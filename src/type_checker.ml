@@ -40,6 +40,7 @@ type typed_statement = {
 and typed_stmt_desc =
   | TExprStmt of typed_expr
   | TAssignment of string * typed_expr
+  | TIndexAssignment of typed_expr * typed_expr * typed_expr
   | TDeclaration of string * bpf_type * typed_expr
   | TReturn of typed_expr option
   | TIf of typed_expr * typed_statement list * typed_statement list option
@@ -207,7 +208,13 @@ let type_check_identifier ctx name pos =
       let typ = Hashtbl.find ctx.variables name in
       { texpr_desc = TIdentifier name; texpr_type = typ; texpr_pos = pos }
     with Not_found ->
-      type_error ("Undefined variable: " ^ name) pos
+      (* Check if it's a map *)
+      try
+        let map_decl = Hashtbl.find ctx.maps name in
+        let map_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type) in
+        { texpr_desc = TIdentifier name; texpr_type = map_type; texpr_pos = pos }
+      with Not_found ->
+        type_error ("Undefined variable: " ^ name) pos
 
 (** Type check function call *)
 let rec type_check_function_call ctx name args pos =
@@ -252,14 +259,19 @@ and type_check_array_access ctx arr idx pos =
    | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> ()
    | _ -> type_error "Array index must be integer type" pos);
   
-  (* Array must be array type *)
+  (* Array must be array type or map type *)
   match typed_arr.texpr_type with
   | Array (element_type, _) ->
       { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
   | Pointer element_type ->
       { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
+  | Map (key_type, value_type, _) ->
+      (* Check key type compatibility *)
+      (match unify_types key_type typed_idx.texpr_type with
+       | Some _ -> { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = value_type; texpr_pos = pos }
+       | None -> type_error ("Map key type mismatch") pos)
   | _ ->
-      type_error "Cannot index non-array type" pos
+      type_error "Cannot index non-array/non-map type" pos
 
 (** Type check field access *)
 and type_check_field_access ctx obj field pos =
@@ -387,6 +399,25 @@ let rec type_check_statement ctx stmt =
                          " to variable of type " ^ string_of_bpf_type var_type) stmt.stmt_pos)
        with Not_found ->
          type_error ("Undefined variable: " ^ name) stmt.stmt_pos)
+  
+  | IndexAssignment (map_expr, key_expr, value_expr) ->
+      let typed_map = type_check_expression ctx map_expr in
+      let typed_key = type_check_expression ctx key_expr in
+      let typed_value = type_check_expression ctx value_expr in
+      
+      (* Validate that map_expr is actually a map type *)
+      (match typed_map.texpr_type with
+       | Map (key_type, value_type, _) ->
+           (* Check key type compatibility *)
+           (match unify_types key_type typed_key.texpr_type with
+            | Some _ -> ()
+            | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
+           (* Check value type compatibility *)
+           (match unify_types value_type typed_value.texpr_type with
+            | Some _ -> ()
+            | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
+           { tstmt_desc = TIndexAssignment (typed_map, typed_key, typed_value); tstmt_pos = stmt.stmt_pos }
+       | _ -> type_error ("Index assignment can only be used on maps") stmt.stmt_pos)
   
   | Declaration (name, type_opt, expr) ->
       let typed_expr = type_check_expression ctx expr in
@@ -555,6 +586,8 @@ let rec typed_stmt_to_stmt tstmt =
   let stmt_desc = match tstmt.tstmt_desc with
     | TExprStmt expr -> ExprStmt (typed_expr_to_expr expr)
     | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)
+    | TIndexAssignment (map_expr, key_expr, value_expr) -> 
+        IndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, typed_expr_to_expr value_expr)
     | TDeclaration (name, typ, expr) -> Declaration (name, Some typ, typed_expr_to_expr expr)
     | TReturn expr_opt -> Return (Option.map typed_expr_to_expr expr_opt)
     | TIf (cond, then_stmts, else_opt) -> 

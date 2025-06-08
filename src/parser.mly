@@ -47,6 +47,11 @@
 %type <Ast.declaration> declaration
 %type <Ast.program_def> program_declaration
 %type <Ast.program_type> program_type
+%type <Ast.map_declaration> map_declaration
+%type <Ast.map_type> map_type
+%type <Ast.map_config> map_config
+%type <Ast.map_attribute list> map_attributes
+%type <Ast.map_attribute> map_attribute
 %type <Ast.function_def list> function_list
 %type <Ast.function_def> function_declaration
 %type <Ast.bpf_type option> function_return_type
@@ -58,6 +63,7 @@
 %type <Ast.statement> expression_statement
 %type <Ast.statement> variable_declaration
 %type <Ast.statement> assignment_statement
+%type <Ast.statement> index_assignment_statement
 %type <Ast.statement> return_statement
 %type <Ast.statement> if_statement
 %type <Ast.statement> while_statement
@@ -88,6 +94,7 @@ declarations:
 declaration:
   | program_declaration { Program $1 }
   | function_declaration { GlobalFunction $1 }
+  | map_declaration { MapDecl $1 }
 
 /* Program declaration: program name : type { functions } */
 program_declaration:
@@ -142,6 +149,7 @@ bpf_type:
   | IDENTIFIER { UserType $1 }
   | LBRACKET bpf_type SEMICOLON INT RBRACKET { Array ($2, $4) }
   | MULTIPLY bpf_type { Pointer $2 }
+  | map_type LT bpf_type COMMA bpf_type GT { Map ($3, $5, $1) }
 
 /* Statements */
 statement_list:
@@ -152,6 +160,7 @@ statement:
   | expression_statement { $1 }
   | variable_declaration { $1 }
   | assignment_statement { $1 }
+  | index_assignment_statement { $1 }
   | return_statement { $1 }
   | if_statement { $1 }
   | while_statement { $1 }
@@ -169,6 +178,10 @@ variable_declaration:
 assignment_statement:
   | IDENTIFIER ASSIGN expression SEMICOLON
     { make_stmt (Assignment ($1, $3)) (make_pos ()) }
+
+index_assignment_statement:
+  | expression LBRACKET expression RBRACKET ASSIGN expression SEMICOLON
+    { make_stmt (IndexAssignment ($1, $3, $6)) (make_pos ()) }
 
 return_statement:
   | RETURN SEMICOLON { make_stmt (Return None) (make_pos ()) }
@@ -241,5 +254,49 @@ field_access:
 
 array_access:
   | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }
+
+/* Map Declarations */
+map_declaration:
+  | MAP IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LBRACE map_config RBRACE
+    { make_map_declaration $2 $6 $8 $4 $11 true (make_pos ()) }
+
+map_type:
+  | IDENTIFIER { 
+      match $1 with
+      | "HashMap" -> HashMap
+      | "Array" -> Array
+      | "PercpuHash" -> PercpuHash
+      | "PercpuArray" -> PercpuArray
+      | "LruHash" -> LruHash
+      | "RingBuffer" -> RingBuffer
+      | "PerfEvent" -> PerfEvent
+      | unknown -> failwith ("Unknown map type: " ^ unknown)
+    }
+
+map_config:
+  | map_attributes { make_map_config 1024 $1 }
+  | IDENTIFIER COLON INT SEMICOLON map_attributes { 
+      if $1 = "max_entries" then make_map_config $3 $5
+      else failwith ("Unknown map config field: " ^ $1)
+    }
+
+map_attributes:
+  | /* empty */ { [] }
+  | map_attribute SEMICOLON map_attributes { $1 :: $3 }
+
+map_attribute:
+  | IDENTIFIER COLON STRING { 
+      match $1 with
+      | "pinned" -> Pinned $3
+      | "permissions" -> Permissions $3
+      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
+    }
+  | IDENTIFIER { 
+      match $1 with
+      | "read_only" -> ReadOnly
+      | "write_only" -> WriteOnly
+      | "userspace_writable" -> UserspaceWritable
+      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
+    }
 
 %% 

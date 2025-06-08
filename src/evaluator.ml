@@ -377,6 +377,13 @@ and eval_statement ctx stmt =
       let value = eval_expression ctx expr in
       Hashtbl.replace ctx.variables name value
   
+  | IndexAssignment (map_expr, key_expr, value_expr) ->
+      (* For evaluation purposes, we'll just ignore map assignments *)
+      let _ = eval_expression ctx map_expr in
+      let _ = eval_expression ctx key_expr in
+      let _ = eval_expression ctx value_expr in
+      ()
+  
   | Declaration (name, _, expr) ->
       let value = eval_expression ctx expr in
       Hashtbl.add ctx.variables name value

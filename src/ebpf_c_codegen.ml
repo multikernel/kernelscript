@@ -234,7 +234,10 @@ let generate_map_load ctx map_val key_val dest_val load_type =
   | DirectLoad ->
       emit_line ctx (sprintf "%s = *%s;" dest_str map_str)
   | MapLookup ->
-      emit_line ctx (sprintf "%s = bpf_map_lookup_elem(%s, &%s);" dest_str map_str key_str)
+      (* bpf_map_lookup_elem returns a pointer, so we need to dereference it *)
+      emit_line ctx (sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);" map_str key_str);
+      emit_line ctx (sprintf "  if (__tmp_ptr) %s = *(%s*)__tmp_ptr;" dest_str (ir_type_to_c_type dest_val.val_type));
+      emit_line ctx (sprintf "  else %s = 0; }" dest_str)
   | MapPeek ->
       emit_line ctx (sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str)
 

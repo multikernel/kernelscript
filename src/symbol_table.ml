@@ -383,6 +383,11 @@ and process_statement table stmt =
   | Assignment (_name, expr) ->
       process_expression table expr
       
+  | IndexAssignment (map_expr, key_expr, value_expr) ->
+      process_expression table map_expr;
+      process_expression table key_expr;
+      process_expression table value_expr
+      
   | ExprStmt expr ->
       process_expression table expr
       

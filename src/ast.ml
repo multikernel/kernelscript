@@ -108,6 +108,7 @@ type statement = {
 and stmt_desc =
   | ExprStmt of expr
   | Assignment of string * expr
+  | IndexAssignment of expr * expr * expr  (* map[key] = value *)
   | Declaration of string * bpf_type option * expr
   | Return of expr option
   | If of expr * statement list * statement list option
@@ -296,6 +297,8 @@ let rec string_of_stmt stmt =
   | ExprStmt expr -> string_of_expr expr ^ ";"
   | Assignment (name, expr) -> 
       Printf.sprintf "%s = %s;" name (string_of_expr expr)
+  | IndexAssignment (map_expr, key_expr, value_expr) ->
+      Printf.sprintf "%s[%s] = %s;" (string_of_expr map_expr) (string_of_expr key_expr) (string_of_expr value_expr)
   | Declaration (name, typ_opt, expr) ->
       let typ_str = match typ_opt with
         | Some t -> ": " ^ string_of_bpf_type t

@@ -194,12 +194,19 @@ let rec lower_expression ctx (expr : Ast.expr) =
       lower_literal lit expr.expr_pos
       
   | Ast.Identifier name ->
-      let reg = get_variable_register ctx name in
-      let ir_type = match expr.expr_type with
-        | Some ast_type -> ast_type_to_ir_type ast_type
-        | None -> failwith ("Untyped identifier: " ^ name)
-      in
-      make_ir_value (IRRegister reg) ir_type expr.expr_pos
+      (* Check if this is a map identifier *)
+      if Hashtbl.mem ctx.maps name then
+        (* For map identifiers, create a map reference *)
+        let map_type = IRPointer (IRU8, make_bounds_info ()) in (* Maps are represented as pointers *)
+        make_ir_value (IRMapRef name) map_type expr.expr_pos
+      else
+        (* Regular variable *)
+        let reg = get_variable_register ctx name in
+        let ir_type = match expr.expr_type with
+          | Some ast_type -> ast_type_to_ir_type ast_type
+          | None -> failwith ("Untyped identifier: " ^ name)
+        in
+        make_ir_value (IRRegister reg) ir_type expr.expr_pos
       
   | Ast.FunctionCall (name, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
@@ -360,6 +367,19 @@ let rec lower_statement ctx stmt =
       let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
       emit_instruction ctx instr
       
+  | Ast.IndexAssignment (map_expr, key_expr, value_expr) ->
+      let map_val = lower_expression ctx map_expr in
+      let key_val = lower_expression ctx key_expr in
+      let value_val = lower_expression ctx value_expr in
+      
+      (* Generate map store instruction *)
+      let instr = make_ir_instruction
+        (IRMapStore (map_val, key_val, value_val, MapUpdate))
+        ~verifier_hints:[HelperCall "map_update_elem"]
+        stmt.stmt_pos
+      in
+      emit_instruction ctx instr
+      
   | Ast.Declaration (name, typ_opt, expr) ->
       let value = lower_expression ctx expr in
       let reg = get_variable_register ctx name in
@@ -399,9 +419,10 @@ let rec lower_statement ctx stmt =
       let cond_val = lower_expression ctx cond_expr in
       
       (* Create labels for control flow *)
-      let then_label = Printf.sprintf "then_%d" ctx.next_block_id in
-      let else_label = Printf.sprintf "else_%d" (ctx.next_block_id + 1) in
-      let merge_label = Printf.sprintf "merge_%d" (ctx.next_block_id + 2) in
+      let cond_label = Printf.sprintf "cond_%d" ctx.next_block_id in
+      let then_label = Printf.sprintf "then_%d" (ctx.next_block_id + 1) in
+      let else_label = Printf.sprintf "else_%d" (ctx.next_block_id + 2) in
+      let merge_label = Printf.sprintf "merge_%d" (ctx.next_block_id + 3) in
       
       (* Conditional jump *)
       let cond_jump = make_ir_instruction 
@@ -410,7 +431,7 @@ let rec lower_statement ctx stmt =
       emit_instruction ctx cond_jump;
       
       (* End current block *)
-      let _ = create_basic_block ctx "cond_block" in
+      let _ = create_basic_block ctx cond_label in
       
       (* Then block *)
       List.iter (lower_statement ctx) then_stmts;

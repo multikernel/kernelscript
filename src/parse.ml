@@ -74,6 +74,8 @@ let validate_ast ast =
     match stmt.stmt_desc with
     | ExprStmt expr -> validate_expr expr
     | Assignment (_, expr) -> validate_expr expr
+    | IndexAssignment (map_expr, key_expr, value_expr) ->
+        validate_expr map_expr && validate_expr key_expr && validate_expr value_expr
     | Declaration (_, _, expr) -> validate_expr expr
     | Return None -> true
     | Return (Some expr) -> validate_expr expr
