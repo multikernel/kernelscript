@@ -41,4 +41,9 @@
 (executable
  (name test_evaluator)
  (modules test_evaluator)
+ (libraries kernelscript ounit2))
+
+(executable
+ (name test_ir)
+ (modules test_ir)
  (libraries kernelscript ounit2)) 

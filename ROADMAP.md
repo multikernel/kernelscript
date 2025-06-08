@@ -319,10 +319,10 @@ let test_stack_usage () =
 
 ---
 
-## Phase 4: Control Flow and Functions (Weeks 10-12)
+## Phase 4: Control Flow and Functions (Weeks 10-13)
 
 ### Goals
-Complete statement handling, function calls, and control flow analysis.
+Complete statement handling, function calls, control flow analysis, and introduce IR.
 
 ### Milestone 4.1: Expression Evaluation (Week 10)
 **Deliverables:**
@@ -331,70 +331,306 @@ Complete statement handling, function calls, and control flow analysis.
 - Function call resolution
 - Built-in function implementations
 
-### Milestone 4.2: Statement Processing (Week 11)
+### Milestone 4.2: Intermediate Representation (Week 11)
 **Deliverables:**
-- Complete statement type checking
-- Control flow analysis
+- `src/ir.ml` - IR type definitions and data structures
+- `src/ir_generator.ml` - AST to IR lowering
+- Simplified expression and statement representation
+- Built-in function expansion and normalization
+- Control flow graph construction
+
+**Key IR Components:**
+```ocaml
+(* Program-level IR *)
+type ir_program = {
+  name: string;
+  program_type: program_type;
+  global_maps: ir_map_def list;
+  local_maps: ir_map_def list;
+  functions: ir_function list;
+  main_function: ir_function;
+  userspace_bindings: ir_userspace_binding list;
+}
+
+(* Enhanced type system for IR *)
+type ir_type = 
+  | IRU8 | IRU16 | IRU32 | IRU64 | IRBool | IRChar
+  | IRPointer of ir_type * bounds_info
+  | IRArray of ir_type * int * bounds_info
+  | IRStruct of string * (string * ir_type) list
+  | IREnum of string * (string * int) list
+  | IROption of ir_type
+  | IRResult of ir_type * ir_type
+  | IRContext of context_type
+  | IRAction of action_type
+
+and context_type = 
+  | XdpCtx | TcCtx | KprobeCtx | UpprobeCtx | TracepointCtx | LsmCtx
+
+and action_type =
+  | XdpActionType | TcActionType | GenericActionType
+
+and bounds_info = {
+  min_size: int option;
+  max_size: int option;
+  alignment: int;
+  nullable: bool;
+}
+
+(* Enhanced map representation *)
+type ir_map_def = {
+  name: string;
+  key_type: ir_type;
+  value_type: ir_type;
+  map_type: ir_map_type;
+  max_entries: int;
+  attributes: ir_map_attr list;
+  is_global: bool;
+  pin_path: string option;
+}
+
+and ir_map_type =
+  | IRHashMap | IRArray | IRPercpuHash | IRPercpuArray
+  | IRLruHash | IRRingBuffer | IRPerfEvent | IRDevMap
+
+and ir_map_attr =
+  | ReadOnly | WriteOnly | UserspaceWritable
+  | Permissions of string
+
+(* Values with safety information *)
+type ir_value = {
+  value_desc: ir_value_desc;
+  value_type: ir_type;
+  stack_offset: int option; (* for stack variables *)
+  bounds_checked: bool;
+}
+
+and ir_value_desc =
+  | IRLiteral of literal
+  | IRVariable of string
+  | IRRegister of int
+  | IRContextField of context_type * string
+  | IRMapRef of string
+
+(* Instructions with verification hints *)
+type ir_instruction = {
+  instr_desc: ir_instr_desc;
+  stack_usage: int;
+  bounds_checks: bounds_check list;
+  verifier_hints: verifier_hint list;
+}
+
+and ir_instr_desc =
+  | IRAssign of ir_value * ir_expr
+  | IRCall of string * ir_value list * ir_value option
+  | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
+  | IRMapStore of ir_value * ir_value * ir_value * map_store_type
+  | IRMapDelete of ir_value * ir_value
+  | IRContextAccess of ir_value * context_access_type
+  | IRBoundsCheck of ir_value * int * int (* value, min, max *)
+  | IRJump of string
+  | IRCondJump of ir_value * string * string
+  | IRReturn of ir_value option
+
+and map_load_type = Direct | Lookup | Peek
+and map_store_type = Direct | Update | Push
+and context_access_type = PacketData | PacketEnd | DataMeta | IngressIfindex
+
+and bounds_check = {
+  value: ir_value;
+  min_bound: int;
+  max_bound: int;
+  check_type: bounds_check_type;
+}
+
+and bounds_check_type = ArrayAccess | PointerDeref | StackAccess
+
+and verifier_hint =
+  | LoopBound of int
+  | StackUsage of int
+  | NoRecursion
+  | BoundsChecked
+
+(* Enhanced basic blocks *)
+type ir_basic_block = {
+  label: string;
+  instructions: ir_instruction list;
+  successors: string list;
+  predecessors: string list;
+  stack_usage: int;
+  loop_depth: int;
+  reachable: bool;
+}
+
+(* Enhanced function representation *)
+type ir_function = {
+  name: string;
+  parameters: (string * ir_type) list;
+  return_type: ir_type option;
+  basic_blocks: ir_basic_block list;
+  total_stack_usage: int;
+  max_loop_depth: int;
+  calls_helper_functions: string list;
+  visibility: visibility;
+  is_main: bool;
+}
+
+and visibility = Public | Private
+
+(* Userspace binding generation *)
+type ir_userspace_binding = {
+  language: binding_language;
+  map_wrappers: ir_map_wrapper list;
+  event_handlers: ir_event_handler list;
+  config_structs: ir_config_struct list;
+}
+
+and binding_language = C | Rust | Go | Python
+
+and ir_map_wrapper = {
+  map_name: string;
+  operations: map_operation list;
+  safety_checks: bool;
+}
+
+and map_operation = Lookup | Update | Delete | Iterate
+
+and ir_event_handler = {
+  event_type: string;
+  callback_signature: string;
+  buffer_management: buffer_type;
+}
+
+and buffer_type = RingBuffer | PerfEvent
+
+and ir_config_struct = {
+  struct_name: string;
+  fields: (string * ir_type) list;
+  serialization: serialization_type;
+}
+
+and serialization_type = Json | Binary | Custom of string
+```
+
+**Unit Tests:**
+```ocaml
+let test_program_lowering () =
+  let ast_program = Program {
+    name = "test_xdp";
+    prog_type = Xdp;
+    maps = [global_map; local_map];
+    functions = [main_fn];
+  } in
+  let ir_prog = lower_program ast_program in
+  assert (ir_prog.program_type = Xdp);
+  assert (List.length ir_prog.global_maps = 1);
+  assert (List.length ir_prog.local_maps = 1);
+  assert (ir_prog.main_function.is_main = true)
+
+let test_context_access_lowering () =
+  let ast_call = FunctionCall ("ctx.packet", []) in
+  let ir_instrs = lower_expression ast_call in
+  match List.hd ir_instrs with
+  | { instr_desc = IRContextAccess (_, PacketData); _ } -> ()
+  | _ -> assert_failure "Context access lowering failed"
+
+let test_map_operation_lowering () =
+  let ast_map_access = ArrayAccess (Identifier "my_map", Literal (IntLit 0)) in
+  let ir_instrs = lower_expression ast_map_access in
+  match List.hd ir_instrs with
+  | { instr_desc = IRMapLoad (_, _, _, Lookup); bounds_checks = [_]; _ } -> ()
+  | _ -> assert_failure "Map access should generate bounds checks"
+
+let test_bounds_check_insertion () =
+  let ast_array_access = ArrayAccess (arr, index) in
+  let ir_instrs = lower_expression ast_array_access in
+  let bounds_checks = List.concat_map (fun i -> i.bounds_checks) ir_instrs in
+  assert (List.length bounds_checks > 0);
+  assert (List.exists (fun bc -> bc.check_type = ArrayAccess) bounds_checks)
+
+let test_stack_usage_tracking () =
+  let ast_fn = Function {
+    name = "test";
+    body = [Declaration ("buffer", Array (U8, 100), None)];
+  } in
+  let ir_fn = lower_function ast_fn in
+  assert (ir_fn.total_stack_usage >= 100);
+  assert (List.for_all (fun bb -> bb.stack_usage >= 0) ir_fn.basic_blocks)
+
+let test_userspace_binding_generation () =
+  let ir_prog = lower_program complex_program in
+  let c_bindings = List.find (fun b -> b.language = C) ir_prog.userspace_bindings in
+  assert (List.length c_bindings.map_wrappers > 0);
+  assert (List.exists (fun op -> op = Lookup) 
+    (List.hd c_bindings.map_wrappers).operations)
+```
+
+### Milestone 4.3: Statement Processing (Week 12)
+**Deliverables:**
+- Complete statement processing on IR
+- Control flow analysis on IR CFG
 - Loop termination verification
 - Return path analysis
+- Dead code elimination
 
-### Milestone 4.3: Function System (Week 12)
+### Milestone 4.4: Function System (Week 13)
 **Deliverables:**
-- Function signature validation
+- Function signature validation on IR
 - Parameter passing semantics
 - Visibility rules (pub/priv)
 - Recursive call detection
+- Cross-function optimization preparation
 
 ---
 
-## Phase 5: Code Generation (Weeks 13-16)
+## Phase 5: Code Generation (Weeks 14-17)
 
 ### Goals
-Generate eBPF bytecode and userspace bindings.
+Generate eBPF bytecode and userspace bindings from IR.
 
-### Milestone 5.1: eBPF Backend (Weeks 13-14)
+### Milestone 5.1: eBPF Backend (Weeks 14-15)
 **Deliverables:**
-- `src/ebpf_codegen.ml` - eBPF bytecode generation
-- Register allocation
-- Instruction selection
-- Map operation compilation
+- `src/ebpf_codegen.ml` - eBPF bytecode generation from IR
+- Register allocation from IR registers
+- Instruction selection from IR instructions
+- Map operation compilation from IR map operations
 
-### Milestone 5.2: Userspace Bindings (Week 15)
+### Milestone 5.2: Userspace Bindings (Week 16)
 **Deliverables:**
-- `src/userspace_codegen.ml` - Generate C/Rust/Go bindings
-- Map access wrappers
+- `src/userspace_codegen.ml` - Generate C/Rust/Go bindings from IR
+- Map access wrappers from IR map operations
 - Event handling code
 - Configuration management
 
-### Milestone 5.3: Standard Library (Week 16)
+### Milestone 5.3: Standard Library (Week 17)
 **Deliverables:**
-- `src/stdlib.ml` - Built-in functions
+- `src/stdlib.ml` - Built-in functions expanded in IR
 - Network utility functions
 - Context helper methods
 - Error handling primitives
 
 ---
 
-## Phase 6: Integration and Tooling (Weeks 17-20)
+## Phase 6: Integration and Tooling (Weeks 18-21)
 
 ### Goals
 Build system, testing framework, and documentation.
 
-### Milestone 6.1: Build System (Week 17)
+### Milestone 6.1: Build System (Week 18)
 **Deliverables:**
 - `dune-project` and `dune` files
 - `kernelscript` command-line tool
-- Compilation pipeline
+- Compilation pipeline (AST → IR → Code)
 - Error reporting system
 
-### Milestone 6.2: Testing Framework (Week 18)
+### Milestone 6.2: Testing Framework (Week 19)
 **Deliverables:**
 - Comprehensive test suite
 - Integration tests
 - Performance benchmarks
 - Fuzzing support
 
-### Milestone 6.3: Documentation and Examples (Weeks 19-20)
+### Milestone 6.3: Documentation and Examples (Weeks 20-21)
 **Deliverables:**
 - API documentation
 - Language reference
@@ -417,6 +653,8 @@ kernelscript/
 │   ├── maps.ml             # Map handling
 │   ├── safety_checker.ml   # Memory safety
 │   ├── evaluator.ml        # Expression evaluation
+│   ├── ir.ml               # IR definitions
+│   ├── ir_generator.ml     # AST to IR lowering
 │   ├── ebpf_codegen.ml     # eBPF code generation
 │   ├── userspace_codegen.ml # Userspace bindings
 │   ├── stdlib.ml           # Standard library
