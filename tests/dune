@@ -46,4 +46,9 @@
 (executable
  (name test_ir)
  (modules test_ir)
+ (libraries kernelscript ounit2))
+
+(executable
+ (name test_ir_analysis)
+ (modules test_ir_analysis)
  (libraries kernelscript ounit2)) 

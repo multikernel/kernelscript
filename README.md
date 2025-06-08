@@ -180,6 +180,18 @@ This milestone implements a comprehensive IR system that serves as the foundatio
 - ✅ Integration with existing AST, type checker, and symbol table modules
 - ✅ Comprehensive test suite with 6 test categories covering IR generation features
 
+**Milestone 4.3: Statement Processing ✅ COMPLETED**
+- ✅ `src/ir_analysis.ml` - Complete IR analysis and optimization infrastructure
+- ✅ Control Flow Graph (CFG) construction and analysis with entry/exit block identification
+- ✅ Loop termination verification for eBPF verifier compatibility
+- ✅ Return path analysis with complete return coverage validation
+- ✅ Dead code elimination for basic blocks and instructions
+- ✅ Statement processing engine with comprehensive IR instruction analysis
+- ✅ Structured control flow verification for eBPF constraints
+- ✅ Analysis reporting with detailed function structure and optimization insights
+- ✅ Integration with existing IR generation and type systems
+- ✅ Comprehensive test suite with 6 test categories covering all analysis features
+
 ### Features Implemented
 
 #### Core Language Features
@@ -242,6 +254,7 @@ dune exec ./tests/test_safety_checker.exe
 dune exec ./tests/test_map_operations.exe
 dune exec ./tests/test_evaluator.exe
 dune exec ./tests/test_ir.exe
+dune exec ./tests/test_ir_analysis.exe
 
 # Check for warnings during build
 dune build --verbose
@@ -328,6 +341,7 @@ kernelscript/
 │   ├── evaluator.ml      # Expression evaluator and runtime system
 │   ├── ir.ml             # Intermediate representation definitions
 │   ├── ir_generator.ml   # AST to IR lowering and generation
+│   ├── ir_analysis.ml    # IR analysis and optimization
 │   ├── main.ml           # Demo executable
 │   └── dune              # Build configuration
 ├── tests/
@@ -341,6 +355,7 @@ kernelscript/
 │   ├── test_map_operations.ml  # Map operations test suite
 │   ├── test_evaluator.ml       # Expression evaluator test suite
 │   ├── test_ir.ml              # IR generation test suite
+│   ├── test_ir_analysis.ml     # IR analysis test suite
 │   └── dune                    # Test build configuration
 ├── examples/
 │   ├── maps_demo.ks            # Maps functionality demonstration
@@ -465,6 +480,15 @@ IR Generation Tests (5/6 passed):
 ✓ Stack usage tracking test passed
 ✓ Userspace binding generation test passed
 ✓ IR generation functionality validated (83% success rate)
+
+IR Analysis Tests (6/6 passed):
+✓ CFG construction test passed
+✓ Function with return test passed
+✓ Loop termination verification test passed
+✓ Complete statement processing test passed
+✓ IR function analysis test passed
+✓ Analysis report generation test passed
+✓ All IR analysis functionality validated (100% success rate)
 ```
 
 ### Current Capabilities
@@ -480,12 +504,12 @@ The KernelScript implementation now supports:
 7. **Map Operations** - Access pattern analysis and concurrent safety
 8. **Expression Evaluation** - Runtime execution of KernelScript expressions
 9. **Intermediate Representation** - eBPF-optimized IR for code generation
+10. **IR Analysis and Optimization** - Control flow analysis, loop termination verification, return path analysis, and dead code elimination
 
 ### Next Steps
 
-The next major milestones in Phase 4 are:
+The next major milestone in Phase 4 is:
 
-- **Milestone 4.3**: Statement Processing - Complete statement processing on IR, control flow analysis on IR CFG, loop termination verification, return path analysis, and dead code elimination
 - **Milestone 4.4**: Function System - Function signature validation on IR, parameter passing semantics, visibility rules, recursive call detection, and cross-function optimization preparation
 
 After Phase 4 completion, Phase 5 will implement eBPF code generation to produce working eBPF bytecode and userspace bindings from the IR representation.
@@ -501,4 +525,16 @@ The IR system provides:
 - **Control Flow Representation**: Basic blocks with predecessor/successor relationships
 - **Verification Hints**: Metadata to assist eBPF verifier during program loading
 - **Register Allocation**: Context-aware register management for eBPF's limited register set
-- **Built-in Expansion**: Automatic expansion of context methods and map operations 
+- **Built-in Expansion**: Automatic expansion of context methods and map operations
+
+### IR Analysis Features
+
+The IR analysis system provides:
+
+- **Control Flow Graph Construction**: Automatic CFG generation with entry/exit block identification
+- **Loop Termination Verification**: eBPF-compliant bounded loop analysis for verifier compatibility
+- **Return Path Analysis**: Complete return path verification and type consistency checking
+- **Dead Code Elimination**: Removal of unreachable basic blocks and instructions
+- **Statement Processing Engine**: Comprehensive IR statement analysis and optimization
+- **Structured Control Flow**: Verification of reducible control flow for eBPF constraints
+- **Analysis Reporting**: Detailed reports on function structure, loops, and optimization results 
