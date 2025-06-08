@@ -1,0 +1,222 @@
+{
+  open Parser
+  
+  exception Lexer_error of string
+
+  let create_lexer_error msg =
+    raise (Lexer_error msg)
+
+  let current_line = ref 1
+  let current_col = ref 1
+  
+  let next_line () =
+    incr current_line;
+    current_col := 1
+
+  let next_col () =
+    incr current_col
+
+  let string_of_char c =
+    String.make 1 c
+
+  let char_for_backslash = function
+    | 'n' -> '\n'
+    | 't' -> '\t'
+    | 'r' -> '\r'
+    | '\\' -> '\\'
+    | '\'' -> '\''
+    | '"' -> '"'
+    | '0' -> '\000'
+    | c -> c
+
+  let parse_hex_literal s =
+    let s = String.sub s 2 (String.length s - 2) in (* Remove "0x" or "0X" *)
+    let rec aux i acc =
+      if i >= String.length s then acc
+      else
+        match s.[i] with
+        | '0'..'9' as c -> aux (i+1) (acc * 16 + (Char.code c - Char.code '0'))
+        | 'a'..'f' as c -> aux (i+1) (acc * 16 + (Char.code c - Char.code 'a' + 10))
+        | 'A'..'F' as c -> aux (i+1) (acc * 16 + (Char.code c - Char.code 'A' + 10))
+        | _ -> create_lexer_error ("Invalid hex literal: " ^ s)
+    in
+    aux 0 0
+
+  let parse_binary_literal s =
+    let s = String.sub s 2 (String.length s - 2) in (* Remove "0b" or "0B" *)
+    let rec aux i acc =
+      if i >= String.length s then acc
+      else
+        match s.[i] with
+        | '0' -> aux (i+1) (acc * 2)
+        | '1' -> aux (i+1) (acc * 2 + 1)
+        | _ -> create_lexer_error ("Invalid binary literal: " ^ s)
+    in
+    aux 0 0
+
+  let lookup_keyword = function
+    | "program" -> PROGRAM
+    | "fn" -> FN
+    | "map" -> MAP
+    | "type" -> TYPE
+    | "struct" -> STRUCT
+    | "enum" -> ENUM
+    (* NOTE: The following are actually built-in program types, not keywords.
+       This is a temporary simplification. In the future, these should be parsed 
+       as IDENTIFIER tokens and resolved by the semantic analyzer to allow for 
+       better extensibility and avoid name collisions. *)
+    | "xdp" -> XDP
+    | "tc" -> TC
+    | "kprobe" -> KPROBE
+    | "uprobe" -> UPROBE
+    | "tracepoint" -> TRACEPOINT
+    | "lsm" -> LSM
+    | "u8" -> U8
+    | "u16" -> U16
+    | "u32" -> U32
+    | "u64" -> U64
+    | "i8" -> I8
+    | "i16" -> I16
+    | "i32" -> I32
+    | "i64" -> I64
+    | "bool" -> BOOL
+    | "char" -> CHAR
+    | "if" -> IF
+    | "else" -> ELSE
+    | "for" -> FOR
+    | "while" -> WHILE
+    | "return" -> RETURN
+    | "break" -> BREAK
+    | "continue" -> CONTINUE
+    | "let" -> LET
+    | "mut" -> MUT
+    | "pub" -> PUB
+    | "priv" -> PRIV
+    | "config" -> CONFIG
+    | "userspace" -> USERSPACE
+    | "in" -> IN
+    | "true" -> BOOL_LIT true
+    | "false" -> BOOL_LIT false
+    | id -> IDENTIFIER id
+}
+
+let whitespace = [' ' '\t']
+let newline = '\r' | '\n' | "\r\n"
+let letter = ['a'-'z' 'A'-'Z']
+let digit = ['0'-'9']
+let identifier = letter (letter | digit | '_')*
+let decimal_literal = digit+
+let hex_literal = '0' ['x' 'X'] ['0'-'9' 'a'-'f' 'A'-'F']+
+let binary_literal = '0' ['b' 'B'] ['0' '1']+
+
+rule token = parse
+  | whitespace+ { next_col (); token lexbuf }
+  | newline { next_line (); token lexbuf }
+  
+  (* Comments *)
+  | "//" [^ '\r' '\n']* { next_col (); token lexbuf }
+  | "/*" { next_col (); block_comment lexbuf }
+  
+  (* Literals *)
+  | decimal_literal as lit { INT (int_of_string lit) }
+  | hex_literal as lit { INT (parse_hex_literal lit) }
+  | binary_literal as lit { INT (parse_binary_literal lit) }
+  
+  (* String literals *)
+  | '"' { next_col (); string_literal (Buffer.create 256) lexbuf }
+  
+  (* Character literals *)
+  | '\'' { next_col (); char_literal lexbuf }
+  
+  (* Identifiers and keywords *)
+  | identifier as id { lookup_keyword id }
+  
+  (* Two-character operators *)
+  | "->" { ARROW }
+  | "==" { EQ }
+  | "!=" { NE }
+  | "<=" { LE }
+  | ">=" { GE }
+  | "&&" { AND }
+  | "||" { OR }
+  
+  (* Single-character operators and punctuation *)
+  | '=' { ASSIGN }
+  | '+' { PLUS }
+  | '-' { MINUS }
+  | '*' { MULTIPLY }
+  | '/' { DIVIDE }
+  | '%' { MODULO }
+  | '<' { LT }
+  | '>' { GT }
+  | '!' { NOT }
+  | '{' { LBRACE }
+  | '}' { RBRACE }
+  | '(' { LPAREN }
+  | ')' { RPAREN }
+  | '[' { LBRACKET }
+  | ']' { RBRACKET }
+  | ';' { SEMICOLON }
+  | ',' { COMMA }
+  | '.' { DOT }
+  | ':' { COLON }
+  
+  (* End of file *)
+  | eof { EOF }
+  
+  (* Error case *)
+  | _ as c { create_lexer_error ("Unexpected character: " ^ string_of_char c) }
+
+and block_comment = parse
+  | "*/" { next_col (); token lexbuf }
+  | newline { next_line (); block_comment lexbuf }
+  | _ { next_col (); block_comment lexbuf }
+  | eof { create_lexer_error "Unterminated block comment" }
+
+and string_literal buf = parse
+  | '"' { next_col (); STRING (Buffer.contents buf) }
+  | '\\' (['\\' '\'' '"' 'n' 't' 'r' '0'] as c) 
+    { next_col (); Buffer.add_char buf (char_for_backslash c); string_literal buf lexbuf }
+  | '\\' 'x' (['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] as hex)
+    { next_col (); 
+      let code = int_of_string ("0x" ^ hex) in
+      Buffer.add_char buf (Char.chr code);
+      string_literal buf lexbuf }
+  | newline { next_line (); Buffer.add_char buf '\n'; string_literal buf lexbuf }
+  | _ as c { next_col (); Buffer.add_char buf c; string_literal buf lexbuf }
+  | eof { create_lexer_error "Unterminated string literal" }
+
+and char_literal = parse
+  | '\'' { next_col (); create_lexer_error "Empty character literal" }
+  | '\\' (['\\' '\'' '"' 'n' 't' 'r' '0'] as c) '\''
+    { next_col (); CHAR_LIT (char_for_backslash c) }
+  | '\\' 'x' (['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] as hex) '\''
+    { next_col (); 
+      let code = int_of_string ("0x" ^ hex) in
+      CHAR_LIT (Char.chr code) }
+  | (_ as c) '\'' { next_col (); CHAR_LIT c }
+  | eof { create_lexer_error "Unterminated character literal" }
+  | _ { create_lexer_error "Invalid character literal" }
+
+{
+  let tokenize_string str =
+    let lexbuf = Lexing.from_string str in
+    let tokens = ref [] in
+    let rec aux () =
+      match token lexbuf with
+      | EOF -> List.rev !tokens
+      | tok -> tokens := tok :: !tokens; aux ()
+    in
+    aux ()
+
+  let tokenize_file filename =
+    let ic = open_in filename in
+    let lexbuf = Lexing.from_channel ic in
+    let tokens = ref [] in
+    let rec aux () =
+      match token lexbuf with
+      | EOF -> close_in ic; List.rev !tokens
+      | tok -> tokens := tok :: !tokens; aux ()
+    in
+    aux ()
+} 

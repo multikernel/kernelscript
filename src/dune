@@ -1,0 +1,25 @@
+(library
+ (public_name kernelscript)
+ (name kernelscript)
+ (modules lexer ast parser parse type_checker symbol_table maps safety_checker map_operations evaluator)
+ (libraries ))
+
+(executable
+ (public_name kernelscript)
+ (name main)
+ (modules main)
+ (libraries kernelscript))
+
+
+
+(rule
+ (targets lexer.ml)
+ (deps lexer.mll)
+ (action
+  (run ocamllex %{deps})))
+
+(rule
+ (targets parser.ml parser.mli)
+ (deps parser.mly)
+ (action
+  (run menhir %{deps}))) 

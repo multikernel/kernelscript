@@ -1,0 +1,44 @@
+(executable
+ (name test_lexer_simple)
+ (modules test_lexer_simple)
+ (libraries kernelscript))
+
+(executable
+ (name test_ast)
+ (modules test_ast)
+ (libraries kernelscript str))
+
+(executable
+ (name test_parser)
+ (modules test_parser)
+ (libraries kernelscript))
+
+(executable
+ (name test_type_checker)
+ (modules test_type_checker)
+ (libraries kernelscript))
+
+(executable
+ (name test_symbol_table)
+ (modules test_symbol_table)
+ (libraries kernelscript str))
+
+(executable
+ (name test_maps)
+ (modules test_maps)
+ (libraries kernelscript))
+
+(executable
+ (name test_safety_checker)
+ (modules test_safety_checker)
+ (libraries kernelscript))
+
+(executable
+ (name test_map_operations)
+ (modules test_map_operations)
+ (libraries kernelscript))
+
+(executable
+ (name test_evaluator)
+ (modules test_evaluator)
+ (libraries kernelscript ounit2)) 
