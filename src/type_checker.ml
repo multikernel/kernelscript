@@ -75,6 +75,19 @@ let create_context () = {
 (** Helper to create type error *)
 let type_error msg pos = raise (Type_error (msg, pos))
 
+(** Resolve user types to built-in types *)
+let resolve_user_type = function
+  | UserType "XdpContext" -> XdpContext
+  | UserType "TcContext" -> TcContext
+  | UserType "KprobeContext" -> KprobeContext
+  | UserType "UprobeContext" -> UprobeContext
+  | UserType "TracepointContext" -> TracepointContext
+  | UserType "LsmContext" -> LsmContext
+  | UserType "CgroupSkbContext" -> CgroupSkbContext
+  | UserType "XdpAction" -> XdpAction
+  | UserType "TcAction" -> TcAction
+  | other_type -> other_type
+
 (** Type unification algorithm *)
 let rec unify_types t1 t2 =
   match t1, t2 with
@@ -287,12 +300,24 @@ and type_check_binary_op ctx left op right pos =
   let result_type = match op with
     (* Arithmetic operations *)
     | Add | Sub | Mul | Div | Mod ->
-        (match unify_types typed_left.texpr_type typed_right.texpr_type with
-         | Some unified_type ->
-             (match unified_type with
-              | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
-              | _ -> type_error "Arithmetic operations require numeric types" pos)
-         | None -> type_error "Cannot unify types for arithmetic operation" pos)
+        (* Handle pointer arithmetic *)
+        (match typed_left.texpr_type, typed_right.texpr_type, op with
+         (* Pointer - Pointer = size (pointer subtraction) *)
+         | Pointer _, Pointer _, Sub -> U64  (* Return size type for pointer difference *)
+         (* Pointer + Integer = Pointer (pointer offset) *)
+         | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64), Add -> Pointer t
+         (* Integer + Pointer = Pointer (pointer offset) *)
+         | (U8|U16|U32|U64|I8|I16|I32|I64), Pointer t, Add -> Pointer t
+         (* Pointer - Integer = Pointer (pointer offset) *)
+         | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64), Sub -> Pointer t
+         (* Regular numeric arithmetic *)
+         | _ ->
+             (match unify_types typed_left.texpr_type typed_right.texpr_type with
+              | Some unified_type ->
+                  (match unified_type with
+                   | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
+                   | _ -> type_error "Arithmetic operations require numeric types" pos)
+              | None -> type_error "Cannot unify types for arithmetic operation" pos))
     
     (* Comparison operations *)
     | Eq | Ne | Lt | Le | Gt | Ge ->
@@ -412,15 +437,19 @@ let type_check_function ctx func =
   let old_function = ctx.current_function in
   ctx.current_function <- Some func.func_name;
   
-  (* Add parameters to scope *)
-  List.iter (fun (name, typ) -> Hashtbl.replace ctx.variables name typ) func.func_params;
+  (* Add parameters to scope with proper type resolution *)
+  let resolved_params = List.map (fun (name, typ) -> 
+    let resolved_type = resolve_user_type typ in
+    Hashtbl.replace ctx.variables name resolved_type;
+    (name, resolved_type)
+  ) func.func_params in
   
   (* Type check function body *)
   let typed_body = List.map (type_check_statement ctx) func.func_body in
   
   (* Determine return type *)
   let return_type = match func.func_return_type with
-    | Some t -> t
+    | Some t -> resolve_user_type t
     | None -> U32  (* Default return type *)
   in
   
@@ -431,7 +460,7 @@ let type_check_function ctx func =
   
   let typed_func = {
     tfunc_name = func.func_name;
-    tfunc_params = func.func_params;
+    tfunc_params = resolved_params;
     tfunc_return_type = return_type;
     tfunc_body = typed_body;
     tfunc_pos = func.func_pos;
@@ -507,4 +536,61 @@ let string_of_type_error (msg, pos) =
   Printf.sprintf "Type error: %s at %s" msg (string_of_position pos)
 
 let print_type_error (msg, pos) =
-  Printf.eprintf "%s\n" (string_of_type_error (msg, pos)) 
+  Printf.eprintf "%s\n" (string_of_type_error (msg, pos))
+
+(** Convert typed AST back to AST with type annotations *)
+let rec typed_expr_to_expr texpr =
+  let expr_desc = match texpr.texpr_desc with
+    | TLiteral lit -> Literal lit
+    | TIdentifier name -> Identifier name
+    | TFunctionCall (name, args) -> FunctionCall (name, List.map typed_expr_to_expr args)
+    | TArrayAccess (arr, idx) -> ArrayAccess (typed_expr_to_expr arr, typed_expr_to_expr idx)
+    | TFieldAccess (obj, field) -> FieldAccess (typed_expr_to_expr obj, field)
+    | TBinaryOp (left, op, right) -> BinaryOp (typed_expr_to_expr left, op, typed_expr_to_expr right)
+    | TUnaryOp (op, expr) -> UnaryOp (op, typed_expr_to_expr expr)
+  in
+  { expr_desc; expr_pos = texpr.texpr_pos; expr_type = Some texpr.texpr_type }
+
+let rec typed_stmt_to_stmt tstmt =
+  let stmt_desc = match tstmt.tstmt_desc with
+    | TExprStmt expr -> ExprStmt (typed_expr_to_expr expr)
+    | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)
+    | TDeclaration (name, typ, expr) -> Declaration (name, Some typ, typed_expr_to_expr expr)
+    | TReturn expr_opt -> Return (Option.map typed_expr_to_expr expr_opt)
+    | TIf (cond, then_stmts, else_opt) -> 
+        If (typed_expr_to_expr cond, 
+            List.map typed_stmt_to_stmt then_stmts,
+            Option.map (List.map typed_stmt_to_stmt) else_opt)
+    | TFor (var, start, end_, body) ->
+        For (var, typed_expr_to_expr start, typed_expr_to_expr end_, List.map typed_stmt_to_stmt body)
+    | TWhile (cond, body) ->
+        While (typed_expr_to_expr cond, List.map typed_stmt_to_stmt body)
+  in
+  { stmt_desc; stmt_pos = tstmt.tstmt_pos }
+
+let typed_function_to_function tfunc =
+  { func_name = tfunc.tfunc_name;
+    func_params = tfunc.tfunc_params;
+    func_return_type = Some tfunc.tfunc_return_type;
+    func_body = List.map typed_stmt_to_stmt tfunc.tfunc_body;
+    func_pos = tfunc.tfunc_pos }
+
+let typed_program_to_program tprog =
+  { prog_name = tprog.tprog_name;
+    prog_type = tprog.tprog_type;
+    prog_functions = List.map typed_function_to_function tprog.tprog_functions;
+    prog_pos = tprog.tprog_pos }
+
+(** Convert typed AST back to annotated AST declarations *)
+let typed_ast_to_annotated_ast typed_ast original_ast =
+  let annotated_programs = List.map typed_program_to_program typed_ast in
+  
+  (* Reconstruct the declarations list, preserving non-program declarations from original *)
+  List.map (function
+    | Program _ -> 
+        (* Find corresponding typed program *)
+        (match annotated_programs with
+         | prog :: _ -> Program prog  (* Take first program for now *)
+         | [] -> failwith "No typed program found")
+    | other_decl -> other_decl  (* Keep maps, types, etc. unchanged *)
+  ) original_ast 

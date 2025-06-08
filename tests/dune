@@ -56,4 +56,10 @@
 (executable
  (public_name test_ir_function_system)
  (name test_ir_function_system)
- (libraries kernelscript ounit2)) 
+ (libraries kernelscript ounit2))
+
+(executable
+ (public_name test_ebpf_c_codegen)
+ (name test_ebpf_c_codegen)
+ (modules test_ebpf_c_codegen)
+ (libraries kernelscript str)) 

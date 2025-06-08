@@ -1,118 +1,348 @@
-open Kernelscript
-
-let print_token = function
-  | Parser.PROGRAM -> "PROGRAM"
-  | Parser.FN -> "FN"
-  | Parser.XDP -> "XDP"
-  | Parser.TC -> "TC"
-  | Parser.KPROBE -> "KPROBE"
-  | Parser.UPROBE -> "UPROBE"
-  | Parser.TRACEPOINT -> "TRACEPOINT"
-  | Parser.LSM -> "LSM"
-  | Parser.IF -> "IF"
-  | Parser.ELSE -> "ELSE"
-  | Parser.FOR -> "FOR"
-  | Parser.WHILE -> "WHILE"
-  | Parser.RETURN -> "RETURN"
-  | Parser.LET -> "LET"
-  | Parser.INT i -> "INT(" ^ string_of_int i ^ ")"
-  | Parser.STRING s -> "STRING(\"" ^ s ^ "\")"
-  | Parser.IDENTIFIER id -> "IDENTIFIER(" ^ id ^ ")"
-  | Parser.CHAR_LIT c -> "CHAR('" ^ String.make 1 c ^ "')"
-  | Parser.BOOL_LIT b -> "BOOL(" ^ string_of_bool b ^ ")"
-  | Parser.LBRACE -> "{"
-  | Parser.RBRACE -> "}"
-  | Parser.LPAREN -> "("
-  | Parser.RPAREN -> ")"
-  | Parser.SEMICOLON -> ";"
-  | Parser.COLON -> ":"
-  | Parser.ARROW -> "->"
-  | Parser.ASSIGN -> "="
-  | Parser.PLUS -> "+"
-  | Parser.MINUS -> "-"
-  | Parser.MULTIPLY -> "*"
-  | Parser.DIVIDE -> "/"
-  | Parser.LT -> "<"
-  | Parser.GT -> ">"
-  | Parser.EQ -> "=="
-  | Parser.NE -> "!="
-  | Parser.LE -> "<="
-  | Parser.GE -> ">="
-  | Parser.AND -> "&&"
-  | Parser.OR -> "||"
-  | Parser.NOT -> "!"
-  | Parser.DOT -> "."
-  | Parser.COMMA -> ","
-  | Parser.LBRACKET -> "["
-  | Parser.RBRACKET -> "]"
-  | Parser.EOF -> "EOF"
-  | _ -> "OTHER"
-
-let print_tokens tokens =
-  List.iter (fun token ->
-    Printf.printf "%s " (print_token token)
-  ) tokens;
-  Printf.printf "\n"
-
-let test_sample_code () =
-  let sample = {|
-    program network_monitor : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let packet_size = ctx.data_end - ctx.data;
-        if packet_size > 1500 {
-          return 1;
-        }
-        return 0;
-      }
-    }
-  |} in
-  Printf.printf "Sample KernelScript code:\n%s\n\n" sample;
-  Printf.printf "Tokens:\n";
-  let tokens = Lexer.tokenize_string sample in
-  print_tokens tokens
-
-let test_evaluator () =
-  Printf.printf "\n=== Evaluator Test ===\n";
-  
-  (* Create a simple expression evaluation test *)
-  let ctx = Evaluator.create_eval_context (Hashtbl.create 0) (Hashtbl.create 0) in
-  
-  (* Test arithmetic expression: 10 + 5 * 2 *)
-  let five = Ast.make_expr (Ast.Literal (Ast.IntLit 5)) (Ast.make_position 1 1 "test") in
-  let two = Ast.make_expr (Ast.Literal (Ast.IntLit 2)) (Ast.make_position 1 1 "test") in
-  let ten = Ast.make_expr (Ast.Literal (Ast.IntLit 10)) (Ast.make_position 1 1 "test") in
-  
-  let mul_expr = Ast.make_expr (Ast.BinaryOp (five, Ast.Mul, two)) (Ast.make_position 1 1 "test") in
-  let add_expr = Ast.make_expr (Ast.BinaryOp (ten, Ast.Add, mul_expr)) (Ast.make_position 1 1 "test") in
-  
-  Printf.printf "Evaluating expression: 10 + 5 * 2\n";
-  (match Evaluator.evaluate_expression ctx add_expr with
-  | Ok result -> 
-      Printf.printf "Result: %s\n" (Evaluator.string_of_runtime_value result)
-  | Error (msg, pos) -> 
-      Printf.printf "Error: %s at %s\n" msg (Ast.string_of_position pos));
+(** KernelScript Compiler - Main Entry Point
     
-  (* Test built-in function call *)
-  Printf.printf "\nTesting built-in function: bpf_get_current_pid_tgid()\n";
-  let func_call = Ast.make_expr (Ast.FunctionCall ("bpf_get_current_pid_tgid", [])) (Ast.make_position 1 1 "test") in
-  (match Evaluator.evaluate_expression ctx func_call with
-  | Ok result -> 
-      Printf.printf "PID/TGID: %s\n" (Evaluator.string_of_runtime_value result)
-  | Error (msg, pos) -> 
-      Printf.printf "Error: %s at %s\n" msg (Ast.string_of_position pos));
-  
-  (* Test enum constant *)
-  Printf.printf "\nTesting enum constant: XdpAction::Pass\n";
-  let enum_expr = Ast.make_expr (Ast.Identifier "XdpAction::Pass") (Ast.make_position 1 1 "test") in
-  (match Evaluator.evaluate_expression ctx enum_expr with
-  | Ok result -> 
-      Printf.printf "XdpAction::Pass = %s\n" (Evaluator.string_of_runtime_value result)
-  | Error (msg, pos) -> 
-      Printf.printf "Error: %s at %s\n" msg (Ast.string_of_position pos));
-  Printf.printf "\n✅ All evaluator tests completed successfully!\n"
+    This is the main compiler driver that:
+    1. Parses command line arguments
+    2. Reads and parses KernelScript (.ks) files
+    3. Performs type checking and analysis
+    4. Generates IR representation
+    5. Outputs eBPF C code (.ebpf.c)
+    6. Creates a Makefile for compilation
+*)
 
+open Kernelscript
+open Printf
+
+(** Command line options *)
+type compiler_options = {
+  input_file: string;
+  output_file: string option;
+  verbose: bool;
+  generate_makefile: bool;
+  optimization_level: int;
+}
+
+(** Print usage information *)
+let print_usage () =
+  printf "KernelScript Compiler\n";
+  printf "Usage: kernelscript [options] <input.ks>\n";
+  printf "\n";
+  printf "Options:\n";
+  printf "  -o, --output <file>     Output file (default: <input>.ebpf.c)\n";
+  printf "  -v, --verbose           Enable verbose output\n";
+  printf "  -M, --makefile          Generate Makefile (default: true)\n";
+  printf "  -O<level>               Optimization level (0-2, default: 2)\n";
+  printf "  -h, --help              Show this help\n";
+  printf "\n";
+  printf "Examples:\n";
+  printf "  kernelscript program.ks              # Generates program.ebpf.c\n";
+  printf "  kernelscript -o xdp_drop.c prog.ks  # Custom output file\n";
+  printf "  kernelscript -v program.ks          # Verbose compilation\n"
+
+(** Parse command line arguments *)
+let parse_args () =
+  let input_file = ref "" in
+  let output_file = ref None in
+  let verbose = ref false in
+  let generate_makefile = ref true in
+  let optimization_level = ref 2 in
+  
+  let set_output file = output_file := Some file in
+  let set_input file = input_file := file in
+  let set_opt_level level = optimization_level := level in
+  
+  let spec = [
+    ("-o", Arg.String set_output, " Set output file");
+    ("--output", Arg.String set_output, " Set output file");
+    ("-v", Arg.Set verbose, " Enable verbose output");
+    ("--verbose", Arg.Set verbose, " Enable verbose output");
+    ("-M", Arg.Set generate_makefile, " Generate Makefile");
+    ("--makefile", Arg.Set generate_makefile, " Generate Makefile");
+    ("-O0", Arg.Unit (fun () -> set_opt_level 0), " No optimization");
+    ("-O1", Arg.Unit (fun () -> set_opt_level 1), " Basic optimization");
+    ("-O2", Arg.Unit (fun () -> set_opt_level 2), " Full optimization");
+    ("-h", Arg.Unit (fun () -> print_usage (); exit 0), " Show help");
+    ("--help", Arg.Unit (fun () -> print_usage (); exit 0), " Show help");
+  ] in
+  
+  let usage_msg = "kernelscript [options] <input.ks>" in
+  Arg.parse spec set_input usage_msg;
+  
+  if !input_file = "" then (
+    printf "Error: No input file specified\n\n";
+    print_usage ();
+    exit 1
+  );
+  
+  if not (Filename.check_suffix !input_file ".ks") then (
+    printf "Error: Input file must have .ks extension\n";
+    exit 1
+  );
+  
+  let base_name = Filename.remove_extension (Filename.basename !input_file) in
+  let output_dir = base_name in
+  let default_output = output_dir ^ "/" ^ base_name ^ ".ebpf.c" in
+  
+  {
+    input_file = !input_file;
+    output_file = (match !output_file with Some f -> Some f | None -> Some default_output);
+    verbose = !verbose;
+    generate_makefile = !generate_makefile;
+    optimization_level = !optimization_level;
+  }
+
+(** Print verbose message *)
+let vprintf opts fmt = 
+  if opts.verbose then printf fmt else Printf.ifprintf stdout fmt
+
+(** Read file contents *)
+let read_file filename =
+  try
+    let ic = open_in filename in
+    let content = really_input_string ic (in_channel_length ic) in
+    close_in ic;
+    Ok content
+  with
+  | Sys_error msg -> Error ("Failed to read file: " ^ msg)
+  | e -> Error ("Error reading file: " ^ Printexc.to_string e)
+
+(** Create directory if it doesn't exist *)
+let create_directory dirname =
+  try
+    if not (Sys.file_exists dirname) then
+      Unix.mkdir dirname 0o755;
+    Ok ()
+  with
+  | Unix.Unix_error (err, _, _) -> 
+      Error ("Failed to create directory: " ^ Unix.error_message err)
+  | e -> Error ("Error creating directory: " ^ Printexc.to_string e)
+
+(** Write file contents *)
+let write_file filename content =
+  try
+    (* Create parent directory if needed *)
+    let dirname = Filename.dirname filename in
+    if dirname <> "." && dirname <> "/" then (
+      match create_directory dirname with
+      | Ok () -> ()
+      | Error msg -> failwith msg
+    );
+    
+    let oc = open_out filename in
+    output_string oc content;
+    close_out oc;
+    Ok ()
+  with
+  | Sys_error msg -> Error ("Failed to write file: " ^ msg)
+  | e -> Error ("Error writing file: " ^ Printexc.to_string e)
+
+(** Generate Makefile for compiling eBPF C code *)
+let generate_makefile opts c_filename =
+  let base_name = Filename.remove_extension (Filename.basename c_filename) in
+  let obj_name = base_name ^ ".o" in
+  
+  let makefile_content = sprintf {|# Makefile for %s
+# Generated by KernelScript compiler
+
+CC = clang
+CFLAGS = -target bpf -O%d -Wall -Wextra
+INCLUDES = -I/usr/include -I/usr/include/x86_64-linux-gnu
+
+# BPF object file
+BPF_OBJ = %s
+
+# Source files
+BPF_SRC = %s
+
+# Default target
+all: $(BPF_OBJ)
+
+# Compile eBPF C to object file
+$(BPF_OBJ): $(BPF_SRC)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Clean generated files
+clean:
+	rm -f $(BPF_OBJ)
+
+# Install object file (customize as needed)
+install: $(BPF_OBJ)
+	@echo "Install target not implemented - copy $(BPF_OBJ) to your deployment location"
+
+# Load program (example - customize for your use case)
+load: $(BPF_OBJ)
+	@echo "Loading eBPF program..."
+	@echo "Example: sudo ip link set dev eth0 xdpgeneric obj $(BPF_OBJ) sec xdp"
+
+# Verify the BPF object file
+verify: $(BPF_OBJ)
+	@echo "Verifying eBPF object file..."
+	llvm-objdump -h $(BPF_OBJ) || objdump -h $(BPF_OBJ)
+
+.PHONY: all clean install load verify
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all       - Build the eBPF object file"
+	@echo "  clean     - Remove generated files"
+	@echo "  install   - Install the object file"
+	@echo "  load      - Load the eBPF program (example)"
+	@echo "  verify    - Verify the object file structure"
+	@echo "  help      - Show this help"
+|} 
+    base_name
+    opts.optimization_level
+    obj_name
+    (Filename.basename c_filename)
+  in
+  
+  let makefile_path = (Filename.dirname c_filename) ^ "/Makefile" in
+  write_file makefile_path makefile_content
+
+(** Compile KernelScript to eBPF C *)
+let compile_kernelscript opts =
+  vprintf opts "KernelScript Compiler v0.1.0\n";
+  vprintf opts "===============================\n\n";
+  
+  (* Step 1: Read input file *)
+  vprintf opts "Reading input file: %s\n" opts.input_file;
+  let content = match read_file opts.input_file with
+    | Ok content -> content
+    | Error msg -> 
+        printf "Error: %s\n" msg;
+        exit 1
+  in
+  
+  (* Step 2: Parsing *)
+  vprintf opts "Parsing AST...\n";
+  let ast = try
+    Parse.parse_string ~filename:opts.input_file content
+  with
+  | Parse.Parse_error (msg, pos) ->
+    printf "Parse error at %s: %s\n" (Ast.string_of_position pos) msg;
+    exit 1
+  | e ->
+    printf "Parser error: %s\n" (Printexc.to_string e);
+    exit 1
+  in
+  vprintf opts "AST parsing completed\n";
+  
+  (* Step 3: Symbol table analysis *)
+  vprintf opts "Building symbol table...\n";
+  let _symbol_table = try
+    Symbol_table.build_symbol_table ast
+  with
+  | Symbol_table.Symbol_error (msg, pos) ->
+    printf "Symbol error at %s: %s\n" (Ast.string_of_position pos) msg;
+    exit 1
+  | e ->
+    printf "Symbol table error: %s\n" (Printexc.to_string e);
+    exit 1
+  in
+  vprintf opts "Symbol table analysis completed\n";
+  
+  (* Step 4: Type checking *)
+  vprintf opts "Type checking...\n";
+  let typed_ast = try
+    Type_checker.type_check_ast ast
+  with
+  | Type_checker.Type_error (msg, pos) ->
+    printf "Type error at %s: %s\n" (Ast.string_of_position pos) msg;
+    exit 1
+  | e ->
+    printf "Type checking error: %s\n" (Printexc.to_string e);
+    exit 1
+  in
+  vprintf opts "Type checking completed\n";
+  
+  (* Convert typed AST back to annotated AST *)
+  let annotated_ast = try
+    Type_checker.typed_ast_to_annotated_ast typed_ast ast
+  with
+  | e ->
+    printf "AST annotation error: %s\n" (Printexc.to_string e);
+    exit 1
+  in
+  
+  (* Step 5: IR Generation *)
+  vprintf opts "Generating intermediate representation...\n";
+  let ir_program = try
+    match annotated_ast with
+    | [] -> 
+      printf "Error: No program found in input file\n";
+      exit 1
+    | _ -> 
+      (* Use proper AST-to-IR conversion *)
+      Ir_generator.generate_ir annotated_ast _symbol_table
+  with
+  | e ->
+    printf "IR generation error: %s\n" (Printexc.to_string e);
+    exit 1
+  in
+  vprintf opts "IR generation completed\n";
+  
+  (* Step 6: C Code Generation *)
+  vprintf opts "Generating eBPF C code...\n";
+  let c_code = try
+    Ebpf_c_codegen.compile_to_c ir_program
+  with
+  | e ->
+    printf "C code generation error: %s\n" (Printexc.to_string e);
+    exit 1
+  in
+  vprintf opts "C code generation completed\n";
+  
+  (* Step 7: Write output file *)
+  let output_filename = match opts.output_file with
+    | Some f -> f
+    | None -> 
+      let base = Filename.remove_extension opts.input_file in
+      base ^ ".ebpf.c"
+  in
+  
+  vprintf opts "Writing output file: %s\n" output_filename;
+  (match write_file output_filename c_code with
+  | Ok () -> ()
+  | Error msg ->
+    printf "Error writing output: %s\n" msg;
+    exit 1);
+  
+  (* Step 8: Generate Makefile *)
+  if opts.generate_makefile then (
+    vprintf opts "Generating Makefile...\n";
+    match generate_makefile opts output_filename with
+    | Ok () -> vprintf opts "Makefile generated successfully\n"
+    | Error msg ->
+      printf "Warning: Failed to generate Makefile: %s\n" msg
+  );
+  
+  (* Step 9: Success message *)
+  let output_dir = Filename.dirname output_filename in
+  let base_name = Filename.basename (Filename.remove_extension output_filename) in
+  printf "✅ Compilation successful!\n";
+  printf "Generated directory: %s/\n" output_dir;
+  printf "  ├── %s\n" (Filename.basename output_filename);
+  if opts.generate_makefile then
+    printf "  └── Makefile\n";
+  printf "\nTo compile the eBPF program:\n";
+  printf "  cd %s && make\n" output_dir;
+  printf "\nGenerated eBPF object will be: %s/%s.o\n" output_dir base_name
+
+(** Error handler *)
+let handle_error e =
+  printf "Fatal error: %s\n" (Printexc.to_string e);
+  if Printexc.backtrace_status () then
+    Printexc.print_backtrace stdout;
+  exit 2
+
+(** Main entry point *)
 let () =
-  Printf.printf "KernelScript Compiler Test\n";
-  Printf.printf "==========================\n\n";
-  test_sample_code ();
-  test_evaluator () 
+  try
+    Printexc.record_backtrace true;
+    let opts = parse_args () in
+    compile_kernelscript opts
+  with
+  | Sys.Break -> 
+    printf "\nCompilation interrupted\n";
+    exit 130
+  | e -> handle_error e 

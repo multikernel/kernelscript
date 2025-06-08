@@ -295,8 +295,8 @@ let rec lower_expression ctx (expr : Ast.expr) =
       (match obj_val.val_type with
        | IRContext _ctx_type ->
            let access_type = match field with
-             | "packet" -> PacketData
-             | "packet_end" -> PacketEnd
+             | "packet" | "data" -> PacketData
+             | "packet_end" | "data_end" -> PacketEnd
              | "data_meta" -> DataMeta
              | "ingress_ifindex" -> IngressIfindex
              | "data_len" -> DataLen
@@ -556,8 +556,11 @@ let lower_function ctx (func_def : Ast.function_def) =
   let ir_blocks = List.rev ctx.blocks in
   let is_main = func_def.func_name = "main" in
   
+  (* Rename main function to avoid conflicts with C main *)
+  let ir_func_name = if is_main then "xdp_main" else func_def.func_name in
+  
   make_ir_function 
-    func_def.func_name 
+    ir_func_name 
     ir_params 
     ir_return_type 
     ir_blocks
