@@ -44,11 +44,16 @@
  (libraries kernelscript ounit2))
 
 (executable
+ (public_name test_ir)
  (name test_ir)
- (modules test_ir)
  (libraries kernelscript ounit2))
 
 (executable
+ (public_name test_ir_analysis)
  (name test_ir_analysis)
- (modules test_ir_analysis)
+ (libraries kernelscript ounit2))
+
+(executable
+ (public_name test_ir_function_system)
+ (name test_ir_function_system)
  (libraries kernelscript ounit2)) 
