@@ -61,16 +61,7 @@
     | "type" -> TYPE
     | "struct" -> STRUCT
     | "enum" -> ENUM
-    (* NOTE: The following are actually built-in program types, not keywords.
-       This is a temporary simplification. In the future, these should be parsed 
-       as IDENTIFIER tokens and resolved by the semantic analyzer to allow for 
-       better extensibility and avoid name collisions. *)
-    | "xdp" -> XDP
-    | "tc" -> TC
-    | "kprobe" -> KPROBE
-    | "uprobe" -> UPROBE
-    | "tracepoint" -> TRACEPOINT
-    | "lsm" -> LSM
+    (* Program types are now parsed as identifiers and resolved semantically *)
     | "u8" -> U8
     | "u16" -> U16
     | "u32" -> U32

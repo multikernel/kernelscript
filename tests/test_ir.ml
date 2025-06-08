@@ -181,7 +181,7 @@ let test_stack_usage_tracking () =
   let ctx = create_context symbol_table in
   
   try
-    let ir_func = lower_function ctx test_func in
+    let ir_func = lower_function ctx "test_program" test_func in
     
     if ir_func.total_stack_usage >= 100 then (
       let all_blocks_have_positive_usage = List.for_all (fun (bb : ir_basic_block) -> bb.stack_usage >= 0) ir_func.basic_blocks in

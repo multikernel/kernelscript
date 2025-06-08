@@ -520,7 +520,7 @@ let rec lower_statement ctx stmt =
       ()
 
 (** Lower AST function to IR function *)
-let lower_function ctx (func_def : Ast.function_def) =
+let lower_function ctx prog_name (func_def : Ast.function_def) =
   ctx.current_function <- Some func_def.func_name;
   
   (* Reset for new function *)
@@ -556,8 +556,8 @@ let lower_function ctx (func_def : Ast.function_def) =
   let ir_blocks = List.rev ctx.blocks in
   let is_main = func_def.func_name = "main" in
   
-  (* Rename main function to avoid conflicts with C main *)
-  let ir_func_name = if is_main then "xdp_main" else func_def.func_name in
+  (* Use program name for main function, regular function names for others *)
+  let ir_func_name = if is_main then prog_name else func_def.func_name in
   
   make_ir_function 
     ir_func_name 
@@ -649,7 +649,7 @@ let lower_program ast symbol_table =
   ) (ir_global_maps @ ir_local_maps);
   
   (* Lower functions *)
-  let ir_functions = List.map (lower_function ctx) prog_def.prog_functions in
+  let ir_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
   
   (* Find main function *)
   let main_function = List.find (fun f -> f.is_main) ir_functions in

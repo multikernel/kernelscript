@@ -14,7 +14,6 @@
 
 /* Keywords */
 %token PROGRAM FN MAP TYPE STRUCT ENUM
-%token XDP TC KPROBE UPROBE TRACEPOINT LSM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET MUT PUB PRIV CONFIG USERSPACE
@@ -96,12 +95,16 @@ program_declaration:
     { make_program $2 $4 $6 (make_pos ()) }
 
 program_type:
-  | XDP { Xdp }
-  | TC { Tc }
-  | KPROBE { Kprobe }
-  | UPROBE { Uprobe }
-  | TRACEPOINT { Tracepoint }
-  | LSM { Lsm }
+  | IDENTIFIER { 
+      match $1 with
+      | "xdp" -> Xdp
+      | "tc" -> Tc  
+      | "kprobe" -> Kprobe
+      | "uprobe" -> Uprobe
+      | "tracepoint" -> Tracepoint
+      | "lsm" -> Lsm
+      | unknown -> failwith ("Unknown program type: " ^ unknown)
+    }
 
 function_list:
   | /* empty */ { [] }
