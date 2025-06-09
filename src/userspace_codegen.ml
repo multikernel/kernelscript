@@ -694,18 +694,4 @@ let generate_userspace_code_from_ast (ast : Ast.ast) ?(output_dir = ".") source_
   in
   
   let _filepath = write_userspace_c_file content prog_config.output_dir source_filename in
-  printf "Successfully generated userspace coordinator program\n"
-
-(** Legacy entry point for backward compatibility with IR-based generation *)
-let generate_userspace_code (ir_prog : ir_program) ?(output_dir = ".") () =
-  let prog_config = { (default_config ir_prog.name) with output_dir = output_dir } in
-  
-  let content = match ir_prog.userspace_block with
-    | Some userspace_block -> 
-        generate_complete_userspace_program userspace_block ir_prog.name ()
-    | None -> 
-        generate_default_userspace_program ir_prog.name ()
-  in
-  
-  let _filepath = write_userspace_c_file content prog_config.output_dir ir_prog.name in
-  printf "Successfully generated userspace C program\n" 
+  printf "Successfully generated userspace coordinator program\n" 

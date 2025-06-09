@@ -97,6 +97,7 @@ let newline = '\r' | '\n' | "\r\n"
 let letter = ['a'-'z' 'A'-'Z']
 let digit = ['0'-'9']
 let identifier = letter (letter | digit | '_')*
+let qualified_identifier = identifier ("::" identifier)*
 let decimal_literal = digit+
 let hex_literal = '0' ['x' 'X'] ['0'-'9' 'a'-'f' 'A'-'F']+
 let binary_literal = '0' ['b' 'B'] ['0' '1']+
@@ -121,6 +122,7 @@ rule token = parse
   | '\'' { next_col (); char_literal lexbuf }
   
   (* Identifiers and keywords *)
+  | qualified_identifier as id { lookup_keyword id }
   | identifier as id { lookup_keyword id }
   
   (* Two-character operators *)

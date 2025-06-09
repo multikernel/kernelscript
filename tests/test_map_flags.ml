@@ -46,7 +46,7 @@ program test : xdp {
   map<u32, u32> test_map : HashMap(1024) {
     %s,
   };
-  fn main(ctx: xdp_context) -> XdpAction {
+  fn main(ctx: XdpContext) -> XdpAction {
     return XdpAction::Pass;
   }
 }|} attr_code in
@@ -79,7 +79,7 @@ program test : xdp {
   map<u32, u32> test_map : HashMap(1024) {
     flags: %s,
   };
-  fn main(ctx: xdp_context) -> XdpAction {
+  fn main(ctx: XdpContext) -> XdpAction {
     return XdpAction::Pass;
   }
 }|} flags_str in
@@ -197,7 +197,7 @@ program test : xdp {
   map<u32, u32> test_map : HashMap(1024) {
     flags: unknown_flag,
   };
-  fn main(ctx: xdp_context) -> XdpAction {
+  fn main(ctx: XdpContext) -> XdpAction {
     return XdpAction::Pass;
   }
 }|} in
@@ -215,7 +215,7 @@ program test : xdp {
   map<u32, u32> test_map : HashMap(1024) {
     flags: numa_node(-1),
   };
-  fn main(ctx: xdp_context) -> XdpAction {
+  fn main(ctx: XdpContext) -> XdpAction {
     return XdpAction::Pass;
   }
 }|} in
@@ -269,7 +269,7 @@ program test_complete : xdp {
     flags: numa_node(1) | no_common_lru,
   };
 
-  fn main(ctx: xdp_context) -> XdpAction {
+  fn main(ctx: XdpContext) -> XdpAction {
     let key: u32 = 42;
     let value: u32 = 100;
     simple_map[key] = value;
