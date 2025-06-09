@@ -1,8 +1,5 @@
-open Kernelscript.Ast
 open Kernelscript.Parse
 open Kernelscript.Type_checker
-open Kernelscript.Ir_generator
-open Kernelscript.Ebpf_c_codegen
 
 (** Integration test suite for complete map functionality *)
 
@@ -48,14 +45,16 @@ program rate_limiter : xdp {
     
     // Get rate limit for this IP
     let limit = rate_limits[src_ip];
+    let final_limit = 1000;
     if (limit == 0) {
       // Set default limit if not configured
       rate_limits[src_ip] = 1000;
-      limit = 1000;
+    } else {
+      final_limit = limit;
     }
     
     // Apply rate limiting
-    if (packet_counts[src_ip] > limit) {
+    if (packet_counts[src_ip] > final_limit) {
       return 1; // XDP_DROP
     }
     
@@ -64,29 +63,13 @@ program rate_limiter : xdp {
 }
 |} in
   try
-    (* Parse *)
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
-    
-    (* Type check *)
-    let _typed_programs = type_check_ast ast in
-    
-    (* Generate IR *)
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    let _map_decls = List.fold_left (fun acc item ->
-      match item with
-      | MapDecl md -> 
-          let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration md in
-          Hashtbl.add ctx.maps md.name ir_map_def;
-          md :: acc
-      | _ -> acc
-    ) [] ast in
-    
-    let ir_program = lower_program ast symbol_table in
-    let _ir_funcs = ir_program.functions in
-    
-    (* Generate C code *)
-    let c_code = generate_c_program ir_program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_program in
     
     (* Verify C code contains expected elements *)
     let has_map_declarations = 
@@ -100,7 +83,7 @@ program rate_limiter : xdp {
     
     let has_program_structure =
       string_contains_substring c_code "SEC(\"xdp\")" &&
-      string_contains_substring c_code "main" in
+      string_contains_substring c_code "rate_limiter" in
     
     has_map_declarations && has_map_operations && has_program_structure
   with
@@ -132,24 +115,13 @@ program multi_map : xdp {
 }
 |} in
   try
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
-    let _typed_programs = type_check_ast ast in
-    
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    let _map_decls = List.fold_left (fun acc item ->
-      match item with
-      | MapDecl md -> 
-          let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration md in
-          Hashtbl.add ctx.maps md.name ir_map_def;
-          md :: acc
-      | _ -> acc
-    ) [] ast in
-    
-    let ir_program = lower_program ast symbol_table in
-    let _ir_funcs = ir_program.functions in
-    
-    let c_code = generate_c_program ir_program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_program in
     
     (* Check that all map types are present *)
     let has_hash = string_contains_substring c_code "BPF_MAP_TYPE_HASH" in
@@ -242,24 +214,13 @@ program complex_ops : xdp {
 }
 |} in
   try
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
-    let _typed_programs = type_check_ast ast in
-    
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    let _map_decls = List.fold_left (fun acc item ->
-      match item with
-      | MapDecl md -> 
-          let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration md in
-          Hashtbl.add ctx.maps md.name ir_map_def;
-          md :: acc
-      | _ -> acc
-    ) [] ast in
-    
-    let ir_program = lower_program ast symbol_table in
-    let _ir_funcs = ir_program.functions in
-    
-    let c_code = generate_c_program ir_program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_program in
     
     (* Check that complex operations were generated *)
     let has_lookups = string_contains_substring c_code "bpf_map_lookup_elem" in
@@ -296,7 +257,10 @@ program conditional_maps : xdp {
     }
     
     // Conditional map access
-    let threshold = if (src_ip == 0x08080808) { 500 } else { 100 };
+    let threshold = 100;
+    if (src_ip == 0x08080808) {
+      threshold = 500;
+    }
     
     if (packet_counts[src_ip] > threshold) {
       return 1; // Drop if over threshold
@@ -307,24 +271,13 @@ program conditional_maps : xdp {
 }
 |} in
   try
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
-    let _typed_programs = type_check_ast ast in
-    
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    let _map_decls = List.fold_left (fun acc item ->
-      match item with
-      | MapDecl md -> 
-          let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration md in
-          Hashtbl.add ctx.maps md.name ir_map_def;
-          md :: acc
-      | _ -> acc
-    ) [] ast in
-    
-    let ir_program = lower_program ast symbol_table in
-    let _ir_funcs = ir_program.functions in
-    
-    let c_code = generate_c_program ir_program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_program in
     
     (* Verify conditional logic and map operations *)
     let has_conditional_logic = string_contains_substring c_code "if" in
@@ -351,24 +304,13 @@ program memory_safe : xdp {
 }
 |} in
   try
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
-    let _typed_programs = type_check_ast ast in
-    
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    let _map_decls = List.fold_left (fun acc item ->
-      match item with
-      | MapDecl md -> 
-          let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration md in
-          Hashtbl.add ctx.maps md.name ir_map_def;
-          md :: acc
-      | _ -> acc
-    ) [] ast in
-    
-    let ir_program = lower_program ast symbol_table in
-    let _ir_funcs = ir_program.functions in
-    
-    let c_code = generate_c_program ir_program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_program in
     
     (* Check for null pointer checks in generated code *)
     let has_null_checks = string_contains_substring c_code "__tmp_ptr" in

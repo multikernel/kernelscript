@@ -760,13 +760,6 @@ let lower_program ast symbol_table =
   let main_function = List.find (fun f -> f.is_main) ir_functions in
   
   (* Generate userspace bindings *)
-  Printf.eprintf "Debug: prog_def.prog_userspace = %s\n" 
-    (match prog_def.prog_userspace with 
-     | None -> "None" 
-     | Some us -> Printf.sprintf "Some with %d functions, %d structs, %d configs" 
-                    (List.length us.userspace_functions)
-                    (List.length us.userspace_structs)
-                    (List.length us.userspace_configs));
   let userspace_bindings = generate_userspace_bindings_from_block prog_def prog_def.prog_userspace (ir_global_maps @ ir_local_maps) in
   
   (* Create IR program *)

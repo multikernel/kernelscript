@@ -294,8 +294,8 @@ let get_global_symbols table =
 (** Build symbol table from AST *)
 let rec build_symbol_table ast =
   let table = create_symbol_table () in
-  let final_table = List.fold_left process_declaration_accumulate table ast in
-  final_table
+  List.iter (process_declaration table) ast;
+  table
 
 and process_declaration_accumulate table declaration =
   match declaration with
@@ -345,29 +345,21 @@ and process_declaration table = function
   | Ast.Program prog ->
       let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
       
-      (* Process program-local maps if any exist in the AST representation *)
-      (* Note: In current AST, maps are separate declarations, but we handle them here for completeness *)
-      
       (* Process program functions *)
       List.iter (fun func ->
-        add_function table_with_prog func Private;
-        
-        (* Process function body in function scope *)
-        let table_with_func = enter_scope table_with_prog 
-          (FunctionScope (prog.prog_name, func.func_name)) in
-          
-        (* Add function parameters *)
-        List.iter (fun (param_name, param_type) ->
-          add_variable table_with_func param_name param_type func.func_pos
-        ) func.func_params;
-        
-        (* Process function body statements *)
-        List.iter (process_statement table_with_func) func.func_body;
-        
-        let _ = exit_scope table_with_func in ()
+        add_function table_with_prog func Private
       ) prog.prog_functions;
       
-      let _ = exit_scope table_with_prog in ()
+      (* Manually merge symbols from program scope back to main table *)
+      Hashtbl.iter (fun name symbols ->
+        let prog_scoped_symbols = List.filter (fun s -> 
+          s.scope = [prog.prog_name]
+        ) symbols in
+        if prog_scoped_symbols <> [] then (
+          let existing = try Hashtbl.find table.symbols name with Not_found -> [] in
+          Hashtbl.replace table.symbols name (existing @ prog_scoped_symbols)
+        )
+      ) table_with_prog.symbols
 
 and process_statement table stmt =
   match stmt.stmt_desc with

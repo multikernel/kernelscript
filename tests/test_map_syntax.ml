@@ -1,8 +1,6 @@
 open Kernelscript.Ast
 open Kernelscript.Parse
 open Kernelscript.Type_checker
-open Kernelscript.Ir_generator
-open Kernelscript.Ebpf_c_codegen
 
 (** Test suite for Map Syntax and Operations *)
 
@@ -38,8 +36,8 @@ let test_map_declaration_parsing () =
     ("map percpu_map : PercpuHash<u64, u64> { max_entries: 256; }", true);
     (* Invalid syntax - parentheses instead of angle brackets *)
     ("map bad_map : HashMap(u32, u64) { max_entries: 1024; }", false);
-    (* Invalid syntax - missing max_entries *)
-    ("map incomplete_map : HashMap<u32, u64> { }", false);
+    (* Empty config - should now be invalid (max_entries mandatory) *)
+    ("map default_map : HashMap<u32, u64> { }", false);
   ] in
   
   List.for_all (fun (code, should_succeed) ->
@@ -171,7 +169,7 @@ map global_map : HashMap<u32, u64> {
 
 program test : xdp {
   fn main() -> u32 {
-    let map_ref = global_map;
+    let value = global_map[42];
     return 0;
   }
 }
@@ -179,15 +177,15 @@ program test : xdp {
   try
     let ast = parse_string program in
     let typed_programs = type_check_ast ast in
-    (* Check that the map identifier was resolved to a map type *)
+    (* Check that the map identifier was resolved and can be used in expressions *)
     match typed_programs with
     | [typed_prog] ->
         (match typed_prog.tprog_functions with
          | [main_func] ->
              (match main_func.tfunc_body with
-              | [decl_stmt] ->
+              | [decl_stmt; _] ->
                   (match decl_stmt.tstmt_desc with
-                   | TDeclaration (_, Map (U32, U64, HashMap), _) -> true
+                   | TDeclaration (_, U64, _) -> true  (* Map lookup returns u64 *)
                    | _ -> false)
               | _ -> false)
          | _ -> false)
@@ -212,28 +210,15 @@ program test : xdp {
 }
 |} in
   try
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
     
-    (* Test IR generation by creating context and generating IR *)
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    
-    (* Add the map to context *)
-    let map_decl = match ast with
-      | [MapDecl md; _] -> md
-      | _ -> failwith "Expected map declaration"
-    in
-    let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration map_decl in
-    Hashtbl.add ctx.maps map_decl.name ir_map_def;
-    
-    (* Convert typed program back to AST for IR generation *)
-    match typed_programs with
-    | [_typed_prog] ->
-        let ir_program = lower_program ast symbol_table in
-        let _ = ir_program.functions in
-        true
-    | _ -> false
+    (* Test that IR generation completes without errors *)
+    let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    true
   with
   | _ -> false
 
@@ -254,37 +239,22 @@ program test : xdp {
 }
 |} in
   try
+    (* Follow the complete compiler pipeline *)
     let ast = parse_string program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
     
-    (* Generate IR *)
-    let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let ctx = create_context symbol_table in
-    let map_decl = match ast with
-      | [MapDecl md; _] -> md
-      | _ -> failwith "Expected map declaration"
-    in
-    let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration map_decl in
-    Hashtbl.add ctx.maps map_decl.name ir_map_def;
+    (* Test that C code generation completes and produces expected output *)
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
     
-    match typed_programs with
-    | [_typed_prog] ->
-        let ir_program = lower_program ast symbol_table in
-        let _ir_funcs = ir_program.functions in
-        
-        (* Test C code generation *)
-        let c_code = generate_c_program ir_program in
-        
-        (* Check that generated C code contains expected map elements *)
-        let contains_map_decl = String.contains c_code '{' && 
-                               String.contains c_code '(' &&
-                               string_contains_substring c_code "BPF_MAP_TYPE_HASH" &&
-                               string_contains_substring c_code "packet_counter" in
-        let contains_lookup = string_contains_substring c_code "bpf_map_lookup_elem" in
-        let contains_update = string_contains_substring c_code "bpf_map_update_elem" in
-        
-        contains_map_decl && contains_lookup && contains_update
-    | _ -> false
+    let contains_map_decl = string_contains_substring c_code "BPF_MAP_TYPE_HASH" &&
+                           string_contains_substring c_code "packet_counter" in
+    let contains_lookup = string_contains_substring c_code "bpf_map_lookup_elem" in
+    let contains_update = string_contains_substring c_code "bpf_map_update_elem" in
+    
+    contains_map_decl && contains_lookup && contains_update
   with
   | _ -> false
 
@@ -313,25 +283,16 @@ program test : xdp {
 }
 |} ks_type in
     try
+      (* Follow the complete compiler pipeline *)
       let ast = parse_string program in
+      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
       let typed_programs = type_check_ast ast in
+      let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
       
-             let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-       let ctx = create_context symbol_table in
-              let map_decl = match ast with
-         | [MapDecl md; _] -> md
-         | _ -> failwith "Expected map declaration"
-       in
-       let ir_map_def = Kernelscript.Ir_generator.lower_map_declaration map_decl in
-       Hashtbl.add ctx.maps map_decl.name ir_map_def;
-      
-      match typed_programs with
-      | [_typed_prog] ->
-          let ir_program = lower_program ast symbol_table in
-          let _ir_funcs = ir_program.functions in
-          let c_code = generate_c_program ir_program in
-          string_contains_substring c_code c_type
-      | _ -> false
+      (* Test compilation and C code generation *)
+      let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+      let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
+      string_contains_substring c_code c_type
     with
     | _ -> false
   ) map_types

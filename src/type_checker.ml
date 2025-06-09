@@ -421,6 +421,12 @@ let rec type_check_statement ctx stmt =
   
   | Declaration (name, type_opt, expr) ->
       let typed_expr = type_check_expression ctx expr in
+      
+      (* Check if trying to assign a map to a variable *)
+      (match typed_expr.texpr_type with
+       | Map (_, _, _) -> type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
+       | _ -> ());
+      
       let var_type = match type_opt with
         | Some declared_type ->
             (match unify_types declared_type typed_expr.texpr_type with

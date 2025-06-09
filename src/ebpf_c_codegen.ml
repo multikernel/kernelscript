@@ -386,10 +386,11 @@ let generate_c_function ctx ir_func =
   in
   
   let section_attr = if ir_func.is_main then
-    match List.hd ir_func.parameters with
-    | (_, IRContext XdpCtx) -> "SEC(\"xdp\")"
-    | (_, IRContext TcCtx) -> "SEC(\"tc\")"
-    | (_, IRContext KprobeCtx) -> "SEC(\"kprobe\")"
+    match ir_func.parameters with
+    | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
+    | (_, IRContext XdpCtx) :: _ -> "SEC(\"xdp\")"
+    | (_, IRContext TcCtx) :: _ -> "SEC(\"tc\")"
+    | (_, IRContext KprobeCtx) :: _ -> "SEC(\"kprobe\")"
     | _ -> "SEC(\"prog\")"
   else ""
   in

@@ -300,7 +300,6 @@ map_type:
     }
 
 map_config:
-  | map_attributes { make_map_config 1024 $1 }
   | IDENTIFIER COLON INT SEMICOLON map_attributes { 
       if $1 = "max_entries" then make_map_config $3 $5
       else failwith ("Unknown map config field: " ^ $1)
