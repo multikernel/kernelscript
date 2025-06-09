@@ -29,15 +29,15 @@ let run_test test_name test_func =
 let test_map_declaration_parsing () =
   let test_cases = [
     (* Basic HashMap *)
-    ("map test_map : HashMap<u32, u64> { max_entries: 1024; }", true);
+    ("map<u32, u64> test_map : HashMap(1024) { }", true);
     (* Array map *)
-    ("map array_map : Array<u32, u32> { max_entries: 512; }", true);
+    ("map<u32, u32> array_map : Array(512) { }", true);
     (* PercpuHash *)
-    ("map percpu_map : PercpuHash<u64, u64> { max_entries: 256; }", true);
-    (* Invalid syntax - parentheses instead of angle brackets *)
-    ("map bad_map : HashMap(u32, u64) { max_entries: 1024; }", false);
-    (* Empty config - should now be invalid (max_entries mandatory) *)
-    ("map default_map : HashMap<u32, u64> { }", false);
+    ("map<u64, u64> percpu_map : PercpuHash(256) { }", true);
+    (* Invalid syntax - wrong order *)
+    ("map bad_map : HashMap<u32, u64>(1024) { }", false);
+    (* Invalid syntax - missing max_entries *)
+    ("map<u32, u64> default_map : HashMap() { }", false);
   ] in
   
   List.for_all (fun (code, should_succeed) ->
@@ -64,7 +64,7 @@ let test_map_operations_parsing () =
   
   List.for_all (fun (code, should_succeed) ->
     try
-      let program = Printf.sprintf "map my_map : HashMap<u32, u64> { max_entries: 1024; }\nprogram test : xdp { fn main() -> u32 { %s return 0; } }" code in
+      let program = Printf.sprintf "map<u32, u64> my_map : HashMap(1024) { }\nprogram test : xdp { fn main() -> u32 { %s return 0; } }" code in
       let _ = parse_string program in
       should_succeed
     with
@@ -74,8 +74,7 @@ let test_map_operations_parsing () =
 (** Test complete map program parsing *)
 let test_complete_map_program_parsing () =
   let program = {|
-map packet_counts : HashMap<u32, u64> {
-  max_entries: 1024;
+map<u32, u64> packet_counts : HashMap(1024) {
 }
 
 program rate_limiter : xdp {
@@ -102,8 +101,7 @@ program rate_limiter : xdp {
 (** Test map type checking *)
 let test_map_type_checking () =
   let program = {|
-map test_map : HashMap<u32, u64> {
-  max_entries: 1024;
+map<u32, u64> test_map : HashMap(1024) {
 }
 
 program test : xdp {
@@ -127,7 +125,7 @@ let test_map_type_validation () =
   let test_cases = [
     (* Valid: u32 key with u32 access *)
     ({|
-map valid_map : HashMap<u32, u64> { max_entries: 1024; }
+map<u32, u64> valid_map : HashMap(1024) { }
 program test : xdp {
   fn main() -> u32 {
     let key: u32 = 42;
@@ -139,7 +137,7 @@ program test : xdp {
     
     (* Invalid: string key with u32 map *)
     ({|
-map invalid_map : HashMap<u32, u64> { max_entries: 1024; }
+map<u32, u64> invalid_map : HashMap(1024) { }
 program test : xdp {
   fn main() -> u32 {
     let key = "invalid";
@@ -163,8 +161,7 @@ program test : xdp {
 (** Test map identifier resolution *)
 let test_map_identifier_resolution () =
   let program = {|
-map global_map : HashMap<u32, u64> {
-  max_entries: 1024;
+map<u32, u64> global_map : HashMap(1024) {
 }
 
 program test : xdp {
@@ -196,8 +193,7 @@ program test : xdp {
 (** Test IR generation for maps *)
 let test_map_ir_generation () =
   let program = {|
-map test_map : HashMap<u32, u64> {
-  max_entries: 1024;
+map<u32, u64> test_map : HashMap(1024) {
 }
 
 program test : xdp {
@@ -225,8 +221,7 @@ program test : xdp {
 (** Test C code generation for maps *)
 let test_map_c_generation () =
   let program = {|
-map packet_counter : HashMap<u32, u64> {
-  max_entries: 1024;
+map<u32, u64> packet_counter : HashMap(1024) {
 }
 
 program test : xdp {
@@ -270,8 +265,7 @@ let test_different_map_types () =
   
   List.for_all (fun (ks_type, c_type) ->
     let program = Printf.sprintf {|
-map test_map : %s<u32, u64> {
-  max_entries: 1024;
+map<u32, u64> test_map : %s(1024) {
 }
 
 program test : xdp {

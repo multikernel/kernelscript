@@ -315,6 +315,11 @@ and process_declaration_accumulate table declaration =
   | Ast.Program prog ->
       let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
       
+      (* Process program maps *)
+      List.iter (fun map_decl ->
+        add_map_decl table_with_prog map_decl
+      ) prog.prog_maps;
+      
       (* Process program functions and accumulate changes *)
       let final_table_prog = List.fold_left (fun acc_table func ->
         add_function acc_table func Private;
@@ -359,6 +364,11 @@ and process_declaration table = function
       
   | Ast.Program prog ->
       let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
+      
+      (* Process program maps *)
+      List.iter (fun map_decl ->
+        add_map_decl table_with_prog map_decl
+      ) prog.prog_maps;
       
       (* Process program functions *)
       List.iter (fun func ->

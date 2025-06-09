@@ -152,6 +152,7 @@ type program_def = {
   prog_name: string;
   prog_type: program_type;
   prog_functions: function_def list;
+  prog_maps: map_declaration list; (* Maps local to this program *)
   prog_pos: position;
 }
 
@@ -186,6 +187,15 @@ let make_program name prog_type functions pos = {
   prog_name = name;
   prog_type = prog_type;
   prog_functions = functions;
+  prog_maps = [];
+  prog_pos = pos;
+}
+
+let make_program_with_maps name prog_type functions maps pos = {
+  prog_name = name;
+  prog_type = prog_type;
+  prog_functions = functions;
+  prog_maps = maps;
   prog_pos = pos;
 }
 

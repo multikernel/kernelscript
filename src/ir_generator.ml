@@ -778,21 +778,22 @@ let lower_program ast symbol_table =
   in
   
   (* Collect map declarations *)
-  let map_decls = List.filter_map (function
-    | Ast.MapDecl m -> Some m
+  let global_map_decls = List.filter_map (function
+    | Ast.MapDecl m when m.is_global -> Some m
     | _ -> None
   ) ast in
   
-  let (global_map_decls, local_map_decls) = List.partition (fun (m : Ast.map_declaration) -> m.is_global) map_decls in
+  (* Include program-scoped maps *)
+  let program_scoped_maps = prog_def.prog_maps in
   
   (* Lower maps *)
   let ir_global_maps = List.map lower_map_declaration global_map_decls in
-  let ir_local_maps = List.map lower_map_declaration local_map_decls in
+  let ir_program_maps = List.map lower_map_declaration program_scoped_maps in
   
   (* Add maps to context *)
   List.iter (fun ir_map -> 
     Hashtbl.add ctx.maps ir_map.map_name ir_map
-  ) (ir_global_maps @ ir_local_maps);
+  ) (ir_global_maps @ ir_program_maps);
   
   (* Lower functions *)
   let ir_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
@@ -807,18 +808,18 @@ let lower_program ast symbol_table =
   ) ast in
   
   (* Generate userspace bindings *)
-  let userspace_bindings = generate_userspace_bindings_from_block prog_def userspace_block (ir_global_maps @ ir_local_maps) in
+  let userspace_bindings = generate_userspace_bindings_from_block prog_def userspace_block (ir_global_maps @ ir_program_maps) in
   
-  (* Create IR program *)
-  make_ir_program
-    prog_def.prog_name
-    prog_def.prog_type
-    ir_global_maps
-    ir_local_maps
-    ir_functions
-    main_function
-    ~userspace_bindings:userspace_bindings
-    ?userspace_block:userspace_block
+    (* Create IR program *)
+  make_ir_program 
+    prog_def.prog_name 
+    prog_def.prog_type 
+    ir_global_maps 
+    ir_program_maps 
+    ir_functions 
+    main_function 
+    ~userspace_bindings:userspace_bindings 
+    ?userspace_block:userspace_block 
     prog_def.prog_pos
 
 (** Main entry point for IR generation *)

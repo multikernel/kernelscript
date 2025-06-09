@@ -514,8 +514,18 @@ let type_check_program ctx prog =
   let old_program = ctx.current_program in
   ctx.current_program <- Some prog.prog_name;
   
+  (* Add program-scoped maps to context *)
+  List.iter (fun map_decl ->
+    Hashtbl.replace ctx.maps map_decl.name map_decl
+  ) prog.prog_maps;
+  
   (* Type check all functions *)
   let typed_functions = List.map (type_check_function ctx) prog.prog_functions in
+  
+  (* Remove program-scoped maps from context (restore scope) *)
+  List.iter (fun map_decl ->
+    Hashtbl.remove ctx.maps map_decl.name
+  ) prog.prog_maps;
   
   ctx.current_program <- old_program;
   
@@ -523,9 +533,22 @@ let type_check_program ctx prog =
     tprog_name = prog.prog_name;
     tprog_type = prog.prog_type;
     tprog_functions = typed_functions;
-    tprog_maps = []; (* Maps will be handled separately *)
+    tprog_maps = prog.prog_maps; (* Include program-scoped maps *)
     tprog_pos = prog.prog_pos;
   }
+
+(** Type check userspace block - only validates, doesn't transform *)
+let type_check_userspace ctx userspace_block =
+  (* Userspace code should only have access to global maps, not program-scoped maps *)
+  (* The global maps are already in ctx.maps from the first pass *)
+  
+  (* Type check all userspace functions for validation *)
+  List.iter (fun func ->
+    let _ = type_check_function ctx func in
+    ()
+  ) userspace_block.userspace_functions;
+  
+  () (* No return value needed - validation only *)
 
 (** Main type checking entry point *)
 let type_check_ast ast =
@@ -542,7 +565,7 @@ let type_check_ast ast =
     | _ -> ()
   ) ast;
   
-  (* Second pass: type check programs and functions *)
+  (* Second pass: type check programs, functions, and userspace blocks *)
   List.fold_left (fun acc decl ->
     match decl with
     | Program prog ->
@@ -550,6 +573,9 @@ let type_check_ast ast =
         typed_prog :: acc
     | GlobalFunction func ->
         let _ = type_check_function ctx func in
+        acc
+    | Userspace userspace_block ->
+        let _ = type_check_userspace ctx userspace_block in
         acc
     | _ -> acc
   ) [] ast |> List.rev
@@ -614,10 +640,11 @@ let typed_function_to_function tfunc =
     func_body = List.map typed_stmt_to_stmt tfunc.tfunc_body;
     func_pos = tfunc.tfunc_pos }
 
-let typed_program_to_program tprog _original_prog =
+let typed_program_to_program tprog original_prog =
   { prog_name = tprog.tprog_name;
     prog_type = tprog.tprog_type;
     prog_functions = List.map typed_function_to_function tprog.tprog_functions;
+    prog_maps = original_prog.prog_maps;  (* Preserve original map declarations *)
     prog_pos = tprog.tprog_pos }
 
 (** Convert typed AST back to annotated AST declarations *)

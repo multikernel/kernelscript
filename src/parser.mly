@@ -48,8 +48,9 @@
 %type <Ast.program_def> program_declaration
 %type <Ast.program_type> program_type
 %type <Ast.map_declaration> map_declaration
-%type <Ast.function_def list> program_items
-%type <Ast.function_def> program_item
+%type <Ast.map_declaration> local_map_declaration
+%type <Ast.function_def list * Ast.map_declaration list> program_items
+%type <[`Function of Ast.function_def | `Map of Ast.map_declaration]> program_item
 %type <Ast.userspace_block> userspace_declaration
 %type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_body
 %type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_item
@@ -112,7 +113,8 @@ declaration:
 /* Program declaration: program name : type { program_items } */
 program_declaration:
   | PROGRAM IDENTIFIER COLON program_type LBRACE program_items RBRACE
-    { make_program $2 $4 $6 (make_pos ()) }
+    { let functions, maps = $6 in
+      make_program_with_maps $2 $4 functions maps (make_pos ()) }
 
 program_type:
   | IDENTIFIER { 
@@ -127,11 +129,17 @@ program_type:
     }
 
 program_items:
-  | /* empty */ { [] }
-  | program_item program_items { $1 :: $2 }
+  | /* empty */ { ([], []) }
+  | program_item program_items { 
+      let functions, maps = $2 in
+      match $1 with
+      | `Function func -> (func :: functions, maps)
+      | `Map map -> (functions, map :: maps)
+    }
 
 program_item:
-  | function_declaration { $1 }
+  | function_declaration { `Function $1 }
+  | local_map_declaration { `Map $1 }
 
 /* Top-level userspace declaration: userspace { userspace_body } */
 userspace_declaration:
@@ -279,18 +287,15 @@ array_access:
 
 /* Map Declarations */
 map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON IDENTIFIER LPAREN INT RPAREN LBRACE map_config RBRACE
-    { let map_type = match $9 with
-        | "HashMap" -> HashMap
-        | "Array" -> Array
-        | "PercpuHash" -> PercpuHash
-        | "PercpuArray" -> PercpuArray
-        | "LruHash" -> LruHash
-        | "RingBuffer" -> RingBuffer
-        | "PerfEvent" -> PerfEvent
-        | unknown -> failwith ("Unknown map type: " ^ unknown)
-      in
-      make_map_declaration $7 $3 $5 map_type $14 true (make_pos ()) }
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
+    { let config = make_map_config $11 $14 in
+      make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
+
+/* Local Map Declarations (inside program blocks) */
+local_map_declaration:
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
+    { let config = make_map_config $11 $14 in
+      make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
 
 map_type:
   | IDENTIFIER { 

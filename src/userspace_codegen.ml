@@ -494,11 +494,11 @@ void setup_signal_handling(void) {
 
 (** Extract map declarations from AST *)
 let extract_map_declarations_from_ast (ast : Ast.ast) =
-  let ast_map_decls = List.filter_map (function
-    | Ast.MapDecl m -> Some m
+  let global_ast_map_decls = List.filter_map (function
+    | Ast.MapDecl m when m.is_global -> Some m  (* Only include global maps *)
     | _ -> None
   ) ast in
-  List.map Maps.ast_to_maps_declaration ast_map_decls
+  List.map Maps.ast_to_maps_declaration global_ast_map_decls
 
 (** Generate complete C userspace coordinator program *)
 let generate_complete_userspace_program (userspace_block : Ast.userspace_block) source_filename ?ast () =
