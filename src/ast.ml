@@ -16,6 +16,15 @@ type map_type =
   | HashMap | Array | PercpuHash | PercpuArray
   | LruHash | RingBuffer | PerfEvent
 
+(** Map flags for eBPF map configuration *)
+type map_flag =
+  | NoPrealloc          (* BPF_F_NO_PREALLOC *)
+  | NoCommonLru         (* BPF_F_NO_COMMON_LRU *)
+  | NumaNode of int     (* BPF_F_NUMA_NODE with node ID *)
+  | Rdonly              (* BPF_F_RDONLY *)
+  | Wronly              (* BPF_F_WRONLY *)
+  | Clone               (* BPF_F_CLONE *)
+
 (** Type definitions for structs, enums, and type aliases *)
 type type_def =
   | StructDef of string * (string * bpf_type) list
@@ -45,12 +54,14 @@ and bpf_type =
 (** Map configuration and attributes *)
 type map_attribute =
   | Pinned of string
+  | FlagsAttr of map_flag list
 
 type map_config = {
   max_entries: int;
   key_size: int option;
   value_size: int option;
   attributes: map_attribute list;
+  flags: map_flag list;
 }
 
 (** Map declarations *)
@@ -203,12 +214,20 @@ let make_enum_def name values = EnumDef (name, values)
 
 let make_type_alias name bpf_type = TypeAlias (name, bpf_type)
 
-let make_map_config max_entries ?key_size ?value_size attributes = {
-  max_entries;
-  key_size;
-  value_size;
-  attributes;
-}
+let make_map_config max_entries ?key_size ?value_size ?(flags=[]) attributes = 
+  (* Extract flags from attributes and combine with explicit flags *)
+  let (regular_attrs, extracted_flags) = List.fold_left (fun (attrs, flags_acc) attr ->
+    match attr with
+    | FlagsAttr flag_list -> (attrs, flag_list @ flags_acc)
+    | other -> (other :: attrs, flags_acc)
+  ) ([], flags) attributes in
+  {
+    max_entries;
+    key_size;
+    value_size;
+    attributes = List.rev regular_attrs;
+    flags = extracted_flags;
+  }
 
 let make_map_declaration name key_type value_type map_type config is_global pos = {
   name;
@@ -260,6 +279,14 @@ let string_of_map_type = function
   | LruHash -> "lru_hash"
   | RingBuffer -> "ring_buffer"
   | PerfEvent -> "perf_event"
+
+let string_of_map_flag = function
+  | NoPrealloc -> "no_prealloc"
+  | NoCommonLru -> "no_common_lru"
+  | NumaNode n -> "numa_node(" ^ string_of_int n ^ ")"
+  | Rdonly -> "rdonly"
+  | Wronly -> "wronly"
+  | Clone -> "clone"
 
 let rec string_of_bpf_type = function
   | U8 -> "u8"
@@ -412,6 +439,8 @@ let string_of_declaration = function
       let attr_strs = List.map (fun attr ->
         match attr with
         | Pinned path -> Printf.sprintf "pinned = \"%s\"" path
+        | FlagsAttr flags -> Printf.sprintf "flags = %s" 
+            (String.concat " | " (List.map string_of_map_flag flags))
       ) md.config.attributes in
       let config_str = Printf.sprintf "max_entries = %d" md.config.max_entries in
       let all_config = config_str :: attr_strs in

@@ -87,18 +87,25 @@
  (modules test_userspace)
  (libraries kernelscript str))
 
+(executable
+ (name test_map_flags)
+ (modules test_map_flags)
+ (libraries kernelscript str))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
  (deps
   test_map_syntax.exe
   test_map_assignment.exe
-  test_map_integration.exe)
+  test_map_integration.exe
+  test_map_flags.exe)
  (action
   (progn
    (run ./test_map_syntax.exe)
    (run ./test_map_assignment.exe)
-   (run ./test_map_integration.exe))))
+   (run ./test_map_integration.exe)
+   (run ./test_map_flags.exe))))
 
 (rule
  (alias userspace-tests)

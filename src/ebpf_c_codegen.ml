@@ -131,6 +131,10 @@ let generate_map_definition ctx map_def =
   emit_line ctx (sprintf "__type(value, %s);" value_type_str);
   emit_line ctx (sprintf "__uint(max_entries, %d);" map_def.max_entries);
   
+  (* Add map flags if specified *)
+  if map_def.flags <> 0 then
+    emit_line ctx (sprintf "__uint(map_flags, 0x%x);" map_def.flags);
+  
   (* Add pinning if specified *)
   begin match map_def.pin_path with
   | Some _path -> emit_line ctx (sprintf "__uint(pinning, LIBBPF_PIN_BY_NAME);")

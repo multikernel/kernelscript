@@ -25,12 +25,13 @@
 
 /* Punctuation */
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET
-%token SEMICOLON COMMA DOT COLON ARROW ASSIGN
+%token SEMICOLON COMMA DOT COLON ARROW ASSIGN PIPE
 
 /* Special */
 %token EOF
 
 /* Operator precedence (lowest to highest) */
+%left PIPE      /* Flag combination */
 %left OR
 %left AND
 %left EQ NE
@@ -65,6 +66,8 @@
 
 %type <Ast.map_attribute list> map_attributes
 %type <Ast.map_attribute> map_attribute
+%type <Ast.map_flag list> flag_expression
+%type <Ast.map_flag> flag_item
 
 %type <Ast.function_def> function_declaration
 %type <Ast.bpf_type option> function_return_type
@@ -316,8 +319,6 @@ map_type:
       | unknown -> failwith ("Unknown map type: " ^ unknown)
     }
 
-
-
 map_attributes:
   | /* empty */ { [] }
   | map_attribute { [$1] }
@@ -335,9 +336,34 @@ map_attribute:
       | "max_entries" -> failwith "max_entries should be specified in map type declaration (e.g., HashMap(1024)), not in attributes block"
       | unknown -> failwith ("Unknown map attribute: " ^ unknown)
     }
+  | IDENTIFIER COLON flag_expression {
+      match $1 with
+      | "flags" -> FlagsAttr $3
+      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
+    }
   | IDENTIFIER { 
       match $1 with
       | unknown -> failwith ("Unknown map attribute: " ^ unknown)
+    }
+
+flag_expression:
+  | flag_item { [$1] }
+  | flag_item PIPE flag_expression { $1 :: $3 }
+
+flag_item:
+  | IDENTIFIER {
+      match $1 with
+      | "no_prealloc" -> NoPrealloc
+      | "no_common_lru" -> NoCommonLru
+      | "rdonly" -> Rdonly
+      | "wronly" -> Wronly
+      | "clone" -> Clone
+      | unknown -> failwith ("Unknown map flag: " ^ unknown)
+    }
+  | IDENTIFIER LPAREN INT RPAREN {
+      match $1 with
+      | "numa_node" -> NumaNode $3
+      | unknown -> failwith ("Unknown parameterized map flag: " ^ unknown)
     }
 
 /* Userspace blocks */

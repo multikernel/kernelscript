@@ -598,12 +598,17 @@ let lower_map_declaration map_decl =
   let ir_attributes = List.filter_map (fun attr ->
     match attr with
     | Ast.Pinned _ -> None (* Handled separately *)
+    | Ast.FlagsAttr _ -> None (* Handled separately *)
   ) map_decl.config.attributes in
   
   let pin_path = List.fold_left (fun _acc attr ->
     match attr with
     | Ast.Pinned path -> Some path
+    | _ -> None
   ) None map_decl.config.attributes in
+  
+  (* Convert AST flags to integer representation *)
+  let flags = Maps.ast_flags_to_int map_decl.config.flags in
   
   make_ir_map_def
     map_decl.name
@@ -612,6 +617,7 @@ let lower_map_declaration map_decl =
     ir_map_type
     map_decl.config.max_entries
     ~attributes:ir_attributes
+    ~flags:flags
     ~is_global:map_decl.is_global
     ?pin_path:pin_path
     map_decl.map_pos

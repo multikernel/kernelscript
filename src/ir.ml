@@ -54,6 +54,7 @@ and ir_map_def = {
   map_type: ir_map_type;
   max_entries: int;
   attributes: ir_map_attr list;
+  flags: int;
   is_global: bool;
   pin_path: string option;
   map_pos: ir_position;
@@ -269,13 +270,14 @@ let make_ir_function name params return_type blocks ?(total_stack_usage = 0)
 }
 
 let make_ir_map_def name key_type value_type map_type max_entries 
-                    ?(attributes = []) ?(is_global = false) ?pin_path pos = {
+                    ?(attributes = []) ?(flags = 0) ?(is_global = false) ?pin_path pos = {
   map_name = name;
   map_key_type = key_type;
   map_value_type = value_type;
   map_type;
   max_entries;
   attributes;
+  flags;
   is_global;
   pin_path;
   map_pos = pos;
@@ -341,6 +343,7 @@ let ast_map_type_to_ir_map_type = function
 
 let ast_map_attr_to_ir_map_attr = function
   | Ast.Pinned path -> Pinned path
+  | Ast.FlagsAttr _ -> failwith "FlagsAttr should be handled separately in IR conversion"
 
 (** Pretty printing functions for debugging *)
 

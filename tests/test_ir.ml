@@ -43,16 +43,16 @@ let make_test_main_function () =
     (make_test_position ())
 
 let make_test_program () =
-  make_program 
+  make_program_with_maps
     "test_xdp" 
     Xdp 
     [make_test_main_function ()] 
+    [make_test_local_map ()]
     (make_test_position ())
 
 let make_test_ast () =
   [
     MapDecl (make_test_global_map ());
-    MapDecl (make_test_local_map ());
     Program (make_test_program ());
   ]
 
@@ -62,7 +62,7 @@ let test_program_lowering () =
   let ast = make_test_ast () in
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   let ir_prog = generate_ir ast symbol_table in
-  
+
   (* Verify program structure *)
   assert (ir_prog.program_type = Xdp);
   assert (List.length ir_prog.global_maps = 1);
@@ -111,6 +111,7 @@ let test_map_operation_lowering () =
     IRU32 
     IRHashMap 
     100 
+    ~flags:0
     (make_test_position ()) in
   Hashtbl.add ctx.maps "local_map" test_map;
   

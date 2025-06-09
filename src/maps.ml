@@ -218,18 +218,32 @@ let ebpf_to_ast_map_type = function
 (** Convert AST map_attribute to Maps map_attribute *)
 let ast_to_maps_attribute = function
   | Ast.Pinned path -> Pinned path
+  | Ast.FlagsAttr _ -> failwith "FlagsAttr should be handled separately"
+
+(** Convert AST map flags to integer representation *)
+let ast_flags_to_int flags =
+  let flag_to_int = function
+    | Ast.NoPrealloc -> 0x1        (* BPF_F_NO_PREALLOC *)
+    | Ast.NoCommonLru -> 0x2       (* BPF_F_NO_COMMON_LRU *)
+    | Ast.NumaNode n -> 0x4 lor (n lsl 8)  (* BPF_F_NUMA_NODE with node ID *)
+    | Ast.Rdonly -> 0x8           (* BPF_F_RDONLY *)
+    | Ast.Wronly -> 0x10          (* BPF_F_WRONLY *)
+    | Ast.Clone -> 0x20           (* BPF_F_CLONE *)
+  in
+  List.fold_left (fun acc flag -> acc lor (flag_to_int flag)) 0 flags
 
 (** Convert AST map declaration to Maps map declaration *)
 let ast_to_maps_declaration ast_map =
   let ebpf_map_type = ast_to_ebpf_map_type ast_map.Ast.map_type in
   let attributes = List.map ast_to_maps_attribute ast_map.Ast.config.attributes in
+  let flags = ast_flags_to_int ast_map.Ast.config.flags in
   let config = {
     max_entries = ast_map.Ast.config.max_entries;
     key_size = ast_map.Ast.config.key_size;
     value_size = ast_map.Ast.config.value_size;
     attributes = attributes;
     inner_map_fd = None;
-    flags = 0;
+    flags = flags;
   } in
   {
     name = ast_map.Ast.name;

@@ -13,6 +13,7 @@ let create_test_map_decl name is_global =
     key_size = None;
     value_size = None;
     attributes = [];
+    flags = [];
   } in
   {
     name;
