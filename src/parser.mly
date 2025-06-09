@@ -48,9 +48,9 @@
 %type <Ast.program_def> program_declaration
 %type <Ast.program_type> program_type
 %type <Ast.map_declaration> map_declaration
-%type <Ast.function_def list * Ast.userspace_block option> program_items
-%type <Ast.function_def list * Ast.userspace_block option> program_item
-%type <Ast.userspace_block> userspace_block
+%type <Ast.function_def list> program_items
+%type <Ast.function_def> program_item
+%type <Ast.userspace_block> userspace_declaration
 %type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_body
 %type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_item
 %type <Ast.struct_def> struct_declaration
@@ -107,12 +107,12 @@ declaration:
   | program_declaration { Program $1 }
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
+  | userspace_declaration { Userspace $1 }
 
 /* Program declaration: program name : type { program_items } */
 program_declaration:
   | PROGRAM IDENTIFIER COLON program_type LBRACE program_items RBRACE
-    { let functions, userspace = $6 in
-      make_program $2 $4 functions ?userspace (make_pos ()) }
+    { make_program $2 $4 $6 (make_pos ()) }
 
 program_type:
   | IDENTIFIER { 
@@ -127,21 +127,17 @@ program_type:
     }
 
 program_items:
-  | /* empty */ { ([], None) }
-  | program_item program_items 
-    { let functions1, userspace1 = $1 in
-      let functions2, userspace2 = $2 in
-      let combined_functions = functions1 @ functions2 in
-      let combined_userspace = match userspace1, userspace2 with
-        | None, None -> None
-        | Some us, None | None, Some us -> Some us
-        | Some _, Some _ -> failwith "Multiple userspace blocks not allowed"
-      in
-      (combined_functions, combined_userspace) }
+  | /* empty */ { [] }
+  | program_item program_items { $1 :: $2 }
 
 program_item:
-  | function_declaration { ([$1], None) }
-  | userspace_block { ([], Some $1) }
+  | function_declaration { $1 }
+
+/* Top-level userspace declaration: userspace { userspace_body } */
+userspace_declaration:
+  | USERSPACE LBRACE userspace_body RBRACE
+    { let functions, structs, configs = $3 in
+      make_userspace_block functions structs configs (make_pos ()) }
 
 /* Function declaration: fn name(params) -> return_type { body } */
 function_declaration:
@@ -325,11 +321,6 @@ map_attribute:
     }
 
 /* Userspace blocks */
-
-userspace_block:
-  | USERSPACE LBRACE userspace_body RBRACE
-    { let functions, structs, configs = $3 in
-      make_userspace_block functions structs configs (make_pos ()) }
 
 userspace_body:
   | /* empty */ { ([], [], []) }

@@ -98,6 +98,7 @@ let validate_ast ast =
     | GlobalFunction func -> validate_function func
     | TypeDef _ -> true (* Type definitions are always valid once parsed *)
     | MapDecl _ -> true (* Map declarations are always valid once parsed *)
+    | Userspace userspace_block -> List.for_all validate_function userspace_block.userspace_functions
   in
   
   List.for_all validate_declaration ast

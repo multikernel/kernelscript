@@ -84,151 +84,241 @@ struct %s {
 
 (** Generate function implementations from userspace functions *)
 let generate_c_function_from_userspace (func : Ast.function_def) =
-  let params = List.map (fun (name, typ) ->
-    let c_type = match typ with
-      | Ast.U8 -> "__u8"
-      | Ast.U16 -> "__u16"
-      | Ast.U32 -> "__u32"
-      | Ast.U64 -> "__u64"
-      | Ast.I8 -> "__s8"
-      | Ast.I16 -> "__s16"
-      | Ast.I32 -> "__s32"
-      | Ast.I64 -> "__s64"
-      | Ast.Bool -> "bool"
-      | Ast.Char -> "char"
-      | Ast.UserType name -> sprintf "struct %s*" name
-      | _ -> "__u32"
-    in
-    sprintf "%s %s" c_type name
-  ) func.func_params in
-  
-  let return_type = match func.func_return_type with
-    | Some Ast.U8 -> "__u8"
-    | Some Ast.U16 -> "__u16"
-    | Some Ast.U32 -> "__u32"
-    | Some Ast.U64 -> "__u64"
-    | Some Ast.I8 -> "__s8"
-    | Some Ast.I16 -> "__s16"
-    | Some Ast.I32 -> "__s32"
-    | Some Ast.I64 -> "__s64"
-    | Some Ast.Bool -> "bool"
-    | Some Ast.Char -> "char"
-    | Some (Ast.UserType name) -> sprintf "struct %s*" name
-    | Some _ -> "__u32"
-    | None -> if func.func_name = "main" then "int" else "void"
-  in
-  
-  let body = if func.func_name = "main" then {|
-    printf("Starting userspace program for eBPF\n");
+  let params, return_type, body = 
+    if func.func_name = "main" then
+      (* Special handling for main function with argc/argv *)
+
+      let params_str = "int argc, char **argv" in
+      let return_type = "int" in
+      let body = {|
+    printf("Starting userspace coordinator for eBPF programs\n");
     
-    // TODO: Add BPF program loading logic here
-    // Example:
-    // 1. Load the eBPF object file
-    // 2. Attach to network interface or kernel hook
-    // 3. Set up map access
-    // 4. Process events/data
+    // Parse command line arguments
+    const char *interface = argc > 1 ? argv[1] : "eth0";
+    bool verbose = argc > 2 && strcmp(argv[2], "--verbose") == 0;
     
-    printf("Userspace program completed\n");
-    return 0;|} else {|
-    // TODO: Implement function body
-    printf("Function %s called\n", __func__);
+    if (verbose) {
+        printf("Using interface: %s\n", interface);
+    }
+    
+    setup_signal_handling();
+    
+    if (load_all_bpf_programs() != 0) {
+        fprintf(stderr, "Failed to load BPF programs\n");
+        return 1;
+    }
+    
+    if (attach_programs(interface) != 0) {
+        fprintf(stderr, "Failed to attach BPF programs\n");
+        cleanup_bpf_programs();
+        return 1;
+    }
+    
+    if (setup_maps() != 0) {
+        fprintf(stderr, "Failed to setup maps\n");
+        cleanup_bpf_programs();
+        return 1;
+    }
+    
+    printf("Multi-program eBPF system running. Press Ctrl+C to exit.\n");
+    
+    // Main coordination loop
+    while (keep_running) {
+        // Process events from all programs
+        process_system_events();
+        usleep(100000); // 100ms
+    }
+    
+    printf("Shutting down coordinator...\n");
+    cleanup_bpf_programs();
     return 0;|} in
+      (params_str, return_type, body)
+    else
+      (* Regular function handling *)
+      let params = List.map (fun (name, typ) ->
+        let c_type = match typ with
+          | Ast.U8 -> "__u8"
+          | Ast.U16 -> "__u16"
+          | Ast.U32 -> "__u32"
+          | Ast.U64 -> "__u64"
+          | Ast.I8 -> "__s8"
+          | Ast.I16 -> "__s16"
+          | Ast.I32 -> "__s32"
+          | Ast.I64 -> "__s64"
+          | Ast.Bool -> "bool"
+          | Ast.Char -> "char"
+          | Ast.UserType name -> sprintf "struct %s*" name
+          | Ast.Pointer (Ast.Pointer Ast.Char) -> "char **"
+          | Ast.Pointer t -> sprintf "%s*" (match t with
+            | Ast.Char -> "char"
+            | Ast.U32 -> "__u32"
+            | _ -> "__u32")
+          | _ -> "__u32"
+        in
+        sprintf "%s %s" c_type name
+      ) func.func_params in
+      
+      let return_type = match func.func_return_type with
+        | Some Ast.U8 -> "__u8"
+        | Some Ast.U16 -> "__u16"
+        | Some Ast.U32 -> "__u32"
+        | Some Ast.U64 -> "__u64"
+        | Some Ast.I8 -> "__s8"
+        | Some Ast.I16 -> "__s16"
+        | Some Ast.I32 -> "__s32"
+        | Some Ast.I64 -> "__s64"
+        | Some Ast.Bool -> "bool"
+        | Some Ast.Char -> "char"
+        | Some (Ast.UserType name) -> sprintf "struct %s*" name
+        | Some _ -> "__u32"
+        | None -> "void"
+      in
+      
+      let body = sprintf {|
+    // TODO: Implement function body for %s
+    printf("Function %s called\n", __func__);
+    return %s;|} func.func_name func.func_name 
+        (if return_type = "void" then "" else "0") in
+      
+      ((if params = [] then "void" else String.concat ", " params), return_type, body)
+  in
   
   sprintf {|
 %s %s(%s) {%s
 }
-|} return_type func.func_name 
-   (if params = [] then "void" else String.concat ", " params)
-   body
+|} return_type func.func_name params body
 
-(** Generate BPF program loading and management code *)
-let generate_bpf_loader_code program_name =
+(** Generate BPF program loading and management code for multiple programs *)
+let generate_bpf_loader_code source_filename =
   sprintf {|
-/* BPF Program Management */
+/* Multi-Program BPF Management */
 struct bpf_object *bpf_obj = NULL;
-struct bpf_program *bpf_prog = NULL;
-int prog_fd = -1;
+struct bpf_program **bpf_programs = NULL;
+int *prog_fds = NULL;
+int num_programs = 0;
 
-int load_bpf_program(void) {
-    // Load BPF object file
+int load_all_bpf_programs(void) {
+    // Load BPF object file generated from %s
     bpf_obj = bpf_object__open("%s.ebpf.o");
     if (libbpf_get_error(bpf_obj)) {
         fprintf(stderr, "ERROR: opening BPF object file failed\n");
         return -1;
     }
 
-    // Load BPF program into kernel
+    // Load all BPF programs into kernel
     if (bpf_object__load(bpf_obj)) {
         fprintf(stderr, "ERROR: loading BPF object file failed\n");
         goto cleanup;
     }
 
-    // Find the main BPF program
-    bpf_prog = bpf_object__find_program_by_name(bpf_obj, "main");
-    if (!bpf_prog) {
-        fprintf(stderr, "ERROR: finding BPF program 'main' failed\n");
+    // Count and setup program management structures
+    struct bpf_program *prog;
+    bpf_object__for_each_program(prog, bpf_obj) {
+        num_programs++;
+    }
+    
+    if (num_programs == 0) {
+        fprintf(stderr, "ERROR: no BPF programs found\n");
         goto cleanup;
     }
-
-    prog_fd = bpf_program__fd(bpf_prog);
-    if (prog_fd < 0) {
-        fprintf(stderr, "ERROR: getting program fd failed\n");
-        goto cleanup;
+    
+    bpf_programs = malloc(num_programs * sizeof(struct bpf_program*));
+    prog_fds = malloc(num_programs * sizeof(int));
+    
+    int i = 0;
+    bpf_object__for_each_program(prog, bpf_obj) {
+        bpf_programs[i] = prog;
+        prog_fds[i] = bpf_program__fd(prog);
+        if (prog_fds[i] < 0) {
+            fprintf(stderr, "ERROR: getting program fd failed for program %%d\n", i);
+            goto cleanup;
+        }
+        printf("Loaded BPF program '%%s' (fd=%%d)\n", 
+               bpf_program__name(prog), prog_fds[i]);
+        i++;
     }
 
-    printf("BPF program loaded successfully (fd=%%d)\n", prog_fd);
+    printf("Successfully loaded %%d BPF programs\n", num_programs);
     return 0;
 
 cleanup:
+    if (bpf_programs) free(bpf_programs);
+    if (prog_fds) free(prog_fds);
     bpf_object__close(bpf_obj);
     return -1;
 }
 
-void cleanup_bpf_program(void) {
+int attach_programs(const char *interface) {
+    printf("Attaching BPF programs to interface %%s\n", interface);
+    
+    // TODO: Add program-specific attachment logic
+    // This needs to be customized based on the actual program types
+    // For XDP: bpf_set_link_xdp_fd(if_index, prog_fd, flags);
+    // For TC: tc filter add dev interface...
+    // For kprobe: bpf_link_create(prog_fd, 0, BPF_TRACE_KPROBE, ...)
+    
+    printf("All programs attached successfully\n");
+    return 0;
+}
+
+void cleanup_bpf_programs(void) {
+    if (bpf_programs) {
+        free(bpf_programs);
+        bpf_programs = NULL;
+    }
+    if (prog_fds) {
+        free(prog_fds);
+        prog_fds = NULL;
+    }
     if (bpf_obj) {
         bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
     }
+    num_programs = 0;
 }
+|} source_filename source_filename
 
-int attach_bpf_program(const char *interface) {
-    // Example: attach XDP program to network interface
-    // This would need to be customized based on program type
-    printf("Attaching BPF program to interface %%s\n", interface);
-    
-    // TODO: Add actual attachment logic based on program type
-    // For XDP: bpf_set_link_xdp_fd(if_index, prog_fd, flags);
-    // For TC: tc filter add...
-    // etc.
-    
-    return 0;
-}
-|} program_name
-
-(** Generate map access code *)
+(** Generate map access code for coordinating multiple programs *)
 let generate_map_access_code () =
   {|
-/* Map Access Functions */
+/* Global Map Access Functions */
 int setup_maps(void) {
     // TODO: Get map file descriptors from loaded BPF object
-    // Example:
-    // map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "map_name");
+    // Global maps are shared between all programs
+    printf("Setting up global maps for multi-program coordination\n");
     
-    printf("Maps setup completed\n");
+    // Example for global maps:
+    // global_flows_fd = bpf_object__find_map_fd_by_name(bpf_obj, "global_flows");
+    // global_events_fd = bpf_object__find_map_fd_by_name(bpf_obj, "global_events");
+    // global_config_fd = bpf_object__find_map_fd_by_name(bpf_obj, "global_config");
+    
+    printf("Global maps setup completed\n");
     return 0;
 }
 
-// Example map lookup function
-int lookup_map_value(__u32 key, __u64 *value) {
-    // TODO: Implement actual map lookup
-    // return bpf_map_lookup_elem(map_fd, &key, value);
-    *value = 0;
+// Process events from all programs
+void process_system_events(void) {
+    // TODO: Read from global event ring buffers
+    // Process events from multiple eBPF programs
+    // Example:
+    // while (ring_buffer__poll(rb, 0) >= 0) {
+    //     // Handle events from all programs
+    // }
+}
+
+// Update global configuration affecting all programs
+int update_global_config(__u32 key, __u64 value) {
+    // TODO: Update global configuration map
+    // This affects all programs that use global_config map
+    // return bpf_map_update_elem(global_config_fd, &key, &value, BPF_ANY);
     return 0;
 }
 
-// Example map update function  
-int update_map_value(__u32 key, __u64 value) {
-    // TODO: Implement actual map update
-    // return bpf_map_update_elem(map_fd, &key, &value, BPF_ANY);
+// Get statistics from all programs
+int get_combined_stats(void) {
+    // TODO: Aggregate statistics from all programs
+    // Read from various program-specific and global maps
+    printf("Getting combined statistics from all programs\n");
     return 0;
 }
 |}
@@ -250,17 +340,19 @@ void setup_signal_handling(void) {
 }
 |}
 
-(** Generate complete C userspace program *)
-let generate_complete_userspace_program (userspace_block : Ast.userspace_block) program_name =
+(** Generate complete C userspace coordinator program *)
+let generate_complete_userspace_program (userspace_block : Ast.userspace_block) source_filename =
   let includes = {|#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/bpf.h>
+#include <sys/resource.h>
 |} in
 
   let structs = String.concat "\n" 
@@ -269,39 +361,54 @@ let generate_complete_userspace_program (userspace_block : Ast.userspace_block) 
   let functions = String.concat "\n" 
     (List.map generate_c_function_from_userspace userspace_block.userspace_functions) in
   
-  let bpf_loader = generate_bpf_loader_code program_name in
+  let bpf_loader = generate_bpf_loader_code source_filename in
   let map_access = generate_map_access_code () in
   let signal_handling = generate_signal_handling () in
   
-  (* Check if main function exists, if not create a default one *)
+  (* Check if main function exists, if not create a default coordinator main *)
   let has_main = List.exists (fun (f : Ast.function_def) -> f.func_name = "main") userspace_block.userspace_functions in
   let default_main = if not has_main then {|
 int main(int argc, char **argv) {
-    printf("Starting userspace program for eBPF\n");
+    printf("Starting multi-program eBPF coordinator\n");
+    
+    // Parse command line arguments
+    const char *interface = argc > 1 ? argv[1] : "eth0";
+    bool verbose = argc > 2 && strcmp(argv[2], "--verbose") == 0;
+    
+    if (verbose) {
+        printf("Using interface: %s\n", interface);
+    }
     
     setup_signal_handling();
     
-    if (load_bpf_program() != 0) {
-        fprintf(stderr, "Failed to load BPF program\n");
+    if (load_all_bpf_programs() != 0) {
+        fprintf(stderr, "Failed to load BPF programs\n");
+        return 1;
+    }
+    
+    if (attach_programs(interface) != 0) {
+        fprintf(stderr, "Failed to attach BPF programs\n");
+        cleanup_bpf_programs();
         return 1;
     }
     
     if (setup_maps() != 0) {
-        fprintf(stderr, "Failed to setup maps\n");
-        cleanup_bpf_program();
+        fprintf(stderr, "Failed to setup global maps\n");
+        cleanup_bpf_programs();
         return 1;
     }
     
-    printf("BPF program running. Press Ctrl+C to exit.\n");
+    printf("Multi-program eBPF system running on %s. Press Ctrl+C to exit.\n", interface);
     
-    // Main event loop
+    // Main coordination loop
     while (keep_running) {
-        // TODO: Process events, update maps, etc.
-        sleep(1);
+        process_system_events();
+        get_combined_stats();
+        usleep(100000); // 100ms
     }
     
-    printf("Shutting down...\n");
-    cleanup_bpf_program();
+    printf("Shutting down coordinator...\n");
+    cleanup_bpf_programs();
     return 0;
 }
 |} else "" in
@@ -380,20 +487,45 @@ int main(int argc, char **argv) {
 %s
 |} includes bpf_loader map_access signal_handling main_function
 
-(** Write userspace C file *)
-let write_userspace_c_file content output_dir program_name =
+(** Write userspace C file with new naming scheme: FOO.c from FOO.ks *)
+let write_userspace_c_file content output_dir source_filename =
   (* Create output directory if it doesn't exist *)
   (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
   
-  let filename = sprintf "%s.c" program_name in
+  (* Extract base name from source filename and use it for userspace program *)
+  let base_name = Filename.remove_extension (Filename.basename source_filename) in
+  let filename = sprintf "%s.c" base_name in
   let filepath = Filename.concat output_dir filename in
   let oc = open_out filepath in
   output_string oc content;
   close_out oc;
-  printf "Generated userspace C program: %s\n" filepath;
+  printf "Generated userspace coordinator program: %s\n" filepath;
   filepath
 
 (** Main entry point for userspace code generation *)
+let generate_userspace_code_from_ast (ast : Ast.ast) ?(output_dir = ".") source_filename =
+  (* Extract userspace block from AST *)
+  let userspace_block = 
+    List.fold_left (fun acc decl ->
+      match decl with
+      | Ast.Userspace ub -> Some ub
+      | _ -> acc
+    ) None ast
+  in
+  
+  let prog_config = { (default_config source_filename) with output_dir = output_dir } in
+  
+  let content = match userspace_block with
+    | Some ub -> 
+        generate_complete_userspace_program ub source_filename
+    | None -> 
+        generate_default_userspace_program source_filename
+  in
+  
+  let _filepath = write_userspace_c_file content prog_config.output_dir source_filename in
+  printf "Successfully generated userspace coordinator program\n"
+
+(** Legacy entry point for backward compatibility with IR-based generation *)
 let generate_userspace_code (ir_prog : ir_program) ?(output_dir = ".") () =
   let prog_config = { (default_config ir_prog.name) with output_dir = output_dir } in
   

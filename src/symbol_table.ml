@@ -330,6 +330,21 @@ and process_declaration_accumulate table declaration =
        ) final_table_prog.symbols;
       
       table
+      
+  | Ast.Userspace userspace_block ->
+      (* Process userspace functions as global functions *)
+      List.iter (fun func ->
+        add_function table func Public
+      ) userspace_block.userspace_functions;
+      
+      (* Process userspace structs as type definitions *)
+      List.iter (fun struct_def ->
+        let pos = { line = 1; column = 1; filename = "" } in
+        let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+        add_type_def table type_def pos
+      ) userspace_block.userspace_structs;
+      
+      table
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
@@ -360,6 +375,19 @@ and process_declaration table = function
           Hashtbl.replace table.symbols name (existing @ prog_scoped_symbols)
         )
       ) table_with_prog.symbols
+      
+  | Ast.Userspace userspace_block ->
+      (* Process userspace functions as global functions *)
+      List.iter (fun func ->
+        add_function table func Public
+      ) userspace_block.userspace_functions;
+      
+      (* Process userspace structs as type definitions *)
+      List.iter (fun struct_def ->
+        let pos = { line = 1; column = 1; filename = "" } in
+        let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+        add_type_def table type_def pos
+      ) userspace_block.userspace_structs
 
 and process_statement table stmt =
   match stmt.stmt_desc with

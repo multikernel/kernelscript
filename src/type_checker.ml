@@ -614,11 +614,10 @@ let typed_function_to_function tfunc =
     func_body = List.map typed_stmt_to_stmt tfunc.tfunc_body;
     func_pos = tfunc.tfunc_pos }
 
-let typed_program_to_program tprog original_prog =
+let typed_program_to_program tprog _original_prog =
   { prog_name = tprog.tprog_name;
     prog_type = tprog.tprog_type;
     prog_functions = List.map typed_function_to_function tprog.tprog_functions;
-    prog_userspace = original_prog.prog_userspace; (* Preserve userspace from original *)
     prog_pos = tprog.tprog_pos }
 
 (** Convert typed AST back to annotated AST declarations *)

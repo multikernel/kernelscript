@@ -124,7 +124,7 @@ type function_def = {
   func_pos: position;
 }
 
-(** Userspace section - contains userspace companion code *)
+(** Top-level userspace block - contains userspace coordinator code *)
 type userspace_block = {
   userspace_functions: function_def list;
   userspace_structs: struct_def list;
@@ -152,7 +152,6 @@ type program_def = {
   prog_name: string;
   prog_type: program_type;
   prog_functions: function_def list;
-  prog_userspace: userspace_block option;
   prog_pos: position;
 }
 
@@ -162,6 +161,7 @@ type declaration =
   | GlobalFunction of function_def
   | TypeDef of type_def
   | MapDecl of map_declaration
+  | Userspace of userspace_block  (* New: top-level userspace *)
 
 (** Complete AST *)
 type ast = declaration list
@@ -182,17 +182,14 @@ let make_function name params return_type body pos = {
   func_pos = pos;
 }
 
-let make_program name prog_type functions ?userspace pos = {
+let make_program name prog_type functions pos = {
   prog_name = name;
   prog_type = prog_type;
   prog_functions = functions;
-  prog_userspace = userspace;
   prog_pos = pos;
 }
 
 let make_type_def def = def
-
-
 
 let make_enum_def name values = EnumDef (name, values)
 
@@ -421,6 +418,10 @@ let string_of_declaration = function
         (string_of_map_type md.map_type)
         (string_of_int md.config.max_entries)
         (String.concat ";\n  " all_config)
+  | Userspace ub ->
+      let functions_str = String.concat "\n\n  " 
+        (List.map string_of_function ub.userspace_functions) in
+      Printf.sprintf "userspace {\n  %s\n}" functions_str
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

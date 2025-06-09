@@ -649,13 +649,54 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
     }]
     
   | Some userspace ->
-    (* Validate that userspace block contains a main() function *)
-    let has_main = List.exists (fun (func : Ast.function_def) ->
-      func.func_name = "main"
-    ) userspace.userspace_functions in
+    (* Validate that userspace block contains a main() function with correct signature *)
+    let validate_userspace_main_signature ast_func =
+      if ast_func.Ast.func_name = "main" then (
+        (* Expected signature: fn main(argc: u32, argv: u64) -> i32 *)
+        let expected_params = [("argc", Ast.U32); ("argv", Ast.U64)] in
+        let expected_return = Some Ast.I32 in
+        
+        (* Check parameter count and types *)
+        let params_valid = 
+          List.length ast_func.Ast.func_params = List.length expected_params &&
+          List.for_all2 (fun (_actual_name, actual_type) (_expected_name, expected_type) ->
+            actual_type = expected_type
+          ) ast_func.Ast.func_params expected_params
+        in
+        
+        (* Check return type *)
+        let return_valid = ast_func.Ast.func_return_type = expected_return in
+        
+        if not params_valid then
+          failwith (Printf.sprintf 
+            "Userspace main() function must have parameters (argc: u32, argv: u64), got: %s"
+            (String.concat ", " (List.map (fun (name, typ) -> 
+              Printf.sprintf "%s: %s" name (Ast.string_of_bpf_type typ)
+            ) ast_func.Ast.func_params)));
+        
+        if not return_valid then
+          failwith (Printf.sprintf
+            "Userspace main() function must return i32, got: %s"
+            (match ast_func.Ast.func_return_type with 
+             | Some t -> Ast.string_of_bpf_type t 
+             | None -> "void"));
+        
+        true
+      ) else false
+    in
     
-    if not has_main then
+    let main_functions = List.filter (fun ast_func -> ast_func.Ast.func_name = "main") userspace.userspace_functions in
+    
+    if main_functions = [] then
       failwith "Userspace block must contain a main() function";
+    
+    if List.length main_functions > 1 then
+      failwith "Userspace block cannot contain multiple main() functions";
+    
+    (* Validate the main function signature *)
+    List.iter (fun ast_func -> 
+      if ast_func.Ast.func_name = "main" then ignore (validate_userspace_main_signature ast_func)
+    ) userspace.userspace_functions;
     
     (* Generate bindings based on userspace block specification *)
     (* For now, generate default map wrappers for all maps *)
@@ -759,8 +800,14 @@ let lower_program ast symbol_table =
   (* Find main function *)
   let main_function = List.find (fun f -> f.is_main) ir_functions in
   
+  (* Find top-level userspace block *)
+  let userspace_block = List.find_map (function
+    | Ast.Userspace ub -> Some ub
+    | _ -> None
+  ) ast in
+  
   (* Generate userspace bindings *)
-  let userspace_bindings = generate_userspace_bindings_from_block prog_def prog_def.prog_userspace (ir_global_maps @ ir_local_maps) in
+  let userspace_bindings = generate_userspace_bindings_from_block prog_def userspace_block (ir_global_maps @ ir_local_maps) in
   
   (* Create IR program *)
   make_ir_program
@@ -771,7 +818,7 @@ let lower_program ast symbol_table =
     ir_functions
     main_function
     ~userspace_bindings:userspace_bindings
-    ?userspace_block:prog_def.prog_userspace
+    ?userspace_block:userspace_block
     prog_def.prog_pos
 
 (** Main entry point for IR generation *)

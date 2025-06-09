@@ -13,7 +13,6 @@ let () =
       prog_name = name;
       prog_type = Xdp;
       prog_functions = functions;
-      prog_userspace = None;
       prog_pos = pos;
     }
   in
