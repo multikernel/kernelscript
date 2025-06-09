@@ -40,7 +40,7 @@ program packet_analyzer : xdp {
   map<u32, u32> local_state : HashMap(100) {
   };
   
-  fn main(ctx: xdp_context) -> xdp_action {
+  fn main(ctx: XdpContext) -> XdpAction {
     // Get packet information
     let src_ip: IpAddress = get_src_ip(ctx);
     let packet_len: PacketSize = get_packet_len(ctx);
@@ -78,15 +78,15 @@ program packet_analyzer : xdp {
     // Update local state
     local_state[0] = local_state[0] + 1;
     
-    return xdp_action::Pass;
+    return XdpAction::Pass;
   };
   
   // Helper functions (would be implemented in stdlib)
-  fn get_src_ip(ctx: xdp_context) -> IpAddress {
+  fn get_src_ip(ctx: XdpContext) -> IpAddress {
     return 0x7f000001; // 127.0.0.1 for demo
   };
   
-  fn get_packet_len(ctx: xdp_context) -> PacketSize {
+  fn get_packet_len(ctx: XdpContext) -> PacketSize {
     return 64; // Demo packet size
   };
   
@@ -107,7 +107,7 @@ program traffic_shaper : tc {
     pinned: "/sys/fs/bpf/bandwidth"
   };
   
-  fn main(ctx: tc_context) -> tc_action {
+  fn main(ctx: TcContext) -> TcAction {
     let cpu = get_cpu_id();
     let bytes = get_packet_len(ctx);
     
@@ -116,13 +116,13 @@ program traffic_shaper : tc {
     
     // Simple rate limiting logic
     if bandwidth_usage[cpu] > 1000000 {
-      return tc_action::Drop;
+      return TcAction::Drop;
     };
     
-    return tc_action::Ok;
+    return TcAction::Ok;
   };
   
-  fn get_packet_len(ctx: tc_context) -> u64 {
+  fn get_packet_len(ctx: TcContext) -> u64 {
     return 128; // Demo packet size
   };
 } 

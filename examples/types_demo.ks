@@ -52,7 +52,7 @@ program packet_inspector : xdp {
   map<Protocol, Counter> protocol_stats : PercpuArray(32) {
   };
   
-  fn extract_packet_info(ctx: xdp_context) -> option PacketInfo {
+  fn extract_packet_info(ctx: XdpContext) -> option PacketInfo {
     // This would contain actual packet parsing logic
     // For now, return a dummy PacketInfo
     let info: PacketInfo = PacketInfo {
@@ -97,7 +97,7 @@ program packet_inspector : xdp {
     }
   }
   
-  fn main(ctx: xdp_context) -> xdp_action {
+  fn main(ctx: XdpContext) -> XdpAction {
     // Extract packet information
     let packet_info = extract_packet_info(ctx);
     
@@ -115,19 +115,19 @@ program packet_inspector : xdp {
         
         // Apply filtering action
         match action {
-          FilterAction::Allow -> return xdp_action::Pass,
-          FilterAction::Block -> return xdp_action::Drop,
+          FilterAction::Allow -> return XdpAction::Pass,
+          FilterAction::Block -> return XdpAction::Drop,
           FilterAction::Log -> {
             // Log packet and allow
             ctx.log_packet(info);
-            return xdp_action::Pass;
+            return XdpAction::Pass;
           },
-          FilterAction::Redirect -> return xdp_action::Redirect
+          FilterAction::Redirect -> return XdpAction::Redirect
         }
       },
       none -> {
         // Failed to parse packet, drop it
-        return xdp_action::Drop;
+        return XdpAction::Drop;
       }
     }
   }

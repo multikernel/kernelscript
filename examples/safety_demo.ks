@@ -13,16 +13,15 @@ struct PacketInfo {
 }
 
 // Global map for statistics
-map<u32, Counter> packet_stats : hash_map(1024) {
-  max_entries = 1024;
-  pinned = "/sys/fs/bpf/packet_stats";
+map<u32, Counter> packet_stats : HashMap(1024) {
+  pinned: "/sys/fs/bpf/packet_stats",
 }
 
 // Program with various safety scenarios
 program safety_demo : xdp {
   
   // Function with safe stack usage
-  fn safe_function(ctx: xdp_context) -> xdp_action {
+  fn safe_function(ctx: XdpContext) -> XdpAction {
     // Small local variables - safe stack usage
     let counter: u64 = 0;
     let packet_size: u16 = 1500;
@@ -35,11 +34,11 @@ program safety_demo : xdp {
     // Safe map operations
     packet_stats.update(1, counter);
     
-    return xdp_action::Pass;
+    return XdpAction::Pass;
   }
   
   // Function demonstrating bounds checking
-  fn bounds_demo(ctx: xdp_context) -> xdp_action {
+  fn bounds_demo(ctx: XdpContext) -> XdpAction {
     let data_array: [u32; 10] = [0; 10];
     
     // Safe accesses
@@ -50,11 +49,11 @@ program safety_demo : xdp {
     // data_array[10] = 200; // ERROR: index 10 >= size 10
     // data_array[-1] = 300; // ERROR: negative index
     
-    return xdp_action::Pass;
+    return XdpAction::Pass;
   }
   
   // Function with moderate stack usage
-  fn moderate_stack_usage(ctx: xdp_context) -> xdp_action {
+  fn moderate_stack_usage(ctx: XdpContext) -> XdpAction {
     // Moderate buffer size - should be within eBPF limits
     let buffer: [u8; 256] = [0; 256];
     let info: PacketInfo = PacketInfo {
@@ -67,22 +66,22 @@ program safety_demo : xdp {
     // Process data
     buffer[0] = info.protocol;
     
-    return xdp_action::Pass;
+    return XdpAction::Pass;
   }
   
   // Function that would trigger stack overflow warning
-  fn large_stack_usage(ctx: xdp_context) -> xdp_action {
+  fn large_stack_usage(ctx: XdpContext) -> XdpAction {
     // Large buffer - would exceed eBPF 512-byte stack limit
     // This would be flagged by the safety analyzer
     let large_buffer: [u8; 600] = [0; 600]; // WARNING: Stack overflow
     
     large_buffer[0] = 1;
     
-    return xdp_action::Pass;
+    return XdpAction::Pass;
   }
   
   // Function demonstrating array size validation
-  fn array_validation_demo(ctx: xdp_context) -> xdp_action {
+  fn array_validation_demo(ctx: XdpContext) -> XdpAction {
     // Valid array sizes
     let valid_small: [u32; 10] = [0; 10];     // OK
     let valid_medium: [u8; 100] = [0; 100];   // OK
@@ -95,13 +94,13 @@ program safety_demo : xdp {
     valid_small[5] = 42;
     valid_medium[50] = 255;
     
-    return xdp_action::Pass;
+    return XdpAction::Pass;
   }
   
   // Main function with comprehensive safety checks
-  fn main(ctx: xdp_context) -> xdp_action {
+  fn main(ctx: XdpContext) -> XdpAction {
     // Stack usage: minimal for main function
-    let result: xdp_action = xdp_action::Pass;
+    let result: XdpAction = XdpAction::Pass;
     
     // Call safe functions
     let _ = safe_function(ctx);
