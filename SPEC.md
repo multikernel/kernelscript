@@ -71,7 +71,7 @@ program = "program" identifier ":" program_type "{" program_body "}" ;
 program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
                "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" ;
 
-program_body = { config_section | userspace_section | map_declaration | 
+program_body = { config_section | local_map_declaration | 
                  type_declaration | function_declaration | import_declaration } ;
 ```
 
@@ -113,52 +113,80 @@ program network_monitor : xdp {
 
 ### 3.3 User-Space Integration Section
 ```kernelscript
+// Multiple eBPF programs working together
 program packet_analyzer : xdp {
-    // Kernel-side configuration
     config {
         enable_stats: bool = true,
     }
     
     fn main(ctx: XdpContext) -> XdpAction {
         if config.enable_stats {
-            // Process packet
+            // Process packet and update statistics
         }
         return XdpAction::Pass;
     }
+}
+
+program flow_tracker : tc {
+    fn main(ctx: TcContext) -> TcAction {
+        // Track flow information
+        return TcAction::Pass;
+    }
+}
+
+// Top-level userspace coordinator - manages all programs
+userspace {
+    struct PacketStats {
+        packets: u64,
+        bytes: u64,
+        drops: u64,
+    }
     
-    // User-space companion code
-    userspace {
-        struct PacketStats {
-            packets: u64,
-            bytes: u64,
-            drops: u64,
+    fn main(argc: u32, argv: &[&str]) -> i32 {
+        // Parse command line arguments
+        if argc < 2 {
+            print("Usage: ", argv[0], " <interface>");
+            return 1;
         }
         
-        fn main() {
-            // Program automatically loaded and attached via config
-            while true {
-                let stats = get_stats();
-                print("Packets: ", stats.packets);
-                sleep(1000);
-            }
+        let interface = argv[1];
+        
+        // Load and coordinate multiple programs
+        let analyzer = BpfProgram::load("packet_analyzer");
+        let tracker = BpfProgram::load("flow_tracker");
+        
+        analyzer.attach_xdp(interface);
+        tracker.attach_tc(interface, TcDirection::Ingress);
+        
+        print("Multi-program system started on interface: ", interface);
+        
+        while true {
+            let stats = get_combined_stats();
+            print("Total packets: ", stats.packets);
+            print("Total bytes: ", stats.bytes);
+            sleep(1000);
         }
         
-        // Helper functions
-        fn on_packet_event(event: PacketEvent) {
-            print("Received packet from ", event.src_ip);
-        }
-        
-        fn update_config(new_config: Config) -> bool {
-            return update_program_config(new_config);
-        }
-        
-        fn get_stats() -> PacketStats {
-            return PacketStats {
-                packets: packet_stats_map.get(0),
-                bytes: packet_stats_map.get(1),
-                drops: packet_stats_map.get(2),
-            };
-        }
+        return 0;
+    }
+    
+    // Helper functions for coordinating programs
+    fn on_packet_event(event: PacketEvent) {
+        print("Received packet from ", event.src_ip);
+    }
+    
+    fn update_all_configs(new_config: GlobalConfig) -> bool {
+        // Update configuration for all programs
+        return update_program_configs(new_config);
+    }
+    
+    fn get_combined_stats() -> PacketStats {
+        // Aggregate statistics from all programs
+        return PacketStats {
+            packets: packet_stats_map.get(0),
+            bytes: packet_stats_map.get(1),
+            drops: packet_stats_map.get(2),
+        };
     }
 }
 ```
@@ -704,7 +732,7 @@ fn validate_state() {
 
 ## 8. User-Space Integration
 
-### 8.1 Automatic Userspace Code Generation with Global Maps
+### 8.1 Top-Level Userspace Coordination with Global Maps
 ```kernelscript
 // Global maps (accessible from all programs and userspace)
 map<FlowKey, FlowStats> global_flows : hash_map(10000) {
@@ -721,6 +749,7 @@ map<ConfigKey, ConfigValue> global_config : array(64) {
     userspace_writable: true,
 };
 
+// Multiple eBPF programs working together
 program network_monitor : xdp {
     // Local maps (only accessible within this program)
     map<u32, LocalStats> local_stats : hash_map(1024);
@@ -740,47 +769,95 @@ program network_monitor : xdp {
         
         return XdpAction::Pass;
     }
+}
+
+program security_filter : lsm("socket_connect") {
+    fn main(ctx: LsmContext) -> i32 {
+        let flow_key = extract_flow_key_from_socket(ctx)?;
+        
+        // Check global flow statistics for threat detection
+        if let Some(flow_stats) = global_flows.get(flow_key) {
+            if flow_stats.is_suspicious() {
+                global_events.submit(Event::ThreatDetected { flow_key });
+                return -EPERM;  // Block connection
+            }
+        }
+        
+        return 0;  // Allow connection
+    }
+}
+
+// Top-level userspace coordinator - manages all eBPF programs
+userspace {
+    // Generated bindings automatically include global maps
+    use std::collections::HashMap;
     
-    userspace {
-        // Generated bindings automatically include global maps
-        use std::collections::HashMap;
+    pub struct SystemCoordinator {
+        network_monitor: BpfProgram,
+        security_filter: BpfProgram,
         
-        pub struct NetworkMonitor {
-            program: BpfProgram,
-            
-            // Local map access
-            local_stats: HashMap<u32, LocalStats>,
-            
-            // Global map access (shared with other programs)
-            global_flows: &'static GlobalMap<FlowKey, FlowStats>,
-            global_events: &'static GlobalRingBuffer<Event>,
-            global_config: &'static GlobalMap<ConfigKey, ConfigValue>,
-            
-            config: Config,
-        }
-        
-        impl NetworkMonitor {
-            pub fn new() -> Result<Self, Error> {
-                let program = BpfProgram::load("network_monitor")?;
+        // Global map access (shared across all programs)
+        global_flows: &'static GlobalMap<FlowKey, FlowStats>,
+        global_events: &'static GlobalRingBuffer<Event>,
+        global_config: &'static GlobalMap<ConfigKey, ConfigValue>,
+    }
+    
+    impl SystemCoordinator {
+        pub fn new() -> Result<Self, Error> {
+            Ok(Self {
+                network_monitor: BpfProgram::load("network_monitor")?,
+                security_filter: BpfProgram::load("security_filter")?,
                 
-                Ok(Self {
-                    program,
-                    local_stats: HashMap::new(),
-                    
-                    // Global maps are automatically accessible
-                    global_flows: GlobalMaps::flows(),
-                    global_events: GlobalMaps::events(),
-                    global_config: GlobalMaps::config(),
-                    
-                    config: Config::default(),
-                })
-            }
-            
-            pub fn attach_to_interface(&mut self, interface: &str) -> Result<(), Error> {
-                self.program.attach_xdp(interface)
-            }
-            
+                // Global maps are automatically accessible
+                global_flows: GlobalMaps::flows(),
+                global_events: GlobalMaps::events(),
+                global_config: GlobalMaps::config(),
+            })
         }
+        
+        pub fn start(&mut self) -> Result<(), Error> {
+            // Coordinate multiple programs
+            self.network_monitor.attach_xdp("eth0")?;
+            self.security_filter.attach_lsm("socket_connect")?;
+            Ok(())
+        }
+        
+        pub fn process_events(&self) {
+            // Process events from all programs
+            while let Some(event) = self.global_events.read() {
+                match event {
+                    Event::PacketProcessed { flow_key } => {
+                        println!("Processed packet for flow: {:?}", flow_key);
+                    },
+                    Event::ThreatDetected { flow_key } => {
+                        println!("THREAT DETECTED: {:?}", flow_key);
+                        self.handle_threat(flow_key);
+                    },
+                }
+            }
+        }
+        
+        fn handle_threat(&self, flow_key: FlowKey) {
+            // Coordinated response across all programs
+            self.global_config.update(ConfigKey::ThreatLevel, ConfigValue::High);
+        }
+    }
+    
+    fn main(argc: u32, argv: &[&str]) -> i32 {
+        // Parse command line arguments for interface configuration
+        let interface = if argc > 1 { argv[1] } else { "eth0" };
+        
+        let mut coordinator = SystemCoordinator::new().unwrap();
+        coordinator.start_on_interface(interface).unwrap();
+        
+        println!("Multi-program eBPF system started on interface: ", interface);
+        
+        loop {
+            coordinator.process_events();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        
+        return 0;
     }
 }
 ```
@@ -795,31 +872,64 @@ program network_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         return XdpAction::Pass;
     }
-    
-    userspace {
-        // Default: KernelScript userspace code
-        fn main() {
-            let program = BpfProgram::load("network_monitor");
-            program.attach_xdp("eth0");
-            print("Program loaded");
+}
+
+program flow_analyzer : tc {
+    fn main(ctx: TcContext) -> TcAction {
+        return TcAction::Pass;
+    }
+}
+
+// Top-level userspace with cross-language binding generation
+userspace {
+    // Default: KernelScript userspace code
+    fn main(argc: u32, argv: &[&str]) -> i32 {
+        // Parse command line arguments
+        let interface = if argc > 1 { argv[1] } else { "eth0" };
+        let verbose = argc > 2 && argv[2] == "--verbose";
+        
+        let network_monitor = BpfProgram::load("network_monitor");
+        let flow_analyzer = BpfProgram::load("flow_analyzer");
+        
+        network_monitor.attach_xdp(interface);
+        flow_analyzer.attach_tc(interface, TcDirection::Ingress);
+        
+        if verbose {
+            print("Multi-program system loaded on interface: ", interface);
+            print("Verbose mode enabled");
         }
         
-        // Generate bindings for other languages
-        targets: ["rust", "go", "python", "c"],
+        // Coordinate both programs
+        handle_system_events(verbose);
         
-        // Language-specific configuration  
-        rust {
-            crate_name: "network_monitor",
-        },
-        
-        go {
-            package: "networkmonitor",
-        },
-        
-        python {
-            package: "network_monitor",
-        },
+        return 0;
     }
+    
+    fn handle_system_events(verbose: bool) {
+        while true {
+            // Process events from all programs
+            if verbose {
+                print("Processing system events...");
+            }
+            sleep(1000);
+        }
+    }
+    
+    // Generate bindings for other languages
+    targets: ["rust", "go", "python", "c"],
+    
+    // Language-specific configuration  
+    rust {
+        crate_name: "network_system",
+    },
+    
+    go {
+        package: "networksystem",
+    },
+    
+    python {
+        package: "network_system",
+    },
 }
 ```
 
@@ -992,25 +1102,49 @@ program simple_filter : xdp {
         
         return XdpAction::Pass;
     }
-    
-    userspace {
-        fn main() {
-            // Program automatically attached via deploy.yaml
-            print("Packet filter started");
-            print("Blocking ports: 22, 23, 135, 445");
-            
-            while true {
-                sleep(10000);  // Keep running
-            }
+}
+
+// Top-level userspace coordinator
+userspace {
+    fn main(argc: u32, argv: &[&str]) -> i32 {
+        // Parse command line arguments
+        if argc < 2 {
+            print("Usage: ", argv[0], " <interface> [--quiet]");
+            return 1;
         }
+        
+        let interface = argv[1];
+        let quiet = argc > 2 && argv[2] == "--quiet";
+        
+        // Program loaded and attached
+        let filter = BpfProgram::load("simple_filter");
+        filter.attach_xdp(interface);
+        
+        if !quiet {
+            print("Packet filter started on interface: ", interface);
+            print("Blocking ports: 22, 23, 135, 445");
+        }
+        
+        while true {
+            // Monitor system health
+            let stats = filter.get_stats();
+            if stats.dropped_packets > 1000 && !quiet {
+                print("High drop rate detected: ", stats.dropped_packets);
+            }
+            sleep(10000);
+        }
+        
+        return 0;
     }
 }
 ```
 
 ### 12.2 Performance Monitoring
 ```kernelscript
+// Global maps for performance data
 map<u32, CallInfo> active_calls : hash_map(1024);
 map<u32, u64> read_stats : array(1024);
+map<u32, u64> write_stats : array(1024);
 
 struct CallInfo {
     start_time: u64,
@@ -1041,20 +1175,81 @@ program perf_monitor : kprobe("sys_read") {
         
         return 0;
     }
-    
-    userspace {
-        fn main() {
-            // Program automatically attached via config
-            while true {
-                sleep(5000);  // Sleep 5 seconds
-                
-                print("=== Read Performance Stats ===");
+}
+
+program write_monitor : kprobe("sys_write") {
+    fn main(ctx: KprobeContext) -> i32 {
+        let pid = bpf_get_current_pid_tgid() as u32;
+        let duration = measure_write_time(ctx);
+        write_stats.add(pid % 1024, duration);
+        return 0;
+    }
+}
+
+// Top-level userspace coordinator for all monitoring programs
+userspace {
+    fn main(argc: u32, argv: &[&str]) -> i32 {
+        // Parse command line arguments
+        let mut interval = 5000;  // Default 5 second interval
+        let mut show_details = true;
+        
+        for i in 1..argc {
+            if argv[i] == "--interval" && i + 1 < argc {
+                interval = parse_u32(argv[i + 1]);
+            } else if argv[i] == "--summary-only" {
+                show_details = false;
+            } else if argv[i] == "--help" {
+                print("Usage: ", argv[0], " [--interval <ms>] [--summary-only] [--help]");
+                return 0;
+            }
+        }
+        
+        // Both programs loaded and attached manually
+        let read_monitor = BpfProgram::load("perf_monitor");
+        let write_monitor = BpfProgram::load("write_monitor");
+        
+        read_monitor.attach_kprobe("sys_read");
+        write_monitor.attach_kprobe("sys_write");
+        
+        print("Performance monitoring system started (interval: ", interval, "ms)");
+        
+        while true {
+            sleep(interval);
+            
+            print("=== System Performance Stats ===");
+            
+            if show_details {
+                // Read statistics
+                print("Read Performance:");
                 for (pid_slot, total_duration) in read_stats.iter() {
                     if total_duration > 0 {
-                        print("Slot ", pid_slot, ": ", total_duration, " ns");
+                        print("  Slot ", pid_slot, ": ", total_duration, " ns");
+                    }
+                }
+                
+                // Write statistics  
+                print("Write Performance:");
+                for (pid_slot, total_duration) in write_stats.iter() {
+                    if total_duration > 0 {
+                        print("  Slot ", pid_slot, ": ", total_duration, " ns");
                     }
                 }
             }
+            
+            // Cross-program analysis
+            analyze_system_performance();
+        }
+        
+        return 0;
+    }
+    
+    fn analyze_system_performance() {
+        // Coordinated analysis across multiple programs
+        let total_read_time = read_stats.sum();
+        let total_write_time = write_stats.sum();
+        
+        if total_read_time > total_write_time * 2 {
+            print("WARNING: Read operations significantly slower than writes");
         }
     }
 }
@@ -1069,7 +1264,7 @@ program perf_monitor : kprobe("sys_read") {
 kernelscript_file = { global_declaration } ;
 
 global_declaration = map_declaration | type_declaration | namespace_declaration | 
-                    program_declaration | import_declaration ;
+                    program_declaration | userspace_declaration | import_declaration ;
 
 (* Map declarations - global scope *)
 map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" identifier 
@@ -1092,7 +1287,7 @@ program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" |
 
 program_body = { program_item } ;
 
-program_item = local_map_declaration | config_section | userspace_section | 
+program_item = local_map_declaration | config_section |
                function_declaration | type_declaration ;
 
 (* Local maps - inside program scope *)
@@ -1103,8 +1298,8 @@ local_map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" id
 config_section = "config" "{" { config_item } "}" ;
 config_item = identifier ":" type_annotation [ "=" expression ] "," ;
 
-(* Userspace section *)
-userspace_section = "userspace" "{" userspace_body "}" ;
+(* Top-level userspace declaration *)
+userspace_declaration = "userspace" "{" userspace_body "}" ;
 userspace_body = { userspace_item } ;
 userspace_item = function_declaration | struct_declaration | userspace_config ;
 
@@ -1254,17 +1449,17 @@ whitespace = " " | "\t" | "\n" | "\r" ;
 
 **Top Level:**
 - `kernelscript_file` contains global declarations
-- Global maps, types, namespaces, and programs
+- Global maps, types, namespaces, programs, and top-level userspace
 
 **Program Structure:**
 - `program_declaration` defines an eBPF program
-- `program_body` contains local maps, config, userspace, and functions
-- `userspace_section` is a nested block within programs
+- `program_body` contains local maps, config, and functions
+- `userspace_declaration` is a top-level block for coordinating all programs
 
 **Scoping Rules:**
-- **Global scope**: Maps and types outside any program
-- **Program scope**: Local maps, config, userspace within a program  
+- **Global scope**: Maps, types, and userspace coordinator outside any program
+- **Program scope**: Local maps, config, and functions within a program  
 - **Function scope**: Variables and parameters within functions
-- **Userspace scope**: Functions and configs within userspace blocks
+- **Userspace scope**: Functions and configs within the top-level userspace block
 
-This specification provides a comprehensive foundation for KernelScript while addressing the concerns about template complexity and userspace integration. The simplified type system avoids complex template metaprogramming while still providing safety, and the userspace section enables seamless bidirectional integration between kernel and userspace code.
+This specification provides a comprehensive foundation for KernelScript while addressing the concerns about template complexity and userspace integration. The simplified type system avoids complex template metaprograming while still providing safety, and the top-level userspace section enables seamless coordination of multiple eBPF programs with centralized control plane management.
