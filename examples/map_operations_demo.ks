@@ -3,29 +3,28 @@
 // and global map sharing validation capabilities
 
 // Global maps shared across programs
-map<u32, u64> global_counter : hash_map(1000) {
+map<u32, u64> global_counter : HashMap(1000) {
+    max_entries: 1000;
     pinned: "/sys/fs/bpf/global_counter";
-    permissions: "rw-rw-r--";
 }
 
-map<u32, Statistics> shared_stats : lru_hash(500) {
+map<u32, Statistics> shared_stats : LruHash(500) {
+    max_entries: 500;
     pinned: "/sys/fs/bpf/shared_stats";
-    numa_node: 0;
 }
 
 // Per-CPU map for high-performance scenarios
-map<u32, PerCpuData> percpu_data : percpu_hash(256) {
+map<u32, PerCpuData> percpu_data : PercpuHash(256) {
     max_entries: 256;
-    no_prealloc: true;
 }
 
 // Ring buffer for event streaming
-map<Event, ()> event_stream : ring_buffer(1024*1024) {
+map<Event, ()> event_stream : RingBuffer(1024*1024) {
     max_entries: 262144;  // 1MB buffer
 }
 
 // Array map for sequential access patterns
-map<u32, ArrayElement> sequential_data : array(128) {
+map<u32, ArrayElement> sequential_data : Array(128) {
     max_entries: 128;
 }
 

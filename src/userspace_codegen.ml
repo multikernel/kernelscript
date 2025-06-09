@@ -82,6 +82,59 @@ struct %s {
 };
 |} struct_def.struct_name (String.concat "\n" fields)
 
+(** Generate C code for a single statement *)
+let rec generate_c_statement (stmt : Ast.statement) = 
+  match stmt.stmt_desc with
+  | Ast.Declaration (name, typ_opt, expr) ->
+      let c_type = match typ_opt with
+        | Some Ast.U32 -> "__u32"
+        | Some Ast.U64 -> "__u64"
+        | Some Ast.I32 -> "__s32"
+        | Some _ -> "__u32"  
+        | None -> "__u32"  (* default type *)
+      in
+      sprintf "%s %s = %s;" c_type name (generate_c_expression expr)
+  | Ast.Assignment (name, expr) ->
+      sprintf "%s = %s;" name (generate_c_expression expr)
+  | Ast.IndexAssignment (map_expr, key_expr, value_expr) ->
+      (* Handle map assignment like shared_counter[key] = value *)
+      let map_name = match map_expr.expr_desc with
+        | Ast.Identifier name -> name
+        | _ -> "unknown_map"
+      in
+      let key_c = generate_c_expression key_expr in
+      let value_c = generate_c_expression value_expr in
+      sprintf "%s_update(&(%s), &(%s), BPF_ANY);" map_name key_c value_c
+  | Ast.ExprStmt expr ->
+      sprintf "%s;" (generate_c_expression expr)
+  | Ast.Return (Some expr) ->
+      sprintf "return %s;" (generate_c_expression expr)
+  | Ast.Return None ->
+      "return;"
+  | _ -> "// TODO: Unsupported statement"
+
+(** Generate C code for expressions *)
+and generate_c_expression (expr : Ast.expr) =
+  match expr.expr_desc with
+  | Ast.Literal (Ast.IntLit i) -> string_of_int i
+  | Ast.Literal (Ast.StringLit s) -> sprintf "\"%s\"" s
+  | Ast.Identifier name -> name
+  | Ast.ArrayAccess (map_expr, key_expr) ->
+      (* Handle map access like shared_counter[key] *)
+      let map_name = match map_expr.expr_desc with
+        | Ast.Identifier name -> name
+        | _ -> "unknown_map"
+      in
+      let key_c = generate_c_expression key_expr in
+      sprintf "({ __u64 __val = 0; %s_lookup(&(%s), &__val) == 0 ? __val : 0; })" map_name key_c
+  | Ast.BinaryOp (left, Ast.Add, right) ->
+      sprintf "(%s + %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Sub, right) ->
+      sprintf "(%s - %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Mul, right) ->
+      sprintf "(%s * %s)" (generate_c_expression left) (generate_c_expression right)
+  | _ -> "0"  (* fallback *)
+
 (** Generate function implementations from userspace functions *)
 let generate_c_function_from_userspace (func : Ast.function_def) =
   let params, return_type, body = 
@@ -90,27 +143,17 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
 
       let params_str = "int argc, char **argv" in
       let return_type = "int" in
-      let body = {|
+      
+      (* Generate the actual function body from KernelScript statements *)
+      let translated_body = String.concat "\n    " (List.map generate_c_statement func.func_body) in
+      
+      let body = sprintf {|
     printf("Starting userspace coordinator for eBPF programs\n");
-    
-    // Parse command line arguments
-    const char *interface = argc > 1 ? argv[1] : "eth0";
-    bool verbose = argc > 2 && strcmp(argv[2], "--verbose") == 0;
-    
-    if (verbose) {
-        printf("Using interface: %s\n", interface);
-    }
     
     setup_signal_handling();
     
     if (load_all_bpf_programs() != 0) {
         fprintf(stderr, "Failed to load BPF programs\n");
-        return 1;
-    }
-    
-    if (attach_programs(interface) != 0) {
-        fprintf(stderr, "Failed to attach BPF programs\n");
-        cleanup_bpf_programs();
         return 1;
     }
     
@@ -120,18 +163,16 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
         return 1;
     }
     
-    printf("Multi-program eBPF system running. Press Ctrl+C to exit.\n");
+    printf("Executing userspace logic...\n");
     
-    // Main coordination loop
-    while (keep_running) {
-        // Process events from all programs
-        process_system_events();
-        usleep(100000); // 100ms
-    }
+    // User-defined logic from KernelScript
+    %s
     
     printf("Shutting down coordinator...\n");
+    cleanup_maps();
     cleanup_bpf_programs();
-    return 0;|} in
+    return 0;
+|} translated_body in
       (params_str, return_type, body)
     else
       (* Regular function handling *)
@@ -325,6 +366,115 @@ int get_combined_stats(void) {
 }
 |}
 
+(** Generate enhanced map access code with proper map sharing support *)
+let generate_enhanced_map_access_code map_declarations =
+  if map_declarations = [] then
+    generate_map_access_code ()
+  else
+    let map_fd_vars = List.map (fun (map_decl : Maps.map_declaration) ->
+      sprintf "int %s_fd = -1;" map_decl.name
+    ) map_declarations in
+    
+    let map_operations = List.map (fun (map_decl : Maps.map_declaration) ->
+      sprintf {|
+// Map operations for %s
+int %s_lookup(void *key, void *value) {
+    if (%s_fd < 0) return -1;
+    return bpf_map_lookup_elem(%s_fd, key, value);
+}
+
+int %s_update(void *key, void *value, __u64 flags) {
+    if (%s_fd < 0) return -1;
+    return bpf_map_update_elem(%s_fd, key, value, flags);
+}
+
+int %s_delete(void *key) {
+    if (%s_fd < 0) return -1;
+    return bpf_map_delete_elem(%s_fd, key);
+}
+
+int %s_get_next_key(void *key, void *next_key) {
+    if (%s_fd < 0) return -1;
+    return bpf_map_get_next_key(%s_fd, key, next_key);
+}|} 
+        map_decl.name
+        map_decl.name map_decl.name map_decl.name
+        map_decl.name map_decl.name map_decl.name
+        map_decl.name map_decl.name map_decl.name
+        map_decl.name map_decl.name map_decl.name
+    ) map_declarations in
+    
+    let setup_maps_impl = List.map (fun (map_decl : Maps.map_declaration) ->
+      let pin_path_opt = List.fold_left (fun acc attr ->
+        match attr with
+        | Maps.Pinned path -> Some path
+        | _ -> acc
+      ) None map_decl.config.attributes in
+      
+      match pin_path_opt with
+      | Some pin_path ->
+          sprintf "    // Setup pinned map: %s\n    %s_fd = bpf_obj_get(\"%s\");\n    if (%s_fd < 0) {\n        struct bpf_map *map = bpf_object__find_map_by_name(bpf_obj, \"%s\");\n        if (map) {\n            %s_fd = bpf_map__fd(map);\n            bpf_obj_pin(%s_fd, \"%s\");\n            printf(\"Pinned map %s\\n\");\n        }\n    }" 
+            map_decl.name map_decl.name pin_path map_decl.name 
+            map_decl.name map_decl.name map_decl.name pin_path map_decl.name
+      | None ->
+          sprintf "    // Setup regular map: %s\n    %s_fd = bpf_object__find_map_fd_by_name(bpf_obj, \"%s\");" 
+            map_decl.name map_decl.name map_decl.name
+    ) map_declarations in
+    
+    sprintf {|
+/* Enhanced Map Access Functions with Userspace-Kernel Sharing */
+
+// Map file descriptor variables
+%s
+
+int setup_maps(void) {
+    printf("Setting up maps for userspace-kernel communication\n");
+    
+    if (!bpf_obj) {
+        fprintf(stderr, "ERROR: BPF object not loaded\n");
+        return -1;
+    }
+    
+%s
+    
+    printf("All maps setup completed successfully\n");
+    return 0;
+}
+
+%s
+
+// Generic map utilities
+int get_map_fd(const char *map_name) {
+    return -1;
+}
+
+void cleanup_maps(void) {
+    // Close map file descriptors
+%s
+    printf("Maps cleaned up\n");
+}
+
+// Enhanced event processing with map polling
+void process_system_events(void) {
+    // Poll ring buffer maps for events
+    // TODO: Implement event polling
+}
+
+// Enhanced statistics collection
+int get_combined_stats(void) {
+    printf("Collecting statistics from all maps\n");
+    // TODO: Implement statistics collection
+    return 0;
+}
+|}
+      (String.concat "\n" map_fd_vars)
+      (String.concat "\n" setup_maps_impl)
+      (String.concat "\n" map_operations)
+      (String.concat "\n" (List.map (fun (map_decl : Maps.map_declaration) ->
+        sprintf "    if (%s_fd >= 0) {\n        close(%s_fd);\n        %s_fd = -1;\n    }" 
+          map_decl.name map_decl.name map_decl.name
+      ) map_declarations))
+
 (** Generate signal handling code *)
 let generate_signal_handling () =
   {|
@@ -342,8 +492,16 @@ void setup_signal_handling(void) {
 }
 |}
 
+(** Extract map declarations from AST *)
+let extract_map_declarations_from_ast (ast : Ast.ast) =
+  let ast_map_decls = List.filter_map (function
+    | Ast.MapDecl m -> Some m
+    | _ -> None
+  ) ast in
+  List.map Maps.ast_to_maps_declaration ast_map_decls
+
 (** Generate complete C userspace coordinator program *)
-let generate_complete_userspace_program (userspace_block : Ast.userspace_block) source_filename =
+let generate_complete_userspace_program (userspace_block : Ast.userspace_block) source_filename ?ast () =
   let includes = {|#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -364,7 +522,12 @@ let generate_complete_userspace_program (userspace_block : Ast.userspace_block) 
     (List.map generate_c_function_from_userspace userspace_block.userspace_functions) in
   
   let bpf_loader = generate_bpf_loader_code source_filename in
-  let map_access = generate_map_access_code () in
+  let map_access = match ast with
+    | Some ast_data -> 
+        let map_declarations = extract_map_declarations_from_ast ast_data in
+        generate_enhanced_map_access_code map_declarations
+    | None -> generate_map_access_code ()
+  in
   let signal_handling = generate_signal_handling () in
   
   (* Check if main function exists, if not create a default coordinator main *)
@@ -410,6 +573,7 @@ int main(int argc, char **argv) {
     }
     
     printf("Shutting down coordinator...\n");
+    cleanup_maps();
     cleanup_bpf_programs();
     return 0;
 }
@@ -431,7 +595,7 @@ int main(int argc, char **argv) {
 |} includes structs bpf_loader map_access signal_handling functions default_main
 
 (** Generate default userspace program when no userspace block is provided *)
-let generate_default_userspace_program program_name =
+let generate_default_userspace_program program_name ?ast () =
   let includes = {|#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -444,7 +608,12 @@ let generate_default_userspace_program program_name =
 |} in
 
   let bpf_loader = generate_bpf_loader_code program_name in
-  let map_access = generate_map_access_code () in
+  let map_access = match ast with
+    | Some ast_data -> 
+        let map_declarations = extract_map_declarations_from_ast ast_data in
+        generate_enhanced_map_access_code map_declarations
+    | None -> generate_map_access_code ()
+  in
   let signal_handling = generate_signal_handling () in
   
   let main_function = {|
@@ -519,9 +688,9 @@ let generate_userspace_code_from_ast (ast : Ast.ast) ?(output_dir = ".") source_
   
   let content = match userspace_block with
     | Some ub -> 
-        generate_complete_userspace_program ub source_filename
+        generate_complete_userspace_program ub source_filename ~ast:ast ()
     | None -> 
-        generate_default_userspace_program source_filename
+        generate_default_userspace_program source_filename ~ast:ast ()
   in
   
   let _filepath = write_userspace_c_file content prog_config.output_dir source_filename in
@@ -533,9 +702,9 @@ let generate_userspace_code (ir_prog : ir_program) ?(output_dir = ".") () =
   
   let content = match ir_prog.userspace_block with
     | Some userspace_block -> 
-        generate_complete_userspace_program userspace_block ir_prog.name
+        generate_complete_userspace_program userspace_block ir_prog.name ()
     | None -> 
-        generate_default_userspace_program ir_prog.name
+        generate_default_userspace_program ir_prog.name ()
   in
   
   let _filepath = write_userspace_c_file content prog_config.output_dir ir_prog.name in

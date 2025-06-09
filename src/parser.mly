@@ -279,8 +279,18 @@ array_access:
 
 /* Map Declarations */
 map_declaration:
-  | MAP IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LBRACE map_config RBRACE
-    { make_map_declaration $2 $6 $8 $4 $11 true (make_pos ()) }
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON IDENTIFIER LPAREN INT RPAREN LBRACE map_config RBRACE
+    { let map_type = match $9 with
+        | "HashMap" -> HashMap
+        | "Array" -> Array
+        | "PercpuHash" -> PercpuHash
+        | "PercpuArray" -> PercpuArray
+        | "LruHash" -> LruHash
+        | "RingBuffer" -> RingBuffer
+        | "PerfEvent" -> PerfEvent
+        | unknown -> failwith ("Unknown map type: " ^ unknown)
+      in
+      make_map_declaration $7 $3 $5 map_type $14 true (make_pos ()) }
 
 map_type:
   | IDENTIFIER { 
