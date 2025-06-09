@@ -46,20 +46,93 @@
 (executable
  (public_name test_ir)
  (name test_ir)
+ (modules test_ir)
  (libraries kernelscript ounit2))
 
 (executable
  (public_name test_ir_analysis)
  (name test_ir_analysis)
+ (modules test_ir_analysis)
  (libraries kernelscript ounit2))
 
 (executable
  (public_name test_ir_function_system)
  (name test_ir_function_system)
+ (modules test_ir_function_system)
  (libraries kernelscript ounit2))
 
 (executable
  (public_name test_ebpf_c_codegen)
  (name test_ebpf_c_codegen)
  (modules test_ebpf_c_codegen)
- (libraries kernelscript str)) 
+ (libraries kernelscript str))
+
+(executable
+ (name test_map_syntax)
+ (modules test_map_syntax)
+ (libraries kernelscript str))
+
+(executable
+ (name test_map_assignment)
+ (modules test_map_assignment)
+ (libraries kernelscript str))
+
+(executable
+ (name test_map_integration)
+ (modules test_map_integration)
+ (libraries kernelscript str))
+
+; Test aliases for organized execution
+(rule
+ (alias map-tests)
+ (deps
+  test_map_syntax.exe
+  test_map_assignment.exe
+  test_map_integration.exe)
+ (action
+  (progn
+   (run ./test_map_syntax.exe)
+   (run ./test_map_assignment.exe)
+   (run ./test_map_integration.exe))))
+
+(rule
+ (alias core-tests)
+ (deps
+  test_lexer_simple.exe
+  test_ast.exe
+  test_parser.exe
+  test_type_checker.exe
+  test_symbol_table.exe)
+ (action
+  (progn
+   (run ./test_lexer_simple.exe)
+   (run ./test_ast.exe)
+   (run ./test_parser.exe)
+   (run ./test_type_checker.exe)
+   (run ./test_symbol_table.exe))))
+
+(rule
+ (alias ir-tests)
+ (deps
+  test_ir.exe
+  test_ir_analysis.exe
+  test_ir_function_system.exe)
+ (action
+  (progn
+   (run ./test_ir.exe)
+   (run ./test_ir_analysis.exe)
+   (run ./test_ir_function_system.exe))))
+
+(rule
+ (alias codegen-tests)
+ (deps test_ebpf_c_codegen.exe)
+ (action (run ./test_ebpf_c_codegen.exe)))
+
+; Top-level alias to run all tests
+(alias
+ (name tests)
+ (deps
+  (alias core-tests)
+  (alias map-tests)
+  (alias ir-tests)
+  (alias codegen-tests))) 
