@@ -314,9 +314,8 @@ let compile_kernelscript opts =
   
   (* Determine output directory and filenames based on input file and program name *)
   let program_name = ir_program.name in
-  let input_dir = Filename.dirname opts.input_file in
   let base_name = Filename.remove_extension (Filename.basename opts.input_file) in
-  let output_dir = input_dir ^ "/" ^ base_name in
+  let output_dir = base_name in
   
   (* Create the output directory if it doesn't exist *)
   (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());

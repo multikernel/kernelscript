@@ -190,6 +190,8 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
 
 (** Generate BPF program loading and management code for multiple programs *)
 let generate_bpf_loader_code source_filename =
+  (* Extract base name without extension and path for the eBPF object filename *)
+  let base_name = Filename.remove_extension (Filename.basename source_filename) in
   sprintf {|
 /* Multi-Program BPF Management */
 struct bpf_object *bpf_obj = NULL;
@@ -276,7 +278,7 @@ void cleanup_bpf_programs(void) {
     }
     num_programs = 0;
 }
-|} source_filename source_filename
+|} source_filename base_name
 
 (** Generate map access code for coordinating multiple programs *)
 let generate_map_access_code () =
@@ -451,14 +453,14 @@ int main(int argc, char **argv) {
     
     setup_signal_handling();
     
-    if (load_bpf_program() != 0) {
+    if (load_all_bpf_programs() != 0) {
         fprintf(stderr, "Failed to load BPF program\n");
         return 1;
     }
     
     if (setup_maps() != 0) {
         fprintf(stderr, "Failed to setup maps\n");
-        cleanup_bpf_program();
+        cleanup_bpf_programs();
         return 1;
     }
     
@@ -471,7 +473,7 @@ int main(int argc, char **argv) {
     }
     
     printf("Shutting down...\n");
-    cleanup_bpf_program();
+    cleanup_bpf_programs();
     return 0;
 }
 |} in
