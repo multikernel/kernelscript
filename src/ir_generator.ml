@@ -598,13 +598,11 @@ let lower_map_declaration map_decl =
   let ir_attributes = List.filter_map (fun attr ->
     match attr with
     | Ast.Pinned _ -> None (* Handled separately *)
-    | _ -> Some (ast_map_attr_to_ir_map_attr attr)
   ) map_decl.config.attributes in
   
-  let pin_path = List.fold_left (fun acc attr ->
+  let pin_path = List.fold_left (fun _acc attr ->
     match attr with
     | Ast.Pinned path -> Some path
-    | _ -> acc
   ) None map_decl.config.attributes in
   
   make_ir_map_def

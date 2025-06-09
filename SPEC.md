@@ -284,12 +284,10 @@ map<u32, InterfaceStats> interface_stats : array(256) {
 
 map<SecurityEvent> security_events : ring_buffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/security_events",
-    userspace_readable: true,
 };
 
 map<ConfigKey, ConfigValue> global_config : array(64) {
     pinned: "/sys/fs/bpf/global_config",
-    userspace_writable: true,
 };
 
 // Program 1: Can access all global maps
@@ -527,12 +525,10 @@ map<FlowKey, FlowInfo> active_flows : lru_hash(10000) {
 
 map<PacketEvent> events : ring_buffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/events",
-    userspace_readable: true,
 };
 
 map<ConfigKey, ConfigValue> config_map : array(16) {
     pinned: "/sys/fs/bpf/config",
-    userspace_writable: true,
 };
 
 program simple_monitor : xdp {
@@ -741,12 +737,10 @@ map<FlowKey, FlowStats> global_flows : hash_map(10000) {
 
 map<Event> global_events : ring_buffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/global_events",
-    userspace_readable: true,
 };
 
 map<ConfigKey, ConfigValue> global_config : array(64) {
     pinned: "/sys/fs/bpf/global_config",
-    userspace_writable: true,
 };
 
 // Multiple eBPF programs working together

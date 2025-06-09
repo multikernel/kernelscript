@@ -29,13 +29,9 @@ type ebpf_map_type =
 (** Map attribute definitions *)
 type map_attribute =
   | Pinned of string
-  | ReadOnly
-  | WriteOnly
-  | UserspaceWritable
   | NoPrealloc
   | Mmapable
   | InnerMapType of ebpf_map_type
-  | Permissions of string
   | NumaNode of int
 
 (** Map configuration with eBPF-specific constraints *)
@@ -70,8 +66,6 @@ type map_operation =
 
 (** Map access pattern for optimization *)
 type access_pattern =
-  | ReadOnly
-  | WriteOnly
   | ReadWrite
   | BatchUpdate
 
@@ -156,8 +150,7 @@ let validate_map_config map_type config =
           else if not (String.contains path '/') then
             InvalidAttributes "Pinned path must be absolute"
           else check rest
-      | ReadOnly :: WriteOnly :: _ ->
-          InvalidAttributes "Cannot be both ReadOnly and WriteOnly"
+
       | NumaNode n :: rest ->
           if n < 0 then
             InvalidAttributes "NUMA node must be non-negative"
@@ -181,21 +174,12 @@ let validate_map_declaration map_decl =
 (** Map operation validation *)
 let validate_map_operation _map_decl operation access_pattern =
   match operation, access_pattern with
-  | MapLookup, ReadOnly -> Valid
   | MapLookup, ReadWrite -> Valid
-  | MapUpdate, WriteOnly -> Valid
   | MapUpdate, ReadWrite -> Valid
-  | MapDelete, WriteOnly -> Valid
   | MapDelete, ReadWrite -> Valid
-  | MapInsert, WriteOnly -> Valid
   | MapInsert, ReadWrite -> Valid
-  | MapUpsert, WriteOnly -> Valid
   | MapUpsert, ReadWrite -> Valid
-  | _, ReadOnly when operation <> MapLookup ->
-      UnsupportedOperation "Write operations not allowed on read-only maps"
-  | _, WriteOnly when operation = MapLookup ->
-      UnsupportedOperation "Read operations not allowed on write-only maps"
-  | _ -> Valid
+  | _, BatchUpdate -> Valid
 
 (** Map creation and utility functions *)
 
@@ -234,10 +218,6 @@ let ebpf_to_ast_map_type = function
 (** Convert AST map_attribute to Maps map_attribute *)
 let ast_to_maps_attribute = function
   | Ast.Pinned path -> Pinned path
-  | Ast.ReadOnly -> ReadOnly
-  | Ast.WriteOnly -> WriteOnly
-  | Ast.UserspaceWritable -> UserspaceWritable
-  | Ast.Permissions perm -> Permissions perm
 
 (** Convert AST map declaration to Maps map declaration *)
 let ast_to_maps_declaration ast_map =
@@ -267,21 +247,7 @@ let ast_to_maps_declaration ast_map =
 (** Analyze access patterns in an expression *)
 let analyze_expr_access_pattern expr =
   match expr.expr_desc with
-  | FunctionCall (name, _) when String.contains name '.' ->
-      (* Map method calls *)
-      let has_suffix suffix str = 
-        let len_str = String.length str in
-        let len_suffix = String.length suffix in
-        len_str >= len_suffix && 
-        String.sub str (len_str - len_suffix) len_suffix = suffix
-      in
-      if has_suffix "lookup" name then ReadOnly
-      else if has_suffix "update" name ||
-              has_suffix "insert" name ||
-              has_suffix "delete" name then WriteOnly
-      else ReadWrite
-  | ArrayAccess (_, _) -> ReadWrite
-  | _ -> ReadOnly
+  | FunctionCall (_, _) | ArrayAccess (_, _) | _ -> ReadWrite
 
 (** Check if a map is compatible with a program type *)
 let is_map_compatible_with_program map_type prog_type =
@@ -296,12 +262,9 @@ let is_map_compatible_with_program map_type prog_type =
 (** Get recommended map type for use case *)
 let recommend_map_type key_type _value_type usage_pattern =
   match usage_pattern with
-  | ReadOnly when key_type = U32 -> Array
   | ReadWrite when key_type = U32 -> Array
   | ReadWrite -> HashMap
   | BatchUpdate -> LruHash
-  | WriteOnly -> HashMap
-  | ReadOnly -> HashMap  (* fallback for non-u32 keys *)
 
 (** Pretty printing functions *)
 
@@ -326,13 +289,9 @@ let string_of_ebpf_map_type = function
 
 let string_of_map_attribute = function
   | Pinned path -> Printf.sprintf "pinned = \"%s\"" path
-  | ReadOnly -> "read_only"
-  | WriteOnly -> "write_only"
-  | UserspaceWritable -> "userspace_writable"
   | NoPrealloc -> "no_prealloc"
   | Mmapable -> "mmapable"
   | InnerMapType mt -> Printf.sprintf "inner_map_type = %s" (string_of_ebpf_map_type mt)
-  | Permissions perm -> Printf.sprintf "permissions = \"%s\"" perm
   | NumaNode n -> Printf.sprintf "numa_node = %d" n
 
 let string_of_map_config config =

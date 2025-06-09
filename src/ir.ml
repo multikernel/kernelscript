@@ -63,9 +63,8 @@ and ir_map_type =
   | IRHashMap | IRMapArray | IRPercpuHash | IRPercpuArray
   | IRLruHash | IRRingBuffer | IRPerfEvent | IRDevMap
 
-and ir_map_attr =
-  | ReadOnly | WriteOnly | UserspaceWritable
-  | Permissions of string
+and ir_map_attr = 
+  | Pinned of string
 
 (** Values with type and safety information *)
 and ir_value = {
@@ -341,11 +340,7 @@ let ast_map_type_to_ir_map_type = function
   | PerfEvent -> IRPerfEvent
 
 let ast_map_attr_to_ir_map_attr = function
-  | Ast.ReadOnly -> ReadOnly
-  | Ast.WriteOnly -> WriteOnly
-  | Ast.UserspaceWritable -> UserspaceWritable
-  | Ast.Permissions perm -> Permissions perm
-  | Ast.Pinned _ -> failwith "Pinned attribute handled separately"
+  | Ast.Pinned path -> Pinned path
 
 (** Pretty printing functions for debugging *)
 

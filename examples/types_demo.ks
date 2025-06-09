@@ -31,33 +31,26 @@ enum Protocol {
 }
 
 // Global map declarations with different types
-map<IpAddress, Counter> connection_count : hash_map(1024) {
-  max_entries = 1024;
-  pinned = "/sys/fs/bpf/connection_count";
-}
+map<IpAddress, Counter> connection_count : HashMap(1024) {
+  pinned: "/sys/fs/bpf/connection_count"
+};
 
-map<PacketInfo, FilterAction> packet_filter : lru_hash(512) {
-  max_entries = 512;
-  read_only;
-}
+map<PacketInfo, FilterAction> packet_filter : LruHash(512) {
+};
 
-map<u32, option PacketInfo> recent_packets : array(256) {
-  max_entries = 256;
-  userspace_writable;
-}
+map<u32, option PacketInfo> recent_packets : Array(256) {
+};
 
 // Result type for error handling
-map<u32, result PacketInfo u8> packet_cache : percpu_hash(128) {
-  max_entries = 128;
-}
+map<u32, result PacketInfo u8> packet_cache : PercpuHash(128) {
+};
 
 // Program using all the new types
 program packet_inspector : xdp {
   
   // Local map within the program
-  map<Protocol, Counter> protocol_stats : percpu_array(32) {
-    max_entries = 32;
-  }
+  map<Protocol, Counter> protocol_stats : PercpuArray(32) {
+  };
   
   fn extract_packet_info(ctx: xdp_context) -> option PacketInfo {
     // This would contain actual packet parsing logic

@@ -1,32 +1,27 @@
 // Map Operations Semantics Demo for KernelScript
 // Demonstrates advanced map operation analysis, concurrent access safety,
 // and global map sharing validation capabilities
+//
+// NOTE: This file uses advanced language features not yet implemented in KernelScript.
+
 
 // Global maps shared across programs
 map<u32, u64> global_counter : HashMap(1000) {
-    max_entries: 1000;
-    pinned: "/sys/fs/bpf/global_counter";
-}
+    pinned: "/sys/fs/bpf/global_counter"
+};
 
 map<u32, Statistics> shared_stats : LruHash(500) {
-    max_entries: 500;
-    pinned: "/sys/fs/bpf/shared_stats";
-}
+    pinned: "/sys/fs/bpf/shared_stats"
+};
 
-// Per-CPU map for high-performance scenarios
-map<u32, PerCpuData> percpu_data : PercpuHash(256) {
-    max_entries: 256;
-}
+// Per-CPU map for high-performance scenarios (using new block-less syntax)
+map<u32, PerCpuData> percpu_data : PercpuHash(256);
 
-// Ring buffer for event streaming
-map<Event, ()> event_stream : RingBuffer(1024*1024) {
-    max_entries: 262144;  // 1MB buffer
-}
+// Ring buffer for event streaming (using new block-less syntax)
+map<Event, ()> event_stream : RingBuffer(262144);  // 1MB buffer
 
-// Array map for sequential access patterns
-map<u32, ArrayElement> sequential_data : Array(128) {
-    max_entries: 128;
-}
+// Array map for sequential access patterns (using new block-less syntax)
+map<u32, ArrayElement> sequential_data : Array(128);
 
 struct Statistics {
     packet_count: u64,

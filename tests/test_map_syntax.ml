@@ -29,11 +29,11 @@ let run_test test_name test_func =
 let test_map_declaration_parsing () =
   let test_cases = [
     (* Basic HashMap *)
-    ("map<u32, u64> test_map : HashMap(1024) { }", true);
+    ("map<u32, u64> test_map : HashMap(1024) { };", true);
     (* Array map *)
-    ("map<u32, u32> array_map : Array(512) { }", true);
+    ("map<u32, u32> array_map : Array(512) { };", true);
     (* PercpuHash *)
-    ("map<u64, u64> percpu_map : PercpuHash(256) { }", true);
+    ("map<u64, u64> percpu_map : PercpuHash(256) { };", true);
     (* Invalid syntax - wrong order *)
     ("map bad_map : HashMap<u32, u64>(1024) { }", false);
     (* Invalid syntax - missing max_entries *)
@@ -48,6 +48,219 @@ let test_map_declaration_parsing () =
     with
     | _ -> not should_succeed
   ) test_cases
+
+(** Test new block-less map declaration syntax *)
+let test_blockless_map_declaration () =
+  let test_cases = [
+    (* Basic block-less HashMap *)
+    ("map<u32, u64> simple_map : HashMap(1024);", true);
+    (* Block-less Array *)
+    ("map<u32, u32> array_map : Array(512);", true);
+    (* Block-less PercpuHash *)
+    ("map<u64, u64> percpu_map : PercpuHash(256);", true);
+    (* Block-less LruHash *)
+    ("map<u32, u64> lru_map : LruHash(128);", true);
+    (* Invalid - missing semicolon *)
+    ("map<u32, u64> invalid_map : HashMap(1024)", false);
+    (* Invalid - missing semicolon with block *)
+    ("map<u32, u64> invalid_map : HashMap(1024) { }", false);
+  ] in
+  
+  List.for_all (fun (code, should_succeed) ->
+    try
+      let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" code in
+      let _ = parse_string program in
+      should_succeed
+    with
+    | _ -> not should_succeed
+  ) test_cases
+
+(** Test map declarations with attributes *)
+let test_map_attributes_syntax () =
+  let test_cases = [
+    (* Map with pinned attribute *)
+    ("map<u32, u64> pinned_map : HashMap(1024) {\n    pinned: \"/sys/fs/bpf/test_map\"\n};", true);
+    (* Map with pinned attribute (single line) *)
+    ("map<u32, u64> pinned_map : HashMap(1024) { pinned: \"/path\" };", true);
+    (* Empty block *)
+    ("map<u32, u64> empty_map : HashMap(1024) { };", true);
+    (* Map with multiline empty block *)
+    ("map<u32, u64> multiline_map : HashMap(1024) {\n};", true);
+    (* Invalid attribute *)
+    ("map<u32, u64> invalid_map : HashMap(1024) { invalid_attr: \"value\" };", false);
+    (* Invalid max_entries in block *)
+    ("map<u32, u64> invalid_map : HashMap(1024) { max_entries: 512 };", false);
+  ] in
+  
+  List.for_all (fun (code, should_succeed) ->
+    try
+      let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" code in
+      let _ = parse_string program in
+      should_succeed
+    with
+    | _ -> not should_succeed
+  ) test_cases
+
+(** Test comprehensive map syntax variations *)
+let test_comprehensive_map_syntax () =
+  let program = {|
+// Block-less maps
+map<u32, u64> simple_counter : HashMap(512);
+map<u32, u32> lookup_array : Array(256);
+map<u64, u64> percpu_stats : PercpuHash(128);
+
+// Maps with empty blocks
+map<u32, u64> empty_block_map : HashMap(1024) { };
+map<u32, u32> multiline_empty : LruHash(256) {
+};
+
+// Maps with attributes
+map<u32, u64> pinned_global : HashMap(2048) {
+    pinned: "/sys/fs/bpf/global_map"
+};
+
+map<u32, u64> pinned_local : HashMap(512) {
+    pinned: "/sys/fs/bpf/local_map"
+};
+
+program test_syntax : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    // Test all map types can be used
+    simple_counter[42] = 100;
+    lookup_array[10] = 200;
+    percpu_stats[123] = 300;
+    empty_block_map[1] = 400;
+    multiline_empty[2] = 500;
+    pinned_global[3] = 600;
+    pinned_local[4] = 700;
+    
+    return 2;
+  }
+}
+|} in
+  try
+    let _ = parse_string program in
+    true
+  with
+  | _ -> false
+
+(** Test map syntax type checking *)
+let test_new_syntax_type_checking () =
+  let program = {|
+map<u32, u64> blockless_map : HashMap(512);
+map<u32, u64> pinned_map : HashMap(1024) {
+    pinned: "/sys/fs/bpf/test"
+};
+
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    // Test type checking works with new syntax
+    let key: u32 = 42;
+    let value1: u64 = blockless_map[key];
+    let value2: u64 = pinned_map[key];
+    
+    blockless_map[key] = value1 + 1;
+    pinned_map[key] = value2 + 1;
+    
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program in
+    let _ = type_check_ast ast in
+    true
+  with
+  | _ -> false
+
+(** Test IR generation with new syntax *)
+let test_new_syntax_ir_generation () =
+  let program = {|
+map<u32, u64> simple_map : HashMap(512);
+map<u32, u64> attr_map : HashMap(1024) {
+    pinned: "/sys/fs/bpf/test_map"
+};
+
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    simple_map[42] = 100;
+    attr_map[42] = 200;
+    
+    let val1 = simple_map[42];
+    let val2 = attr_map[42];
+    
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    true
+  with
+  | _ -> false
+
+(** Test C code generation with new syntax *)
+let test_new_syntax_c_generation () =
+  let program = {|
+map<u32, u64> blockless_counter : HashMap(512);
+map<u32, u64> pinned_stats : HashMap(1024) {
+    pinned: "/sys/fs/bpf/stats"
+};
+
+program counter : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let key = 42;
+    blockless_counter[key] = blockless_counter[key] + 1;
+    pinned_stats[key] = pinned_stats[key] + 1;
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let typed_programs = type_check_ast ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
+    
+    (* Verify both maps are generated *)
+    let has_blockless = string_contains_substring c_code "blockless_counter" in
+    let has_pinned = string_contains_substring c_code "pinned_stats" in
+    let has_map_ops = string_contains_substring c_code "bpf_map_lookup_elem" &&
+                     string_contains_substring c_code "bpf_map_update_elem" in
+    
+    has_blockless && has_pinned && has_map_ops
+  with
+  | _ -> false
+
+(** Test error cases for new syntax *)
+let test_new_syntax_error_cases () =
+  let invalid_cases = [
+    (* Missing semicolon in block-less *)
+    "map<u32, u64> invalid : HashMap(512)";
+    (* Missing semicolon with block *)
+    "map<u32, u64> invalid : HashMap(512) { }";
+    (* Invalid attribute *)
+    "map<u32, u64> invalid : HashMap(512) { invalid_attr: \"val\" };";
+    (* max_entries in attributes *)
+    "map<u32, u64> invalid : HashMap(512) { max_entries: 1024 };";
+    (* Permission attributes (should be rejected) *)
+    "map<u32, u64> invalid : HashMap(512) { read_only: \"true\" };";
+  ] in
+  
+  List.for_all (fun invalid_code ->
+    try
+      let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" invalid_code in
+      let _ = parse_string program in
+      false  (* Should have failed *)
+    with
+    | _ -> true  (* Expected to fail *)
+  ) invalid_cases
 
 (** Test map operations parsing *)
 let test_map_operations_parsing () =
@@ -64,7 +277,7 @@ let test_map_operations_parsing () =
   
   List.for_all (fun (code, should_succeed) ->
     try
-      let program = Printf.sprintf "map<u32, u64> my_map : HashMap(1024) { }\nprogram test : xdp { fn main() -> u32 { %s return 0; } }" code in
+      let program = Printf.sprintf "map<u32, u64> my_map : HashMap(1024) { };\nprogram test : xdp { fn main() -> u32 { %s return 0; } }" code in
       let _ = parse_string program in
       should_succeed
     with
@@ -75,7 +288,7 @@ let test_map_operations_parsing () =
 let test_complete_map_program_parsing () =
   let program = {|
 map<u32, u64> packet_counts : HashMap(1024) {
-}
+};
 
 program rate_limiter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -102,7 +315,7 @@ program rate_limiter : xdp {
 let test_map_type_checking () =
   let program = {|
 map<u32, u64> test_map : HashMap(1024) {
-}
+};
 
 program test : xdp {
   fn main() -> u32 {
@@ -125,7 +338,7 @@ let test_map_type_validation () =
   let test_cases = [
     (* Valid: u32 key with u32 access *)
     ({|
-map<u32, u64> valid_map : HashMap(1024) { }
+map<u32, u64> valid_map : HashMap(1024) { };
 program test : xdp {
   fn main() -> u32 {
     let key: u32 = 42;
@@ -137,7 +350,7 @@ program test : xdp {
     
     (* Invalid: string key with u32 map *)
     ({|
-map<u32, u64> invalid_map : HashMap(1024) { }
+map<u32, u64> invalid_map : HashMap(1024) { };
 program test : xdp {
   fn main() -> u32 {
     let key = "invalid";
@@ -162,7 +375,7 @@ program test : xdp {
 let test_map_identifier_resolution () =
   let program = {|
 map<u32, u64> global_map : HashMap(1024) {
-}
+};
 
 program test : xdp {
   fn main() -> u32 {
@@ -194,7 +407,7 @@ program test : xdp {
 let test_map_ir_generation () =
   let program = {|
 map<u32, u64> test_map : HashMap(1024) {
-}
+};
 
 program test : xdp {
   fn main() -> u32 {
@@ -222,7 +435,7 @@ program test : xdp {
 let test_map_c_generation () =
   let program = {|
 map<u32, u64> packet_counter : HashMap(1024) {
-}
+};
 
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -266,7 +479,7 @@ let test_different_map_types () =
   List.for_all (fun (ks_type, c_type) ->
     let program = Printf.sprintf {|
 map<u32, u64> test_map : %s(1024) {
-}
+};
 
 program test : xdp {
   fn main() -> u32 {
@@ -296,6 +509,13 @@ let () =
   Printf.printf "=== Map Syntax and Operations Test Suite ===\n\n";
   
   run_test "Map declaration parsing" test_map_declaration_parsing;
+  run_test "Block-less map declarations" test_blockless_map_declaration;
+  run_test "Map attributes syntax" test_map_attributes_syntax;
+  run_test "Comprehensive map syntax" test_comprehensive_map_syntax;
+  run_test "New syntax type checking" test_new_syntax_type_checking;
+  run_test "New syntax IR generation" test_new_syntax_ir_generation;
+  run_test "New syntax C generation" test_new_syntax_c_generation;
+  run_test "New syntax error cases" test_new_syntax_error_cases;
   run_test "Map operations parsing" test_map_operations_parsing;
   run_test "Complete map program parsing" test_complete_map_program_parsing;
   run_test "Map type checking" test_map_type_checking;

@@ -10,42 +10,35 @@ struct PacketStats {
   count: Counter;
   total_bytes: u64;
   last_seen: u64;
-}
+};
 
 // Global maps with different configurations
 
 // 1. Simple array map for per-CPU counters
-map<u32, Counter> cpu_counters : array(256) {
-  max_entries = 256;
-  pinned = "/sys/fs/bpf/cpu_counters";
-}
+map<u32, Counter> cpu_counters : Array(256) {
+  pinned: "/sys/fs/bpf/cpu_counters"
+};
 
 // 2. Hash map for IP address tracking with attributes
-map<IpAddress, PacketStats> ip_stats : hash_map(10000) {
-  max_entries = 10000;
-  pinned = "/sys/fs/bpf/ip_tracking";
-  userspace_writable;
-}
+map<IpAddress, PacketStats> ip_stats : HashMap(10000) {
+  pinned: "/sys/fs/bpf/ip_tracking"
+};
 
 // 3. LRU hash map for recent connections
-map<IpAddress, u64> recent_connections : lru_hash(1000) {
-  max_entries = 1000;
-  read_only;
-}
+map<IpAddress, u64> recent_connections : LruHash(1000) {
+};
 
 // 4. Ring buffer for event logging
-map<u32, u8> event_log : ring_buffer(65536) {
-  max_entries = 65536;
-  pinned = "/sys/fs/bpf/events";
-}
+map<u32, u8> event_log : RingBuffer(65536) {
+  pinned: "/sys/fs/bpf/events"
+};
 
 // XDP program demonstrating map usage
 program packet_analyzer : xdp {
   
   // Local map for program-specific data
-  map<u32, u32> local_state : hash_map(100) {
-    max_entries = 100;
-  }
+  map<u32, u32> local_state : HashMap(100) {
+  };
   
   fn main(ctx: xdp_context) -> xdp_action {
     // Get packet information
@@ -72,48 +65,47 @@ program packet_analyzer : xdp {
           last_seen: get_timestamp()
         };
         ip_stats.insert(src_ip, new_stats);
-      }
-    }
+      };
+    };
     
     // Check recent connections
     let recent = recent_connections.lookup(src_ip);
     if recent.is_some() {
       // Log repeated connection
       event_log.insert(0, 1);
-    }
+    };
     
     // Update local state
     local_state[0] = local_state[0] + 1;
     
     return xdp_action::Pass;
-  }
+  };
   
   // Helper functions (would be implemented in stdlib)
   fn get_src_ip(ctx: xdp_context) -> IpAddress {
     return 0x7f000001; // 127.0.0.1 for demo
-  }
+  };
   
   fn get_packet_len(ctx: xdp_context) -> PacketSize {
     return 64; // Demo packet size
-  }
+  };
   
   fn get_cpu_id() -> u32 {
     return 0; // Demo CPU ID
-  }
+  };
   
   fn get_timestamp() -> u64 {
     return 1234567890; // Demo timestamp
-  }
+  };
 }
 
 // TC program demonstrating different map usage patterns
 program traffic_shaper : tc {
   
   // Per-CPU array for bandwidth tracking
-  map<u32, u64> bandwidth_usage : percpu_array(256) {
-    max_entries = 256;
-    pinned = "/sys/fs/bpf/bandwidth";
-  }
+  map<u32, u64> bandwidth_usage : PercpuArray(256) {
+    pinned: "/sys/fs/bpf/bandwidth"
+  };
   
   fn main(ctx: tc_context) -> tc_action {
     let cpu = get_cpu_id();
@@ -125,12 +117,12 @@ program traffic_shaper : tc {
     // Simple rate limiting logic
     if bandwidth_usage[cpu] > 1000000 {
       return tc_action::Drop;
-    }
+    };
     
     return tc_action::Ok;
-  }
+  };
   
   fn get_packet_len(ctx: tc_context) -> u64 {
     return 128; // Demo packet size
-  }
+  };
 } 

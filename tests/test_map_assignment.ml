@@ -36,10 +36,10 @@ let test_index_assignment_parsing () =
   
   List.for_all (fun (stmt, should_succeed) ->
     let program = Printf.sprintf {|
-map<u32, u64> my_map : HashMap(1024) { }
-map<u32, u32> other_map : HashMap(512) { }
-map<u32, u32> array_map : Array(256) { }
-map<u32, u64> packet_counts : HashMap(1024) { }
+map<u32, u64> my_map : HashMap(1024) { };
+map<u32, u32> other_map : HashMap(512) { };
+map<u32, u32> array_map : Array(256) { };
+map<u32, u64> packet_counts : HashMap(1024) { };
 
 program test : xdp {
   fn compute_value() -> u64 { return 42; }
@@ -62,7 +62,7 @@ program test : xdp {
 (** Test AST structure for IndexAssignment *)
 let test_index_assignment_ast () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program test : xdp {
   fn main() -> u32 {
@@ -101,7 +101,7 @@ program test : xdp {
 (** Test type checking for IndexAssignment *)
 let test_index_assignment_type_checking () =
   let valid_program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program test : xdp {
   fn main() -> u32 {
@@ -114,7 +114,7 @@ program test : xdp {
 |} in
   
   let invalid_program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program test : xdp {
   fn main() -> u32 {
@@ -142,7 +142,7 @@ program test : xdp {
 (** Test typed AST structure for IndexAssignment *)
 let test_typed_index_assignment () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program test : xdp {
   fn main() -> u32 {
@@ -174,7 +174,7 @@ program test : xdp {
 (** Test IR generation for IndexAssignment *)
 let test_index_assignment_ir () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program test : xdp {
   fn main() -> u32 {
@@ -216,8 +216,8 @@ program test : xdp {
 (** Test complex IndexAssignment scenarios *)
 let test_complex_index_assignment () =
   let program = {|
-map<u32, u64> packet_counts : HashMap(1024) { }
-map<u32, u64> user_limits : HashMap(512) { }
+map<u32, u64> packet_counts : HashMap(1024) { };
+map<u32, u64> user_limits : HashMap(512) { };
 
 program rate_limiter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -265,7 +265,7 @@ program rate_limiter : xdp {
 (** Test symbol table processing of IndexAssignment *)
 let test_symbol_table_index_assignment () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program test : xdp {
   fn main() -> u32 {

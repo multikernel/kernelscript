@@ -45,8 +45,6 @@ and bpf_type =
 (** Map configuration and attributes *)
 type map_attribute =
   | Pinned of string
-  | ReadOnly | WriteOnly | UserspaceWritable
-  | Permissions of string
 
 type map_config = {
   max_entries: int;
@@ -414,10 +412,6 @@ let string_of_declaration = function
       let attr_strs = List.map (fun attr ->
         match attr with
         | Pinned path -> Printf.sprintf "pinned = \"%s\"" path
-        | ReadOnly -> "read_only"
-        | WriteOnly -> "write_only" 
-        | UserspaceWritable -> "userspace_writable"
-        | Permissions perm -> Printf.sprintf "permissions = \"%s\"" perm
       ) md.config.attributes in
       let config_str = Printf.sprintf "max_entries = %d" md.config.max_entries in
       let all_config = config_str :: attr_strs in

@@ -62,7 +62,7 @@
 %type <Ast.userspace_config_item list> userspace_config_items
 %type <Ast.userspace_config_item> userspace_config_item
 %type <Ast.map_type> map_type
-%type <Ast.map_config> map_config
+
 %type <Ast.map_attribute list> map_attributes
 %type <Ast.map_attribute> map_attribute
 
@@ -287,13 +287,19 @@ array_access:
 
 /* Map Declarations */
 map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN SEMICOLON
+    { let config = make_map_config $11 [] in
+      make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE SEMICOLON
     { let config = make_map_config $11 $14 in
       make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
 
 /* Local Map Declarations (inside program blocks) */
 local_map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN SEMICOLON
+    { let config = make_map_config $11 [] in
+      make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE SEMICOLON
     { let config = make_map_config $11 $14 in
       make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
 
@@ -310,28 +316,27 @@ map_type:
       | unknown -> failwith ("Unknown map type: " ^ unknown)
     }
 
-map_config:
-  | IDENTIFIER COLON INT SEMICOLON map_attributes { 
-      if $1 = "max_entries" then make_map_config $3 $5
-      else failwith ("Unknown map config field: " ^ $1)
-    }
+
 
 map_attributes:
   | /* empty */ { [] }
-  | map_attribute SEMICOLON map_attributes { $1 :: $3 }
+  | map_attribute { [$1] }
+  | map_attribute COMMA map_attributes { $1 :: $3 }
 
 map_attribute:
   | IDENTIFIER COLON STRING { 
       match $1 with
       | "pinned" -> Pinned $3
-      | "permissions" -> Permissions $3
+      | "max_entries" -> failwith "max_entries should be specified in map type declaration (e.g., HashMap(1024)), not in attributes block"
+      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
+    }
+  | IDENTIFIER COLON INT { 
+      match $1 with
+      | "max_entries" -> failwith "max_entries should be specified in map type declaration (e.g., HashMap(1024)), not in attributes block"
       | unknown -> failwith ("Unknown map attribute: " ^ unknown)
     }
   | IDENTIFIER { 
       match $1 with
-      | "read_only" -> ReadOnly
-      | "write_only" -> WriteOnly
-      | "userspace_writable" -> UserspaceWritable
       | unknown -> failwith ("Unknown map attribute: " ^ unknown)
     }
 

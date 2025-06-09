@@ -26,10 +26,10 @@ let string_contains_substring s sub =
 let test_complete_map_compilation () =
   let program = {|
 map<u32, u64> packet_counts : HashMap(1024) {
-}
+};
 
 map<u32, u64> rate_limits : HashMap(512) {
-}
+};
 
 program rate_limiter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -90,9 +90,9 @@ program rate_limiter : xdp {
 (** Test multiple map types in one program *)
 let test_multiple_map_types () =
   let program = {|
-map<u32, u64> hash_map : HashMap(1024) { }
-map<u32, u32> array_map : Array(256) { }
-map<u64, u64> percpu_map : PercpuHash(512) { }
+map<u32, u64> hash_map : HashMap(1024) { };
+map<u32, u32> array_map : Array(256) { };
+map<u64, u64> percpu_map : PercpuHash(512) { };
 
 program multi_map : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -135,7 +135,7 @@ let test_invalid_map_operations () =
   let test_cases = [
     (* Invalid key type *)
     {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 program test : xdp {
   fn main() -> u32 {
     test_map["invalid_key"] = 100;
@@ -146,7 +146,7 @@ program test : xdp {
     
     (* Invalid value type *)
     {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 program test : xdp {
   fn main() -> u32 {
     test_map[42] = "invalid_value";
@@ -180,8 +180,8 @@ program test : xdp {
 (** Test map operations with complex expressions *)
 let test_complex_map_expressions () =
   let program = {|
-map<u32, u64> counters : HashMap(1024) { }
-map<u32, u64> multipliers : HashMap(512) { }
+map<u32, u64> counters : HashMap(1024) { };
+map<u32, u64> multipliers : HashMap(512) { };
 
 program complex_ops : xdp {
   fn compute_key(base: u32) -> u32 {
@@ -232,8 +232,8 @@ program complex_ops : xdp {
 (** Test map operations in conditional statements *)
 let test_map_operations_in_conditionals () =
   let program = {|
-map<u32, u64> packet_counts : HashMap(1024) { }
-map<u32, u32> blacklist : HashMap(256) { }
+map<u32, u64> packet_counts : HashMap(1024) { };
+map<u32, u32> blacklist : HashMap(256) { };
 
 program conditional_maps : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -290,7 +290,7 @@ program conditional_maps : xdp {
 (** Test memory safety of generated C code *)
 let test_memory_safety () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) { }
+map<u32, u64> test_map : HashMap(1024) { };
 
 program memory_safe : xdp {
   fn main(ctx: XdpContext) -> XdpAction {

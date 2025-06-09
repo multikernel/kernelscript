@@ -316,7 +316,6 @@ let test_map_declarations () =
   (* Test map configuration *)
   let config = make_map_config 1024 ~key_size:4 ~value_size:8 [
     Pinned "/sys/fs/bpf/my_map";
-    ReadOnly;
   ] in
   
   (* Test map declaration *)
@@ -329,7 +328,6 @@ let test_map_declarations () =
     "hash_map";
     "max_entries = 1024";
     "pinned = \"/sys/fs/bpf/my_map\"";
-    "read_only";
   ] in
   
   let all_found = List.for_all (fun part ->
