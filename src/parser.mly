@@ -13,7 +13,7 @@
 %token <bool> BOOL_LIT
 
 /* Keywords */
-%token PROGRAM FN MAP TYPE STRUCT ENUM
+%token PROGRAM FN MAP TYPE STRUCT ENUM TARGETS
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET MUT PUB PRIV CONFIG USERSPACE
@@ -48,11 +48,23 @@
 %type <Ast.program_def> program_declaration
 %type <Ast.program_type> program_type
 %type <Ast.map_declaration> map_declaration
+%type <Ast.function_def list * Ast.userspace_block option> program_items
+%type <Ast.function_def list * Ast.userspace_block option> program_item
+%type <Ast.userspace_block> userspace_block
+%type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_body
+%type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_item
+%type <Ast.struct_def> struct_declaration
+%type <(string * Ast.bpf_type) list> struct_fields
+%type <string * Ast.bpf_type> struct_field
+%type <Ast.userspace_config> userspace_config
+%type <string list> string_list
+%type <Ast.userspace_config_item list> userspace_config_items
+%type <Ast.userspace_config_item> userspace_config_item
 %type <Ast.map_type> map_type
 %type <Ast.map_config> map_config
 %type <Ast.map_attribute list> map_attributes
 %type <Ast.map_attribute> map_attribute
-%type <Ast.function_def list> function_list
+
 %type <Ast.function_def> function_declaration
 %type <Ast.bpf_type option> function_return_type
 %type <(string * Ast.bpf_type) list> parameter_list
@@ -96,10 +108,11 @@ declaration:
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
 
-/* Program declaration: program name : type { functions } */
+/* Program declaration: program name : type { program_items } */
 program_declaration:
-  | PROGRAM IDENTIFIER COLON program_type LBRACE function_list RBRACE
-    { make_program $2 $4 $6 (make_pos ()) }
+  | PROGRAM IDENTIFIER COLON program_type LBRACE program_items RBRACE
+    { let functions, userspace = $6 in
+      make_program $2 $4 functions ?userspace (make_pos ()) }
 
 program_type:
   | IDENTIFIER { 
@@ -113,9 +126,22 @@ program_type:
       | unknown -> failwith ("Unknown program type: " ^ unknown)
     }
 
-function_list:
-  | /* empty */ { [] }
-  | function_declaration function_list { $1 :: $2 }
+program_items:
+  | /* empty */ { ([], None) }
+  | program_item program_items 
+    { let functions1, userspace1 = $1 in
+      let functions2, userspace2 = $2 in
+      let combined_functions = functions1 @ functions2 in
+      let combined_userspace = match userspace1, userspace2 with
+        | None, None -> None
+        | Some us, None | None, Some us -> Some us
+        | Some _, Some _ -> failwith "Multiple userspace blocks not allowed"
+      in
+      (combined_functions, combined_userspace) }
+
+program_item:
+  | function_declaration { ([$1], None) }
+  | userspace_block { ([], Some $1) }
 
 /* Function declaration: fn name(params) -> return_type { body } */
 function_declaration:
@@ -298,5 +324,54 @@ map_attribute:
       | "userspace_writable" -> UserspaceWritable
       | unknown -> failwith ("Unknown map attribute: " ^ unknown)
     }
+
+/* Userspace blocks */
+
+userspace_block:
+  | USERSPACE LBRACE userspace_body RBRACE
+    { let functions, structs, configs = $3 in
+      make_userspace_block functions structs configs (make_pos ()) }
+
+userspace_body:
+  | /* empty */ { ([], [], []) }
+  | userspace_item userspace_body
+    { let funcs1, structs1, configs1 = $1 in
+      let funcs2, structs2, configs2 = $2 in
+      (funcs1 @ funcs2, structs1 @ structs2, configs1 @ configs2) }
+
+userspace_item:
+  | function_declaration { ([$1], [], []) }
+  | struct_declaration { ([], [$1], []) }
+  | userspace_config { ([], [], [$1]) }
+
+struct_declaration:
+  | STRUCT IDENTIFIER LBRACE struct_fields RBRACE
+    { make_struct_def $2 $4 (make_pos ()) }
+
+struct_fields:
+  | /* empty */ { [] }
+  | struct_field COMMA struct_fields { $1 :: $3 }
+  | struct_field { [$1] }
+
+struct_field:
+  | IDENTIFIER COLON bpf_type { ($1, $3) }
+
+userspace_config:
+  | TARGETS COLON LBRACKET string_list RBRACKET COMMA
+    { TargetsConfig $4 }
+  | IDENTIFIER LBRACE userspace_config_items RBRACE
+    { CustomConfig ($1, $3) }
+
+string_list:
+  | /* empty */ { [] }
+  | STRING COMMA string_list { $1 :: $3 }
+  | STRING { [$1] }
+
+userspace_config_items:
+  | /* empty */ { [] }
+  | userspace_config_item userspace_config_items { $1 :: $2 }
+
+userspace_config_item:
+  | IDENTIFIER COLON literal COMMA { make_userspace_config_item $1 $3 }
 
 %% 

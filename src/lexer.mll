@@ -61,6 +61,7 @@
     | "type" -> TYPE
     | "struct" -> STRUCT
     | "enum" -> ENUM
+    | "targets" -> TARGETS
     (* Program types are now parsed as identifiers and resolved semantically *)
     | "u8" -> U8
     | "u16" -> U16

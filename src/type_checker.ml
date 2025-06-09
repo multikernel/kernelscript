@@ -608,22 +608,46 @@ let typed_function_to_function tfunc =
     func_body = List.map typed_stmt_to_stmt tfunc.tfunc_body;
     func_pos = tfunc.tfunc_pos }
 
-let typed_program_to_program tprog =
+let typed_program_to_program tprog original_prog =
   { prog_name = tprog.tprog_name;
     prog_type = tprog.tprog_type;
     prog_functions = List.map typed_function_to_function tprog.tprog_functions;
+    prog_userspace = original_prog.prog_userspace; (* Preserve userspace from original *)
     prog_pos = tprog.tprog_pos }
 
 (** Convert typed AST back to annotated AST declarations *)
 let typed_ast_to_annotated_ast typed_ast original_ast =
-  let annotated_programs = List.map typed_program_to_program typed_ast in
+  (* Create a mapping of original programs by name *)
+  let original_programs = List.fold_left (fun acc decl ->
+    match decl with
+    | Program prog -> (prog.prog_name, prog) :: acc
+    | _ -> acc
+  ) [] original_ast in
   
-  (* Reconstruct the declarations list, preserving non-program declarations from original *)
+  let annotated_programs = List.map (fun tprog ->
+    (* Find corresponding original program *)
+    let original_prog = try 
+      List.assoc tprog.tprog_name original_programs
+    with Not_found -> 
+      failwith ("No original program found for " ^ tprog.tprog_name)
+    in
+    typed_program_to_program tprog original_prog
+  ) typed_ast in
+  
+  (* Create a mapping of annotated programs by name *)
+  let annotated_prog_map = List.fold_left (fun acc prog ->
+    (prog.prog_name, prog) :: acc
+  ) [] annotated_programs in
+  
+  (* Reconstruct the declarations list, preserving order and non-program declarations *)
   List.map (function
-    | Program _ -> 
-        (* Find corresponding typed program *)
-        (match annotated_programs with
-         | prog :: _ -> Program prog  (* Take first program for now *)
-         | [] -> failwith "No typed program found")
+    | Program orig_prog -> 
+        (* Find corresponding annotated program *)
+        let annotated_prog = try
+          List.assoc orig_prog.prog_name annotated_prog_map
+        with Not_found ->
+          failwith ("No annotated program found for " ^ orig_prog.prog_name)
+        in
+        Program annotated_prog
     | other_decl -> other_decl  (* Keep maps, types, etc. unchanged *)
   ) original_ast 

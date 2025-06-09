@@ -54,6 +54,7 @@ let create_test_program () =
     functions = [helper_func];
     main_function = main_func;
     userspace_bindings = [];
+    userspace_block = None;
     ir_pos = { line = 1; column = 1; filename = "test" };
   }
 

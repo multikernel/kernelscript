@@ -17,6 +17,7 @@ type ir_program = {
   functions: ir_function list;
   main_function: ir_function;
   userspace_bindings: ir_userspace_binding list;
+  userspace_block: Ast.userspace_block option; (* Original userspace block for code generation *)
   ir_pos: ir_position;
 }
 
@@ -282,7 +283,7 @@ let make_ir_map_def name key_type value_type map_type max_entries
 }
 
 let make_ir_program name prog_type global_maps local_maps functions main_function 
-                    ?(userspace_bindings = []) pos = {
+                    ?(userspace_bindings = []) ?userspace_block pos = {
   name;
   program_type = prog_type;
   global_maps;
@@ -290,6 +291,7 @@ let make_ir_program name prog_type global_maps local_maps functions main_functio
   functions;
   main_function;
   userspace_bindings;
+  userspace_block;
   ir_pos = pos;
 }
 

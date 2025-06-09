@@ -270,12 +270,12 @@ let test_extended_types () =
 (** Test type definitions *)
 let test_type_definitions () =
   (* Test struct definition *)
-  let struct_def = make_struct_def "PacketInfo" [
+  let struct_def = StructDef ("PacketInfo", [
     ("src_ip", U32);
     ("dst_ip", U32);
     ("protocol", U8);
     ("payload_len", U16);
-  ] in
+  ]) in
   let struct_str = string_of_declaration (TypeDef struct_def) in
   
   (* Test enum definition *)
@@ -375,11 +375,11 @@ let test_comprehensive_type_system () =
   let pos = make_position 1 1 "comprehensive_test.ks" in
   
   (* Create a comprehensive AST with all new features *)
-  let struct_def = TypeDef (make_struct_def "PacketInfo" [
+  let struct_def = TypeDef (StructDef ("PacketInfo", [
     ("src_ip", U32);
     ("dst_ip", U32);
     ("protocol", U8);
-  ]) in
+  ])) in
   
   let enum_def = TypeDef (make_enum_def "FilterAction" [
     ("Allow", Some 0);

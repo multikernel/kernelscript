@@ -124,11 +124,35 @@ type function_def = {
   func_pos: position;
 }
 
+(** Userspace section - contains userspace companion code *)
+type userspace_block = {
+  userspace_functions: function_def list;
+  userspace_structs: struct_def list;
+  userspace_configs: userspace_config list;
+  userspace_pos: position;
+}
+
+and struct_def = {
+  struct_name: string;
+  struct_fields: (string * bpf_type) list;
+  struct_pos: position;
+}
+
+and userspace_config = 
+  | TargetsConfig of string list (* targets: ["c", "rust"] *)
+  | CustomConfig of string * userspace_config_item list (* custom_name { key: value, ... } *)
+
+and userspace_config_item = {
+  config_key: string;
+  config_value: literal;
+}
+
 (** Program definition *)
 type program_def = {
   prog_name: string;
   prog_type: program_type;
   prog_functions: function_def list;
+  prog_userspace: userspace_block option;
   prog_pos: position;
 }
 
@@ -158,16 +182,17 @@ let make_function name params return_type body pos = {
   func_pos = pos;
 }
 
-let make_program name prog_type functions pos = {
+let make_program name prog_type functions ?userspace pos = {
   prog_name = name;
   prog_type = prog_type;
   prog_functions = functions;
+  prog_userspace = userspace;
   prog_pos = pos;
 }
 
 let make_type_def def = def
 
-let make_struct_def name fields = StructDef (name, fields)
+
 
 let make_enum_def name values = EnumDef (name, values)
 
@@ -188,6 +213,24 @@ let make_map_declaration name key_type value_type map_type config is_global pos 
   config;
   is_global;
   map_pos = pos;
+}
+
+let make_userspace_block functions structs configs pos = {
+  userspace_functions = functions;
+  userspace_structs = structs;
+  userspace_configs = configs;
+  userspace_pos = pos;
+}
+
+let make_struct_def name fields pos = {
+  struct_name = name;
+  struct_fields = fields;
+  struct_pos = pos;
+}
+
+let make_userspace_config_item key value = {
+  config_key = key;
+  config_value = value;
 }
 
 (** Pretty-printing functions for debugging *)

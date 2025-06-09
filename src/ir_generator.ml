@@ -618,24 +618,108 @@ let lower_map_declaration map_decl =
     ?pin_path:pin_path
     map_decl.map_pos
 
-(** Generate userspace bindings for a program *)
-let generate_userspace_bindings _prog_def maps =
-  let map_wrappers = List.map (fun map_def ->
-    {
-      wrapper_map_name = map_def.map_name;
-      operations = [OpLookup; OpUpdate; OpDelete];
-      safety_checks = true;
-    }
-  ) maps in
-  
-  let c_bindings = {
-    language = C;
-    map_wrappers;
-    event_handlers = [];
-    config_structs = [];
-  } in
-  
-  [c_bindings]
+(** Generate userspace bindings from userspace block *)
+let generate_userspace_bindings_from_block prog_def userspace_block maps =
+  match userspace_block with
+  | None -> 
+    (* Default bindings when no userspace block is specified *)
+    let map_wrappers = List.map (fun map_def ->
+      let operations = match map_def.map_type with
+        | IRRingBuffer | IRPerfEvent -> [OpLookup; OpUpdate] (* Event maps *)
+        | _ -> [OpLookup; OpUpdate; OpDelete; OpIterate] (* Regular maps *)
+      in
+      {
+        wrapper_map_name = map_def.map_name;
+        operations;
+        safety_checks = true;
+      }
+    ) maps in
+    
+    let config_structs = [{
+      struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
+      fields = [("debug_level", IRU32); ("max_events", IRU32)];
+      serialization = Json;
+    }] in
+    
+    [{
+      language = C;
+      map_wrappers;
+      event_handlers = [];
+      config_structs;
+    }]
+    
+  | Some userspace ->
+    (* Validate that userspace block contains a main() function *)
+    let has_main = List.exists (fun (func : Ast.function_def) ->
+      func.func_name = "main"
+    ) userspace.userspace_functions in
+    
+    if not has_main then
+      failwith "Userspace block must contain a main() function";
+    
+    (* Generate bindings based on userspace block specification *)
+    (* For now, generate default map wrappers for all maps *)
+    let map_wrappers = List.map (fun map_def ->
+      let operations = match map_def.map_type with
+        | IRRingBuffer | IRPerfEvent -> [OpLookup; OpUpdate] (* Event maps *)
+        | _ -> [OpLookup; OpUpdate; OpDelete; OpIterate] (* Regular maps *)
+      in
+      {
+        wrapper_map_name = map_def.map_name;
+        operations;
+        safety_checks = true;
+      }
+    ) maps in
+    
+    (* Convert userspace structs to config structs *)
+    let config_structs = List.map (fun struct_def ->
+      let fields = List.map (fun (name, ast_type) ->
+        (name, ast_type_to_ir_type ast_type)
+      ) struct_def.struct_fields in
+      {
+        struct_name = struct_def.struct_name;
+        fields;
+        serialization = Json;
+      }
+    ) userspace.userspace_structs in
+    
+    (* Add default config struct if none provided *)
+    let final_config_structs = 
+      if config_structs = [] then
+        [{
+          struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
+          fields = [("debug_level", IRU32); ("max_events", IRU32)];
+          serialization = Json;
+        }]
+      else config_structs
+    in
+    
+    (* Determine target languages from userspace configs *)
+    let target_languages = List.fold_left (fun acc config ->
+      match config with
+      | Ast.TargetsConfig targets ->
+        List.fold_left (fun acc_lang target ->
+          let lang = match target with
+            | "c" -> C
+            | "rust" -> Rust
+            | "go" -> Go
+            | "python" -> Python
+            | _ -> C (* default *)
+          in
+          if List.mem lang acc_lang then acc_lang else lang :: acc_lang
+        ) acc targets
+      | _ -> acc
+    ) [C] userspace.userspace_configs in
+    
+    (* Generate bindings for each target language *)
+    List.map (fun language ->
+      {
+        language;
+        map_wrappers;
+        event_handlers = []; (* TODO: Extract from userspace functions *)
+        config_structs = final_config_structs;
+      }
+    ) target_languages
 
 (** Lower complete AST to IR program *)
 let lower_program ast symbol_table =
@@ -676,7 +760,14 @@ let lower_program ast symbol_table =
   let main_function = List.find (fun f -> f.is_main) ir_functions in
   
   (* Generate userspace bindings *)
-  let userspace_bindings = generate_userspace_bindings prog_def (ir_global_maps @ ir_local_maps) in
+  Printf.eprintf "Debug: prog_def.prog_userspace = %s\n" 
+    (match prog_def.prog_userspace with 
+     | None -> "None" 
+     | Some us -> Printf.sprintf "Some with %d functions, %d structs, %d configs" 
+                    (List.length us.userspace_functions)
+                    (List.length us.userspace_structs)
+                    (List.length us.userspace_configs));
+  let userspace_bindings = generate_userspace_bindings_from_block prog_def prog_def.prog_userspace (ir_global_maps @ ir_local_maps) in
   
   (* Create IR program *)
   make_ir_program
@@ -687,6 +778,7 @@ let lower_program ast symbol_table =
     ir_functions
     main_function
     ~userspace_bindings:userspace_bindings
+    ?userspace_block:prog_def.prog_userspace
     prog_def.prog_pos
 
 (** Main entry point for IR generation *)

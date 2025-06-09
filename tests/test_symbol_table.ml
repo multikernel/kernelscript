@@ -38,6 +38,7 @@ let create_test_program name functions =
     prog_name = name;
     prog_type = Xdp;
     prog_functions = functions;
+    prog_userspace = None;
     prog_pos = dummy_pos;
   }
 
