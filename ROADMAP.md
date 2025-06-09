@@ -590,19 +590,25 @@ Generate eBPF bytecode and userspace bindings from IR.
 
 ### Milestone 5.1: eBPF Backend (Weeks 14-15)
 **Deliverables:**
-- `src/ebpf_codegen.ml` - eBPF bytecode generation from IR
-- Register allocation from IR registers
-- Instruction selection from IR instructions
+- `src/ebpf_c_codegen.ml` - eBPF C generation from IR
 - Map operation compilation from IR map operations
+- Makefile for compiling eBPF C code
 
 ### Milestone 5.2: Userspace Bindings (Week 16)
 **Deliverables:**
-- `src/userspace_codegen.ml` - Generate C/Rust/Go bindings from IR
+- `src/userspace_codegen.ml` - Generate C code from IR
 - Map access wrappers from IR map operations
+- Access to shared maps with kernel space eBPF code
+- Integration in Makefile for compilation
+
+## Milestone 5.3: Advanced Userspace Code
+**Deliverables:**
+- eBPF program config from userspace via a single-entry map
+- Userspace config for users to manage eBPF program attachment
 - Event handling code
 - Configuration management
 
-### Milestone 5.3: Standard Library (Week 17)
+### Milestone 5.4: Standard Library (Week 17)
 **Deliverables:**
 - `src/stdlib.ml` - Built-in functions expanded in IR
 - Network utility functions
