@@ -92,6 +92,11 @@
  (modules test_map_flags)
  (libraries kernelscript str))
 
+(executable
+ (name test_userspace_maps)
+ (modules test_userspace_maps)
+ (libraries kernelscript str))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -109,8 +114,13 @@
 
 (rule
  (alias userspace-tests)
- (deps test_userspace.exe)
- (action (run ./test_userspace.exe)))
+ (deps
+  test_userspace.exe
+  test_userspace_maps.exe)
+ (action
+  (progn
+   (run ./test_userspace.exe)
+   (run ./test_userspace_maps.exe))))
 
 (rule
  (alias core-tests)
