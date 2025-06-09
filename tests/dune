@@ -82,6 +82,11 @@
  (modules test_map_integration)
  (libraries kernelscript str))
 
+(executable
+ (name test_userspace)
+ (modules test_userspace)
+ (libraries kernelscript str))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -94,6 +99,11 @@
    (run ./test_map_syntax.exe)
    (run ./test_map_assignment.exe)
    (run ./test_map_integration.exe))))
+
+(rule
+ (alias userspace-tests)
+ (deps test_userspace.exe)
+ (action (run ./test_userspace.exe)))
 
 (rule
  (alias core-tests)
@@ -135,4 +145,5 @@
   (alias core-tests)
   (alias map-tests)
   (alias ir-tests)
-  (alias codegen-tests))) 
+  (alias codegen-tests)
+  (alias userspace-tests))) 
