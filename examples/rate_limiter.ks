@@ -1,6 +1,4 @@
-map packet_counts : HashMap<u32, u64> {
-  max_entries: 1024;
-}
+map<u32,u64>packet_counts : HashMap(1024);
 
 program rate_limiter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
