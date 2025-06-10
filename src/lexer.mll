@@ -102,11 +102,11 @@ let hex_literal = '0' ['x' 'X'] ['0'-'9' 'a'-'f' 'A'-'F']+
 let binary_literal = '0' ['b' 'B'] ['0' '1']+
 
 rule token = parse
-  | whitespace+ { next_col (); token lexbuf }
-  | newline { next_line (); token lexbuf }
+  | whitespace+ { token lexbuf }
+  | newline { Lexing.new_line lexbuf; token lexbuf }
   
   (* Comments *)
-  | "//" [^ '\r' '\n']* { next_col (); token lexbuf }
+  | "//" [^ '\r' '\n']* { token lexbuf }
   
   (* Literals *)
   | decimal_literal as lit { INT (int_of_string lit) }
@@ -114,10 +114,10 @@ rule token = parse
   | binary_literal as lit { INT (parse_binary_literal lit) }
   
   (* String literals *)
-  | '"' { next_col (); string_literal (Buffer.create 256) lexbuf }
+  | '"' { string_literal (Buffer.create 256) lexbuf }
   
   (* Character literals *)
-  | '\'' { next_col (); char_literal lexbuf }
+  | '\'' { char_literal lexbuf }
   
   (* Identifiers and keywords *)
   | qualified_identifier as id { lookup_keyword id }
@@ -163,27 +163,25 @@ rule token = parse
 
 
 and string_literal buf = parse
-  | '"' { next_col (); STRING (Buffer.contents buf) }
+  | '"' { STRING (Buffer.contents buf) }
   | '\\' (['\\' '\'' '"' 'n' 't' 'r' '0'] as c) 
-    { next_col (); Buffer.add_char buf (char_for_backslash c); string_literal buf lexbuf }
+    { Buffer.add_char buf (char_for_backslash c); string_literal buf lexbuf }
   | '\\' 'x' (['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] as hex)
-    { next_col (); 
-      let code = int_of_string ("0x" ^ hex) in
+    { let code = int_of_string ("0x" ^ hex) in
       Buffer.add_char buf (Char.chr code);
       string_literal buf lexbuf }
-  | newline { next_line (); Buffer.add_char buf '\n'; string_literal buf lexbuf }
-  | _ as c { next_col (); Buffer.add_char buf c; string_literal buf lexbuf }
+  | newline { Lexing.new_line lexbuf; Buffer.add_char buf '\n'; string_literal buf lexbuf }
+  | _ as c { Buffer.add_char buf c; string_literal buf lexbuf }
   | eof { create_lexer_error "Unterminated string literal" }
 
 and char_literal = parse
-  | '\'' { next_col (); create_lexer_error "Empty character literal" }
+  | '\'' { create_lexer_error "Empty character literal" }
   | '\\' (['\\' '\'' '"' 'n' 't' 'r' '0'] as c) '\''
-    { next_col (); CHAR_LIT (char_for_backslash c) }
+    { CHAR_LIT (char_for_backslash c) }
   | '\\' 'x' (['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] as hex) '\''
-    { next_col (); 
-      let code = int_of_string ("0x" ^ hex) in
+    { let code = int_of_string ("0x" ^ hex) in
       CHAR_LIT (Char.chr code) }
-  | (_ as c) '\'' { next_col (); CHAR_LIT c }
+  | (_ as c) '\'' { CHAR_LIT c }
   | eof { create_lexer_error "Unterminated character literal" }
   | _ { create_lexer_error "Invalid character literal" }
 

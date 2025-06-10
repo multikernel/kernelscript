@@ -14,17 +14,22 @@ let parse_string ?(filename="<string>") str =
   try
     Parser.program Lexer.token lexbuf
   with
-  | Parsing.Parse_error ->
+  | Parser.Error ->
       let pos = Lexing.lexeme_start_p lexbuf in
       let parse_pos = { 
         line = pos.pos_lnum; 
-        column = pos.pos_cnum - pos.pos_bol; 
+        column = pos.pos_cnum - pos.pos_bol + 1; 
         filename = pos.pos_fname 
       } in
       create_parse_error "Syntax error" parse_pos
   | Lexer.Lexer_error msg ->
-      let pos = { line = !Lexer.current_line; column = !Lexer.current_col; filename } in
-      create_parse_error ("Lexer error: " ^ msg) pos
+      let pos = Lexing.lexeme_start_p lexbuf in
+      let parse_pos = { 
+        line = pos.pos_lnum; 
+        column = pos.pos_cnum - pos.pos_bol + 1; 
+        filename = pos.pos_fname 
+      } in
+      create_parse_error ("Lexer error: " ^ msg) parse_pos
   | e -> 
       let pos = { line = 1; column = 1; filename } in
       create_parse_error ("Parse error: " ^ Printexc.to_string e) pos
