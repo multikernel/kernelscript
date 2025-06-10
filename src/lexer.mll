@@ -107,7 +107,6 @@ rule token = parse
   
   (* Comments *)
   | "//" [^ '\r' '\n']* { next_col (); token lexbuf }
-  | "/*" { next_col (); block_comment lexbuf }
   
   (* Literals *)
   | decimal_literal as lit { INT (int_of_string lit) }
@@ -161,11 +160,7 @@ rule token = parse
   (* Error case *)
   | _ as c { create_lexer_error ("Unexpected character: " ^ string_of_char c) }
 
-and block_comment = parse
-  | "*/" { next_col (); token lexbuf }
-  | newline { next_line (); block_comment lexbuf }
-  | _ { next_col (); block_comment lexbuf }
-  | eof { create_lexer_error "Unterminated block comment" }
+
 
 and string_literal buf = parse
   | '"' { next_col (); STRING (Buffer.contents buf) }

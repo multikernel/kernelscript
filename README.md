@@ -245,7 +245,7 @@ This milestone implements a comprehensive IR system that serves as the foundatio
 
 #### Comment Support
 - **Line comments**: `// comment text`
-- **Block comments**: `/* comment text */`
+
 
 ### Building and Testing
 

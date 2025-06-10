@@ -129,9 +129,7 @@ let test_line_comments () =
   let tokens = tokenize_string "program // this is a comment\nfn" in
   check (list token_testable) "line comments" [PROGRAM; FN] tokens
 
-let test_block_comments () =
-  let tokens = tokenize_string "program /* this is a\n   block comment */ fn" in
-  check (list token_testable) "block comments" [PROGRAM; FN] tokens
+
 
 let test_whitespace_handling () =
   let tokens = tokenize_string "  program   \t\n  fn  " in
@@ -162,16 +160,13 @@ let test_mixed_literals () =
   let tokens = tokenize_string "0xFF 255 0b11111111 true false \"test\" 'c'" in
   check (list token_testable) "mixed literals" [INT 255; INT 255; INT 255; BOOL_LIT true; BOOL_LIT false; STRING "test"; CHAR_LIT 'c'] tokens
 
-let test_nested_block_comments () =
-  let tokens = tokenize_string "program /* outer /* inner */ still outer */ fn" in
-  check (list token_testable) "nested block comments" [PROGRAM; FN] tokens
+
 
 let test_error_handling () =
   let test_cases = [
     ("@", "Unexpected character");
     ("\"unterminated", "Unterminated string");
     ("''", "Empty character literal");
-    ("/* unterminated", "Unterminated block comment");
   ] in
   
   List.iter (fun (code, expected_msg) ->
@@ -201,11 +196,9 @@ let lexer_tests = [
   "control_flow", `Quick, test_control_flow;
   "variable_keywords", `Quick, test_variable_keywords;
   "line_comments", `Quick, test_line_comments;
-  "block_comments", `Quick, test_block_comments;
   "whitespace_handling", `Quick, test_whitespace_handling;
   "complex_program", `Quick, test_complex_program;
   "mixed_literals", `Quick, test_mixed_literals;
-  "nested_block_comments", `Quick, test_nested_block_comments;
   "error_handling", `Quick, test_error_handling;
 ]
 

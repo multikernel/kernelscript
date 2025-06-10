@@ -1430,9 +1430,8 @@ char = any_char_except_quote_and_backslash | escape_sequence ;
 escape_sequence = "\" ( "n" | "t" | "r" | "\" | "'" | '"' | "0" | "x" hex_digit hex_digit ) ;
 
 (* Comments *)
-comment = line_comment | block_comment ;
+comment = line_comment ;
 line_comment = "//" { any_char_except_newline } newline ;
-block_comment = "/*" { any_char } "*/" ;
 
 (* Whitespace *)
 whitespace = " " | "\t" | "\n" | "\r" ;

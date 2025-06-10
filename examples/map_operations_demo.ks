@@ -212,35 +212,35 @@ config {
     }
 }
 
-/* 
-Expected Analysis Results:
-
-1. Access Pattern Analysis:
-   - traffic_monitor: High-frequency random access (100 lookups)
-   - stats_updater: Batch access pattern (20 operations)
-   - data_processor: Sequential access pattern (0-31)
-   - event_logger: Streaming pattern (ring buffer)
-
-2. Concurrent Access Safety:
-   - global_counter: SAFE (multiple readers, single writer per key)
-   - shared_stats: WRITE_LOCKED (multiple programs writing)
-   - percpu_data: SAFE (per-CPU isolation)
-   - event_stream: SAFE (single writer recommended)
-
-3. Global Map Sharing Validation:
-   - global_counter: VALID (reader-heavy workload)
-   - shared_stats: CONFLICT (multiple writers detected)
-   - Recommendations: Use per-CPU maps or synchronization
-
-4. Performance Recommendations:
-   - High-frequency access detected in traffic_monitor
-   - Consider caching for frequently accessed keys
-   - Sequential access in data_processor could use array map
-   - Batch operations detected - consider batch helpers
-
-5. Optimization Suggestions:
-   - Convert sequential_data to array map type
-   - Use LRU eviction for shared_stats under memory pressure
-   - Consider read-only maps for static configuration data
-   - Implement proper error handling for ring buffer overflow
-*/ 
+//
+// Expected Analysis Results:
+//
+// 1. Access Pattern Analysis:
+//    - traffic_monitor: High-frequency random access (100 lookups)
+//    - stats_updater: Batch access pattern (20 operations)
+//    - data_processor: Sequential access pattern (0-31)
+//    - event_logger: Streaming pattern (ring buffer)
+//
+// 2. Concurrent Access Safety:
+//    - global_counter: SAFE (multiple readers, single writer per key)
+//    - shared_stats: WRITE_LOCKED (multiple programs writing)
+//    - percpu_data: SAFE (per-CPU isolation)
+//    - event_stream: SAFE (single writer recommended)
+//
+// 3. Global Map Sharing Validation:
+//    - global_counter: VALID (reader-heavy workload)
+//    - shared_stats: CONFLICT (multiple writers detected)
+//    - Recommendations: Use per-CPU maps or synchronization
+//
+// 4. Performance Recommendations:
+//    - High-frequency access detected in traffic_monitor
+//    - Consider caching for frequently accessed keys
+//    - Sequential access in data_processor could use array map
+//    - Batch operations detected - consider batch helpers
+//
+// 5. Optimization Suggestions:
+//    - Convert sequential_data to array map type
+//    - Use LRU eviction for shared_stats under memory pressure
+//    - Consider read-only maps for static configuration data
+//    - Implement proper error handling for ring buffer overflow
+// 
