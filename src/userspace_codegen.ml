@@ -21,6 +21,21 @@ let default_config program_name = {
   program_name = program_name;
 }
 
+(** Context for generating unique variable names *)
+type userspace_context = {
+  mutable temp_var_counter: int;
+}
+
+let create_userspace_context () = {
+  temp_var_counter = 0;
+}
+
+let fresh_temp_var ctx prefix =
+  ctx.temp_var_counter <- ctx.temp_var_counter + 1;
+  sprintf "%s_%d" prefix ctx.temp_var_counter
+
+
+
 (* ===== C Type Mappings ===== *)
 
 (** Generate C type declaration from IR type *)
@@ -83,7 +98,7 @@ struct %s {
 |} struct_def.struct_name (String.concat "\n" fields)
 
 (** Generate C code for a single statement *)
-let rec generate_c_statement (stmt : Ast.statement) = 
+let rec generate_c_statement_with_context ctx (stmt : Ast.statement) = 
   match stmt.stmt_desc with
   | Ast.Declaration (name, typ_opt, expr) ->
       let c_type = match typ_opt with
@@ -102,9 +117,11 @@ let rec generate_c_statement (stmt : Ast.statement) =
         | Ast.Identifier name -> name
         | _ -> "unknown_map"
       in
-      let key_c = generate_c_expression key_expr in
-      let value_c = generate_c_expression value_expr in
-      sprintf "%s_update(&(%s), &(%s), BPF_ANY);" map_name key_c value_c
+      let ((key_decl, key_arg), (value_decl, value_arg)) = 
+        generate_safe_map_args ctx key_expr (Some value_expr) in
+      let statements = [key_decl; value_decl] |> List.filter (fun s -> s <> "") in
+      let setup = if statements = [] then "" else String.concat "\n    " statements ^ "\n    " in
+      sprintf "%s%s_update(%s, %s, BPF_ANY);" setup map_name key_arg value_arg
   | Ast.ExprStmt expr ->
       sprintf "%s;" (generate_c_expression expr)
   | Ast.Return (Some expr) ->
@@ -126,7 +143,16 @@ and generate_c_expression (expr : Ast.expr) =
         | _ -> "unknown_map"
       in
       let key_c = generate_c_expression key_expr in
-      sprintf "({ __u64 __val = 0; %s_lookup(&(%s), &__val) == 0 ? __val : 0; })" map_name key_c
+      (* For map lookups in expressions, we need to be more careful with literals *)
+      (match key_expr.expr_desc with
+       | Ast.Literal _ ->
+           let temp_ctx = create_userspace_context () in
+           let temp_key = fresh_temp_var temp_ctx "key" in
+           let key_type = "__u32" in
+           sprintf "({ %s %s = %s; __u64 __val = 0; %s_lookup(&%s, &__val) == 0 ? __val : 0; })" 
+             key_type temp_key key_c map_name temp_key
+       | _ ->
+           sprintf "({ __u64 __val = 0; %s_lookup(&(%s), &__val) == 0 ? __val : 0; })" map_name key_c)
   | Ast.BinaryOp (left, Ast.Add, right) ->
       sprintf "(%s + %s)" (generate_c_expression left) (generate_c_expression right)
   | Ast.BinaryOp (left, Ast.Sub, right) ->
@@ -134,6 +160,43 @@ and generate_c_expression (expr : Ast.expr) =
   | Ast.BinaryOp (left, Ast.Mul, right) ->
       sprintf "(%s * %s)" (generate_c_expression left) (generate_c_expression right)
   | _ -> "0"  (* fallback *)
+
+(** Helper function to generate safe key and value expressions for map operations *)
+and generate_safe_map_args ctx key_expr value_expr_opt =
+  let key_c = generate_c_expression key_expr in
+  let key_arg = match key_expr.expr_desc with
+    | Ast.Literal _ ->
+        let temp_key = fresh_temp_var ctx "key" in
+        let key_type = match key_expr.expr_desc with
+          | Ast.Literal (Ast.IntLit _) -> "__u32"
+          | _ -> "__u32"
+        in
+        let key_decl = sprintf "%s %s = %s;" key_type temp_key key_c in
+        (key_decl, sprintf "&%s" temp_key)
+    | _ -> ("", sprintf "&(%s)" key_c)
+  in
+  
+  let value_arg = match value_expr_opt with
+    | Some value_expr ->
+        let value_c = generate_c_expression value_expr in
+        (match value_expr.expr_desc with
+         | Ast.Literal _ ->
+             let temp_value = fresh_temp_var ctx "value" in
+             let value_type = match value_expr.expr_desc with
+               | Ast.Literal (Ast.IntLit _) -> "__u32"
+               | _ -> "__u32"
+             in
+             let value_decl = sprintf "%s %s = %s;" value_type temp_value value_c in
+             (value_decl, sprintf "&%s" temp_value)
+         | _ -> ("", sprintf "&(%s)" value_c))
+    | None -> ("", "")
+  in
+  (key_arg, value_arg)
+
+(** Wrapper function that maintains backward compatibility *)
+let generate_c_statement (stmt : Ast.statement) = 
+  let ctx = create_userspace_context () in
+  generate_c_statement_with_context ctx stmt
 
 (** Generate function implementations from userspace functions *)
 let generate_c_function_from_userspace (func : Ast.function_def) =
@@ -145,7 +208,8 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
       let return_type = "int" in
       
       (* Generate the actual function body from KernelScript statements *)
-      let translated_body = String.concat "\n    " (List.map generate_c_statement func.func_body) in
+      let ctx = create_userspace_context () in
+      let translated_body = String.concat "\n    " (List.map (generate_c_statement_with_context ctx) func.func_body) in
       
       let body = sprintf {|
     printf("Starting userspace coordinator for eBPF programs\n");

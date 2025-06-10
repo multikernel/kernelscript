@@ -29,10 +29,19 @@
    - Multiple function generation
    - Required includes and BPF infrastructure
    - Error handling for invalid signatures
+   
+   === C Code Generation Tests (Literal Key/Value Bug Fix) ===
+   - Temporary variable creation for literal keys and values in map operations
+   - Direct variable usage for non-literal expressions
+   - Mixed literal and variable expressions handling
+   - Map lookup expressions with literal keys
+   - Unique temporary variable name generation
+   - Validation that direct literal addressing (&(literal)) is avoided
 *)
 
 open Kernelscript.Ast
 open Kernelscript.Parse
+open Kernelscript.Userspace_codegen
 open Alcotest
 
 (** Helper function to check if a pattern exists in content (case-insensitive) *)
@@ -428,7 +437,157 @@ userspace {
     check string "temp dir path set" "/tmp/kernelscript_test" temp_dir_path;
     check int "Expected files count" 3 3
 
+(** ===== USERSPACE C CODE GENERATION TESTS ===== *)
+
+(** Helper functions for creating test AST nodes *)
+
+let make_test_pos () = { line = 1; column = 1; filename = "test.ks" }
+
+let make_int_literal i = 
+  { expr_desc = Literal (IntLit i); expr_pos = make_test_pos (); expr_type = Some U32 }
+
+let make_identifier name = 
+  { expr_desc = Identifier name; expr_pos = make_test_pos (); expr_type = Some U32 }
+
+let make_index_assignment map_name key_val value_val =
+  let map_expr = make_identifier map_name in
+  { stmt_desc = IndexAssignment (map_expr, key_val, value_val); stmt_pos = make_test_pos () }
+
+let make_array_access map_name key_val =
+  let map_expr = make_identifier map_name in
+  { expr_desc = ArrayAccess (map_expr, key_val); expr_pos = make_test_pos (); expr_type = Some U32 }
+
+let contains_substr str substr =
+  let len = String.length substr in
+  let str_len = String.length str in
+  let rec check i =
+    if i + len > str_len then false
+    else if String.sub str i len = substr then true
+    else check (i + 1)
+  in
+  check 0
+
+(** Test literal key/value handling in map assignments *)
+let test_literal_map_assignment () =
+  let key_expr = make_int_literal 42 in
+  let value_expr = make_int_literal 100 in
+  let stmt = make_index_assignment "test_map" key_expr value_expr in
+  
+  let result = generate_c_statement stmt in
+  
+  (* Verify that temporary variables are created for literals *)
+  check bool "creates key temp variable" true (contains_substr result "__u32 key_");
+  check bool "creates value temp variable" true (contains_substr result "__u32 value_");
+  check bool "assigns key literal" true (contains_substr result "= 42;");
+  check bool "assigns value literal" true (contains_substr result "= 100;");
+  check bool "uses temp variable addresses" true (contains_substr result "test_map_update(&key_");
+  check bool "uses temp value address" true (contains_substr result ", &value_");
+  
+  (* Verify that literals are NOT directly addressed (no &(42) or &(100)) *)
+  check bool "no direct key literal addressing" false (contains_substr result "&(42)");
+  check bool "no direct value literal addressing" false (contains_substr result "&(100)");
+  
+  (* Check that the result contains BPF_ANY flag *)
+  check bool "contains BPF_ANY flag" true (contains_substr result "BPF_ANY")
+
+(** Test variable key/value handling in map assignments (should not create temp vars) *)
+let test_variable_map_assignment () =
+  let key_expr = make_identifier "my_key" in
+  let value_expr = make_identifier "my_value" in
+  let stmt = make_index_assignment "test_map" key_expr value_expr in
+  
+  let result = generate_c_statement stmt in
+  
+  (* Verify that variables are used directly without temp vars *)
+  check bool "uses variables directly" true (contains_substr result "test_map_update(&(my_key), &(my_value)");
+  check bool "no temp vars for variable keys" false (contains_substr result "__u32 key_");
+  check bool "no temp vars for variable values" false (contains_substr result "__u32 value_")
+
+(** Test mixed literal key and variable value *)
+let test_mixed_literal_variable_assignment () =
+  let key_expr = make_int_literal 5 in
+  let value_expr = make_identifier "counter" in
+  let stmt = make_index_assignment "test_map" key_expr value_expr in
+  
+  let result = generate_c_statement stmt in
+  
+  (* Verify that only the literal key gets a temp variable *)
+  check bool "creates key temp variable for literal" true (contains_substr result "__u32 key_");
+  check bool "no value temp variable for variable" false (contains_substr result "__u32 value_");
+  check bool "assigns key literal" true (contains_substr result "= 5;");
+  check bool "uses temp key and variable value" true (contains_substr result "test_map_update(&key_");
+  check bool "uses variable value directly" true (contains_substr result ", &(counter)");
+  
+  (* Verify no direct literal addressing *)
+  check bool "no direct key literal addressing" false (contains_substr result "&(5)")
+
+(** Test literal key in map lookups (expressions) *)
+let test_literal_map_lookup () =
+  let key_expr = make_int_literal 123 in
+  let expr = make_array_access "data_map" key_expr in
+  
+  let result = generate_c_expression expr in
+  
+  (* Verify that a temporary variable is created for the literal key *)
+  check bool "creates temp key in lookup" true (contains_substr result "__u32 key_");
+  check bool "assigns key literal in lookup" true (contains_substr result "= 123;");
+  check bool "uses temp key in lookup call" true (contains_substr result "data_map_lookup(&key_");
+  check bool "contains value variable" true (contains_substr result "__u64 __val");
+  
+  (* Verify no direct literal addressing *)
+  check bool "no direct key literal addressing in lookup" false (contains_substr result "&(123)")
+
+(** Test variable key in map lookups *)
+let test_variable_map_lookup () =
+  let key_expr = make_identifier "lookup_key" in
+  let expr = make_array_access "data_map" key_expr in
+  
+  let result = generate_c_expression expr in
+  
+  (* Verify that variables are used directly *)
+  check bool "uses variable directly in lookup" true (contains_substr result "data_map_lookup(&(lookup_key)");
+  check bool "no temp vars for variable keys in lookup" false (contains_substr result "__u32 key_")
+
+(** Test complex expressions with multiple operations *)
+let test_complex_literal_expressions () =
+  (* Test: map[1] = 0; map[2] = 0; in sequence *)
+  let stmt1 = make_index_assignment "shared_counter" (make_int_literal 1) (make_int_literal 0) in
+  let stmt2 = make_index_assignment "shared_counter" (make_int_literal 2) (make_int_literal 0) in
+  
+  let result1 = generate_c_statement stmt1 in
+  let result2 = generate_c_statement stmt2 in
+  
+  (* Each statement should have its own unique temp variables *)
+  check bool "first statement creates temp vars" true 
+    (contains_substr result1 "__u32 key_" && contains_substr result1 "__u32 value_");
+  check bool "second statement creates temp vars" true 
+    (contains_substr result2 "__u32 key_" && contains_substr result2 "__u32 value_");
+  
+  (* Verify no direct literal addressing in either *)
+  check bool "no direct addressing in first" false 
+    (contains_substr result1 "&(1)" || contains_substr result1 "&(0)");
+  check bool "no direct addressing in second" false 
+    (contains_substr result2 "&(2)" || contains_substr result2 "&(0)")
+
+(** Test that generated temp variable names are unique *)
+let test_unique_temp_variables () =
+  (* Create context and generate multiple temp variables *)
+  let ctx = create_userspace_context () in
+  let temp1 = fresh_temp_var ctx "key" in
+  let temp2 = fresh_temp_var ctx "key" in
+  let temp3 = fresh_temp_var ctx "value" in
+  
+  (* Verify they are all different *)
+  check bool "temp variables are unique" true 
+    (temp1 <> temp2 && temp2 <> temp3 && temp1 <> temp3);
+  
+  (* Verify they follow the expected pattern *)
+  check bool "first key variable" true (temp1 = "key_1");
+  check bool "second key variable" true (temp2 = "key_2");
+  check bool "first value variable" true (temp3 = "value_3")
+
 let userspace_tests = [
+  (* Parsing and validation tests *)
   "userspace_top_level", `Quick, test_userspace_top_level;
   "nested_userspace_disallowed", `Quick, test_nested_userspace_disallowed;
   "userspace_main_correct_signature", `Quick, test_userspace_main_correct_signature;
@@ -443,6 +602,15 @@ let userspace_tests = [
   "multiple_programs_single_userspace", `Quick, test_multiple_programs_single_userspace;
   "basic_userspace", `Quick, test_basic_userspace;
   "userspace_code_generation", `Quick, test_userspace_code_generation;
+  
+  (* C code generation tests *)
+  "literal_map_assignment", `Quick, test_literal_map_assignment;
+  "variable_map_assignment", `Quick, test_variable_map_assignment;
+  "mixed_literal_variable_assignment", `Quick, test_mixed_literal_variable_assignment;
+  "literal_map_lookup", `Quick, test_literal_map_lookup;
+  "variable_map_lookup", `Quick, test_variable_map_lookup;
+  "complex_literal_expressions", `Quick, test_complex_literal_expressions;
+  "unique_temp_variables", `Quick, test_unique_temp_variables;
 ]
 
 let () = Alcotest.run "KernelScript Userspace Tests" [
