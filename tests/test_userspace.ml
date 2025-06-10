@@ -714,7 +714,7 @@ userspace {
     return true;
   }
   
-  targets: ["c"];
+
 }
 |} in
   let temp_dir_path = "/tmp/kernelscript_test" in

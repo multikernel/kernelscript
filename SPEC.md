@@ -910,7 +910,7 @@ userspace {
     }
     
     // Generate bindings for other languages
-    targets: ["rust", "go", "python", "c"],
+
     
     // Language-specific configuration  
     rust {
@@ -1297,8 +1297,7 @@ userspace_declaration = "userspace" "{" userspace_body "}" ;
 userspace_body = { userspace_item } ;
 userspace_item = function_declaration | struct_declaration | userspace_config ;
 
-userspace_config = "targets" ":" "[" string_literal { "," string_literal } "]" "," |
-                   identifier "{" { userspace_config_item } "}" ;
+userspace_config = identifier "{" { userspace_config_item } "}" ;
 userspace_config_item = identifier ":" literal "," ;
 
 (* Namespace declarations *)

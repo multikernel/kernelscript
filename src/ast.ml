@@ -148,7 +148,6 @@ and struct_def = {
 }
 
 and userspace_config = 
-  | TargetsConfig of string list (* targets: ["c", "rust"] *)
   | CustomConfig of string * userspace_config_item list (* custom_name { key: value, ... } *)
 
 and userspace_config_item = {

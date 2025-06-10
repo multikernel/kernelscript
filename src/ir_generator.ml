@@ -758,22 +758,8 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
       else config_structs
     in
     
-    (* Determine target languages from userspace configs *)
-    let target_languages = List.fold_left (fun acc config ->
-      match config with
-      | Ast.TargetsConfig targets ->
-        List.fold_left (fun acc_lang target ->
-          let lang = match target with
-            | "c" -> C
-            | "rust" -> Rust
-            | "go" -> Go
-            | "python" -> Python
-            | _ -> C (* default *)
-          in
-          if List.mem lang acc_lang then acc_lang else lang :: acc_lang
-        ) acc targets
-      | _ -> acc
-    ) [C] userspace.userspace_configs in
+    (* Default to C language for userspace bindings *)
+    let target_languages = [C] in
     
     (* Generate bindings for each target language *)
     List.map (fun language ->
@@ -922,11 +908,9 @@ let lower_multi_program ast symbol_table source_name =
     failwith "Only one userspace block is allowed per source file";
   
   (* Generate userspace bindings *)
-  let userspace_bindings = match userspace_block with
-    | None -> []
-    | Some ub ->
-        (* For multi-program, generate bindings that work with all programs *)
-        generate_userspace_bindings_from_multi_programs prog_defs (Some ub) ir_global_maps
+  let userspace_bindings = 
+    (* Always generate default bindings, even without explicit userspace block *)
+    generate_userspace_bindings_from_multi_programs prog_defs userspace_block ir_global_maps
   in
   
   (* Create multi-program IR *)

@@ -13,7 +13,7 @@
 %token <bool> BOOL_LIT
 
 /* Keywords */
-%token PROGRAM FN MAP TYPE STRUCT ENUM TARGETS
+%token PROGRAM FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET MUT PUB PRIV CONFIG USERSPACE
@@ -59,7 +59,7 @@
 %type <(string * Ast.bpf_type) list> struct_fields
 %type <string * Ast.bpf_type> struct_field
 %type <Ast.userspace_config> userspace_config
-%type <string list> string_list
+
 %type <Ast.userspace_config_item list> userspace_config_items
 %type <Ast.userspace_config_item> userspace_config_item
 %type <Ast.map_type> map_type
@@ -393,15 +393,10 @@ struct_field:
   | IDENTIFIER COLON bpf_type { ($1, $3) }
 
 userspace_config:
-  | TARGETS COLON LBRACKET string_list RBRACKET COMMA
-    { TargetsConfig $4 }
   | IDENTIFIER LBRACE userspace_config_items RBRACE
     { CustomConfig ($1, $3) }
 
-string_list:
-  | /* empty */ { [] }
-  | STRING COMMA string_list { $1 :: $3 }
-  | STRING { [$1] }
+
 
 userspace_config_items:
   | /* empty */ { [] }

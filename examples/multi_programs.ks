@@ -23,6 +23,4 @@ userspace {
     shared_counter[2] = 0;
     return 0;
   }
-
-  targets: ["c"],
 } 

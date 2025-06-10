@@ -436,6 +436,9 @@ let generate_c_program ir_prog =
   let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
   List.iter (generate_c_function ctx) other_functions;
   
+  (* Add license (required for eBPF) *)
+  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
+  
   (* Return generated code *)
   String.concat "\n" (List.rev ctx.output_lines)
 
