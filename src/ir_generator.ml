@@ -30,6 +30,8 @@ type ir_context = {
   mutable current_function: string option;
   (* Symbol table reference *)
   symbol_table: Symbol_table.symbol_table;
+  (* Assignment optimization info *)
+  mutable assignment_optimizations: Map_assignment.optimization_info option;
 }
 
 (** Create new IR generation context *)
@@ -43,6 +45,7 @@ let create_context symbol_table = {
   maps = Hashtbl.create 16;
   current_function = None;
   symbol_table;
+  assignment_optimizations = None;
 }
 
 (** Register allocation *)
@@ -68,6 +71,13 @@ let create_basic_block ctx label =
   ctx.blocks <- block :: ctx.blocks;
   ctx.current_block <- [];
   block
+
+(** Analyze assignment patterns for optimization *)
+let analyze_assignment_patterns ctx (ast: declaration list) =
+  let assignments = Map_assignment.extract_map_assignments_from_ast ast in
+  let optimization_info = Map_assignment.analyze_assignment_optimizations assignments in
+  ctx.assignment_optimizations <- Some optimization_info;
+  optimization_info
 
 (** Add instruction to current block *)
 let emit_instruction ctx instr =
@@ -372,10 +382,19 @@ let rec lower_statement ctx stmt =
       let key_val = lower_expression ctx key_expr in
       let value_val = lower_expression ctx value_expr in
       
-      (* Generate map store instruction *)
+      (* Check for optimization opportunities *)
+      let hints = match ctx.assignment_optimizations with
+        | Some opt_info when opt_info.constant_folding && Map_assignment.is_constant_expression value_expr ->
+            [HelperCall "map_update_elem"; BoundsChecked]  (* Mark as optimizable *)
+        | Some _opt_info ->
+            [HelperCall "map_update_elem"]
+        | _ -> [HelperCall "map_update_elem"]
+      in
+      
+      (* Generate map store instruction with optimization hints *)
       let instr = make_ir_instruction
         (IRMapStore (map_val, key_val, value_val, MapUpdate))
-        ~verifier_hints:[HelperCall "map_update_elem"]
+        ~verifier_hints:hints
         stmt.stmt_pos
       in
       emit_instruction ctx instr
@@ -769,6 +788,9 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
 (** Lower complete AST to IR program *)
 let lower_program ast symbol_table =
   let ctx = create_context symbol_table in
+  
+  (* Analyze assignment patterns for optimization early *)
+  let _optimization_info = analyze_assignment_patterns ctx ast in
   
   (* Find the program declaration *)
   let prog_def = List.find_map (function

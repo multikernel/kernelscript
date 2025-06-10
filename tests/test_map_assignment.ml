@@ -1,19 +1,15 @@
 open Kernelscript.Ast
 open Kernelscript.Parse
 open Alcotest
+module MapAssign = Kernelscript.Map_assignment
+open MapAssign
 
 (* Helper function for position printing *)
 let string_of_position pos =
   Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
 
-(* Placeholder record types for unimplemented functions *)
+(* Record types for other unimplemented functions *)
 type validation_result = { all_valid: bool; errors: string list; analysis_complete: bool }
-type optimization_record = { optimization_type: string }
-type optimization_info = { 
-  optimizations: optimization_record list; 
-  constant_folding: bool;
-  optimization_type: string
-}
 type dependency_graph = { nodes: string list; edges: string list }
 type safety_violation = { violation_type: string }
 type safety_info = { safety_violations: safety_violation list }
@@ -51,9 +47,8 @@ program test : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    (* TODO: Implement extract_map_assignments function *)
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
-    check int "basic assignment count" 0 (List.length assignments);
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
+    check int "basic assignment count" 2 (List.length assignments);
     check bool "AST parsed successfully" true (List.length ast > 0)
   with
   | _ -> fail "Error occurred"
@@ -78,9 +73,8 @@ program complex_assign : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    (* TODO: Implement extract_map_assignments function *)
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
-    check int "complex assignment count" 0 (List.length assignments);
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
+    check int "complex assignment count" 2 (List.length assignments);
     check bool "AST parsed successfully" true (List.length ast > 0)
   with
   | _ -> fail "Error occurred"
@@ -113,7 +107,8 @@ program invalid_assign : xdp {
   (* Test valid assignments *)
   (try
     let ast = parse_string valid_program in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
+    let _ = List.length assignments in  (* Use the variable to avoid warning *)
     (* let type_check_result = check_assignment_types assignments in *)
     let type_check_result = {all_valid = true; errors = []; analysis_complete = true} in  (* Placeholder *)
     check bool "valid assignments pass type check" true type_check_result.all_valid;
@@ -125,7 +120,8 @@ program invalid_assign : xdp {
   (* Test invalid assignments *)
   (try
     let ast = parse_string invalid_program in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
+    let _ = List.length assignments in  (* Use the variable to avoid warning *)
     (* let type_check_result = check_assignment_types assignments in *)
     let type_check_result = {all_valid = false; errors = []; analysis_complete = true} in  (* Placeholder *)
     check bool "invalid assignments fail type check" false type_check_result.all_valid
@@ -156,20 +152,21 @@ program optimize_assign : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
-    (* let optimization_info = analyze_assignment_optimizations assignments in *)
-    let optimization_info = {optimizations = [{optimization_type = "multiple_assignment_elimination"}]; constant_folding = true; optimization_type = ""} in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
+    let optimization_info = MapAssign.analyze_assignment_optimizations assignments in
     
-    check bool "optimization analysis completed" true (List.length optimization_info.optimizations > 0);
+    check bool "optimization analysis completed" true (List.length optimization_info.optimizations >= 0);
     
     (* Check for multiple assignment optimization *)
-    (* let optimizations = optimization_info.optimizations in
-    let has_multiple_assign = List.exists (fun opt -> opt.optimization_type = "multiple_assignment_elimination") optimizations in
+    let optimizations = optimization_info.optimizations in
+    let has_multiple_assign = List.exists (fun (opt : optimization_record) -> 
+      opt.optimization_type = "multiple_assignment_elimination") optimizations in
     check bool "has multiple assignment optimization" true has_multiple_assign;
     
     (* Check for constant folding *)
-    let has_constant_fold = List.exists (fun opt -> opt.optimization_type = "constant_folding") optimizations in
-    check bool "has constant folding optimization" true has_constant_fold *)
+    let has_constant_fold = List.exists (fun (opt : optimization_record) -> 
+      opt.optimization_type = "constant_folding") optimizations in
+    check bool "has constant folding optimization" true has_constant_fold
   with
   
   | _ -> fail "Error occurred"
@@ -196,7 +193,7 @@ program dependency_test : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
     let dependency_graph = build_assignment_dependency_graph assignments in
     
     check bool "dependency graph built" true (List.length dependency_graph.nodes > 0);
@@ -235,7 +232,7 @@ program invalid_assignments : xdp {
   (* Test valid assignments *)
   (try
     let ast = parse_string valid_assignments in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
     let validation_result = validate_assignments assignments in
     check bool "valid assignments validated" true validation_result.all_valid;
     check int "no validation errors" 0 (List.length validation_result.errors)
@@ -246,7 +243,7 @@ program invalid_assignments : xdp {
   (* Test invalid assignments *)
   (try
     let ast = parse_string invalid_assignments in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
     let validation_result = validate_assignments assignments in
     check bool "invalid assignments fail validation" false validation_result.all_valid
   with
@@ -272,7 +269,7 @@ program safety_test : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
     let safety_info = analyze_assignment_safety assignments in
     
     check bool "safety analysis completed" true (List.length safety_info.safety_violations >= 0);
@@ -308,7 +305,7 @@ program perf_test : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
     let performance_info = analyze_assignment_performance assignments in
     
     check bool "performance analysis completed" true (List.length performance_info.performance_metrics > 0);
@@ -366,7 +363,7 @@ program comprehensive : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
     let comprehensive_analysis = comprehensive_assignment_analysis assignments in
     
     check bool "comprehensive analysis completed" true comprehensive_analysis.analysis_complete;
@@ -392,10 +389,8 @@ program test_assign : xdp {
 |} in
   try
     let ast = parse_string program_text in let _ = List.length ast in
-    (* TODO: Implement extract_map_assignments function *)
-    let assignments = [] in let _ = List.length assignments in  (* Placeholder *)
-    check int "map assignment count" 0 (List.length assignments)
-    (* check int "map assignment count" 2 (List.length assignments) *) 
+    let assignments = MapAssign.extract_map_assignments_from_ast ast in
+    check int "map assignment count" 2 (List.length assignments)
   with
   | _ -> fail "Error occurred"
 

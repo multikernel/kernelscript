@@ -142,13 +142,69 @@ module StatementProcessor = struct
     }
 end
 
+(** Assignment Optimization Analysis *)
+module AssignmentOptimization = struct
+  
+  (** Extract map assignments from IR function *)
+  let extract_ir_assignments (func : ir_function) : Map_assignment.map_assignment list =
+    let assignments = ref [] in
+    List.iter (fun block ->
+      List.iter (fun instr ->
+        match instr.instr_desc with
+        | IRMapStore (map_val, _key_val, _value_val, _) ->
+                         let assignment = Map_assignment.{
+               map_name = (match map_val.value_desc with IRMapRef name -> name | _ -> "unknown");
+               key_expr = { Ast.expr_desc = Ast.Literal (IntLit 0); expr_type = None; expr_pos = instr.instr_pos }; (* Simplified for IR analysis *)
+               value_expr = { Ast.expr_desc = Ast.Literal (IntLit 0); expr_type = None; expr_pos = instr.instr_pos }; (* Simplified for IR analysis *)
+               assignment_type = DirectAssignment;
+               assignment_pos = instr.instr_pos;
+             } in
+            assignments := assignment :: !assignments
+        | _ -> ()
+      ) block.instructions
+    ) func.basic_blocks;
+    List.rev !assignments
+  
+  (** Apply assignment optimizations to IR function *)
+  let optimize_assignments (func : ir_function) : ir_function * Map_assignment.optimization_info =
+    let assignments = extract_ir_assignments func in
+    let optimization_info = Map_assignment.analyze_assignment_optimizations assignments in
+    
+    (* Apply optimizations based on analysis *)
+    let optimized_blocks = List.map (fun block ->
+      let optimized_instructions = List.map (fun instr ->
+        match instr.instr_desc with
+        | IRMapStore (_map_val, _key_val, _value_val, _store_type) ->
+            (* Add optimization hints based on analysis *)
+            let new_hints = if optimization_info.constant_folding then
+              BoundsChecked :: instr.verifier_hints
+            else
+              instr.verifier_hints
+            in
+            { instr with verifier_hints = new_hints }
+        | _ -> instr
+      ) block.instructions in
+      { block with instructions = optimized_instructions }
+    ) func.basic_blocks in
+    
+    let optimized_func = { func with basic_blocks = optimized_blocks } in
+    (optimized_func, optimization_info)
+end
+
 (** Main analysis interface *)
 
 (** Analyze IR function and apply optimizations *)
 let analyze_ir_function (func : ir_function) : ir_function * string list =
   let result = StatementProcessor.process_statements func in
-  let optimized_func = { func with basic_blocks = result.processed_blocks } in
-  (optimized_func, result.warnings)
+  let (optimized_func, assignment_opt_info) = AssignmentOptimization.optimize_assignments 
+    { func with basic_blocks = result.processed_blocks } in
+  
+  let warnings = result.warnings in
+  let assignment_warnings = List.map (fun (opt : Map_assignment.optimization_record) -> 
+    Printf.sprintf "Assignment optimization: %s" opt.optimization_type
+  ) assignment_opt_info.optimizations in
+  
+  (optimized_func, warnings @ assignment_warnings)
 
 (** Analyze entire IR program *)
 let analyze_ir_program (prog : ir_program) : ir_program * string list =

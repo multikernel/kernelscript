@@ -1,7 +1,7 @@
 (library
  (public_name kernelscript)
  (name kernelscript)
- (modules lexer ast parser parse type_checker symbol_table maps safety_checker map_operations evaluator ir ir_generator ir_analysis ir_function_system ebpf_c_codegen userspace_codegen)
+ (modules lexer ast parser parse type_checker symbol_table maps safety_checker map_operations map_assignment evaluator ir ir_generator ir_analysis ir_function_system ebpf_c_codegen userspace_codegen)
  (libraries unix))
 
 (executable
