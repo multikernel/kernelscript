@@ -11,7 +11,7 @@ program packet_counter : xdp {
 }
 
 program packet_filter : tc {
-  fn main(ctx: SkBuff) -> TcAction {
+  fn main(ctx: TcContext) -> TcAction {
     shared_counter[2] = 200;
     return 0;
   }

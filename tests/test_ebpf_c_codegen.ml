@@ -94,6 +94,73 @@ let test_map_operations () =
   Alcotest.(check bool) "map lookup contains bpf_map_lookup_elem" true (contains_substr output "bpf_map_lookup_elem");
   Alcotest.(check bool) "map lookup contains map name" true (contains_substr output "test_map")
 
+(** Test literal keys and values in map operations *)
+let test_literal_map_operations () =
+  let ctx = create_c_context () in
+  
+  (* Test map store with literal key and value *)
+  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
+  let literal_key = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
+  let literal_value = make_ir_value (IRLiteral (IntLit 100)) IRU64 test_pos in
+  
+  generate_map_store ctx map_val literal_key literal_value MapUpdate;
+  
+  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  
+  (* Verify that temporary variables are created for literals *)
+  Alcotest.(check bool) "key temp variable created" true (contains_substr output "__u32 key_");
+  Alcotest.(check bool) "value temp variable created" true (contains_substr output "__u64 value_");
+  Alcotest.(check bool) "key literal assigned" true (contains_substr output "= 42;");
+  Alcotest.(check bool) "value literal assigned" true (contains_substr output "= 100;");
+  Alcotest.(check bool) "map update uses temp variables" true (contains_substr output "bpf_map_update_elem(&test_map, &key_");
+  Alcotest.(check bool) "map update uses value temp" true (contains_substr output ", &value_");
+  
+  (* Verify literals are NOT directly addressed (no &42 or &100) *)
+  Alcotest.(check bool) "no direct key literal addressing" false (contains_substr output "&42");
+  Alcotest.(check bool) "no direct value literal addressing" false (contains_substr output "&100");
+  
+  (* Test map load with literal key *)
+  let ctx2 = create_c_context () in
+  let dest_val = make_ir_value (IRVariable "result") IRU64 test_pos in
+  
+  generate_map_load ctx2 map_val literal_key dest_val MapLookup;
+  
+  let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
+  
+  (* Verify key temp variable for lookup *)
+  Alcotest.(check bool) "lookup key temp variable created" true (contains_substr output2 "__u32 key_");
+  Alcotest.(check bool) "lookup key literal assigned" true (contains_substr output2 "= 42;");
+  Alcotest.(check bool) "lookup uses temp key variable" true (contains_substr output2 "bpf_map_lookup_elem(&test_map, &key_");
+  Alcotest.(check bool) "lookup no direct key addressing" false (contains_substr output2 "&42");
+  
+  (* Test map delete with literal key *)
+  let ctx3 = create_c_context () in
+  
+  let delete_instr = make_ir_instruction (IRMapDelete (map_val, literal_key)) test_pos in
+  generate_c_instruction ctx3 delete_instr;
+  
+  let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
+  
+  (* Verify key temp variable for delete *)
+  Alcotest.(check bool) "delete key temp variable created" true (contains_substr output3 "__u32 key_");
+  Alcotest.(check bool) "delete key literal assigned" true (contains_substr output3 "= 42;");
+  Alcotest.(check bool) "delete uses temp key variable" true (contains_substr output3 "bpf_map_delete_elem(&test_map, &key_");
+  Alcotest.(check bool) "delete no direct key addressing" false (contains_substr output3 "&42");
+  
+  (* Test with non-literal (variable) keys and values - should not create temp vars *)
+  let ctx4 = create_c_context () in
+  let var_key = make_ir_value (IRVariable "my_key") IRU32 test_pos in
+  let var_value = make_ir_value (IRVariable "my_value") IRU64 test_pos in
+  
+  generate_map_store ctx4 map_val var_key var_value MapUpdate;
+  
+  let output4 = String.concat "\n" (List.rev ctx4.output_lines) in
+  
+  (* Verify variables are used directly without temp vars *)
+  Alcotest.(check bool) "variable key used directly" true (contains_substr output4 "bpf_map_update_elem(&test_map, &my_key, &my_value");
+  Alcotest.(check bool) "no temp vars for variable keys" false (contains_substr output4 "__u32 key_");
+  Alcotest.(check bool) "no temp vars for variable values" false (contains_substr output4 "__u64 value_")
+
 (** Test simple function generation *)
 let test_function_generation () =
   let ctx = create_c_context () in
@@ -194,6 +261,7 @@ let suite =
     ("Context access", `Quick, test_context_access);
     ("Bounds checking", `Quick, test_bounds_checking);
     ("Map operations", `Quick, test_map_operations);
+    ("Literal map operations", `Quick, test_literal_map_operations);
     ("Function generation", `Quick, test_function_generation);
     ("Helper calls", `Quick, test_helper_calls);
     ("Control flow", `Quick, test_control_flow);

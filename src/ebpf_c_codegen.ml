@@ -231,15 +231,24 @@ let generate_bounds_check ctx ir_val min_bound max_bound =
 
 let generate_map_load ctx map_val key_val dest_val load_type =
   let map_str = generate_c_value ctx map_val in
-  let key_str = generate_c_value ctx key_val in
   let dest_str = generate_c_value ctx dest_val in
   
   match load_type with
   | DirectLoad ->
       emit_line ctx (sprintf "%s = *%s;" dest_str map_str)
   | MapLookup ->
+      (* Handle key - create temp variable if it's a literal *)
+      let key_var = match key_val.value_desc with
+        | IRLiteral _ -> 
+            let temp_key = fresh_var ctx "key" in
+            let key_type = ir_type_to_c_type key_val.val_type in
+            let key_str = generate_c_value ctx key_val in
+            emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+            temp_key
+        | _ -> generate_c_value ctx key_val
+      in
       (* bpf_map_lookup_elem returns a pointer, so we need to dereference it *)
-      emit_line ctx (sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);" map_str key_str);
+      emit_line ctx (sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);" map_str key_var);
       emit_line ctx (sprintf "  if (__tmp_ptr) %s = *(%s*)__tmp_ptr;" dest_str (ir_type_to_c_type dest_val.val_type));
       emit_line ctx (sprintf "  else %s = 0; }" dest_str)
   | MapPeek ->
@@ -247,15 +256,37 @@ let generate_map_load ctx map_val key_val dest_val load_type =
 
 let generate_map_store ctx map_val key_val value_val store_type =
   let map_str = generate_c_value ctx map_val in
-  let key_str = generate_c_value ctx key_val in
-  let value_str = generate_c_value ctx value_val in
   
   match store_type with
   | DirectStore ->
+      let value_str = generate_c_value ctx value_val in
       emit_line ctx (sprintf "*%s = %s;" map_str value_str)
   | MapUpdate ->
-      emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_str value_str)
+      (* Handle key - create temp variable if it's a literal *)
+      let key_var = match key_val.value_desc with
+        | IRLiteral _ -> 
+            let temp_key = fresh_var ctx "key" in
+            let key_type = ir_type_to_c_type key_val.val_type in
+            let key_str = generate_c_value ctx key_val in
+            emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+            temp_key
+        | _ -> generate_c_value ctx key_val
+      in
+      
+      (* Handle value - create temp variable if it's a literal *)
+      let value_var = match value_val.value_desc with
+        | IRLiteral _ ->
+            let temp_value = fresh_var ctx "value" in
+            let value_type = ir_type_to_c_type value_val.val_type in
+            let value_str = generate_c_value ctx value_val in
+            emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
+            temp_value
+        | _ -> generate_c_value ctx value_val
+      in
+      
+      emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_var value_var)
   | MapPush ->
+      let value_str = generate_c_value ctx value_val in
       emit_line ctx (sprintf "bpf_ringbuf_submit(%s, 0);" value_str)
 
 (** Generate C code for IR instruction *)
@@ -278,8 +309,17 @@ let generate_c_instruction ctx ir_instr =
 
   | IRMapDelete (map_val, key_val) ->
       let map_str = generate_c_value ctx map_val in
-      let key_str = generate_c_value ctx key_val in
-      emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_str)
+      (* Handle key - create temp variable if it's a literal *)
+      let key_var = match key_val.value_desc with
+        | IRLiteral _ -> 
+            let temp_key = fresh_var ctx "key" in
+            let key_type = ir_type_to_c_type key_val.val_type in
+            let key_str = generate_c_value ctx key_val in
+            emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+            temp_key
+        | _ -> generate_c_value ctx key_val
+      in
+      emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
 
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
