@@ -111,6 +111,78 @@ let lookup_map table map_name =
 (* Placeholder function for check_types_with_symbol_table *)
 let check_types_with_symbol_table _ _ = []
 
+(* Implementation of comprehensive_symbol_analysis *)
+let comprehensive_symbol_analysis symbol_table ast =
+  let errors = ref [] in
+  
+  (* Count different types of symbols *)
+  let total_symbols = ref 0 in
+  let function_count = ref 0 in
+  let variable_count = ref 0 in
+  let type_count = ref 0 in
+  
+  (* Analyze all symbols in the symbol table *)
+  Hashtbl.iter (fun _name symbols ->
+    List.iter (fun symbol ->
+      incr total_symbols;
+      match symbol.kind with
+      | Function _ -> incr function_count
+      | Variable _ | Parameter _ -> incr variable_count  
+      | TypeDef _ -> incr type_count
+      | GlobalMap _ | LocalMap _ -> () (* Maps are counted separately *)
+      | EnumConstant _ -> incr type_count
+    ) symbols
+  ) symbol_table.symbols;
+  
+  (* Add map symbols to total count *)
+  let map_count = Hashtbl.length symbol_table.global_maps + Hashtbl.length symbol_table.local_maps in
+  total_symbols := !total_symbols + map_count;
+  
+  (* Perform additional validation checks *)
+  List.iter (fun declaration ->
+    match declaration with
+    | Program prog ->
+        (* Check that main function exists for programs *)
+        (match lookup_symbol symbol_table "main" with
+         | Some { kind = Function _; scope = [prog_name]; _ } when prog_name = prog.prog_name -> ()
+         | Some _ -> errors := ("main function found but not in expected program scope") :: !errors
+         | None -> errors := ("no main function found for program " ^ prog.prog_name) :: !errors);
+        
+        (* Check that all functions in program are properly scoped *)
+        List.iter (fun func ->
+          match lookup_symbol symbol_table func.func_name with
+          | Some { scope = [prog_name]; _ } when prog_name = prog.prog_name -> ()
+          | Some _ -> errors := ("function " ^ func.func_name ^ " has incorrect scope") :: !errors
+          | None -> errors := ("function " ^ func.func_name ^ " not found in symbol table") :: !errors
+        ) prog.prog_functions;
+        
+    | MapDecl map_decl ->
+        (* Check that map is properly registered *)
+        (match get_map_declaration symbol_table map_decl.name with
+         | Some _ -> ()
+         | None -> errors := ("map " ^ map_decl.name ^ " not found in symbol table") :: !errors)
+        
+    | GlobalFunction func ->
+        (* Check that global function is properly registered *)
+        (match lookup_symbol symbol_table func.func_name with
+         | Some { kind = Function _; scope = []; _ } -> ()
+         | Some _ -> errors := ("global function " ^ func.func_name ^ " has incorrect scope") :: !errors
+         | None -> errors := ("global function " ^ func.func_name ^ " not found in symbol table") :: !errors)
+        
+    | _ -> ()
+  ) ast;
+  
+  {
+    analysis_complete = true;
+    symbol_errors = List.rev !errors;
+    symbol_statistics = {
+      total_symbols = !total_symbols;
+      function_count = !function_count; 
+      variable_count = !variable_count;
+      type_count = !type_count;
+    }
+  }
+
 (** Test 1: Basic symbol table creation *)
 let test_symbol_table_creation () =
   let table = create_symbol_table () in
@@ -706,22 +778,11 @@ program comprehensive : xdp {
 |} in
   try
     let ast = parse_string program_text in
-    let symbol_table = create_symbol_table () in
-    let _ = build_symbol_table ast in  (* This function builds the symbol table *)
+    let symbol_table = build_symbol_table ast in  (* This function builds and returns the symbol table *)
     check bool "comprehensive analysis setup" true true;
     
-    (* Full analysis - TODO: Implement comprehensive_symbol_analysis *)
-    let _ = symbol_table in  (* Use the symbol_table variable to avoid warning *)
-    let analysis = {
-      analysis_complete = true;
-      symbol_errors = [];
-      symbol_statistics = {
-        total_symbols = 1;
-        function_count = 1;
-        variable_count = 0;
-        type_count = 0
-      }
-    } in  (* Placeholder *)
+    (* Full analysis - now implemented properly *)
+    let analysis = comprehensive_symbol_analysis symbol_table ast in
     check bool "comprehensive analysis completed" true analysis.analysis_complete;
     check int "no symbol errors" 0 (List.length analysis.symbol_errors);
     check bool "has symbol statistics" true (analysis.symbol_statistics.total_symbols > 0);
