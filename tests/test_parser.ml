@@ -60,8 +60,8 @@ let test_statement_parsing () =
     ("x = 50;", true);
     ("return x;", true);
     ("return;", true);
-    ("if (condition) { return 1; }", true);
-    ("if (x > 0) { return 1; } else { return 0; }", true);
+    ("if condition { return 1; }", true);
+    ("if x > 0 { return 1; } else { return 0; }", true);
   ] in
   
   List.iter (fun (stmt_text, should_succeed) ->
@@ -175,13 +175,13 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10;
     
-    if (x > 5) {
+    if x > 5 {
       x = x + 1;
     } else {
       x = x - 1;
     }
     
-    while (x > 0) {
+    while x > 0 {
       x = x - 1;
     }
     
@@ -250,7 +250,7 @@ program packet_filter : xdp {
     let src_ip = 0x12345678;
     let count = process_packet(src_ip);
     
-    if (count > 100) {
+    if count > 100 {
       return 1;  // DROP
     }
     
@@ -279,6 +279,244 @@ program packet_filter : xdp {
   with
   | _ -> fail "Failed to parse complete program"
 
+(** Test simple if statement without else *)
+let test_simple_if () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let x = 10;
+    if x > 5 {
+      return 1;
+    }
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let if_stmt = List.nth main_func.func_body 1 in
+                 (match if_stmt.stmt_desc with
+          | If (_, then_stmts, None) ->
+              check int "then branch has statements" 1 (List.length then_stmts);
+              check bool "no else branch" true (None = None)
+         | _ -> fail "Expected if statement without else")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse simple if: " ^ Printexc.to_string e)
+
+(** Test if-else statement *)
+let test_if_else () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let x = 10;
+    if x > 15 {
+      return 1;
+    } else {
+      return 2;
+    }
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let if_stmt = List.nth main_func.func_body 1 in
+                 (match if_stmt.stmt_desc with
+          | If (_, then_stmts, Some else_stmts) ->
+              check int "then branch has statements" 1 (List.length then_stmts);
+              check int "else branch has statements" 1 (List.length else_stmts)
+         | _ -> fail "Expected if-else statement")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse if-else: " ^ Printexc.to_string e)
+
+(** Test if-else if-else chain *)
+let test_if_else_if_else () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let x = 10;
+    if x > 20 {
+      return 1;
+    } else if x > 10 {
+      return 2;
+    } else if x > 5 {
+      return 3; 
+    } else {
+      return 4;
+    }
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let if_stmt = List.nth main_func.func_body 1 in
+                 (match if_stmt.stmt_desc with
+          | If (_, then_stmts, Some else_stmts) ->
+              check int "first then branch" 1 (List.length then_stmts);
+              check int "else contains nested if" 1 (List.length else_stmts);
+             (* Check that else contains another if statement *)
+             (match (List.hd else_stmts).stmt_desc with
+              | If (_, _, Some _) -> check bool "nested if-else" true true
+              | _ -> fail "Expected nested if in else branch")
+         | _ -> fail "Expected if-else chain")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse if-else-if-else: " ^ Printexc.to_string e)
+
+(** Test nested if statements *)
+let test_nested_if () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let x = 10;
+    let y = 20;
+    if x > 5 {
+      if y > 15 {
+        return 1;
+      } else {
+        return 2;
+      }
+    } else {
+      return 3;
+    }
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let if_stmt = List.nth main_func.func_body 2 in
+                 (match if_stmt.stmt_desc with
+          | If (_, then_stmts, Some _) ->
+              check int "outer then branch" 1 (List.length then_stmts);
+              (* Check nested if in then branch *)
+              (match (List.hd then_stmts).stmt_desc with
+               | If (_, nested_then, Some nested_else) -> 
+                   check int "nested then" 1 (List.length nested_then);
+                   check int "nested else" 1 (List.length nested_else)
+               | _ -> fail "Expected nested if in then branch")
+         | _ -> fail "Expected nested if statement")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse nested if: " ^ Printexc.to_string e)
+
+(** Test if statements with multiple statements in branches *)
+let test_multiple_statements_in_branches () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let x = 10;
+    if x > 5 {
+      let y = x + 1;
+      let z = y * 2;
+      x = z - 1;
+      return 1;
+    } else {
+      x = x - 1;
+      let w = x / 2;  
+      return 2;
+    }
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let if_stmt = List.nth main_func.func_body 1 in
+                 (match if_stmt.stmt_desc with
+          | If (_, then_stmts, Some else_stmts) ->
+              check int "then branch multiple statements" 4 (List.length then_stmts);
+              check int "else branch multiple statements" 3 (List.length else_stmts)
+         | _ -> fail "Expected if statement with multiple statements")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse multiple statements: " ^ Printexc.to_string e)
+
+(** Test that SPEC-compliant syntax works correctly *)
+let test_spec_compliant_syntax () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let x = 10;
+    let y = 20;
+    
+    // SPEC-compliant syntax without parentheses around condition
+    if x > 5 {
+      return 1;
+    }
+    
+    // Complex conditions should also work without parens
+    if x > 5 && y < 25 {
+      return 2;
+    }
+    
+    // Parentheses for grouping expressions should still work
+    if (x + y) > 25 {
+      return 3;
+    }
+    
+    return 0;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        (* Should have multiple if statements *)
+        check bool "SPEC-compliant syntax works" true (List.length main_func.func_body >= 6)
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse SPEC-compliant syntax: " ^ Printexc.to_string e)
+
+(** Test if statement error cases *)
+let test_if_error_cases () =
+  let error_cases = [
+    ("missing condition", {|
+program test : xdp {
+  fn main() -> u32 {
+    if {
+      return 1;
+    }
+    return 0;
+  }
+}
+|});
+    ("missing braces", {|
+program test : xdp {
+  fn main() -> u32 {
+    if x > 5
+      return 1;
+    return 0;
+  }
+}
+|});
+  ] in
+  
+  List.iter (fun (desc, code) ->
+    try
+      let _ = parse_string code in
+      fail ("Should have failed: " ^ desc)
+    with
+    | Parse_error (_, _) -> check bool ("error case: " ^ desc) true true
+    | _ -> fail ("Expected parse error for: " ^ desc)
+  ) error_cases
+
 let parser_tests = [
   "simple_program", `Quick, test_simple_program;
   "expression_parsing", `Quick, test_expression_parsing;
@@ -287,6 +525,13 @@ let parser_tests = [
   "program_types", `Quick, test_program_types;
   "bpf_type_parsing", `Quick, test_bpf_type_parsing;
   "control_flow_parsing", `Quick, test_control_flow_parsing;
+  "simple_if", `Quick, test_simple_if;
+  "if_else", `Quick, test_if_else;
+  "if_else_if_else", `Quick, test_if_else_if_else;
+  "nested_if", `Quick, test_nested_if;
+  "multiple_statements_in_branches", `Quick, test_multiple_statements_in_branches;
+  "spec_compliant_syntax", `Quick, test_spec_compliant_syntax;
+  "if_error_cases", `Quick, test_if_error_cases;
   "error_handling", `Quick, test_error_handling;
   "operator_precedence", `Quick, test_operator_precedence;
   "complete_program_parsing", `Quick, test_complete_program_parsing;

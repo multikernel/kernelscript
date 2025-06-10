@@ -221,18 +221,20 @@ return_statement:
   | RETURN expression SEMICOLON { make_stmt (Return (Some $2)) (make_pos ()) }
 
 if_statement:
-  | IF LPAREN expression RPAREN LBRACE statement_list RBRACE
-    { make_stmt (If ($3, $6, None)) (make_pos ()) }
-  | IF LPAREN expression RPAREN LBRACE statement_list RBRACE ELSE LBRACE statement_list RBRACE
-    { make_stmt (If ($3, $6, Some $10)) (make_pos ()) }
+  | IF expression LBRACE statement_list RBRACE
+    { make_stmt (If ($2, $4, None)) (make_pos ()) }
+  | IF expression LBRACE statement_list RBRACE ELSE LBRACE statement_list RBRACE
+    { make_stmt (If ($2, $4, Some $8)) (make_pos ()) }
+  | IF expression LBRACE statement_list RBRACE ELSE if_statement
+    { make_stmt (If ($2, $4, Some [$7])) (make_pos ()) }
 
 while_statement:
-  | WHILE LPAREN expression RPAREN LBRACE statement_list RBRACE
-    { make_stmt (While ($3, $6)) (make_pos ()) }
+  | WHILE expression LBRACE statement_list RBRACE
+    { make_stmt (While ($2, $4)) (make_pos ()) }
 
 for_statement:
-  | FOR LPAREN IDENTIFIER IN expression DOT DOT expression RPAREN LBRACE statement_list RBRACE
-    { make_stmt (For ($3, $5, $8, $11)) (make_pos ()) }
+  | FOR IDENTIFIER IN expression DOT DOT expression LBRACE statement_list RBRACE
+    { make_stmt (For ($2, $4, $7, $9)) (make_pos ()) }
 
 /* Expressions */
 expression:
