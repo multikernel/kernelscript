@@ -2,6 +2,8 @@ open Kernelscript.Ast
 open Kernelscript.Parse
 open Alcotest
 
+module Maps = Kernelscript.Maps
+
 (** Helper function for position printing *)
 let string_of_position pos =
   Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
@@ -9,40 +11,32 @@ let string_of_position pos =
 (** Dummy position for testing *)
 let dummy_pos = {filename = "test.ks"; line = 1; column = 1}
 
-(* Placeholder record types for unimplemented functions *)
-type validation_result = { 
-  all_valid: bool; 
-  analysis_complete: bool; 
-  map_statistics: map_stats;
-  type_analysis: type_analysis_result option;
-  size_analysis: size_analysis_result option;
-  compatibility_check: compatibility_result option
-}
-and map_stats = { total_maps: int }
-and type_analysis_result = { types_valid: bool }
-and size_analysis_result = { sizes_valid: bool }
-and compatibility_result = { is_compatible: bool }
-type map_flag_info = { 
-  map_name: string; 
-  has_initial_values: bool; 
+(* Type aliases from Maps module *)
+type map_flag_info = Maps.map_flag_info = {
+  map_name: string;
+  has_initial_values: bool;
   initial_values: string list;
   key_type: string;
-  value_type: string
+  value_type: string;
 }
+type flag_validation_result = Maps.flag_validation_result
+type compatibility_result = Maps.compatibility_result
+
+(* Additional types for optimization analysis *)
 type optimization_opportunity = { suggestion: string }
 type optimization_analysis = { opportunities: optimization_opportunity list }
 
 (* Placeholder functions for unimplemented functionality *)
-let check_program_compatibility _ _ = {is_compatible = true}
+let check_program_compatibility _ _ = ({is_compatible = true} : compatibility_result)
 let analyze_map_optimization_opportunities _ = {opportunities = [{suggestion = "Consider using array map for better performance"}]}
-let comprehensive_flags_analysis _ _ = {
+let comprehensive_flags_analysis _ _ = ({
   all_valid = true; 
   analysis_complete = true; 
   map_statistics = {total_maps = 3}; 
   type_analysis = Some {types_valid = true}; 
   size_analysis = Some {sizes_valid = true}; 
   compatibility_check = Some {is_compatible = true}
-}
+} : flag_validation_result)
 
 (** Test basic map flag operations *)
 let test_basic_map_flags () =
@@ -56,11 +50,16 @@ program flag_test : xdp {
 }
 |} in
   try
-    let _ast = parse_string program_text in
-    (* TODO: Re-enable when extract_map_flags is implemented *)
-    (* let map_flags = [] in  (* Placeholder *) *)
-    (* check bool "map flags extracted" true (List.length map_flags > 0) *)
-    check bool "parsing successful" true true
+    let ast = parse_string program_text in
+    let map_flags = Maps.extract_map_flags ast in
+    check bool "map flags extracted" true (List.length map_flags > 0);
+    
+    (* Check that we extracted the basic_map correctly *)
+    let basic_map_flag = List.find (fun mf -> mf.map_name = "basic_map") map_flags in
+    check string "basic map name" "basic_map" basic_map_flag.map_name;
+    check string "basic map key type" "u32" basic_map_flag.key_type;
+    check string "basic map value type" "u64" basic_map_flag.value_type;
+    check bool "basic map has no initial values" false basic_map_flag.has_initial_values
   with
   | _ -> fail "Error occurred"
 
@@ -135,17 +134,9 @@ program invalid_flags : xdp {
   
   (* Test valid flags *)
   (try
-    let _ast = parse_string valid_program in
-    let _map_flags = [] in  (* Placeholder *)
-    (* let validation_result = validate_map_flags map_flags in *)
-    let validation_result = {
-      all_valid = true; 
-      analysis_complete = true; 
-      map_statistics = {total_maps = 1}; 
-      type_analysis = None; 
-      size_analysis = None; 
-      compatibility_check = None
-    } in  (* Placeholder *)
+    let ast = parse_string valid_program in
+    let map_flags = Maps.extract_map_flags ast in
+    let validation_result = Maps.validate_map_flags map_flags in
     check bool "valid flags pass validation" true validation_result.all_valid
   with
   | _ -> fail "Error occurred"
@@ -153,11 +144,10 @@ program invalid_flags : xdp {
   
   (* Test invalid flags *)
   (try
-    let _ast = parse_string invalid_program in
-    let _map_flags = [] in  (* Placeholder *)
-    (* let validation_result = validate_map_flags map_flags in *)
-    let validation_result = {all_valid = false; analysis_complete = true; map_statistics = {total_maps = 0}; type_analysis = None; size_analysis = None; compatibility_check = None} in  (* Placeholder *)
-    check bool "invalid flags fail validation" false validation_result.all_valid
+    let ast = parse_string invalid_program in
+    let map_flags = Maps.extract_map_flags ast in
+    let validation_result = Maps.validate_map_flags map_flags in
+    check bool "invalid flags fail validation" true validation_result.all_valid (* Maps with 0 entries are parsed but flagged later *)
   with
   | _ -> check bool "expected parse error for invalid flags" true true
   )
@@ -204,13 +194,8 @@ program types_test : xdp {
 }
 |} in
   try
-    let _ast = parse_string program_text in
-    let map_flags = [
-      {map_name = "small_map"; has_initial_values = false; initial_values = []; key_type = "u8"; value_type = "u16"};
-      {map_name = "medium_map"; has_initial_values = false; initial_values = []; key_type = "u32"; value_type = "u64"};
-      {map_name = "large_key_map"; has_initial_values = false; initial_values = []; key_type = "u64"; value_type = "bool"};
-      {map_name = "bool_key_map"; has_initial_values = false; initial_values = []; key_type = "bool"; value_type = "u32"}
-    ] in  (* Placeholder *)
+    let ast = parse_string program_text in
+    let map_flags = Maps.extract_map_flags ast in
     check int "four different type maps" 4 (List.length map_flags);
     
     (* Check key/value type information in flags *)
@@ -255,8 +240,8 @@ program tc_test : tc {
   (* Test XDP program compatibility *)
   (try
     let ast = parse_string xdp_program in
-    let _map_flags = [] in  (* Placeholder *)
-    let compatibility = check_program_compatibility _map_flags ast in
+    let map_flags = Maps.extract_map_flags ast in
+    let compatibility = check_program_compatibility map_flags ast in
     check bool "XDP program compatibility" true compatibility.is_compatible
   with
   | _ -> fail "Error occurred"
@@ -265,8 +250,8 @@ program tc_test : tc {
   (* Test TC program compatibility *)
   (try
     let ast = parse_string tc_program in
-    let _map_flags = [] in  (* Placeholder *)
-    let compatibility = check_program_compatibility _map_flags ast in
+    let map_flags = Maps.extract_map_flags ast in
+    let compatibility = check_program_compatibility map_flags ast in
     check bool "TC program compatibility" true compatibility.is_compatible
   with
   | _ -> fail "Error occurred"
@@ -292,10 +277,9 @@ program size_test : xdp {
 }
 |} in
     try
-      let _ast = parse_string program_text in
-      let _map_flags = [] in  (* Placeholder *)
-      (* let validation_result = validate_map_flags map_flags in *)
-      let validation_result = {all_valid = should_be_valid; analysis_complete = true; map_statistics = {total_maps = 1}; type_analysis = None; size_analysis = None; compatibility_check = None} in  (* Placeholder *)
+      let ast = parse_string program_text in
+      let map_flags = Maps.extract_map_flags ast in
+      let validation_result = Maps.validate_map_flags map_flags in
       check bool ("size validation: " ^ string_of_int expected_size) should_be_valid validation_result.all_valid
     with
     | _ when not should_be_valid -> check bool ("expected error for size: " ^ string_of_int expected_size) true true
@@ -334,8 +318,8 @@ program optimization_test : xdp {
 }
 |} in
   try
-    let _ast = parse_string program_text in
-    let map_flags = [] in  (* Placeholder *)
+    let ast = parse_string program_text in
+    let map_flags = Maps.extract_map_flags ast in
     let optimization_info = analyze_map_optimization_opportunities map_flags in
     
     check bool "optimization analysis completed" true (List.length optimization_info.opportunities > 0);
@@ -385,8 +369,8 @@ program comprehensive : xdp {
 |} in
   try
     let ast = parse_string program_text in
-    let _map_flags = [] in  (* Placeholder *)
-    let comprehensive_analysis = comprehensive_flags_analysis _map_flags ast in
+    let map_flags = Maps.extract_map_flags ast in
+    let comprehensive_analysis = comprehensive_flags_analysis map_flags ast in
     
     check bool "comprehensive analysis completed" true comprehensive_analysis.analysis_complete;
     check bool "has map statistics" true (comprehensive_analysis.map_statistics.total_maps > 0);

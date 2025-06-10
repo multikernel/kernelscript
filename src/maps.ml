@@ -78,6 +78,30 @@ type validation_result =
   | InvalidAttributes of string
   | UnsupportedOperation of string
 
+(** Map flag information for analysis *)
+type map_flag_info = {
+  map_name: string;
+  has_initial_values: bool;
+  initial_values: string list;
+  key_type: string;
+  value_type: string;
+}
+
+(** Analysis result types *)
+type map_stats = { total_maps: int }
+type type_analysis_result = { types_valid: bool }
+type size_analysis_result = { sizes_valid: bool }
+type compatibility_result = { is_compatible: bool }
+
+type flag_validation_result = {
+  all_valid: bool;
+  analysis_complete: bool;
+  map_statistics: map_stats;
+  type_analysis: type_analysis_result option;
+  size_analysis: size_analysis_result option;
+  compatibility_check: compatibility_result option;
+}
+
 (** Map semantics and constraints *)
 
 (** Get the default key and value sizes for primitive types *)
@@ -341,4 +365,36 @@ let print_map_declaration map_decl =
   print_endline (string_of_map_declaration map_decl)
 
 let print_validation_result result =
-  print_endline (string_of_validation_result result) 
+  print_endline (string_of_validation_result result)
+
+(** Extract map flag information from AST *)
+let extract_map_flags (ast : Ast.declaration list) =
+  List.filter_map (function
+    | Ast.MapDecl map_decl ->
+        Some {
+          map_name = map_decl.Ast.name;
+          has_initial_values = false; (* KernelScript doesn't support map initialization yet *)
+          initial_values = [];
+          key_type = Ast.string_of_bpf_type map_decl.Ast.key_type;
+          value_type = Ast.string_of_bpf_type map_decl.Ast.value_type;
+        }
+    | _ -> None
+  ) ast
+
+(** Validate map flags *)
+let validate_map_flags map_flags =
+  let all_valid = List.for_all (fun flag_info ->
+    (* Basic validation - check that names are not empty and types are valid *)
+    String.length flag_info.map_name > 0 &&
+    String.length flag_info.key_type > 0 &&
+    String.length flag_info.value_type > 0
+  ) map_flags in
+  
+  ({
+    all_valid = all_valid;
+    analysis_complete = true;
+    map_statistics = { total_maps = List.length map_flags };
+    type_analysis = None;
+    size_analysis = None;
+    compatibility_check = None;
+  } : flag_validation_result) 
