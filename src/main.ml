@@ -145,7 +145,7 @@ BPF_CC = clang
 CC = gcc
 
 # BPF compilation flags
-BPF_CFLAGS = -target bpf -O%d -Wall -Wextra
+BPF_CFLAGS = -target bpf -O%d -Wall -Wextra -g
 BPF_INCLUDES = -I/usr/include -I/usr/include/x86_64-linux-gnu
 
 # Userspace compilation flags

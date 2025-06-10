@@ -197,7 +197,7 @@ let test_complete_program () =
   (* Verify the generated C code contains expected elements *)
   Alcotest.(check bool) "program contains linux/bpf.h include" true (contains_substr c_code "#include <linux/bpf.h>");
   Alcotest.(check bool) "program contains map name" true (contains_substr c_code "packet_count");
-  Alcotest.(check bool) "program contains maps section" true (contains_substr c_code "SEC(\"maps\")");
+  Alcotest.(check bool) "program contains maps section" true (contains_substr c_code "SEC(\".maps\")");
   Alcotest.(check bool) "program contains xdp section" true (contains_substr c_code "SEC(\"xdp\")");
   Alcotest.(check bool) "program contains function name" true (contains_substr c_code "xdp_prog");
   Alcotest.(check bool) "program contains GPL license" true (contains_substr c_code "GPL")

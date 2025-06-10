@@ -127,9 +127,9 @@ let generate_map_definition ctx map_def =
   emit_line ctx "struct {";
   increase_indent ctx;
   emit_line ctx (sprintf "__uint(type, %s);" map_type_str);
+  emit_line ctx (sprintf "__uint(max_entries, %d);" map_def.max_entries);
   emit_line ctx (sprintf "__type(key, %s);" key_type_str);
   emit_line ctx (sprintf "__type(value, %s);" value_type_str);
-  emit_line ctx (sprintf "__uint(max_entries, %d);" map_def.max_entries);
   
   (* Add map flags if specified *)
   if map_def.flags <> 0 then
@@ -142,7 +142,7 @@ let generate_map_definition ctx map_def =
   end;
   
   decrease_indent ctx;
-  emit_line ctx (sprintf "} %s SEC(\"maps\");" map_def.map_name);
+  emit_line ctx (sprintf "} %s SEC(\".maps\");" map_def.map_name);
   emit_blank_line ctx
 
 (** Generate C expression from IR value *)
@@ -538,7 +538,7 @@ let write_c_to_file ir_program filename =
 (** Helper function to compile C code to eBPF object *)
 
 let compile_c_to_ebpf c_filename obj_filename =
-  let cmd = sprintf "clang -target bpf -O2 -c %s -o %s" c_filename obj_filename in
+  let cmd = sprintf "clang -target bpf -O2 -g -c %s -o %s" c_filename obj_filename in
   let exit_code = Sys.command cmd in
   if exit_code = 0 then
     Ok obj_filename
