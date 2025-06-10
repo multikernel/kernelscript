@@ -95,13 +95,11 @@ let rec unify_types t1 t2 =
   (* Identical types *)
   | t1, t2 when t1 = t2 -> Some t1
   
-  (* Numeric type promotions *)
+  (* Conservative numeric type promotions - only allow explicit cases that are safe *)
   | U8, U16 | U16, U8 -> Some U16
   | U8, U32 | U32, U8 | U16, U32 | U32, U16 -> Some U32
-  | U8, U64 | U64, U8 | U16, U64 | U64, U16 | U32, U64 | U64, U32 -> Some U64
-  | I8, I16 | I16, I8 -> Some I16
+  | I8, I16 | I16, I8 -> Some I16  
   | I8, I32 | I32, I8 | I16, I32 | I32, I16 -> Some I32
-  | I8, I64 | I64, I8 | I16, I64 | I64, I16 | I32, I64 | I64, I32 -> Some I64
   
   (* Array types *)
   | Array (t1, s1), Array (t2, s2) when s1 = s2 ->
@@ -324,18 +322,33 @@ and type_check_binary_op ctx left op right pos =
          | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64), Sub -> Pointer t
          (* Regular numeric arithmetic *)
          | _ ->
+             (* Try standard unification first *)
              (match unify_types typed_left.texpr_type typed_right.texpr_type with
               | Some unified_type ->
                   (match unified_type with
                    | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
                    | _ -> type_error "Arithmetic operations require numeric types" pos)
-              | None -> type_error "Cannot unify types for arithmetic operation" pos))
+              | None ->
+                  (* Special case: allow U32 literals to be promoted to U64 in arithmetic *)
+                  (match typed_left.texpr_type, typed_right.texpr_type with
+                   | U64, U32 -> U64  (* Promote U32 to U64 *)
+                   | U32, U64 -> U64  (* Promote U32 to U64 *)
+                   | I64, I32 -> I64  (* Promote I32 to I64 *)
+                   | I32, I64 -> I64  (* Promote I32 to I64 *)
+                   | _ -> type_error "Cannot unify types for arithmetic operation" pos)))
     
     (* Comparison operations *)
     | Eq | Ne | Lt | Le | Gt | Ge ->
         (match unify_types typed_left.texpr_type typed_right.texpr_type with
          | Some _ -> Bool
-         | None -> type_error "Cannot compare incompatible types" pos)
+         | None ->
+             (* Special case: allow U32 literals to be compared with U64 *)
+             (match typed_left.texpr_type, typed_right.texpr_type with
+              | U64, U32 -> Bool  (* Allow U64 > U32 comparisons *)
+              | U32, U64 -> Bool  (* Allow U32 > U64 comparisons *)
+              | I64, I32 -> Bool  (* Allow I64 > I32 comparisons *)
+              | I32, I64 -> Bool  (* Allow I32 > I64 comparisons *)
+              | _ -> type_error "Cannot compare incompatible types" pos))
     
     (* Logical operations *)
     | And | Or ->
@@ -596,7 +609,7 @@ let check_function_call name arg_types =
 
 (** Pretty printing for debugging *)
 let string_of_type_error (msg, pos) =
-  Printf.sprintf "Type error: %s at %s" msg (string_of_position pos)
+  Printf.sprintf "Type error: %s at %s" msg (Ast.string_of_position pos)
 
 let print_type_error (msg, pos) =
   Printf.eprintf "%s\n" (string_of_type_error (msg, pos))
@@ -683,3 +696,14 @@ let typed_ast_to_annotated_ast typed_ast original_ast =
         Program annotated_prog
     | other_decl -> other_decl  (* Keep maps, types, etc. unchanged *)
   ) original_ast 
+
+(** PHASE 1: Type check and annotate AST - main entry point for IR generator *)
+let type_check_and_annotate_ast ast =
+  (* Perform type checking to get typed AST *)
+  let typed_programs = type_check_ast ast in
+  
+  (* Convert back to annotated AST (original AST with expr_type fields populated) *)
+  let annotated_ast = typed_ast_to_annotated_ast typed_programs ast in
+  
+  (* Return both the annotated AST (for IR generator) and typed programs (for other uses) *)
+  (annotated_ast, typed_programs) 

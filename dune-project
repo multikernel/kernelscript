@@ -9,6 +9,7 @@
  (depends
   ocaml
   dune
-  menhir))
+  menhir
+  alcotest))
 
 (using menhir 2.0) 

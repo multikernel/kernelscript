@@ -1,101 +1,101 @@
 (executable
  (name test_lexer_simple)
  (modules test_lexer_simple)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_ast)
  (modules test_ast)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_parser)
  (modules test_parser)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_type_checker)
  (modules test_type_checker)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_symbol_table)
  (modules test_symbol_table)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_maps)
  (modules test_maps)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_safety_checker)
  (modules test_safety_checker)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_map_operations)
  (modules test_map_operations)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_evaluator)
  (modules test_evaluator)
- (libraries kernelscript ounit2))
+ (libraries kernelscript alcotest))
 
 (executable
  (public_name test_ir)
  (name test_ir)
  (modules test_ir)
- (libraries kernelscript ounit2))
+ (libraries kernelscript alcotest))
 
 (executable
  (public_name test_ir_analysis)
  (name test_ir_analysis)
  (modules test_ir_analysis)
- (libraries kernelscript ounit2))
+ (libraries kernelscript alcotest))
 
 (executable
  (public_name test_ir_function_system)
  (name test_ir_function_system)
  (modules test_ir_function_system)
- (libraries kernelscript ounit2))
+ (libraries kernelscript alcotest))
 
 (executable
  (public_name test_ebpf_c_codegen)
  (name test_ebpf_c_codegen)
  (modules test_ebpf_c_codegen)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_map_syntax)
  (modules test_map_syntax)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_map_assignment)
  (modules test_map_assignment)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_map_integration)
  (modules test_map_integration)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_userspace)
  (modules test_userspace)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_map_flags)
  (modules test_map_flags)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_userspace_maps)
  (modules test_userspace_maps)
- (libraries kernelscript str))
+ (libraries kernelscript alcotest str))
 
 ; Test aliases for organized execution
 (rule

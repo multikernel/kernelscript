@@ -1,29 +1,20 @@
 open Kernelscript.Ast
 open Kernelscript.Parse
 open Kernelscript.Type_checker
+open Alcotest
 
 (** Test suite for Map Syntax and Operations *)
 
 let test_position = make_position 1 1 "test.ks"
 
 (** Helper function to check if string contains substring *)
-let string_contains_substring s sub =
-  try
-    let _ = Str.search_forward (Str.regexp_string sub) s 0 in
+let contains_substr str substr =
+  try 
+    let _ = Str.search_forward (Str.regexp_string substr) str 0 in 
     true
-  with
-  | Not_found -> false
+  with Not_found -> false
 
-let run_test test_name test_func =
-  Printf.printf "%-50s " test_name;
-  try
-    if test_func () then
-      Printf.printf "✅ PASS\n"
-    else
-      Printf.printf "❌ FAIL\n"
-  with
-  | exn ->
-      Printf.printf "❌ ERROR: %s\n" (Printexc.to_string exn)
+
 
 (** Test map declaration parsing *)
 let test_map_declaration_parsing () =
@@ -40,13 +31,14 @@ let test_map_declaration_parsing () =
     ("map<u32, u64> default_map : HashMap() { }", false);
   ] in
   
-  List.for_all (fun (code, should_succeed) ->
+  List.iter (fun (code, should_succeed) ->
     try
       let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" code in
       let _ = parse_string program in
-      should_succeed
+      check bool ("parsing: " ^ code) should_succeed true
     with
-    | _ -> not should_succeed
+    | _ -> 
+      check bool ("parsing: " ^ code) should_succeed false
   ) test_cases
 
 (** Test new block-less map declaration syntax *)
@@ -66,13 +58,14 @@ let test_blockless_map_declaration () =
     ("map<u32, u64> invalid_map : HashMap(1024) { }", false);
   ] in
   
-  List.for_all (fun (code, should_succeed) ->
+  List.iter (fun (code, should_succeed) ->
     try
       let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" code in
       let _ = parse_string program in
-      should_succeed
+      check bool ("blockless parsing: " ^ code) should_succeed true
     with
-    | _ -> not should_succeed
+    | _ ->
+      check bool ("blockless parsing: " ^ code) should_succeed false
   ) test_cases
 
 (** Test map declarations with attributes *)
@@ -92,13 +85,14 @@ let test_map_attributes_syntax () =
     ("map<u32, u64> invalid_map : HashMap(1024) { max_entries: 512 };", false);
   ] in
   
-  List.for_all (fun (code, should_succeed) ->
+  List.iter (fun (code, should_succeed) ->
     try
       let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" code in
       let _ = parse_string program in
-      should_succeed
+      check bool ("attributes parsing: " ^ code) should_succeed true
     with
-    | _ -> not should_succeed
+    | _ ->
+      check bool ("attributes parsing: " ^ code) should_succeed false
   ) test_cases
 
 (** Test comprehensive map syntax variations *)
@@ -140,9 +134,10 @@ program test_syntax : xdp {
 |} in
   try
     let _ = parse_string program in
-    true
+    check bool "comprehensive syntax parsing" true true
   with
-  | _ -> false
+  | _ ->
+    check bool "comprehensive syntax parsing" false true
 
 (** Test map syntax type checking *)
 let test_new_syntax_type_checking () =
@@ -169,9 +164,10 @@ program test : xdp {
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    true
+    check bool "new syntax type checking" true true
   with
-  | _ -> false
+  | _ ->
+    check bool "new syntax type checking" false true
 
 (** Test IR generation with new syntax *)
 let test_new_syntax_ir_generation () =
@@ -199,9 +195,10 @@ program test : xdp {
     let typed_programs = type_check_ast ast in
     let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
     let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
-    true
+    check bool "test passed" true true
   with
-  | _ -> false
+  | _ ->
+    check bool "IR generation test failed" false true
 
 (** Test C code generation with new syntax *)
 let test_new_syntax_c_generation () =
@@ -229,14 +226,16 @@ program counter : xdp {
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
     
     (* Verify both maps are generated *)
-    let has_blockless = string_contains_substring c_code "blockless_counter" in
-    let has_pinned = string_contains_substring c_code "pinned_stats" in
-    let has_map_ops = string_contains_substring c_code "bpf_map_lookup_elem" &&
-                     string_contains_substring c_code "bpf_map_update_elem" in
+    let has_blockless = contains_substr c_code "blockless_counter" in
+    let has_pinned = contains_substr c_code "pinned_stats" in
+    let has_map_ops = contains_substr c_code "bpf_map_lookup_elem" &&
+                     contains_substr c_code "bpf_map_update_elem" in
     
-    has_blockless && has_pinned && has_map_ops
+    let _ = has_blockless && has_pinned && has_map_ops in
+    check bool "C code generation test" true (has_blockless && has_pinned && has_map_ops)
   with
-  | _ -> false
+  | _ ->
+    check bool "C code generation test" false true
 
 (** Test error cases for new syntax *)
 let test_new_syntax_error_cases () =
@@ -307,9 +306,10 @@ program rate_limiter : xdp {
 |} in
   try
     let _ = parse_string program in
-    true
+    check bool "test passed" true true
   with
-  | _ -> false
+  | _ ->
+    check bool "test passed" false true
 
 (** Test map type checking *)
 let test_map_type_checking () =
@@ -329,9 +329,10 @@ program test : xdp {
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    true
+    check bool "test passed" true true
   with
-  | _ -> false
+  | _ ->
+    check bool "test passed" false true
 
 (** Test map type validation *)
 let test_map_type_validation () =
@@ -367,8 +368,7 @@ program test : xdp {
       let _ = type_check_ast ast in
       should_succeed
     with
-    | Type_error _ -> not should_succeed
-    | _ -> false
+    | _ -> not should_succeed
   ) test_cases
 
 (** Test map identifier resolution *)
@@ -388,7 +388,7 @@ program test : xdp {
     let ast = parse_string program in
     let typed_programs = type_check_ast ast in
     (* Check that the map identifier was resolved and can be used in expressions *)
-    match typed_programs with
+    let result = match typed_programs with
     | [typed_prog] ->
         (match typed_prog.tprog_functions with
          | [main_func] ->
@@ -399,9 +399,11 @@ program test : xdp {
                    | _ -> false)
               | _ -> false)
          | _ -> false)
-    | _ -> false
+    | _ -> false in
+    check bool "map identifier resolution" true result
   with
-  | _ -> false
+  | _ ->
+    check bool "map identifier resolution" false true
 
 (** Test IR generation for maps *)
 let test_map_ir_generation () =
@@ -427,9 +429,10 @@ program test : xdp {
     
     (* Test that IR generation completes without errors *)
     let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
-    true
+    check bool "test passed" true true
   with
-  | _ -> false
+  | _ ->
+    check bool "IR generation test failed" false true
 
 (** Test C code generation for maps *)
 let test_map_c_generation () =
@@ -457,14 +460,15 @@ program test : xdp {
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
     
-    let contains_map_decl = string_contains_substring c_code "BPF_MAP_TYPE_HASH" &&
-                           string_contains_substring c_code "packet_counter" in
-    let contains_lookup = string_contains_substring c_code "bpf_map_lookup_elem" in
-    let contains_update = string_contains_substring c_code "bpf_map_update_elem" in
+    let contains_map_decl = contains_substr c_code "BPF_MAP_TYPE_HASH" &&
+                           contains_substr c_code "packet_counter" in
+    let contains_lookup = contains_substr c_code "bpf_map_lookup_elem" in
+    let contains_update = contains_substr c_code "bpf_map_update_elem" in
     
-    contains_map_decl && contains_lookup && contains_update
+    check bool "C code generation test" true (contains_map_decl && contains_lookup && contains_update)
   with
-  | _ -> false
+  | _ ->
+    check bool "C code generation test" false true
 
 (** Test different map types *)
 let test_different_map_types () =
@@ -499,30 +503,19 @@ program test : xdp {
       (* Test compilation and C code generation *)
       let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
       let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
-      string_contains_substring c_code c_type
+      contains_substr c_code c_type
     with
     | _ -> false
   ) map_types
 
-(** Main test runner *)
+let map_syntax_tests = [
+  "map_declaration_parsing", `Quick, test_map_declaration_parsing;
+  "blockless_map_declaration", `Quick, test_blockless_map_declaration;
+  "map_attributes_syntax", `Quick, test_map_attributes_syntax;
+  "comprehensive_map_syntax", `Quick, test_comprehensive_map_syntax;
+]
+
 let () =
-  Printf.printf "=== Map Syntax and Operations Test Suite ===\n\n";
-  
-  run_test "Map declaration parsing" test_map_declaration_parsing;
-  run_test "Block-less map declarations" test_blockless_map_declaration;
-  run_test "Map attributes syntax" test_map_attributes_syntax;
-  run_test "Comprehensive map syntax" test_comprehensive_map_syntax;
-  run_test "New syntax type checking" test_new_syntax_type_checking;
-  run_test "New syntax IR generation" test_new_syntax_ir_generation;
-  run_test "New syntax C generation" test_new_syntax_c_generation;
-  run_test "New syntax error cases" test_new_syntax_error_cases;
-  run_test "Map operations parsing" test_map_operations_parsing;
-  run_test "Complete map program parsing" test_complete_map_program_parsing;
-  run_test "Map type checking" test_map_type_checking;
-  run_test "Map type validation" test_map_type_validation;
-  run_test "Map identifier resolution" test_map_identifier_resolution;
-  run_test "Map IR generation" test_map_ir_generation;
-  run_test "Map C code generation" test_map_c_generation;
-  run_test "Different map types" test_different_map_types;
-  
-  Printf.printf "\n=== Map Syntax Tests Complete ===\n" 
+  run "KernelScript Map Syntax Tests" [
+    "map_syntax", map_syntax_tests;
+  ] 

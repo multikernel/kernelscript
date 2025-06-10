@@ -3,6 +3,21 @@
 open Kernelscript.Ast
 open Kernelscript.Ir
 open Kernelscript.Ir_generator
+open Alcotest
+
+(** Define test modules for custom types *)
+module Program_type = struct
+  type t = program_type
+  let equal = (=)
+  let pp fmt = function
+    | Xdp -> Format.fprintf fmt "Xdp"
+    | Tc -> Format.fprintf fmt "Tc"
+    | Tracepoint -> Format.fprintf fmt "Tracepoint"
+    | Kprobe -> Format.fprintf fmt "Kprobe"
+    | Uprobe -> Format.fprintf fmt "Uprobe"
+    | Lsm -> Format.fprintf fmt "Lsm"
+    | CgroupSkb -> Format.fprintf fmt "CgroupSkb"
+end
 
 (** Helper functions for creating test AST nodes *)
 
@@ -64,11 +79,10 @@ let test_program_lowering () =
   let ir_prog = generate_ir ast symbol_table in
 
   (* Verify program structure *)
-  assert (ir_prog.program_type = Xdp);
-  assert (List.length ir_prog.global_maps = 1);
-  assert (List.length ir_prog.local_maps = 1);
-  assert (ir_prog.main_function.is_main = true);
-  Printf.printf "✓ Program lowering test passed\n"
+  check (module Program_type) "program type" Xdp ir_prog.program_type;
+  check int "global maps count" 1 (List.length ir_prog.global_maps);
+  check int "local maps count" 1 (List.length ir_prog.local_maps);
+  check bool "main function flag" true ir_prog.main_function.is_main
 
 let test_context_access_lowering () =
   let ctx_access = make_expr 
@@ -79,18 +93,12 @@ let test_context_access_lowering () =
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   let ctx = create_context symbol_table in
   
-  try
-    let _ir_val = lower_expression ctx ctx_access in
-    (* Should generate context access instruction *)
-    assert (List.length ctx.current_block > 0);
-    match (List.hd ctx.current_block).instr_desc with
-    | IRContextAccess (_, PacketData) -> 
-        Printf.printf "✓ Context access lowering test passed\n"
-    | _ -> 
-        Printf.printf "✗ Context access lowering test failed: wrong instruction type\n"
-  with
-  | exn ->
-      Printf.printf "✗ Context access lowering test failed: %s\n" (Printexc.to_string exn)
+  let _ir_val = lower_expression ctx ctx_access in
+  (* Should generate context access instruction *)
+  check bool "instruction generated" true (List.length ctx.current_block > 0);
+  match (List.hd ctx.current_block).instr_desc with
+  | IRContextAccess (_, PacketData) -> () (* Success *)
+  | _ -> fail "Expected context access instruction"
 
 let test_map_operation_lowering () =
   let map_access = make_expr 
@@ -115,26 +123,15 @@ let test_map_operation_lowering () =
     (make_test_position ()) in
   Hashtbl.add ctx.maps "local_map" test_map;
   
-  try
-    let _ir_val = lower_expression ctx map_access in
-    (* Should generate map lookup with bounds checks *)
-    let has_map_load = List.exists (fun instr ->
-      match instr.instr_desc with
-      | IRMapLoad (_, _, _, MapLookup) -> true
-      | _ -> false
-    ) ctx.current_block in
-    
-    let _has_bounds_check = List.exists (fun instr ->
-      List.length instr.bounds_checks > 0
-    ) ctx.current_block in
-    
-    if has_map_load then
-      Printf.printf "✓ Map operation lowering test passed\n"
-    else
-      Printf.printf "✗ Map operation lowering test failed: no map load found\n"
-  with
-  | exn ->
-      Printf.printf "✗ Map operation lowering test failed: %s\n" (Printexc.to_string exn)
+  let _ir_val = lower_expression ctx map_access in
+  (* Should generate map lookup with bounds checks *)
+  let has_map_load = List.exists (fun instr ->
+    match instr.instr_desc with
+    | IRMapLoad (_, _, _, MapLookup) -> true
+    | _ -> false
+  ) ctx.current_block in
+  
+  check bool "map load instruction generated" true has_map_load
 
 let test_bounds_check_insertion () =
   let array_decl = make_expr (Identifier "arr") (make_test_position ()) in
@@ -148,23 +145,14 @@ let test_bounds_check_insertion () =
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   let ctx = create_context symbol_table in
   
-  try
-    let _ir_val = lower_expression ctx array_access in
-    let bounds_checks = List.concat_map (fun instr -> instr.bounds_checks) ctx.current_block in
-    
-    if List.length bounds_checks > 0 then (
-      let has_array_access_check = List.exists (fun bc -> 
-        bc.check_type = ArrayAccess
-      ) bounds_checks in
-      if has_array_access_check then
-        Printf.printf "✓ Bounds check insertion test passed\n"
-      else
-        Printf.printf "✗ Bounds check insertion test failed: wrong check type\n"
-    ) else
-      Printf.printf "✗ Bounds check insertion test failed: no bounds checks\n"
-  with
-  | exn ->
-      Printf.printf "✗ Bounds check insertion test failed: %s\n" (Printexc.to_string exn)
+  let _ir_val = lower_expression ctx array_access in
+  let bounds_checks = List.concat_map (fun instr -> instr.bounds_checks) ctx.current_block in
+  
+  check bool "bounds checks present" true (List.length bounds_checks > 0);
+  let has_array_access_check = List.exists (fun bc -> 
+    bc.check_type = ArrayAccess
+  ) bounds_checks in
+  check bool "array access bounds check" true has_array_access_check
 
 let test_stack_usage_tracking () =
   let buffer_decl = make_stmt 
@@ -181,58 +169,38 @@ let test_stack_usage_tracking () =
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   let ctx = create_context symbol_table in
   
-  try
-    let ir_func = lower_function ctx "test_program" test_func in
-    
-    if ir_func.total_stack_usage >= 100 then (
-      let all_blocks_have_positive_usage = List.for_all (fun (bb : ir_basic_block) -> bb.stack_usage >= 0) ir_func.basic_blocks in
-      if all_blocks_have_positive_usage then
-        Printf.printf "✓ Stack usage tracking test passed\n"
-      else
-        Printf.printf "✗ Stack usage tracking test failed: negative stack usage\n"
-    ) else
-      Printf.printf "✗ Stack usage tracking test failed: insufficient stack usage (%d < 100)\n" ir_func.total_stack_usage
-  with
-  | exn ->
-      Printf.printf "✗ Stack usage tracking test failed: %s\n" (Printexc.to_string exn)
+  let ir_func = lower_function ctx "test_program" test_func in
+  
+  check bool "sufficient stack usage" true (ir_func.total_stack_usage >= 100);
+  let all_blocks_have_positive_usage = List.for_all (fun (bb : ir_basic_block) -> bb.stack_usage >= 0) ir_func.basic_blocks in
+  check bool "positive stack usage in all blocks" true all_blocks_have_positive_usage
 
 let test_userspace_binding_generation () =
   let ast = make_test_ast () in
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   
-  try
-    let ir_prog = generate_ir ast symbol_table in
-    let c_bindings = List.find_opt (fun b -> b.language = C) ir_prog.userspace_bindings in
-    
-    match c_bindings with
-    | Some bindings ->
-        if List.length bindings.map_wrappers > 0 then (
-          let first_wrapper = List.hd bindings.map_wrappers in
-          let has_lookup = List.exists (fun op -> op = OpLookup) first_wrapper.operations in
-          if has_lookup then
-            Printf.printf "✓ Userspace binding generation test passed\n"
-          else
-            Printf.printf "✗ Userspace binding generation test failed: no lookup operation\n"
-        ) else
-          Printf.printf "✗ Userspace binding generation test failed: no map wrappers\n"
-    | None ->
-        Printf.printf "✗ Userspace binding generation test failed: no C bindings\n"
-  with
-  | exn ->
-      Printf.printf "✗ Userspace binding generation test failed: %s\n" (Printexc.to_string exn)
-
-(** Run all tests *)
-let run_tests () =
-  Printf.printf "Running IR generation tests...\n\n";
+  let ir_prog = generate_ir ast symbol_table in
+  let c_bindings = List.find_opt (fun b -> b.language = C) ir_prog.userspace_bindings in
   
-  test_program_lowering ();
-  test_context_access_lowering ();
-  test_map_operation_lowering ();
-  test_bounds_check_insertion ();
-  test_stack_usage_tracking ();
-  test_userspace_binding_generation ();
-  
-  Printf.printf "\nIR generation tests completed.\n"
+  match c_bindings with
+  | Some bindings ->
+      check bool "map wrappers present" true (List.length bindings.map_wrappers > 0);
+      let first_wrapper = List.hd bindings.map_wrappers in
+      let has_lookup = List.exists (fun op -> op = OpLookup) first_wrapper.operations in
+      check bool "lookup operation present" true has_lookup
+  | None ->
+      fail "No C bindings found"
 
-(** Entry point *)
-let () = run_tests () 
+let ir_tests = [
+  "program_lowering", `Quick, test_program_lowering;
+  "context_access_lowering", `Quick, test_context_access_lowering;
+  "map_operation_lowering", `Quick, test_map_operation_lowering;
+  "bounds_check_insertion", `Quick, test_bounds_check_insertion;
+  "stack_usage_tracking", `Quick, test_stack_usage_tracking;
+  "userspace_binding_generation", `Quick, test_userspace_binding_generation;
+]
+
+let () =
+  run "KernelScript IR Generation Tests" [
+    "ir_generation", ir_tests;
+  ] 

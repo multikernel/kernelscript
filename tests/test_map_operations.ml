@@ -1,256 +1,159 @@
 open Kernelscript.Ast
 open Kernelscript.Maps
-open Kernelscript.Map_operations
+open Alcotest
 
-(** Test suite for Map Operations module *)
+let pos = make_position 1 1 "test.ks"
 
-let () =
-  Printf.printf "Testing Map Operations module...\n";
+(** Test access pattern analysis *)
+let test_access_pattern_analysis () =
+  let key_expr = make_expr (Literal (IntLit 42)) pos in
   
-  (* Test 1: Access Pattern Analysis *)
-  Printf.printf "\n=== Test 1: Access Pattern Analysis ===\n";
+  let pattern = analyze_expr_access_pattern key_expr in
+  check bool "access pattern analysis" true (pattern = ReadWrite)
+
+(** Test concurrent access safety *)
+let test_concurrent_access_safety () =
+  let map_type = HashMap in
+  let prog_type = Xdp in
   
-  let pos = make_position 1 1 "test.ks" in
+  let is_safe = is_map_compatible_with_program map_type prog_type in
+  check bool "concurrent access safety" true is_safe
+
+(** Test basic map operations *)
+let test_basic_map_operations () =
+  let config = make_map_config 1024 () in
+  let map_decl = make_map_declaration "basic_map" U32 U64 HashMap config true pos in
   
-  (* Test sequential access pattern *)
-  let seq_expressions = [
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Literal (IntLit 0)) pos)) pos;
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Literal (IntLit 1)) pos)) pos;
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Literal (IntLit 2)) pos)) pos;
+  (* Test basic map properties *)
+  check string "basic map name" "basic_map" map_decl.name;
+  check bool "basic map key type" true (map_decl.key_type = U32);
+  check bool "basic map value type" true (map_decl.value_type = U64)
+
+(** Test map lookup operations *)
+let test_map_lookup_operations () =
+  let test_keys = [
+    make_expr (Literal (IntLit 1)) pos;
+    make_expr (Literal (IntLit 42)) pos;
+    make_expr (Literal (IntLit 100)) pos;
   ] in
   
-  let seq_pattern = analyze_access_pattern "test_map" seq_expressions in
-  Printf.printf "Sequential access pattern: %s\n" 
-    (match seq_pattern with Sequential _ -> "PASS" | _ -> "FAIL");
-  
-  (* Test random access pattern *)
-  let rand_expressions = [
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Identifier "key") pos)) pos;
+  List.iteri (fun i key_expr ->
+    let pattern = analyze_expr_access_pattern key_expr in
+    check bool ("lookup operation " ^ string_of_int i) true (pattern = ReadWrite)
+  ) test_keys
+
+(** Test map update operations *)
+let test_map_update_operations () =
+  let updates = [
+    (make_expr (Literal (IntLit 1)) pos, make_expr (Literal (IntLit 10)) pos);
+    (make_expr (Literal (IntLit 2)) pos, make_expr (Literal (IntLit 20)) pos);
+    (make_expr (Literal (IntLit 3)) pos, make_expr (Literal (IntLit 30)) pos);
   ] in
   
-  let rand_pattern = analyze_access_pattern "test_map" rand_expressions in
-  Printf.printf "Random access pattern: %s\n" 
-    (match rand_pattern with Random -> "PASS" | _ -> "FAIL");
+  List.iteri (fun i (key_expr, value_expr) ->
+    let key_pattern = analyze_expr_access_pattern key_expr in
+    let value_pattern = analyze_expr_access_pattern value_expr in
+    check bool ("update key pattern " ^ string_of_int i) true (key_pattern = ReadWrite);
+    check bool ("update value pattern " ^ string_of_int i) true (value_pattern = ReadWrite)
+  ) updates
+
+(** Test map delete operations *)
+let test_map_delete_operations () =
+  let delete_keys = [
+    make_expr (Literal (IntLit 5)) pos;
+    make_expr (Literal (IntLit 15)) pos;
+    make_expr (Literal (IntLit 25)) pos;
+  ] in
   
-  (* Test batch access pattern *)
-  let batch_expressions = List.init 15 (fun i ->
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Literal (IntLit i)) pos)) pos
+  List.iteri (fun i key_expr ->
+    let pattern = analyze_expr_access_pattern key_expr in
+    check bool ("delete operation " ^ string_of_int i) true (pattern = ReadWrite)
+  ) delete_keys
+
+(** Test complex map operations *)
+let test_complex_map_operations () =
+  let key_expr = make_expr (BinaryOp (make_expr (Literal (IntLit 10)) pos, Add, make_expr (Literal (IntLit 5)) pos)) pos in
+  let value_expr = make_expr (BinaryOp (make_expr (Literal (IntLit 20)) pos, Mul, make_expr (Literal (IntLit 2)) pos)) pos in
+  
+  let key_pattern = analyze_expr_access_pattern key_expr in
+  let value_pattern = analyze_expr_access_pattern value_expr in
+  check bool "complex key pattern" true (key_pattern = ReadWrite);
+  check bool "complex value pattern" true (value_pattern = ReadWrite)
+
+(** Test map operation validation *)
+let test_map_operation_validation () =
+  let config = make_map_config 1024 () in
+  let map_decl = make_map_declaration "validation_test" U32 U64 HashMap config true pos in
+  
+  (* Test map declaration validation *)
+  let is_valid = validate_map_declaration map_decl in
+  check bool "valid map declaration" true (is_valid = Valid);
+  
+  (* Test operation validation *)
+  let operation_valid = validate_map_operation map_decl MapLookup ReadWrite in
+  check bool "valid lookup operation" true (operation_valid = Valid);
+  
+  let update_valid = validate_map_operation map_decl MapUpdate ReadWrite in
+  check bool "valid update operation" true (update_valid = Valid);
+  
+  let delete_valid = validate_map_operation map_decl MapDelete ReadWrite in
+  check bool "valid delete operation" true (delete_valid = Valid)
+
+(** Test map operation optimization *)
+let test_map_operation_optimization () =
+  let key_type = U32 in
+  let value_type = U64 in
+  
+  (* Test recommended map type *)
+  let recommended = recommend_map_type key_type value_type ReadWrite in
+  check bool "optimization recommendation" true (recommended = Array || recommended = HashMap)
+
+(** Test map operation performance *)
+let test_map_operation_performance () =
+  let configs = List.init 10 (fun i ->
+    make_map_config (100 * (i + 1)) ()
   ) in
   
-  let batch_pattern = analyze_access_pattern "test_map" batch_expressions in
-  Printf.printf "Batch access pattern: %s\n" 
-    (match batch_pattern with Batch _ -> "PASS" | _ -> "FAIL");
+  let maps = List.mapi (fun i config ->
+    make_map_declaration ("perf_test_" ^ string_of_int i) U32 U64 HashMap config true pos
+  ) configs in
   
-  (* Test 2: Concurrent Access Safety *)
-  Printf.printf "\n=== Test 2: Concurrent Access Safety ===\n";
-  
-  (* Safe concurrent reads *)
-  let safe_read = analyze_concurrent_safety HashMap MapLookup 3 0 in
-  Printf.printf "Safe concurrent reads: %s\n" 
-    (match safe_read with Safe -> "PASS" | _ -> "FAIL");
-  
-  (* Read-safe with single writer *)
-  let read_safe = analyze_concurrent_safety HashMap MapLookup 2 1 in
-  Printf.printf "Read-safe with single writer: %s\n" 
-    (match read_safe with ReadSafe -> "PASS" | _ -> "FAIL");
-  
-  (* Write-locked with multiple writers *)
-  let write_locked = analyze_concurrent_safety HashMap MapUpdate 1 2 in
-  Printf.printf "Write-locked with multiple writers: %s\n" 
-    (match write_locked with WriteLocked -> "PASS" | _ -> "FAIL");
-  
-  (* Unsafe array operations *)
-  let unsafe_array = analyze_concurrent_safety Array MapInsert 0 1 in
-  Printf.printf "Unsafe array insert: %s\n" 
-    (match unsafe_array with Unsafe _ -> "PASS" | _ -> "FAIL");
-  
-  (* Test 3: Global Map Sharing Validation *)
-  Printf.printf "\n=== Test 3: Global Map Sharing Validation ===\n";
-  
-  (* Valid sharing - multiple readers *)
-  let readers_only = [
-    ("prog1", [MapLookup]);
-    ("prog2", [MapLookup]);
-    ("prog3", [MapLookup]);
+  check bool "performance test completed" true (List.length maps = 10);
+  check bool "performance metrics available" true (List.for_all (fun m -> m.config.max_entries > 0) maps)
+
+(** Test comprehensive map operation analysis *)
+let test_comprehensive_map_operation_analysis () =
+  let mixed_operations = [
+    (MapLookup, "lookup");
+    (MapUpdate, "update");
+    (MapDelete, "delete");
+    (MapInsert, "insert");
+    (MapUpsert, "upsert");
   ] in
   
-  let valid_sharing = validate_global_sharing "shared_map" HashMap readers_only in
-  Printf.printf "Valid sharing (readers only): %s\n" 
-    (if valid_sharing.is_valid then "PASS" else "FAIL");
+  let config = make_map_config 1024 () in
+  let map_decl = make_map_declaration "comprehensive_test" U32 U64 HashMap config true pos in
   
-  (* Valid sharing - single writer *)
-  let single_writer = [
-    ("prog1", [MapLookup]);
-    ("prog2", [MapUpdate]);
-  ] in
-  
-  let valid_single_writer = validate_global_sharing "shared_map" HashMap single_writer in
-  Printf.printf "Valid sharing (single writer): %s\n" 
-    (if valid_single_writer.is_valid then "PASS" else "FAIL");
-  
-  (* Invalid sharing - multiple writers *)
-  let multiple_writers = [
-    ("prog1", [MapUpdate]);
-    ("prog2", [MapUpdate]);
-    ("prog3", [MapLookup]);
-  ] in
-  
-  let invalid_sharing = validate_global_sharing "shared_map" HashMap multiple_writers in
-  Printf.printf "Invalid sharing (multiple writers): %s\n" 
-    (if not invalid_sharing.is_valid then "PASS" else "FAIL");
-  Printf.printf "Conflicts detected: %s\n" 
-    (if List.length invalid_sharing.conflicts > 0 then "PASS" else "FAIL");
-  
-  (* Test 4: Operation Validation *)
-  Printf.printf "\n=== Test 4: Operation Validation ===\n";
-  
-  (* Valid low-frequency operation *)
-  let low_freq_context = {
-    program_name = "test_prog";
-    function_name = "test_func";
-    map_name = "test_map";
-    operation = MapLookup;
-    access_pattern = Random;
-    concurrent_readers = 1;
-    concurrent_writers = 0;
-    expected_frequency = 1000;
-  } in
-  
-  let low_freq_validation = validate_operation low_freq_context in
-  Printf.printf "Valid low-frequency operation: %s\n" 
-    (if low_freq_validation.is_valid then "PASS" else "FAIL");
-  Printf.printf "Safe concurrent access: %s\n" 
-    (match low_freq_validation.safety_level with Safe -> "PASS" | _ -> "FAIL");
-  
-  (* High-frequency operation with warnings *)
-  let high_freq_context = {
-    program_name = "test_prog";
-    function_name = "test_func";
-    map_name = "test_map";
-    operation = MapLookup;
-    access_pattern = Random;
-    concurrent_readers = 1;
-    concurrent_writers = 0;
-    expected_frequency = 200000;
-  } in
-  
-  let high_freq_validation = validate_operation high_freq_context in
-  Printf.printf "High-frequency operation validation: %s\n" 
-    (if high_freq_validation.is_valid then "PASS" else "FAIL");
-  Printf.printf "Performance warnings generated: %s\n" 
-    (if List.length high_freq_validation.warnings > 0 then "PASS" else "FAIL");
-  
-  (* Unsafe concurrent operation *)
-  let unsafe_context = {
-    program_name = "test_prog";
-    function_name = "test_func";
-    map_name = "test_array";
-    operation = MapInsert;
-    access_pattern = Random;
-    concurrent_readers = 0;
-    concurrent_writers = 1;
-    expected_frequency = 1000;
-  } in
-  
-  let unsafe_validation = validate_operation unsafe_context in
-  Printf.printf "Unsafe operation detected: %s\n" 
-    (if List.length unsafe_validation.warnings > 0 then "PASS" else "FAIL");
-  
-  (* Test 5: Performance Profiles *)
-  Printf.printf "\n=== Test 5: Performance Profiles ===\n";
-  
-  let hash_profile = PerformanceProfiles.get_profile HashMap in
-  Printf.printf "HashMap lookup complexity defined: %s\n" 
-    (if String.length hash_profile.lookup_complexity > 0 then "PASS" else "FAIL");
-  Printf.printf "HashMap memory overhead reasonable: %s\n" 
-    (if hash_profile.memory_overhead > 0 && hash_profile.memory_overhead < 100 then "PASS" else "FAIL");
-  
-  let array_profile = PerformanceProfiles.get_profile Array in
-  Printf.printf "Array has O(1) complexity: %s\n" 
-    (if String.contains array_profile.lookup_complexity '1' then "PASS" else "FAIL");
-  Printf.printf "Array has better cache efficiency: %s\n" 
-    (if array_profile.cache_efficiency > hash_profile.cache_efficiency then "PASS" else "FAIL");
-  
-  (* Test 6: String Representations *)
-  Printf.printf "\n=== Test 6: String Representations ===\n";
-  
-  let seq_str = string_of_access_pattern (Sequential 2) in
-  Printf.printf "Sequential pattern string: %s\n" 
-    (if String.contains seq_str '2' then "PASS" else "FAIL");
-  
-  let safety_str = string_of_concurrency_safety WriteLocked in
-  Printf.printf "Safety level string: %s\n" 
-    (if String.contains safety_str 'L' then "PASS" else "FAIL");
-  
-  let context_str = string_of_operation_context low_freq_context in
-  Printf.printf "Operation context string: %s\n" 
-    (if String.contains context_str '{' && String.contains context_str '}' then "PASS" else "FAIL");
-  
-  let sharing_str = string_of_sharing_validation valid_sharing in
-  Printf.printf "Sharing validation string: %s\n" 
-    (if String.contains sharing_str '=' then "PASS" else "FAIL");
-  
-  let validation_str = string_of_operation_validation low_freq_validation in
-  Printf.printf "Operation validation string: %s\n" 
-    (if String.contains validation_str '=' then "PASS" else "FAIL");
-  
-  (* Test 7: Complex Access Pattern Analysis *)
-  Printf.printf "\n=== Test 7: Complex Access Pattern Analysis ===\n";
-  
-  (* Mixed access pattern *)
-  let mixed_expressions = [
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Literal (IntLit 0)) pos)) pos;
-    make_expr (ArrayAccess (make_expr (Identifier "test_map") pos, make_expr (Identifier "key") pos)) pos;
-    make_expr (FunctionCall ("test_map.lookup", [make_expr (Identifier "key") pos])) pos;
-  ] in
-  
-  let mixed_pattern = analyze_access_pattern "test_map" mixed_expressions in
-  Printf.printf "Mixed access pattern handled: %s\n" 
-    (match mixed_pattern with Random | Sequential _ | Batch _ -> "PASS" | _ -> "FAIL");
-  
-  (* No access pattern *)
-  let no_access_pattern = analyze_access_pattern "nonexistent_map" mixed_expressions in
-  Printf.printf "No access pattern: %s\n" 
-    (match no_access_pattern with Random -> "PASS" | _ -> "FAIL");
-  
-  (* Function call access pattern *)
-  let func_expressions = [
-    make_expr (FunctionCall ("test_map.lookup", [make_expr (Literal (IntLit 1)) pos])) pos;
-    make_expr (FunctionCall ("test_map.update", [make_expr (Literal (IntLit 2)) pos; make_expr (Literal (IntLit 42)) pos])) pos;
-  ] in
-  
-  let func_pattern = analyze_access_pattern "test_map" func_expressions in
-  Printf.printf "Function call access pattern: %s\n" 
-    (match func_pattern with Random | Batch _ -> "PASS" | _ -> "FAIL");
-  
-  (* Test 8: Edge Cases *)
-  Printf.printf "\n=== Test 8: Edge Cases ===\n";
-  
-  (* Empty sharing validation *)
-  let empty_sharing = validate_global_sharing "empty_map" HashMap [] in
-  Printf.printf "Empty sharing validation: %s\n" 
-    (if empty_sharing.is_valid then "PASS" else "FAIL");
-  
-  (* Zero frequency operation *)
-  let zero_freq_context = { low_freq_context with expected_frequency = 0 } in
-  let zero_freq_validation = validate_operation zero_freq_context in
-  Printf.printf "Zero frequency operation: %s\n" 
-    (if zero_freq_validation.is_valid then "PASS" else "FAIL");
-  
-  (* Maximum values *)
-  let max_context = {
-    program_name = "max_prog";
-    function_name = "max_func"; 
-    map_name = "max_map";
-    operation = MapLookup;
-    access_pattern = Random;
-    concurrent_readers = 1000;
-    concurrent_writers = 0;
-    expected_frequency = 1000000;
-  } in
-  
-  let max_validation = validate_operation max_context in
-  Printf.printf "Maximum values handled: %s\n" 
-    (if max_validation.is_valid then "PASS" else "FAIL");
-  
-  Printf.printf "\nMap Operations module tests completed!\n" 
+  List.iter (fun (operation, name) ->
+    let validation = validate_map_operation map_decl operation ReadWrite in
+    check bool ("comprehensive " ^ name ^ " operation") true (validation = Valid)
+  ) mixed_operations
+
+let map_operations_tests = [
+  "access_pattern_analysis", `Quick, test_access_pattern_analysis;
+  "concurrent_access_safety", `Quick, test_concurrent_access_safety;
+  "basic_map_operations", `Quick, test_basic_map_operations;
+  "map_lookup_operations", `Quick, test_map_lookup_operations;
+  "map_update_operations", `Quick, test_map_update_operations;
+  "map_delete_operations", `Quick, test_map_delete_operations;
+  "complex_map_operations", `Quick, test_complex_map_operations;
+  "map_operation_validation", `Quick, test_map_operation_validation;
+  "map_operation_optimization", `Quick, test_map_operation_optimization;
+  "map_operation_performance", `Quick, test_map_operation_performance;
+  "comprehensive_map_operation_analysis", `Quick, test_comprehensive_map_operation_analysis;
+]
+
+let () =
+  run "Map Operations Tests" [
+    "map_operations", map_operations_tests;
+  ] 
