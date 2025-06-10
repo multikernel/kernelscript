@@ -24,10 +24,17 @@ let default_config program_name = {
 (** Context for generating unique variable names *)
 type userspace_context = {
   mutable temp_var_counter: int;
+  mutable in_main_function: bool;
 }
 
 let create_userspace_context () = {
   temp_var_counter = 0;
+  in_main_function = false;
+}
+
+let create_main_context () = {
+  temp_var_counter = 0;
+  in_main_function = true;
 }
 
 let fresh_temp_var ctx prefix =
@@ -125,9 +132,15 @@ let rec generate_c_statement_with_context ctx (stmt : Ast.statement) =
   | Ast.ExprStmt expr ->
       sprintf "%s;" (generate_c_expression expr)
   | Ast.Return (Some expr) ->
-      sprintf "return %s;" (generate_c_expression expr)
+      if ctx.in_main_function then
+        sprintf "__return_value = %s; goto cleanup;" (generate_c_expression expr)
+      else
+        sprintf "return %s;" (generate_c_expression expr)
   | Ast.Return None ->
-      "return;"
+      if ctx.in_main_function then
+        "__return_value = 0; goto cleanup;"
+      else
+        "return;"
   | _ -> "// TODO: Unsupported statement"
 
 (** Generate C code for expressions *)
@@ -208,23 +221,27 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
       let return_type = "int" in
       
       (* Generate the actual function body from KernelScript statements *)
-      let ctx = create_userspace_context () in
+      let ctx = create_main_context () in
       let translated_body = String.concat "\n    " (List.map (generate_c_statement_with_context ctx) func.func_body) in
       
       let body = sprintf {|
+    int __return_value = 0;
+    
     printf("Starting userspace coordinator for eBPF programs\n");
     
     setup_signal_handling();
     
     if (load_all_bpf_programs() != 0) {
         fprintf(stderr, "Failed to load BPF programs\n");
-        return 1;
+        __return_value = 1;
+        goto cleanup;
     }
     
     if (setup_maps() != 0) {
         fprintf(stderr, "Failed to setup maps\n");
         cleanup_bpf_programs();
-        return 1;
+        __return_value = 1;
+        goto cleanup;
     }
     
     printf("Executing userspace logic...\n");
@@ -232,10 +249,11 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
     // User-defined logic from KernelScript
     %s
     
+cleanup:
     printf("Shutting down coordinator...\n");
     cleanup_maps();
     cleanup_bpf_programs();
-    return 0;
+    return __return_value;
 |} translated_body in
       (params_str, return_type, body)
     else
@@ -279,10 +297,14 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
         | None -> "void"
       in
       
+      (* Generate the actual function body from KernelScript statements *)
+      let ctx = create_userspace_context () in
+      let translated_body = String.concat "\n    " (List.map (generate_c_statement_with_context ctx) func.func_body) in
+      
       let body = sprintf {|
-    // TODO: Implement function body for %s
-    printf("Function %s called\n", __func__);
-    return %s;|} func.func_name func.func_name 
+    // Function body for %s
+    %s
+    return %s;|} func.func_name translated_body 
         (if return_type = "void" then "" else "0") in
       
       ((if params = [] then "void" else String.concat ", " params), return_type, body)

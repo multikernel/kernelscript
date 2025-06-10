@@ -586,6 +586,126 @@ let test_unique_temp_variables () =
   check bool "second key variable" true (temp2 = "key_2");
   check bool "first value variable" true (temp3 = "value_3")
 
+(** ===== RETURN VALUE HANDLING TESTS ===== *)
+
+let make_return_stmt value_opt =
+  { stmt_desc = Return value_opt; stmt_pos = make_test_pos () }
+
+(** Test return statement in main function context *)
+let test_main_return_with_value () =
+  let ctx = create_main_context () in
+  let return_stmt = make_return_stmt (Some (make_int_literal 42)) in
+  
+  let result = generate_c_statement_with_context ctx return_stmt in
+  
+  (* Verify return value is captured and goto cleanup is used *)
+  check bool "captures return value" true (contains_substr result "__return_value = 42;");
+  check bool "uses goto cleanup" true (contains_substr result "goto cleanup;");
+  check bool "no direct return" false (contains_substr result "return 42;")
+
+(** Test return statement in regular function context *)
+let test_regular_function_return_with_value () =
+  let ctx = create_userspace_context () in
+  let return_stmt = make_return_stmt (Some (make_int_literal 42)) in
+  
+  let result = generate_c_statement_with_context ctx return_stmt in
+  
+  (* Verify normal return is used *)
+  check bool "uses direct return" true (contains_substr result "return 42;");
+  check bool "no goto cleanup" false (contains_substr result "goto cleanup;");
+  check bool "no return value capture" false (contains_substr result "__return_value")
+
+(** Test return statement without value in main context *)
+let test_main_return_without_value () =
+  let ctx = create_main_context () in
+  let return_stmt = make_return_stmt None in
+  
+  let result = generate_c_statement_with_context ctx return_stmt in
+  
+  (* Verify default return value is used *)
+  check bool "sets default return value" true (contains_substr result "__return_value = 0;");
+  check bool "uses goto cleanup" true (contains_substr result "goto cleanup;");
+  check bool "no direct return" false (contains_substr result "return;")
+
+(** Test return statement without value in regular function context *)
+let test_regular_function_return_without_value () =
+  let ctx = create_userspace_context () in
+  let return_stmt = make_return_stmt None in
+  
+  let result = generate_c_statement_with_context ctx return_stmt in
+  
+  (* Verify normal return is used *)
+  check bool "uses direct return" true (contains_substr result "return;");
+  check bool "no goto cleanup" false (contains_substr result "goto cleanup;");
+  check bool "no return value capture" false (contains_substr result "__return_value")
+
+(** Helper to create a test function definition *)
+let make_test_function name is_main statements =
+  {
+    func_name = name;
+    func_params = if is_main then [("argc", U32); ("argv", U64)] else [];
+    func_return_type = if is_main then Some I32 else Some U32;
+    func_body = statements;
+    func_pos = make_test_pos ();
+  }
+
+(** Test complete main function generation with return statement *)
+let test_complete_main_function_with_return () =
+  let return_stmt = make_return_stmt (Some (make_int_literal 5)) in
+  let main_func = make_test_function "main" true [return_stmt] in
+  
+  let result = generate_c_function_from_userspace main_func in
+  
+  (* Verify the function structure is correct *)
+  check bool "has return value variable" true (contains_substr result "int __return_value = 0;");
+  check bool "has cleanup label" true (contains_substr result "cleanup:");
+  check bool "has return value assignment" true (contains_substr result "__return_value = 5; goto cleanup;");
+  check bool "cleanup runs" true (contains_substr result "cleanup_maps();");
+  check bool "programs cleaned up" true (contains_substr result "cleanup_bpf_programs();");
+  check bool "returns captured value" true (contains_substr result "return __return_value;");
+  
+  (* Verify no early return that would skip cleanup *)
+  check bool "no early return to skip cleanup" false (contains_substr result "return 5;")
+
+(** Test main function generation without explicit return *)
+let test_complete_main_function_without_return () =  
+  let assignment_stmt = { stmt_desc = Assignment ("counter", make_int_literal 10); stmt_pos = make_test_pos () } in
+  let main_func = make_test_function "main" true [assignment_stmt] in
+  
+  let result = generate_c_function_from_userspace main_func in
+  
+  (* Verify cleanup still runs even without explicit return *)
+  check bool "has return value variable" true (contains_substr result "int __return_value = 0;");
+  check bool "has cleanup label" true (contains_substr result "cleanup:");
+  check bool "cleanup runs" true (contains_substr result "cleanup_maps();");
+  check bool "returns default value" true (contains_substr result "return __return_value;");
+  check bool "has assignment" true (contains_substr result "counter = 10;")
+
+(** Test main function with early failure return *)
+let test_main_function_early_failure () =
+  let early_return = make_return_stmt (Some (make_int_literal 1)) in
+  let main_func = make_test_function "main" true [early_return] in
+  
+  let result = generate_c_function_from_userspace main_func in
+  
+  (* Verify that early failure still goes through cleanup *)
+  check bool "failure return goes to cleanup" true (contains_substr result "__return_value = 1; goto cleanup;");
+  check bool "cleanup runs for failure" true (contains_substr result "cleanup_maps();");
+  check bool "no direct return for failure" false (contains_substr result "return 1;")
+
+(** Test regular function (not main) with return statement *)
+let test_regular_function_generation () =
+  let return_stmt = make_return_stmt (Some (make_int_literal 42)) in
+  let regular_func = make_test_function "helper" false [return_stmt] in
+  
+  let result = generate_c_function_from_userspace regular_func in
+  
+  (* Verify regular function behavior (no cleanup logic) *)
+  check bool "no return value variable" false (contains_substr result "int __return_value");
+  check bool "no cleanup label" false (contains_substr result "cleanup:");
+  check bool "direct return used" true (contains_substr result "return 42;");
+  check bool "no cleanup calls" false (contains_substr result "cleanup_maps();")
+
 let userspace_tests = [
   (* Parsing and validation tests *)
   "userspace_top_level", `Quick, test_userspace_top_level;
@@ -611,6 +731,16 @@ let userspace_tests = [
   "variable_map_lookup", `Quick, test_variable_map_lookup;
   "complex_literal_expressions", `Quick, test_complex_literal_expressions;
   "unique_temp_variables", `Quick, test_unique_temp_variables;
+  
+  (* Return value handling tests *)
+  "main_return_with_value", `Quick, test_main_return_with_value;
+  "regular_function_return_with_value", `Quick, test_regular_function_return_with_value;
+  "main_return_without_value", `Quick, test_main_return_without_value;
+  "regular_function_return_without_value", `Quick, test_regular_function_return_without_value;
+  "complete_main_function_with_return", `Quick, test_complete_main_function_with_return;
+  "complete_main_function_without_return", `Quick, test_complete_main_function_without_return;
+  "main_function_early_failure", `Quick, test_main_function_early_failure;
+  "regular_function_generation", `Quick, test_regular_function_generation;
 ]
 
 let () = Alcotest.run "KernelScript Userspace Tests" [
