@@ -36,7 +36,6 @@ type optimization_opportunities = {
 let create_function_system () = {
   name = "test_system";
   program_type = Xdp;
-  global_maps = [];
   local_maps = [];
   functions = [];
   main_function = {
@@ -51,8 +50,6 @@ let create_function_system () = {
     is_main = true;
     func_pos = {filename = "test.ks"; line = 1; column = 1}
   };
-  userspace_bindings = [];
-  userspace_block = None;
   ir_pos = {filename = "test.ks"; line = 1; column = 1}
 }
 
@@ -123,12 +120,9 @@ let create_test_program () =
   {
     name = "test_program";
     program_type = Xdp;
-    global_maps = [];
     local_maps = [];
     functions = [helper_func];
     main_function = main_func;
-    userspace_bindings = [];
-    userspace_block = None;
     ir_pos = { line = 1; column = 1; filename = "test" };
   }
 
@@ -207,7 +201,7 @@ program simple : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -222,8 +216,8 @@ program simple : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let success = register_functions function_system ast in
@@ -253,7 +247,7 @@ program func_test : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -268,8 +262,8 @@ program func_test : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let success = register_functions function_system ast in
@@ -339,7 +333,7 @@ program call_test : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -354,8 +348,8 @@ program call_test : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let _ = register_functions function_system ast in
@@ -407,7 +401,7 @@ program non_recursive : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -422,8 +416,8 @@ program non_recursive : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let _ = register_functions function_system ast in
@@ -440,7 +434,7 @@ program non_recursive : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -455,8 +449,8 @@ program non_recursive : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let _ = register_functions function_system ast in
@@ -493,7 +487,7 @@ program dependency : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -508,8 +502,8 @@ program dependency : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let _ = register_functions function_system ast in
@@ -549,7 +543,7 @@ program optimization : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -564,8 +558,8 @@ program optimization : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let _ = register_functions function_system ast in
@@ -629,7 +623,7 @@ program comprehensive : xdp {
     let function_system = {
       name = "test_system";
       program_type = Xdp;
-      global_maps = [];
+      
       local_maps = [];
       functions = [];
       main_function = {
@@ -644,8 +638,8 @@ program comprehensive : xdp {
         is_main = true;
         func_pos = {filename = "test.ks"; line = 1; column = 1}
       };
-      userspace_bindings = [];
-      userspace_block = None;
+      
+      
       ir_pos = {filename = "test.ks"; line = 1; column = 1}
     } in  (* Placeholder *)
     let _ = register_functions function_system ast in

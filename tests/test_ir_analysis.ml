@@ -404,7 +404,8 @@ program simple_ir : xdp {
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir = List.hd ir_multi.programs in
     check bool "IR generation successful" true (ir.name <> "");
     check bool "IR has main function" true ir.main_function.is_main;
     check int "IR function count" 1 (List.length ir.functions) (* Just the main function *)
@@ -425,7 +426,8 @@ program basic : xdp {
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir = List.hd ir_multi.programs in
     (* Perform comprehensive analysis on the generated IR *)
     let analysis_result = comprehensive_analysis ir.main_function in
     check bool "IR generation successful" true (ir.name <> "");
@@ -454,7 +456,8 @@ program control_flow : xdp {
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir = List.hd ir_multi.programs in
     let cfg = CFG.build_cfg ir.main_function in
     check bool "control flow graph built" true (List.length cfg.blocks > 0);
     check bool "has edges" true (List.length cfg.edges > 0);
@@ -868,7 +871,8 @@ program cfg_test : xdp {
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir = List.hd ir_multi.programs in
     check bool "IR generation successful" true (ir.name <> "");
     check bool "IR has main function" true ir.main_function.is_main;
     check int "IR function count" 1 (List.length ir.functions) (* Just the main function *)

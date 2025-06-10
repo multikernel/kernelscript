@@ -29,8 +29,8 @@ let compile_to_c_code ast =
   try
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
-    let c_code = generate_c_program ir_program in
+    let ir_multi_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let c_code = generate_c_multi_program ir_multi_program in
     Some c_code
   with
   | exn -> 

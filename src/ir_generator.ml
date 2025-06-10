@@ -785,41 +785,53 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
       }
     ) target_languages
 
-(** Lower complete AST to IR program *)
-let lower_program ast symbol_table =
-  let ctx = create_context symbol_table in
-  
-  (* Analyze assignment patterns for optimization early *)
-  let _optimization_info = analyze_assignment_patterns ctx ast in
-  
-  (* Find the program declaration *)
-  let prog_def = List.find_map (function
-    | Ast.Program p -> Some p
-    | _ -> None
-  ) ast in
-  
-  let prog_def = match prog_def with
-    | Some p -> p
-    | None -> failwith "No program declaration found"
-  in
-  
-  (* Collect map declarations *)
-  let global_map_decls = List.filter_map (function
-    | Ast.MapDecl m when m.is_global -> Some m
-    | _ -> None
-  ) ast in
-  
+(** Generate userspace bindings for multiple programs *)
+let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_opt maps =
+  match userspace_block_opt with
+  | None -> 
+    (* Generate default bindings for all programs *)
+    let map_wrappers = List.map (fun map_def ->
+      let operations = match map_def.map_type with
+        | IRRingBuffer | IRPerfEvent -> [OpLookup; OpUpdate] (* Event maps *)
+        | _ -> [OpLookup; OpUpdate; OpDelete; OpIterate] (* Regular maps *)
+      in
+      {
+        wrapper_map_name = map_def.map_name;
+        operations;
+        safety_checks = true;
+      }
+    ) maps in
+    
+    let config_structs = [{
+      struct_name = "multi_program_config";
+      fields = [("debug_level", IRU32); ("max_events", IRU32)];
+      serialization = Json;
+    }] in
+    
+    [{
+      language = C;
+      map_wrappers;
+      event_handlers = [];
+      config_structs;
+    }]
+    
+  | Some userspace ->
+    (* Use the existing single-program logic for now, but pass the first program *)
+    let first_prog = List.hd prog_defs in
+    generate_userspace_bindings_from_block first_prog (Some userspace) maps
+
+(** Lower a single program from AST to IR *)
+let lower_single_program ctx prog_def global_ir_maps =
   (* Include program-scoped maps *)
   let program_scoped_maps = prog_def.prog_maps in
   
-  (* Lower maps *)
-  let ir_global_maps = List.map lower_map_declaration global_map_decls in
+  (* Lower program-scoped maps *)
   let ir_program_maps = List.map lower_map_declaration program_scoped_maps in
   
-  (* Add maps to context *)
+  (* Add all maps to context for this program *)
   List.iter (fun ir_map -> 
     Hashtbl.add ctx.maps ir_map.map_name ir_map
-  ) (ir_global_maps @ ir_program_maps);
+  ) (global_ir_maps @ ir_program_maps);
   
   (* Lower functions *)
   let ir_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
@@ -827,31 +839,114 @@ let lower_program ast symbol_table =
   (* Find main function *)
   let main_function = List.find (fun f -> f.is_main) ir_functions in
   
+  (* Create IR program *)
+  make_ir_program 
+    prog_def.prog_name 
+    prog_def.prog_type 
+    ir_program_maps 
+    ir_functions 
+    main_function 
+    prog_def.prog_pos
+
+(** Validate multiple programs for consistency *)
+let validate_multiple_programs prog_defs =
+  (* Check for duplicate program names *)
+  let names = List.map (fun p -> p.prog_name) prog_defs in
+  let unique_names = List.sort_uniq String.compare names in
+  if List.length names <> List.length unique_names then
+    failwith "Multiple programs cannot have the same name";
+  
+  (* Check for duplicate program types *)
+  let types = List.map (fun p -> p.prog_type) prog_defs in
+  let unique_types = List.sort_uniq compare types in
+  if List.length types <> List.length unique_types then
+    failwith "Multiple programs cannot have the same type";
+  
+  (* Each program must have exactly one main function *)
+  List.iter (fun prog_def ->
+    let main_functions = List.filter (fun f -> f.Ast.func_name = "main") prog_def.prog_functions in
+    if List.length main_functions = 0 then
+      failwith (Printf.sprintf "Program '%s' must have a main function" prog_def.prog_name);
+    if List.length main_functions > 1 then
+      failwith (Printf.sprintf "Program '%s' cannot have multiple main functions" prog_def.prog_name)
+  ) prog_defs
+
+(** Lower complete AST to multi-program IR *)
+let lower_multi_program ast symbol_table source_name =
+  let ctx = create_context symbol_table in
+  
+  (* Analyze assignment patterns for optimization early *)
+  let _optimization_info = analyze_assignment_patterns ctx ast in
+  
+  (* Find all program declarations *)
+  let prog_defs = List.filter_map (function
+    | Ast.Program p -> Some p
+    | _ -> None
+  ) ast in
+  
+  if prog_defs = [] then
+    failwith "No program declarations found";
+  
+  (* Validate multiple programs *)
+  validate_multiple_programs prog_defs;
+  
+  (* Collect global map declarations *)
+  let global_map_decls = List.filter_map (function
+    | Ast.MapDecl m when m.is_global -> Some m
+    | _ -> None
+  ) ast in
+  
+  (* Lower global maps *)
+  let ir_global_maps = List.map lower_map_declaration global_map_decls in
+  
+  (* Lower each program *)
+  let ir_programs = List.map (fun prog_def ->
+    (* Create a fresh context for each program *)
+    let prog_ctx = create_context symbol_table in
+    lower_single_program prog_ctx prog_def ir_global_maps
+  ) prog_defs in
+  
   (* Find top-level userspace block *)
   let userspace_block = List.find_map (function
     | Ast.Userspace ub -> Some ub
     | _ -> None
   ) ast in
   
-  (* Generate userspace bindings *)
-  let userspace_bindings = generate_userspace_bindings_from_block prog_def userspace_block (ir_global_maps @ ir_program_maps) in
+  (* Validate userspace block - there should be at most one *)
+  let userspace_blocks = List.filter_map (function
+    | Ast.Userspace ub -> Some ub
+    | _ -> None
+  ) ast in
   
-    (* Create IR program *)
-  make_ir_program 
-    prog_def.prog_name 
-    prog_def.prog_type 
+  if List.length userspace_blocks > 1 then
+    failwith "Only one userspace block is allowed per source file";
+  
+  (* Generate userspace bindings *)
+  let userspace_bindings = match userspace_block with
+    | None -> []
+    | Some ub ->
+        (* For multi-program, generate bindings that work with all programs *)
+        generate_userspace_bindings_from_multi_programs prog_defs (Some ub) ir_global_maps
+  in
+  
+  (* Create multi-program IR *)
+  let multi_pos = match prog_defs with
+    | [] -> { line = 1; column = 1; filename = source_name }
+    | first :: _ -> first.prog_pos
+  in
+  
+  make_ir_multi_program 
+    source_name 
+    ir_programs 
     ir_global_maps 
-    ir_program_maps 
-    ir_functions 
-    main_function 
-    ~userspace_bindings:userspace_bindings 
     ?userspace_block:userspace_block 
-    prog_def.prog_pos
+    ~userspace_bindings:userspace_bindings 
+    multi_pos
 
 (** Main entry point for IR generation *)
-let generate_ir ast symbol_table =
+let generate_ir ast symbol_table source_name =
   try
-    lower_program ast symbol_table
+    lower_multi_program ast symbol_table source_name
   with
   | exn ->
       Printf.eprintf "IR generation failed: %s\n" (Printexc.to_string exn);

@@ -397,7 +397,7 @@ userspace {
       let ast = parse_string program in
       (* Trigger validation by generating IR first, which validates userspace main *)
       let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-      let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+      let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
       (* If we get here, validation passed but it shouldn't have *)
       fail ("Should have failed for: " ^ description)
     with

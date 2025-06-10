@@ -123,7 +123,7 @@ let test_complete_program () =
   (* Add a simple map *)
   let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHashMap 1024 test_pos in
   
-  let ir_prog = make_ir_program "test_xdp" Xdp [map_def] [] [] main_func test_pos in
+  let ir_prog = make_ir_program "test_xdp" Xdp [map_def] [] main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
   
@@ -167,7 +167,7 @@ let test_file_writing () =
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test_prog" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
-  let ir_prog = make_ir_program "test" Xdp [] [] [] main_func test_pos in
+  let ir_prog = make_ir_program "test" Xdp [] [] main_func test_pos in
   
   let test_filename = "test_output.c" in
   let c_code = write_c_to_file ir_prog test_filename in

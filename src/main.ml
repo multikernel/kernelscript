@@ -286,14 +286,15 @@ let compile_kernelscript opts =
   
   (* Step 5: IR Generation *)
   vprintf opts "Generating intermediate representation...\n";
-  let ir_program = try
+  let ir_multi_program = try
     match annotated_ast with
     | [] -> 
       printf "Error: No program found in input file\n";
       exit 1
     | _ -> 
       (* Use proper AST-to-IR conversion *)
-      Ir_generator.generate_ir annotated_ast _symbol_table
+      let source_name = Filename.remove_extension (Filename.basename opts.input_file) in
+      Ir_generator.generate_ir annotated_ast _symbol_table source_name
   with
   | e ->
     printf "IR generation error: %s\n" (Printexc.to_string e);
@@ -304,7 +305,7 @@ let compile_kernelscript opts =
   (* Step 6: C Code Generation *)
   vprintf opts "Generating eBPF C code...\n";
   let c_code = try
-    Ebpf_c_codegen.compile_to_c ir_program
+    Ebpf_c_codegen.compile_multi_to_c ir_multi_program
   with
   | e ->
     printf "C code generation error: %s\n" (Printexc.to_string e);
@@ -312,8 +313,7 @@ let compile_kernelscript opts =
   in
   vprintf opts "C code generation completed\n";
   
-  (* Determine output directory and filenames based on input file and program name *)
-  let program_name = ir_program.name in
+  (* Determine output directory and filenames based on input file name *)
   let base_name = Filename.remove_extension (Filename.basename opts.input_file) in
   let output_dir = base_name in
   
@@ -332,7 +332,7 @@ let compile_kernelscript opts =
   (* Step 7: Write output file *)
   let output_filename = match opts.output_file with
     | Some f -> f
-    | None -> output_dir ^ "/" ^ program_name ^ ".ebpf.c"
+    | None -> output_dir ^ "/" ^ base_name ^ ".ebpf.c"
   in
   
   vprintf opts "Writing output file: %s\n" output_filename;
@@ -345,7 +345,7 @@ let compile_kernelscript opts =
   (* Step 8: Generate Makefile *)
   if opts.generate_makefile then (
     vprintf opts "Generating Makefile...\n";
-    match generate_makefile opts output_filename ir_program.name with
+    match generate_makefile opts output_filename base_name with
     | Ok () -> vprintf opts "Makefile generated successfully\n"
     | Error msg ->
       printf "Warning: Failed to generate Makefile: %s\n" msg
@@ -354,17 +354,17 @@ let compile_kernelscript opts =
   (* Step 9: Success message *)
   let output_dir = Filename.dirname output_filename in
   let source_base_name = Filename.remove_extension (Filename.basename opts.input_file) in
-  let program_name = ir_program.name in
+  let program_names = List.map (fun (p : Ir.ir_program) -> p.name) ir_multi_program.programs in
   printf "✅ Compilation successful!\n";
   printf "Generated directory: %s/\n" output_dir;
-  printf "  ├── %s.ebpf.c (eBPF kernel programs)\n" program_name;
+  printf "  ├── %s.ebpf.c (eBPF kernel programs: %s)\n" base_name (String.concat ", " program_names);
   printf "  ├── %s.c (userspace coordinator)\n" source_base_name;
   if opts.generate_makefile then
     printf "  └── Makefile\n";
   printf "\nTo compile both eBPF and userspace programs:\n";
   printf "  cd %s && make\n" output_dir;
   printf "\nGenerated files will be:\n";
-  printf "  - eBPF object: %s/%s.ebpf.o\n" output_dir program_name;
+  printf "  - eBPF object: %s/%s.ebpf.o\n" output_dir base_name;
   printf "  - Userspace binary: %s/%s\n" output_dir source_base_name
 
 (** Error handler *)

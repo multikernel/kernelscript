@@ -8,16 +8,23 @@ open Ast
 (** Position information preserved from AST *)
 type ir_position = position
 
-(** Program-level IR - complete program representation *)
-type ir_program = {
+(** Multi-program IR - complete compilation unit with multiple eBPF programs *)
+type ir_multi_program = {
+  source_name: string; (* Base name of source file *)
+  programs: ir_program list; (* List of eBPF programs *)
+  global_maps: ir_map_def list; (* Maps shared across programs *)
+  userspace_block: Ast.userspace_block option; (* Userspace code block *)
+  userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
+  multi_pos: ir_position;
+}
+
+(** Program-level IR - single eBPF program representation *)
+and ir_program = {
   name: string;
   program_type: program_type;
-  global_maps: ir_map_def list;
-  local_maps: ir_map_def list;
+  local_maps: ir_map_def list; (* Maps local to this program *)
   functions: ir_function list;
   main_function: ir_function;
-  userspace_bindings: ir_userspace_binding list;
-  userspace_block: Ast.userspace_block option; (* Original userspace block for code generation *)
   ir_pos: ir_position;
 }
 
@@ -283,17 +290,23 @@ let make_ir_map_def name key_type value_type map_type max_entries
   map_pos = pos;
 }
 
-let make_ir_program name prog_type global_maps local_maps functions main_function 
-                    ?(userspace_bindings = []) ?userspace_block pos = {
+let make_ir_program name prog_type local_maps functions main_function pos = {
   name;
   program_type = prog_type;
-  global_maps;
   local_maps;
   functions;
   main_function;
-  userspace_bindings;
-  userspace_block;
   ir_pos = pos;
+}
+
+let make_ir_multi_program source_name programs global_maps 
+                          ?userspace_block ?(userspace_bindings = []) pos = {
+  source_name;
+  programs;
+  global_maps;
+  userspace_block;
+  userspace_bindings;
+  multi_pos = pos;
 }
 
 (** Type conversion utilities *)
@@ -466,4 +479,10 @@ let string_of_ir_program prog =
   let functions_str = String.concat "\n\n" 
     (List.map string_of_ir_function prog.functions) in
   Printf.sprintf "program %s : %s {\n%s\n}" 
-    prog.name (string_of_program_type prog.program_type) functions_str 
+    prog.name (string_of_program_type prog.program_type) functions_str
+
+let string_of_ir_multi_program multi_prog =
+  let programs_str = String.concat "\n\n" 
+    (List.map string_of_ir_program multi_prog.programs) in
+  Printf.sprintf "source %s {\n%s\n}" 
+    multi_prog.source_name programs_str 

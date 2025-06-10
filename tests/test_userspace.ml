@@ -114,7 +114,7 @@ let test_userspace_main_correct_signature () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✓ PASS: Correct userspace main signature\n"
   with
   | _ -> 
@@ -138,7 +138,7 @@ let test_userspace_main_wrong_param_types () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✗ FAIL: Wrong parameter types (should have been rejected)\n"
   with
   | Failure msg ->
@@ -165,7 +165,7 @@ let test_userspace_main_wrong_return_type () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✗ FAIL: Wrong return type (should have been rejected)\n"
   with
   | Failure msg ->
@@ -192,7 +192,7 @@ let test_userspace_main_too_few_params () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✗ FAIL: Too few parameters (should have been rejected)\n"
   with
   | Failure msg ->
@@ -219,7 +219,7 @@ let test_userspace_main_too_many_params () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✗ FAIL: Too many parameters (should have been rejected)\n"
   with
   | Failure msg ->
@@ -246,7 +246,7 @@ let test_userspace_missing_main () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✗ FAIL: Missing main function (should have been rejected)\n"
   with
   | Failure msg ->
@@ -277,7 +277,7 @@ let test_userspace_multiple_main () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✗ FAIL: Multiple main functions (should have been rejected)\n"
   with
   | Failure msg ->
@@ -314,7 +314,7 @@ let test_userspace_with_other_functions () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✓ PASS: Userspace with other functions\n"
   with
   | _ -> 
@@ -348,7 +348,7 @@ let test_userspace_with_structs () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✓ PASS: Userspace with structs\n"
   with
   | _ -> 
@@ -378,7 +378,7 @@ let test_multiple_programs_single_userspace () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     Printf.printf "✓ PASS: Multiple programs with single userspace\n"
   with
   | _ -> 
@@ -643,7 +643,7 @@ let test_userspace_codegen_error_handling () =
   try
     let ast = parse_string code in let _ = List.length ast in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
     
     let temp_dir = Filename.temp_file "test_userspace" "" in
     Unix.unlink temp_dir;

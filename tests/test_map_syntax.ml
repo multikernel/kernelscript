@@ -194,7 +194,7 @@ program test : xdp {
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
     let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
-    let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     check bool "test passed" true true
   with
   | _ ->
@@ -222,8 +222,8 @@ program counter : xdp {
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
     let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
-    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
     (* Verify both maps are generated *)
     let has_blockless = contains_substr c_code "blockless_counter" in
@@ -428,7 +428,7 @@ program test : xdp {
     let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
     
     (* Test that IR generation completes without errors *)
-    let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
+    let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     check bool "test passed" true true
   with
   | _ ->
@@ -457,8 +457,8 @@ program test : xdp {
     let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
     
     (* Test that C code generation completes and produces expected output *)
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
-    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+            let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
     let contains_map_decl = contains_substr c_code "BPF_MAP_TYPE_HASH" &&
                            contains_substr c_code "packet_counter" in
@@ -501,8 +501,8 @@ program test : xdp {
       let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
       
       (* Test compilation and C code generation *)
-      let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table in
-      let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir in
+      let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+      let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
       contains_substr c_code c_type
     with
     | _ -> false

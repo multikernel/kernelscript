@@ -427,7 +427,7 @@ let generate_c_program ir_prog =
   generate_includes ctx;
   
   (* Generate map definitions *)
-  List.iter (generate_map_definition ctx) (ir_prog.global_maps @ ir_prog.local_maps);
+  List.iter (generate_map_definition ctx) (ir_prog.local_maps);
   
   (* Generate main function *)
   generate_c_function ctx ir_prog.main_function;
@@ -435,6 +435,35 @@ let generate_c_program ir_prog =
   (* Generate other functions (excluding main to avoid duplicates) *)
   let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
   List.iter (generate_c_function ctx) other_functions;
+  
+  (* Return generated code *)
+  String.concat "\n" (List.rev ctx.output_lines)
+
+(** Generate complete C program from multiple IR programs *)
+
+let generate_c_multi_program ir_multi_prog =
+  let ctx = create_c_context () in
+  
+  (* Add standard includes *)
+  generate_includes ctx;
+  
+  (* Generate global map definitions *)
+  List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
+  
+  (* Generate all local map definitions from all programs *)
+  List.iter (fun ir_prog ->
+    List.iter (generate_map_definition ctx) ir_prog.local_maps
+  ) ir_multi_prog.programs;
+  
+  (* Generate all functions from all programs *)
+  List.iter (fun ir_prog ->
+    (* Generate main function *)
+    generate_c_function ctx ir_prog.main_function;
+    
+    (* Generate other functions (excluding main to avoid duplicates) *)
+    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
+    List.iter (generate_c_function ctx) other_functions
+  ) ir_multi_prog.programs;
   
   (* Add license (required for eBPF) *)
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
@@ -446,6 +475,12 @@ let generate_c_program ir_prog =
 
 let compile_to_c ir_program =
   let c_code = generate_c_program ir_program in
+  c_code
+
+(** Multi-program compilation entry point *)
+
+let compile_multi_to_c ir_multi_program =
+  let c_code = generate_c_multi_program ir_multi_program in
   c_code
 
 (** Helper function to write C code to file *)
