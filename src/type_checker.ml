@@ -98,8 +98,10 @@ let rec unify_types t1 t2 =
   (* Conservative numeric type promotions - only allow explicit cases that are safe *)
   | U8, U16 | U16, U8 -> Some U16
   | U8, U32 | U32, U8 | U16, U32 | U32, U16 -> Some U32
+  | U8, U64 | U64, U8 | U16, U64 | U64, U16 | U32, U64 | U64, U32 -> Some U64
   | I8, I16 | I16, I8 -> Some I16  
   | I8, I32 | I32, I8 | I16, I32 | I32, I16 -> Some I32
+  | I8, I64 | I64, I8 | I16, I64 | I64, I16 | I32, I64 | I64, I32 -> Some I64
   
   (* Array types *)
   | Array (t1, s1), Array (t2, s2) when s1 = s2 ->

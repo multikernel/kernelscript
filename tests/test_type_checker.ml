@@ -13,7 +13,7 @@ let can_unify t1 t2 =
 let test_type_unification () =
   (* Test basic type unification *)
   check bool "U32 unifies with U32" true (can_unify U32 U32);
-  check bool "U32 does not unify with U64" false (can_unify U32 U64);
+  check bool "U32 can unify with U64 (promotion)" true (can_unify U32 U64);
   check bool "Pointer U8 unifies with Pointer U8" true (can_unify (Pointer U8) (Pointer U8));
   check bool "Array types unify" true (can_unify (Array (U32, 10)) (Array (U32, 10)));
   check bool "Different array sizes don't unify" false (can_unify (Array (U32, 10)) (Array (U32, 20)))
@@ -244,6 +244,56 @@ program packet_filter : xdp {
   with
   | _ -> fail "Error occurred"
 
+(** Test integer type promotion *)
+let test_integer_type_promotion () =
+  let program_text = {|
+map<u32, u64> counter : HashMap(1024) { };
+
+program test_promotion : xdp {
+  fn main() -> u32 {
+    // Test U32 literal assignment to U64 map value
+    counter[1] = 100;     // U32 literal should promote to U64
+    counter[2] = 200;     // U32 literal should promote to U64
+    
+    // Test arithmetic with different sizes
+    let small: u32 = 50;
+    let large: u64 = 1000;
+    let result = small + large;  // U32 should promote to U64
+    
+    // Test map access with promoted values
+    let val1 = counter[1] + 50;  // U64 + U32 -> U64
+    counter[3] = val1;
+    
+    return 0;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let typed_programs = type_check_ast ast in
+    check int "type promotion programs count" 1 (List.length typed_programs);
+    
+    let typed_program = List.hd typed_programs in
+    check string "type promotion program name" "test_promotion" typed_program.tprog_name;
+    check bool "integer type promotion" true true
+  with
+  | exn -> 
+    Printf.printf "Error in integer type promotion test: %s\n" (Printexc.to_string exn);
+    fail "Error occurred in type promotion test"
+
+(** Test type unification enhancements *)
+let test_type_unification_enhanced () =
+  (* Test the specific type promotions we added *)
+  check bool "U32 promotes to U64" true (can_unify U32 U64);
+  check bool "U64 unifies with U32" true (can_unify U64 U32);
+  check bool "I32 promotes to I64" true (can_unify I32 I64);
+  check bool "I64 unifies with I32" true (can_unify I64 I32);
+  check bool "U16 promotes to U64" true (can_unify U16 U64);
+  check bool "U8 promotes to U64" true (can_unify U8 U64);
+  (* Test that incompatible types still don't unify *)
+  check bool "U32 does not unify with Bool" false (can_unify U32 Bool);
+  check bool "I32 does not unify with U32" false (can_unify I32 U32)
+
 (** Test comprehensive type checking *)
 let test_comprehensive_type_checking () =
   let program_text = {|
@@ -297,6 +347,8 @@ let type_checker_tests = [
   "function_type_checking", `Quick, test_function_type_checking;
   "error_handling", `Quick, test_error_handling;
   "program_type_checking", `Quick, test_program_type_checking;
+  "integer_type_promotion", `Quick, test_integer_type_promotion;
+  "type_unification_enhanced", `Quick, test_type_unification_enhanced;
   "comprehensive_type_checking", `Quick, test_comprehensive_type_checking;
 ]
 
