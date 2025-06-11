@@ -926,18 +926,21 @@ let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_op
     generate_userspace_bindings_from_block first_prog (Some userspace) maps
 
 (** Lower a single program from AST to IR *)
-let lower_single_program ctx prog_def global_ir_maps =
+let lower_single_program ctx prog_def _global_ir_maps =
   (* Include program-scoped maps *)
   let program_scoped_maps = prog_def.prog_maps in
   
   (* Lower program-scoped maps *)
-  let ir_program_maps = List.map lower_map_declaration program_scoped_maps in
+  let ir_program_maps = List.map (fun map_decl -> lower_map_declaration map_decl) program_scoped_maps in
   
   (* Add all maps to context for this program *)
-  List.iter (fun _ir_map -> 
-    (* Hashtbl.add ctx.maps ir_map.map_name ir_map  (* Temporarily commented out due to type conflicts *) *)
-    ()
-  ) (global_ir_maps @ ir_program_maps);
+  List.iter (fun (map_def : ir_map_def) -> 
+    Hashtbl.add ctx.maps map_def.map_name map_def
+  ) (ir_program_maps : ir_map_def list);
+  (* Also add global maps to context *)
+  List.iter (fun (map_def : ir_map_def) -> 
+    Hashtbl.add ctx.maps map_def.map_name map_def
+  ) (_global_ir_maps : ir_map_def list);
   
   (* Lower functions *)
   let ir_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
@@ -1003,7 +1006,7 @@ let lower_multi_program ast symbol_table source_name =
   ) ast in
   
   (* Lower global maps *)
-  let ir_global_maps = List.map lower_map_declaration global_map_decls in
+  let ir_global_maps = List.map (fun map_decl -> lower_map_declaration map_decl) global_map_decls in
   
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
@@ -1027,11 +1030,50 @@ let lower_multi_program ast symbol_table source_name =
   if List.length userspace_blocks > 1 then
     failwith "Only one userspace block is allowed per source file";
   
+  (* Extract all map assignments from the AST to analyze initial values *)
+  let all_map_assignments = Map_assignment.extract_map_assignments_from_ast ast in
+  
+  (* Convert ir_map_def list to map_flag_info list for userspace bindings *)
+  let ir_map_def_to_map_flag_info (ir_map : ir_map_def) : Maps.map_flag_info =
+    (* Find assignments to this specific map *)
+    let map_assignments = List.filter (fun assignment -> 
+      assignment.Map_assignment.map_name = ir_map.map_name
+    ) all_map_assignments in
+    
+    (* Extract initial values from assignments with literal keys and values *)
+    let initial_values = List.filter_map (fun assignment ->
+      match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
+      | Literal key_lit, Literal value_lit ->
+          let key_str = match key_lit with
+            | IntLit i -> string_of_int i
+            | StringLit s -> "\"" ^ s ^ "\""
+            | CharLit c -> "'" ^ String.make 1 c ^ "'"
+            | BoolLit b -> string_of_bool b
+          in
+          let value_str = match value_lit with
+            | IntLit i -> string_of_int i
+            | StringLit s -> "\"" ^ s ^ "\""
+            | CharLit c -> "'" ^ String.make 1 c ^ "'"
+            | BoolLit b -> string_of_bool b
+          in
+          Some (key_str ^ ":" ^ value_str)
+      | _ -> None
+    ) map_assignments in
+    
+    {
+      map_name = ir_map.map_name;
+      has_initial_values = List.length map_assignments > 0;
+      initial_values = initial_values;
+      key_type = string_of_ir_type ir_map.map_key_type;
+      value_type = string_of_ir_type ir_map.map_value_type;
+    }
+  in
+  
+  let map_flag_infos = List.map ir_map_def_to_map_flag_info ir_global_maps in
+  
   (* Generate userspace bindings *)
   let userspace_bindings = 
-    (* Always generate default bindings, even without explicit userspace block *)
-    (* generate_userspace_bindings_from_multi_programs prog_defs userspace_block ir_global_maps *)
-    [] (* Temporarily empty list to avoid type conflicts *)
+    generate_userspace_bindings_from_multi_programs prog_defs userspace_block map_flag_infos
   in
   
   (* Create multi-program IR *)

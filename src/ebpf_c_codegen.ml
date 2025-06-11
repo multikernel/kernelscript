@@ -165,11 +165,11 @@ let generate_c_value _ctx ir_val =
   | IRContextField (ctx_type, field) ->
       let ctx_var = "ctx" in (* Standard context parameter name *)
       begin match ctx_type, field with
-      | XdpCtx, "data" -> sprintf "(__u64)(long)%s->data" ctx_var
-      | XdpCtx, "data_end" -> sprintf "(__u64)(long)%s->data_end" ctx_var
-      | XdpCtx, "data_meta" -> sprintf "(__u64)(long)%s->data_meta" ctx_var
-      | TcCtx, "data" -> sprintf "(__u64)(long)%s->data" ctx_var
-      | TcCtx, "data_end" -> sprintf "(__u64)(long)%s->data_end" ctx_var
+      | XdpCtx, "data" -> sprintf "(void*)(long)%s->data" ctx_var
+      | XdpCtx, "data_end" -> sprintf "(void*)(long)%s->data_end" ctx_var
+      | XdpCtx, "data_meta" -> sprintf "(void*)(long)%s->data_meta" ctx_var
+      | TcCtx, "data" -> sprintf "(void*)(long)%s->data" ctx_var
+      | TcCtx, "data_end" -> sprintf "(void*)(long)%s->data_end" ctx_var
       | _, field -> sprintf "%s->%s" ctx_var field
       end
 
@@ -295,6 +295,22 @@ let generate_map_store ctx map_val key_val value_val store_type =
       let value_str = generate_c_value ctx value_val in
       emit_line ctx (sprintf "bpf_ringbuf_submit(%s, 0);" value_str)
 
+let generate_map_delete ctx map_val key_val =
+  let map_str = generate_c_value ctx map_val in
+  
+  (* Handle key - create temp variable if it's a literal *)
+  let key_var = match key_val.value_desc with
+    | IRLiteral _ -> 
+        let temp_key = fresh_var ctx "key" in
+        let key_type = ir_type_to_c_type key_val.val_type in
+        let key_str = generate_c_value ctx key_val in
+        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+        temp_key
+    | _ -> generate_c_value ctx key_val
+  in
+  
+  emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
+
 (** Generate C code for IR instruction *)
 
 let generate_c_instruction ctx ir_instr =
@@ -314,27 +330,13 @@ let generate_c_instruction ctx ir_instr =
            emit_line ctx (sprintf "%s(%s);" name args_str))
 
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
-      let map_str = generate_c_value ctx map_val in
-      let key_str = generate_c_value ctx key_val in
-      let dest_str = generate_c_value ctx dest_val in
-      (match load_type with
-       | DirectLoad -> emit_line ctx (sprintf "%s = %s[%s];" dest_str map_str key_str)
-       | MapLookup -> emit_line ctx (sprintf "%s = bpf_map_lookup_elem(%s, &%s);" dest_str map_str key_str)
-       | MapPeek -> emit_line ctx (sprintf "%s = bpf_map_peek_elem(%s, &%s);" dest_str map_str key_str))
+      generate_map_load ctx map_val key_val dest_val load_type
 
   | IRMapStore (map_val, key_val, value_val, store_type) ->
-      let map_str = generate_c_value ctx map_val in
-      let key_str = generate_c_value ctx key_val in
-      let value_str = generate_c_value ctx value_val in
-      (match store_type with
-       | DirectStore -> emit_line ctx (sprintf "%s[%s] = %s;" map_str key_str value_str)
-       | MapUpdate -> emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_str value_str)
-       | MapPush -> emit_line ctx (sprintf "bpf_map_push_elem(%s, &%s, BPF_EXIST);" map_str value_str))
+      generate_map_store ctx map_val key_val value_val store_type
 
   | IRMapDelete (map_val, key_val) ->
-      let map_str = generate_c_value ctx map_val in
-      let key_str = generate_c_value ctx key_val in
-      emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_str)
+      generate_map_delete ctx map_val key_val
 
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
