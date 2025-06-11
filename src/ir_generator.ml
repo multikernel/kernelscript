@@ -420,6 +420,18 @@ let rec lower_statement ctx stmt =
       in
       emit_instruction ctx instr
       
+  | Ast.Delete (map_expr, key_expr) ->
+      let map_val = lower_expression ctx map_expr in
+      let key_val = lower_expression ctx key_expr in
+      
+      (* Generate map delete instruction *)
+      let instr = make_ir_instruction
+        (IRMapDelete (map_val, key_val))
+        ~verifier_hints:[HelperCall "map_delete_elem"]
+        stmt.stmt_pos
+      in
+      emit_instruction ctx instr
+      
   | Ast.Declaration (name, typ_opt, expr) ->
       let value = lower_expression ctx expr in
       let reg = get_variable_register ctx name in

@@ -460,6 +460,10 @@ and process_statement table stmt =
       List.iter (process_statement table_with_loop) body;
       let _ = exit_scope table_with_loop in ()
 
+  | Delete (map_expr, key_expr) ->
+      process_expression table map_expr;
+      process_expression table key_expr
+
 and process_expression table expr =
   match expr.expr_desc with
   | Literal _ -> ()

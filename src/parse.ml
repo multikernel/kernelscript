@@ -94,6 +94,8 @@ let validate_ast ast =
         validate_expr iterable && List.for_all validate_stmt body
     | While (cond, body) ->
         validate_expr cond && List.for_all validate_stmt body
+    | Delete (map_expr, key_expr) ->
+        validate_expr map_expr && validate_expr key_expr
   in
   
   let validate_function func =

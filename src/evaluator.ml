@@ -35,6 +35,8 @@ type eval_context = {
   current_context: runtime_value option;
   mutable call_depth: int;
   max_call_depth: int;
+  (* Map storage: map_name -> (key -> value) hashtable *)
+  map_storage: (string, (string, runtime_value) Hashtbl.t) Hashtbl.t;
 }
 
 (** Create evaluation context *)
@@ -69,6 +71,12 @@ let create_eval_context maps functions =
     | [] -> IntValue 1234567890  (* Mock timestamp *)
     | _ -> raise (Evaluation_error ("bpf_ktime_get_ns takes no arguments", make_position 0 0 "")));
   
+  let map_storage = Hashtbl.create 32 in
+  (* Initialize storage for each map *)
+  Hashtbl.iter (fun map_name _map_decl ->
+    Hashtbl.add map_storage map_name (Hashtbl.create 64)
+  ) maps;
+  
   {
     variables = Hashtbl.create 64;
     maps = maps;
@@ -77,6 +85,7 @@ let create_eval_context maps functions =
     current_context = None;
     call_depth = 0;
     max_call_depth = 100;
+    map_storage = map_storage;
   }
 
 (** Helper to create evaluation error *)
@@ -197,35 +206,50 @@ let rec eval_function_call ctx name args pos =
         eval_error ("Undefined function: " ^ name) pos
 
 (** Evaluate map operations *)
-and eval_map_operation _ctx name arg_values pos =
+and eval_map_operation ctx name arg_values pos =
   let parts = String.split_on_char '.' name in
   match parts with
   | [map_name; operation] ->
+      let get_map_storage () =
+        try Hashtbl.find ctx.map_storage map_name
+        with Not_found -> eval_error ("Map not found: " ^ map_name) pos
+      in
+      
       (match operation with
-               | "lookup" ->
-            (match arg_values with
-             | [_key_val] ->
-                (* Mock map lookup - return Some(value) or None *)
-                let mock_value = IntValue 42 in
-                StructValue [("Some", mock_value)]  (* Mock Option::Some *)
+       | "lookup" ->
+           (match arg_values with
+            | [key_val] ->
+                let map_store = get_map_storage () in
+                let key_str = string_of_runtime_value key_val in
+                (try
+                   let value = Hashtbl.find map_store key_str in
+                   StructValue [("Some", value)]  (* Option::Some *)
+                 with Not_found ->
+                   StructValue [("None", UnitValue)])  (* Option::None *)
             | _ -> eval_error ("Map lookup requires 1 argument") pos)
        
        | "insert" | "update" ->
            (match arg_values with
             | [key_val; val_val] ->
+                let map_store = get_map_storage () in
+                let key_str = string_of_runtime_value key_val in
+                Hashtbl.replace map_store key_str val_val;
                 Printf.printf "[MAP %s]: %s[%s] = %s\n" 
-                  operation map_name 
-                  (string_of_runtime_value key_val)
-                  (string_of_runtime_value val_val);
+                  operation map_name key_str (string_of_runtime_value val_val);
                 IntValue 0  (* Success *)
             | _ -> eval_error (Printf.sprintf "Map %s requires 2 arguments" operation) pos)
        
        | "delete" ->
            (match arg_values with
             | [key_val] ->
-                Printf.printf "[MAP DELETE]: %s[%s]\n" 
-                  map_name (string_of_runtime_value key_val);
-                IntValue 0  (* Success *)
+                let map_store = get_map_storage () in
+                let key_str = string_of_runtime_value key_val in
+                let existed = Hashtbl.mem map_store key_str in
+                if existed then
+                  Hashtbl.remove map_store key_str;
+                Printf.printf "[MAP DELETE]: %s[%s] (existed: %b)\n" 
+                  map_name key_str existed;
+                IntValue (if existed then 0 else -1)  (* Success or not found *)
             | _ -> eval_error ("Map delete requires 1 argument") pos)
        
        | _ -> eval_error ("Unknown map operation: " ^ operation) pos)
@@ -271,28 +295,45 @@ and eval_user_function ctx func_def arg_values pos =
 
 (** Evaluate array access *)
 and eval_array_access ctx arr_expr idx_expr pos =
-  let arr_val = eval_expression ctx arr_expr in
-  let idx_val = eval_expression ctx idx_expr in
-  
-  let index = int_of_runtime_value idx_val pos in
-  
-  match arr_val with
-  | ArrayValue arr ->
-      if index >= 0 && index < Array.length arr then
-        arr.(index)
-      else
-        eval_error (Printf.sprintf "Array index %d out of bounds (length %d)" 
-                     index (Array.length arr)) pos
-  
-  | StringValue s ->
-      if index >= 0 && index < String.length s then
-        CharValue s.[index]
-      else
-        eval_error (Printf.sprintf "String index %d out of bounds (length %d)" 
-                     index (String.length s)) pos
-  
-  | _ ->
-      eval_error ("Cannot index " ^ string_of_runtime_value arr_val) pos
+  (* Check if this is a map access first *)
+  (match arr_expr.expr_desc with
+   | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
+       (* This is a map access: map[key] *)
+       let key_val = eval_expression ctx idx_expr in
+       let map_store = 
+         try Hashtbl.find ctx.map_storage map_name
+         with Not_found -> eval_error ("Map not found: " ^ map_name) pos
+       in
+       let key_str = string_of_runtime_value key_val in
+       (try
+          Hashtbl.find map_store key_str
+        with Not_found ->
+          (* For map access, return a default value or error based on map type *)
+          IntValue 0)  (* Default value for missing keys *)
+   | _ ->
+       (* Regular array access *)
+       let arr_val = eval_expression ctx arr_expr in
+       let idx_val = eval_expression ctx idx_expr in
+       
+       let index = int_of_runtime_value idx_val pos in
+       
+       match arr_val with
+       | ArrayValue arr ->
+           if index >= 0 && index < Array.length arr then
+             arr.(index)
+           else
+             eval_error (Printf.sprintf "Array index %d out of bounds (length %d)" 
+                          index (Array.length arr)) pos
+       
+       | StringValue s ->
+           if index >= 0 && index < String.length s then
+             CharValue s.[index]
+           else
+             eval_error (Printf.sprintf "String index %d out of bounds (length %d)" 
+                          index (String.length s)) pos
+       
+       | _ ->
+           eval_error ("Cannot index " ^ string_of_runtime_value arr_val) pos)
 
 (** Evaluate field access *)
 and eval_field_access ctx obj_expr field pos =
@@ -378,11 +419,24 @@ and eval_statement ctx stmt =
       Hashtbl.replace ctx.variables name value
   
   | IndexAssignment (map_expr, key_expr, value_expr) ->
-      (* For evaluation purposes, we'll just ignore map assignments *)
-      let _ = eval_expression ctx map_expr in
-      let _ = eval_expression ctx key_expr in
-      let _ = eval_expression ctx value_expr in
-      ()
+      (* Handle map assignment: map[key] = value *)
+      let map_name = match map_expr.expr_desc with
+        | Identifier name when Hashtbl.mem ctx.maps name -> name
+        | Identifier name -> eval_error ("Not a map: " ^ name) stmt.stmt_pos
+        | _ -> eval_error ("Map assignment requires a map identifier") stmt.stmt_pos
+      in
+      let key_val = eval_expression ctx key_expr in
+      let value_val = eval_expression ctx value_expr in
+      
+      let map_store = 
+        try Hashtbl.find ctx.map_storage map_name
+        with Not_found -> eval_error ("Map not found: " ^ map_name) stmt.stmt_pos
+      in
+      
+      let key_str = string_of_runtime_value key_val in
+      Hashtbl.replace map_store key_str value_val;
+      Printf.printf "[MAP ASSIGN]: %s[%s] = %s\n" 
+        map_name key_str (string_of_runtime_value value_val)
   
   | Declaration (name, _, expr) ->
       let value = eval_expression ctx expr in
@@ -468,6 +522,28 @@ and eval_statement ctx stmt =
            | Continue_loop -> loop ())
       in
       loop ()
+
+  | Delete (map_expr, key_expr) ->
+      let map_name = match map_expr.expr_desc with
+        | Identifier name -> name
+        | _ -> eval_error ("Delete requires a map identifier") stmt.stmt_pos
+      in
+      let key_result = eval_expression ctx key_expr in
+      
+      (* Get the map storage *)
+      let map_store = 
+        try Hashtbl.find ctx.map_storage map_name
+        with Not_found -> eval_error ("Map not found: " ^ map_name) stmt.stmt_pos
+      in
+      
+      (* Perform the actual delete operation *)
+      let key_str = string_of_runtime_value key_result in
+      let existed = Hashtbl.mem map_store key_str in
+      if existed then
+        Hashtbl.remove map_store key_str;
+      
+      Printf.printf "[MAP DELETE]: %s[%s] (existed: %b)\n" 
+        map_name key_str existed
 
 (** Evaluate a complete program *)
 let eval_program ctx prog =

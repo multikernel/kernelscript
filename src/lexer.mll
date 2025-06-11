@@ -86,6 +86,7 @@
     | "config" -> CONFIG
     | "userspace" -> USERSPACE
     | "in" -> IN
+    | "delete" -> DELETE
     | "true" -> BOOL_LIT true
     | "false" -> BOOL_LIT false
     | id -> IDENTIFIER id

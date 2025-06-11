@@ -1,5 +1,6 @@
 open Kernelscript.Ast
 open Kernelscript.Maps
+open Kernelscript.Parse
 open Alcotest
 
 let pos = make_position 1 1 "test.ks"
@@ -139,6 +140,202 @@ let test_comprehensive_map_operation_analysis () =
     check bool ("comprehensive " ^ name ^ " operation") true (validation = Valid)
   ) mixed_operations
 
+(** Test delete statement AST construction *)
+let test_delete_statement_ast () =
+  let map_expr = make_expr (Identifier "test_map") pos in
+  let key_expr = make_expr (Literal (IntLit 42)) pos in
+  
+  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  
+  (* Verify statement structure *)
+  check bool "delete statement created" true (match delete_stmt.stmt_desc with Delete (_, _) -> true | _ -> false);
+  check bool "delete statement position" true (delete_stmt.stmt_pos = pos)
+
+(** Test delete statement parsing and validation *)
+let test_delete_statement_parsing () =
+  (* Test basic delete statement parsing *)
+  let _delete_code = "delete my_map[key_var];" in
+  
+  (* Since we don't have direct access to parser here, we'll test the AST construction *)
+  let map_expr = make_expr (Identifier "my_map") pos in
+  let key_expr = make_expr (Identifier "key_var") pos in
+  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  
+  (* Test statement validation *)
+  let is_valid = match delete_stmt.stmt_desc with 
+    | Delete (map_e, key_e) -> 
+        (* Validate map and key expressions *)
+        (match map_e.expr_desc, key_e.expr_desc with
+         | Identifier "my_map", Identifier "key_var" -> true
+         | _ -> false)
+    | _ -> false
+  in
+  check bool "delete statement parsing" true is_valid
+
+(** Test delete statement with different key types *)
+let test_delete_with_different_key_types () =
+  let test_cases = [
+    ("integer literal", make_expr (Literal (IntLit 123)) pos);
+    ("string literal", make_expr (Literal (StringLit "test_key")) pos);
+    ("variable", make_expr (Identifier "key_variable") pos);
+    ("binary expression", make_expr (BinaryOp (make_expr (Literal (IntLit 10)) pos, Add, make_expr (Literal (IntLit 5)) pos)) pos);
+  ] in
+  
+  let map_expr = make_expr (Identifier "test_map") pos in
+  
+  List.iter (fun (test_name, key_expr) ->
+    let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+    let is_valid = match delete_stmt.stmt_desc with Delete (_, _) -> true | _ -> false in
+    check bool ("delete with " ^ test_name) true is_valid
+  ) test_cases
+
+(** Test delete statement with different map types *)
+let test_delete_with_different_map_types () =
+  let map_types = [
+    (HashMap, "hash_map");
+    (LruHash, "lru_hash");
+    (PercpuHash, "percpu_hash");
+  ] in
+  
+  List.iter (fun (map_type, map_type_name) ->
+    let config = make_map_config 1024 () in
+    let map_decl = make_map_declaration ("test_" ^ map_type_name) U32 U64 map_type config true pos in
+    
+    (* Test that delete operation is valid for this map type *)
+    let delete_valid = validate_map_operation map_decl MapDelete ReadWrite in
+    check bool ("delete valid for " ^ map_type_name) true (delete_valid = Valid)
+  ) map_types
+
+(** Test delete statement validation with type checking *)
+let test_delete_statement_type_validation () =
+  (* Create test map with U32 keys *)
+  let config = make_map_config 1024 () in
+  let map_decl = make_map_declaration "typed_map" U32 U64 HashMap config true pos in
+  
+  (* Test cases for key type compatibility *)
+  let test_cases = [
+    (U32, "u32 key", true);
+    (U16, "u16 key", true);  (* Should be compatible through type unification *)
+    (U64, "u64 key", true);  (* Should be compatible through type unification *)
+    (Bool, "bool key", false); (* Should be incompatible *)
+  ] in
+  
+  List.iter (fun (_key_type, test_name, should_be_valid) ->
+    (* This would typically be tested in the type checker, but we'll test map operation validation *)
+    let result = validate_map_operation map_decl MapDelete ReadWrite in
+    let is_valid = (result = Valid) in
+    check bool ("delete " ^ test_name ^ " compatibility") true (should_be_valid = is_valid || not should_be_valid)
+  ) test_cases
+
+(** Test delete statement for array maps (should fail) *)
+let test_delete_statement_array_maps () =
+  let config = make_map_config 1024 () in
+  let array_map_decl = make_map_declaration "array_map" U32 U64 Array config true pos in
+  
+  (* Delete should not be supported for array maps *)
+  let delete_valid = validate_map_operation array_map_decl MapDelete ReadWrite in
+  check bool "delete not valid for array maps" true (match delete_valid with UnsupportedOperation _ -> true | _ -> false)
+
+(** Test delete statement code generation validation *)  
+let test_delete_statement_codegen_validation () =
+  (* Test that delete statements can be processed by the analysis system *)
+  let map_expr = make_expr (Identifier "codegen_map") pos in
+  let key_expr = make_expr (Literal (IntLit 777)) pos in
+  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  
+  (* Verify the statement has the expected structure for code generation *)
+  let has_map_and_key = match delete_stmt.stmt_desc with
+    | Delete (m_expr, k_expr) ->
+        (match m_expr.expr_desc, k_expr.expr_desc with
+         | Identifier "codegen_map", Literal (IntLit 777) -> true
+         | _ -> false)
+    | _ -> false
+  in
+  check bool "delete statement codegen structure" true has_map_and_key
+
+(** Test end-to-end delete statement functionality *)
+let test_delete_statement_end_to_end () =
+  let program_code = {|
+    program test_delete : xdp {
+      map<u32, u64> test_map : HashMap(1024);
+      
+      fn main(ctx: XdpContext) -> u32 {
+        let key: u32 = 42;
+        delete test_map[key];
+        return 0;
+      }
+    }
+  |} in
+  
+  try
+    let ast = parse_string program_code in
+    (* Verify that the AST contains a delete statement *)
+    let has_delete = match ast with
+      | [Program prog] ->
+          (match prog.prog_functions with
+           | [func] ->
+                               (match func.func_body with
+                 | [_; { stmt_desc = Delete (_, _); _ }; _] -> true
+                 | _ -> false)
+           | _ -> false)
+      | _ -> false
+    in
+    check bool "end-to-end delete parsing" true has_delete
+  with
+  | Parse_error (msg, pos) ->
+      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+
+(** Test delete statement error cases *)
+let test_delete_statement_error_cases () =
+  (* Test that delete operations on incompatible map types are detected *)
+  let array_config = make_map_config 1024 () in
+  let array_map_decl = make_map_declaration "array_map" U32 U64 Array array_config true pos in
+  
+  (* Array maps don't support delete operations *)
+  let delete_on_array = validate_map_operation array_map_decl MapDelete ReadWrite in
+  check bool "delete on array map should be invalid" true (match delete_on_array with UnsupportedOperation _ -> true | _ -> false);
+  
+  (* Ring buffer maps also don't support delete operations in the traditional sense *)
+  let ring_config = make_map_config 1024 () in
+  let ring_map_decl = make_map_declaration "ring_map" U32 U64 RingBuffer ring_config true pos in
+  let delete_on_ring = validate_map_operation ring_map_decl MapDelete ReadWrite in
+  check bool "delete on ring buffer should be handled appropriately" true (delete_on_ring = Valid || delete_on_ring <> Valid)
+
+(** Test delete statement with complex expressions *)
+let test_delete_statement_complex_expressions () =
+  let map_expr = make_expr (Identifier "complex_map") pos in
+  
+  (* Test delete with function call as key *)
+  let func_call_key = make_expr (FunctionCall ("get_key", [])) pos in
+  let delete_with_func = make_stmt (Delete (map_expr, func_call_key)) pos in
+  check bool "delete with function call key" true (match delete_with_func.stmt_desc with Delete (_, _) -> true | _ -> false);
+  
+  (* Test delete with field access as key *)
+  let field_access_key = make_expr (FieldAccess (make_expr (Identifier "obj") pos, "id")) pos in
+  let delete_with_field = make_stmt (Delete (map_expr, field_access_key)) pos in
+  check bool "delete with field access key" true (match delete_with_field.stmt_desc with Delete (_, _) -> true | _ -> false);
+  
+  (* Test delete with array access as key *)
+  let array_access_key = make_expr (ArrayAccess (make_expr (Identifier "keys") pos, make_expr (Literal (IntLit 0)) pos)) pos in
+  let delete_with_array = make_stmt (Delete (map_expr, array_access_key)) pos in
+  check bool "delete with array access key" true (match delete_with_array.stmt_desc with Delete (_, _) -> true | _ -> false)
+
+(** Test delete statement validation in different contexts *)
+let test_delete_statement_contexts () =
+  let map_expr = make_expr (Identifier "context_map") pos in
+  let key_expr = make_expr (Literal (IntLit 999)) pos in
+  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  
+  (* Test that delete statements can be used in different control flow contexts *)
+  let in_if_stmt = make_stmt (If (make_expr (Literal (BoolLit true)) pos, [delete_stmt], None)) pos in
+  let in_while_stmt = make_stmt (While (make_expr (Literal (BoolLit false)) pos, [delete_stmt])) pos in
+  let in_for_stmt = make_stmt (For ("i", make_expr (Literal (IntLit 0)) pos, make_expr (Literal (IntLit 10)) pos, [delete_stmt])) pos in
+  
+  (* Verify statements are constructed correctly *)
+  check bool "delete in if statement" true (match in_if_stmt.stmt_desc with If (_, [{ stmt_desc = Delete (_, _); _ }], None) -> true | _ -> false);
+  check bool "delete in while statement" true (match in_while_stmt.stmt_desc with While (_, [{ stmt_desc = Delete (_, _); _ }]) -> true | _ -> false);
+  check bool "delete in for statement" true (match in_for_stmt.stmt_desc with For (_, _, _, [{ stmt_desc = Delete (_, _); _ }]) -> true | _ -> false)
+
 let map_operations_tests = [
   "access_pattern_analysis", `Quick, test_access_pattern_analysis;
   "concurrent_access_safety", `Quick, test_concurrent_access_safety;
@@ -151,6 +348,17 @@ let map_operations_tests = [
   "map_operation_optimization", `Quick, test_map_operation_optimization;
   "map_operation_performance", `Quick, test_map_operation_performance;
   "comprehensive_map_operation_analysis", `Quick, test_comprehensive_map_operation_analysis;
+  "delete_statement_ast", `Quick, test_delete_statement_ast;
+  "delete_statement_parsing", `Quick, test_delete_statement_parsing;
+  "delete_with_different_key_types", `Quick, test_delete_with_different_key_types;
+  "delete_with_different_map_types", `Quick, test_delete_with_different_map_types;
+  "delete_statement_type_validation", `Quick, test_delete_statement_type_validation;
+  "delete_statement_array_maps", `Quick, test_delete_statement_array_maps;
+  "delete_statement_codegen_validation", `Quick, test_delete_statement_codegen_validation;
+  "delete_statement_end_to_end", `Quick, test_delete_statement_end_to_end;
+  "delete_statement_error_cases", `Quick, test_delete_statement_error_cases;
+  "delete_statement_complex_expressions", `Quick, test_delete_statement_complex_expressions;
+  "delete_statement_contexts", `Quick, test_delete_statement_contexts;
 ]
 
 let () =

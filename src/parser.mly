@@ -17,7 +17,7 @@
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET MUT PUB PRIV CONFIG USERSPACE
-%token IN
+%token IN DELETE
 
 /* Operators */
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
@@ -84,6 +84,7 @@
 %type <Ast.statement> if_statement
 %type <Ast.statement> while_statement
 %type <Ast.statement> for_statement
+%type <Ast.statement> delete_statement
 %type <Ast.expr> expression
 %type <Ast.expr> primary_expression
 %type <Ast.literal> literal
@@ -198,6 +199,7 @@ statement:
   | if_statement { $1 }
   | while_statement { $1 }
   | for_statement { $1 }
+  | delete_statement { $1 }
 
 expression_statement:
   | expression SEMICOLON { make_stmt (ExprStmt $1) (make_pos ()) }
@@ -239,6 +241,10 @@ for_statement:
     { match $10 with
       | "iter" -> make_stmt (ForIter ($3, $5, $8, $14)) (make_pos ())
       | method_name -> failwith ("Unknown iterator method: " ^ method_name) }
+
+delete_statement:
+  | DELETE expression LBRACKET expression RBRACKET SEMICOLON 
+    { make_stmt (Delete ($2, $4)) (make_pos ()) }
 
 /* Expressions */
 expression:
@@ -401,8 +407,6 @@ struct_field:
 userspace_config:
   | IDENTIFIER LBRACE userspace_config_items RBRACE
     { CustomConfig ($1, $3) }
-
-
 
 userspace_config_items:
   | /* empty */ { [] }

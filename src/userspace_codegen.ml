@@ -141,6 +141,16 @@ let rec generate_c_statement_with_context ctx (stmt : Ast.statement) =
         "__return_value = 0; goto cleanup;"
       else
         "return;"
+  | Ast.Delete (map_expr, key_expr) ->
+      (* Handle delete statement like delete map[key]; *)
+      let map_name = match map_expr.expr_desc with
+        | Ast.Identifier name -> name
+        | _ -> "unknown_map"
+      in
+      let ((key_decl, key_arg), _) = 
+        generate_safe_map_args ctx key_expr None in
+      let setup = if key_decl = "" then "" else key_decl ^ "\n    " in
+      sprintf "%s%s_delete(%s);" setup map_name key_arg
   | _ -> "// TODO: Unsupported statement"
 
 (** Generate C code for expressions *)

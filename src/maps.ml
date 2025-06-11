@@ -196,11 +196,18 @@ let validate_map_declaration map_decl =
   validate_map_config map_decl.map_type map_decl.config
 
 (** Map operation validation *)
-let validate_map_operation _map_decl operation access_pattern =
+let validate_map_operation map_decl operation access_pattern =
   match operation, access_pattern with
   | MapLookup, ReadWrite -> Valid
   | MapUpdate, ReadWrite -> Valid
-  | MapDelete, ReadWrite -> Valid
+  | MapDelete, ReadWrite ->
+      (* Delete is only supported on certain map types *)
+      (match map_decl.map_type with
+       | HashMap | PercpuHash | LruHash | LruPercpuHash -> Valid
+       | Array | PercpuArray -> UnsupportedOperation "Delete operations not supported on array maps"
+       | RingBuffer -> UnsupportedOperation "Delete operations not supported on ring buffer maps"
+       | PerfEvent -> UnsupportedOperation "Delete operations not supported on perf event maps"
+       | _ -> UnsupportedOperation "Delete operations not supported on this map type")
   | MapInsert, ReadWrite -> Valid
   | MapUpsert, ReadWrite -> Valid
   | _, BatchUpdate -> Valid

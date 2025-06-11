@@ -47,6 +47,7 @@ and typed_stmt_desc =
   | TFor of string * typed_expr * typed_expr * typed_statement list
   | TForIter of string * string * typed_expr * typed_statement list
   | TWhile of typed_expr * typed_statement list
+  | TDelete of typed_expr * typed_expr
 
 type typed_function = {
   tfunc_name: string;
@@ -549,6 +550,24 @@ let rec type_check_statement ctx stmt =
       let typed_body = List.map (type_check_statement ctx) body in
       { tstmt_desc = TWhile (typed_cond, typed_body); tstmt_pos = stmt.stmt_pos }
 
+  | Delete (map_expr, key_expr) ->
+      let typed_key = type_check_expression ctx key_expr in
+      
+      (* Check if this is map deletion *)
+      (match map_expr.expr_desc with
+       | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
+           (* This is map deletion *)
+           let map_decl = Hashtbl.find ctx.maps map_name in
+           (* Check key type compatibility *)
+           (match unify_types map_decl.key_type typed_key.texpr_type with
+            | Some _ -> ()
+            | None -> type_error ("Map key type mismatch in delete statement") stmt.stmt_pos);
+           (* Create a synthetic map type for the result *)
+           let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
+           { tstmt_desc = TDelete (typed_map, typed_key); tstmt_pos = stmt.stmt_pos }
+       | _ ->
+           type_error ("Delete can only be used on maps") stmt.stmt_pos)
+
 (** Type check function *)
 let type_check_function ctx func =
   (* Save current state *)
@@ -725,6 +744,8 @@ let rec typed_stmt_to_stmt tstmt =
         ForIter (index_var, value_var, typed_expr_to_expr iterable, List.map typed_stmt_to_stmt body)
     | TWhile (cond, body) ->
         While (typed_expr_to_expr cond, List.map typed_stmt_to_stmt body)
+    | TDelete (cond, body) ->
+        Delete (typed_expr_to_expr cond, typed_expr_to_expr body)
   in
   { stmt_desc; stmt_pos = tstmt.tstmt_pos }
 
