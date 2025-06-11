@@ -2,6 +2,74 @@ open Kernelscript.Ast
 open Kernelscript.Parse
 open Alcotest
 
+(** Helper functions for creating AST nodes in tests *)
+
+let dummy_loc = {
+  line = 1;
+  column = 1;
+  filename = "test";
+}
+
+let make_int_lit value = {
+  expr_desc = Literal (IntLit value);
+  expr_type = Some U32;
+  expr_pos = dummy_loc;
+}
+
+let make_id name = {
+  expr_desc = Identifier name;
+  expr_type = None;
+  expr_pos = dummy_loc;
+}
+
+let make_binop left op right = {
+  expr_desc = BinaryOp (left, op, right);
+  expr_type = None;
+  expr_pos = dummy_loc;
+}
+
+let make_call name args = {
+  expr_desc = FunctionCall (name, args);
+  expr_type = None;
+  expr_pos = dummy_loc;
+}
+
+let make_decl name expr = {
+  stmt_desc = Declaration (name, None, expr);
+  stmt_pos = dummy_loc;
+}
+
+let make_for_stmt var start_expr end_expr body = {
+  stmt_desc = For (var, start_expr, end_expr, body);
+  stmt_pos = dummy_loc;
+}
+
+let make_for_iter_stmt index_var value_var expr body = {
+  stmt_desc = ForIter (index_var, value_var, expr, body);
+  stmt_pos = dummy_loc;
+}
+
+(** Helper function to test parsing statements *)
+let test_parse_statements input expected =
+  let program_text = Printf.sprintf {|
+program test : xdp {
+  fn main() -> u32 {
+    %s
+    return 0;
+  }
+}
+|} input in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let actual_stmts = List.rev (List.tl (List.rev main_func.func_body)) in
+        check int "statement count" (List.length expected) (List.length actual_stmts)
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse statements: " ^ Printexc.to_string e)
+
 (** Test simple program parsing *)
 let test_simple_program () =
   let program_text = {|
@@ -517,6 +585,158 @@ program test : xdp {
     | _ -> fail ("Expected parse error for: " ^ desc)
   ) error_cases
 
+(** Test simple for loop *)
+let test_simple_for_loop () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for i in 0..10 {
+      return 1;
+    }
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let for_stmt = List.hd main_func.func_body in
+        (match for_stmt.stmt_desc with
+         | For (var, _, _, body) ->
+             check string "for loop variable" "i" var;
+             check int "for loop body has statements" 1 (List.length body)
+         | _ -> fail "Expected for loop")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse simple for loop: " ^ Printexc.to_string e)
+
+(** Test for loop with expressions *)
+let test_for_loop_with_expressions () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let count = 5;
+    for i in 0..count {
+      let x = i * 2;
+      x = x + 1;
+    }
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let for_stmt = List.nth main_func.func_body 1 in
+        (match for_stmt.stmt_desc with
+         | For (var, _, _, body) ->
+             check string "for loop variable" "i" var;
+             check int "for loop body has statements" 2 (List.length body)
+         | _ -> fail "Expected for loop")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse for loop with expressions: " ^ Printexc.to_string e)
+
+(** Test for iter syntax support *)
+let test_for_iter_syntax () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for (i, v) in array.iter() {
+      return v;
+    }
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let for_stmt = List.hd main_func.func_body in
+        (match for_stmt.stmt_desc with
+         | ForIter (index_var, value_var, _, body) ->
+             check string "for iter index variable" "i" index_var;
+             check string "for iter value variable" "v" value_var;
+             check int "for iter body has statements" 1 (List.length body)
+         | _ -> fail "Expected for iter loop")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse for iter syntax: " ^ Printexc.to_string e)
+
+(** Test nested for loops *)
+let test_nested_for_loops () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for i in 0..3 {
+      for j in 0..2 {
+        return 1;
+      }
+    }
+    return 2;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    match List.hd ast with
+    | Program prog -> 
+        let main_func = List.hd prog.prog_functions in
+        let outer_for = List.hd main_func.func_body in
+        (match outer_for.stmt_desc with
+         | For (_, _, _, outer_body) ->
+             check int "outer for loop body has statements" 1 (List.length outer_body);
+             (* Check nested for loop *)
+             let inner_for = List.hd outer_body in
+             (match inner_for.stmt_desc with
+              | For (_, _, _, inner_body) ->
+                  check int "inner for loop body has statements" 1 (List.length inner_body)
+              | _ -> fail "Expected nested for loop")
+         | _ -> fail "Expected outer for loop")
+    | _ -> fail "Expected program declaration"
+  with
+  | e -> fail ("Failed to parse nested for loops: " ^ Printexc.to_string e)
+
+(** Test for loop edge cases *)
+let test_for_loop_edge_cases () =
+  let test_cases = [
+    (* Zero range - should work *)
+    ("for i in 5..5 { let x = i; }", 
+     [make_for_stmt "i" (make_int_lit 5) (make_int_lit 5) [make_decl "x" (make_id "i")]]);
+    
+    (* Variable bounds - should work but be unbounded *)
+    ("for j in start..(end + 1) { let y = j; }", 
+     [make_for_stmt "j" (make_id "start") 
+       (make_binop (make_id "end") Add (make_int_lit 1)) [make_decl "y" (make_id "j")]]);
+  ] in
+  List.iter (fun (input, expected) ->
+    test_parse_statements input expected
+  ) test_cases
+
+let test_for_comprehensive () =
+  let input = "for i in 0..3 { let x = i; } for j in start..end { let y = j; } for (idx, val) in array.iter() { let z = val; }" in
+  let expected = [
+    make_for_stmt "i" (make_int_lit 0) (make_int_lit 3) [make_decl "x" (make_id "i")];
+    make_for_stmt "j" (make_id "start") (make_id "end") [make_decl "y" (make_id "j")];
+    make_for_iter_stmt "idx" "val" (make_call "array.iter" []) [make_decl "z" (make_id "val")];
+  ] in
+  test_parse_statements input expected
+
+let test_loop_bounds_analysis () =
+  (* Test that we can parse different kinds of loop bounds *)
+  let input = "for i in 0..5 { let x = i; } for j in variable..end { let y = j; }" in
+  let expected = [
+    make_for_stmt "i" (make_int_lit 0) (make_int_lit 5) [make_decl "x" (make_id "i")];
+    make_for_stmt "j" (make_id "variable") (make_id "end") [make_decl "y" (make_id "j")];
+  ] in
+  test_parse_statements input expected
+
 let parser_tests = [
   "simple_program", `Quick, test_simple_program;
   "expression_parsing", `Quick, test_expression_parsing;
@@ -535,6 +755,13 @@ let parser_tests = [
   "error_handling", `Quick, test_error_handling;
   "operator_precedence", `Quick, test_operator_precedence;
   "complete_program_parsing", `Quick, test_complete_program_parsing;
+  "simple_for_loop", `Quick, test_simple_for_loop;
+  "for_loop_with_expressions", `Quick, test_for_loop_with_expressions;
+  "for_iter_syntax", `Quick, test_for_iter_syntax;
+  "nested_for_loops", `Quick, test_nested_for_loops;
+  "for_loop_edge_cases", `Quick, test_for_loop_edge_cases;
+  "test_for_comprehensive", `Quick, test_for_comprehensive;
+  "test_loop_bounds_analysis", `Quick, test_loop_bounds_analysis;
 ]
 
 let () =

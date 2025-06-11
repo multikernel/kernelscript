@@ -27,6 +27,10 @@ type c_codegen_context = {
   mutable includes: string list;
   (* Map definitions that need to be emitted *)
   mutable map_definitions: ir_map_def list;
+  (* Next label ID for generating unique callback function names *)
+  mutable next_label_id: int;
+  (* Pending callbacks to be emitted *)
+  mutable pending_callbacks: string list;
 }
 
 let create_c_context () = {
@@ -36,6 +40,8 @@ let create_c_context () = {
   label_counter = 0;
   includes = [];
   map_definitions = [];
+  next_label_id = 0;
+  pending_callbacks = [];
 }
 
 (** Helper functions for code generation *)
@@ -159,11 +165,11 @@ let generate_c_value _ctx ir_val =
   | IRContextField (ctx_type, field) ->
       let ctx_var = "ctx" in (* Standard context parameter name *)
       begin match ctx_type, field with
-      | XdpCtx, "data" -> sprintf "(void*)(long)%s->data" ctx_var
-      | XdpCtx, "data_end" -> sprintf "(void*)(long)%s->data_end" ctx_var
-      | XdpCtx, "data_meta" -> sprintf "(void*)(long)%s->data_meta" ctx_var
-      | TcCtx, "data" -> sprintf "(void*)(long)%s->data" ctx_var
-      | TcCtx, "data_end" -> sprintf "(void*)(long)%s->data_end" ctx_var
+      | XdpCtx, "data" -> sprintf "(__u64)(long)%s->data" ctx_var
+      | XdpCtx, "data_end" -> sprintf "(__u64)(long)%s->data_end" ctx_var
+      | XdpCtx, "data_meta" -> sprintf "(__u64)(long)%s->data_meta" ctx_var
+      | TcCtx, "data" -> sprintf "(__u64)(long)%s->data" ctx_var
+      | TcCtx, "data_end" -> sprintf "(__u64)(long)%s->data_end" ctx_var
       | _, field -> sprintf "%s->%s" ctx_var field
       end
 
@@ -298,35 +304,44 @@ let generate_c_instruction ctx ir_instr =
       let expr_str = generate_c_expression ctx expr in
       emit_line ctx (sprintf "%s = %s;" dest_str expr_str)
 
-  | IRCall (func_name, args, ret_opt) ->
-      generate_helper_call ctx func_name args ret_opt
+  | IRCall (name, args, ret_opt) ->
+      let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+      (match ret_opt with
+       | Some ret_val ->
+           let ret_str = generate_c_value ctx ret_val in
+           emit_line ctx (sprintf "%s = %s(%s);" ret_str name args_str)
+       | None ->
+           emit_line ctx (sprintf "%s(%s);" name args_str))
 
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
-      generate_map_load ctx map_val key_val dest_val load_type
+      let map_str = generate_c_value ctx map_val in
+      let key_str = generate_c_value ctx key_val in
+      let dest_str = generate_c_value ctx dest_val in
+      (match load_type with
+       | DirectLoad -> emit_line ctx (sprintf "%s = %s[%s];" dest_str map_str key_str)
+       | MapLookup -> emit_line ctx (sprintf "%s = bpf_map_lookup_elem(%s, &%s);" dest_str map_str key_str)
+       | MapPeek -> emit_line ctx (sprintf "%s = bpf_map_peek_elem(%s, &%s);" dest_str map_str key_str))
 
   | IRMapStore (map_val, key_val, value_val, store_type) ->
-      generate_map_store ctx map_val key_val value_val store_type
+      let map_str = generate_c_value ctx map_val in
+      let key_str = generate_c_value ctx key_val in
+      let value_str = generate_c_value ctx value_val in
+      (match store_type with
+       | DirectStore -> emit_line ctx (sprintf "%s[%s] = %s;" map_str key_str value_str)
+       | MapUpdate -> emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_str value_str)
+       | MapPush -> emit_line ctx (sprintf "bpf_map_push_elem(%s, &%s, BPF_EXIST);" map_str value_str))
 
   | IRMapDelete (map_val, key_val) ->
       let map_str = generate_c_value ctx map_val in
-      (* Handle key - create temp variable if it's a literal *)
-      let key_var = match key_val.value_desc with
-        | IRLiteral _ -> 
-            let temp_key = fresh_var ctx "key" in
-            let key_type = ir_type_to_c_type key_val.val_type in
-            let key_str = generate_c_value ctx key_val in
-            emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-            temp_key
-        | _ -> generate_c_value ctx key_val
-      in
-      emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
+      let key_str = generate_c_value ctx key_val in
+      emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_str)
 
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
       let access_str = match access_type with
-        | PacketData -> "(void*)(long)ctx->data"
-        | PacketEnd -> "(void*)(long)ctx->data_end"
-        | DataMeta -> "(void*)(long)ctx->data_meta"
+        | PacketData -> "ctx->data"
+        | PacketEnd -> "ctx->data_end"
+        | DataMeta -> "ctx->data_meta"
         | IngressIfindex -> "ctx->ingress_ifindex"
         | DataLen -> "ctx->len"
         | MarkField -> "ctx->mark"
@@ -335,32 +350,90 @@ let generate_c_instruction ctx ir_instr =
       in
       emit_line ctx (sprintf "%s = %s;" dest_str access_str)
 
-  | IRBoundsCheck (ir_val, min_bound, max_bound) ->
-      generate_bounds_check ctx ir_val min_bound max_bound
+  | IRBoundsCheck (value_val, min_bound, max_bound) ->
+      let value_str = generate_c_value ctx value_val in
+      emit_line ctx (sprintf "if (%s < %d || %s > %d) return XDP_ABORTED;" 
+                     value_str min_bound value_str max_bound)
 
   | IRJump label ->
       emit_line ctx (sprintf "goto %s;" label)
 
   | IRCondJump (cond_val, true_label, false_label) ->
       let cond_str = generate_c_value ctx cond_val in
-      emit_line ctx (sprintf "if (%s) {" cond_str);
-      increase_indent ctx;
-      emit_line ctx (sprintf "goto %s;" true_label);
-      decrease_indent ctx;
-      emit_line ctx "} else {";
-      increase_indent ctx;
-      emit_line ctx (sprintf "goto %s;" false_label);
-      decrease_indent ctx;
-      emit_line ctx "}"
+      emit_line ctx (sprintf "if (%s) goto %s; else goto %s;" cond_str true_label false_label)
 
-  | IRReturn ret_val_opt ->
-      begin match ret_val_opt with
+  | IRReturn ret_opt ->
+      begin match ret_opt with
       | Some ret_val ->
           let ret_str = generate_c_value ctx ret_val in
           emit_line ctx (sprintf "return %s;" ret_str)
       | None ->
           emit_line ctx "return 0;"
       end
+
+  | IRComment comment ->
+      emit_line ctx (sprintf "/* %s */" comment)
+
+  | IRBpfLoop (start_val, end_val, counter_val, _ctx_val, body) ->
+      let start_str = generate_c_value ctx start_val in
+      let end_str = generate_c_value ctx end_val in
+      
+      (* Generate unique callback function name *)
+      let callback_name = sprintf "loop_callback_%d" ctx.next_label_id in
+      ctx.next_label_id <- ctx.next_label_id + 1;
+      
+      (* Generate callback function code - store it for later emission *)
+      let callback_code = ref [] in
+      
+      (* Generate callback function signature and body *)
+      callback_code := sprintf "static long %s(__u32 index, void *ctx_ptr) {" callback_name :: !callback_code;
+      callback_code := "    /* Loop body for bpf_loop() */" :: !callback_code;
+      
+      (* Extract the variable name from counter_val for proper declaration in callback *)
+      let counter_var_name = match counter_val.value_desc with
+        | IRRegister reg -> sprintf "tmp_%d" reg
+        | IRVariable name -> name
+        | _ -> "loop_counter"
+      in
+      
+      (* Declare the loop counter variable in callback scope *)
+      let counter_type = ir_type_to_c_type counter_val.val_type in
+      callback_code := sprintf "    %s %s;" counter_type counter_var_name :: !callback_code;
+      callback_code := sprintf "    %s = index;" counter_var_name :: !callback_code;
+      
+      (* Generate actual loop body statements from 'body' parameter *)
+      (match body with
+      | [] -> 
+          callback_code := "    /* Empty loop body */" :: !callback_code;
+      | _ -> 
+          callback_code := "    /* Loop body statements would be generated here */" :: !callback_code;
+          callback_code := sprintf "    /* %d statements in loop body */" (List.length body) :: !callback_code;
+      );
+      
+      callback_code := "    return 0; /* Continue loop */" :: !callback_code;
+      callback_code := "}" :: !callback_code;
+      callback_code := "" :: !callback_code; (* blank line *)
+      
+      (* Store callback for later emission *)
+      ctx.pending_callbacks <- (List.rev !callback_code) @ ctx.pending_callbacks;
+      
+      (* Generate the actual bpf_loop() call *)
+      emit_line ctx (sprintf "/* bpf_loop() call for unbounded loop */");
+      emit_line ctx (sprintf "{");
+      increase_indent ctx;
+      emit_line ctx (sprintf "__u32 start_val = %s;" start_str);
+      emit_line ctx (sprintf "__u32 end_val = %s;" end_str);
+      emit_line ctx (sprintf "__u32 nr_loops = (end_val > start_val) ? (end_val - start_val) : 0;");
+      emit_line ctx (sprintf "void *callback_ctx = NULL; /* TODO: pass loop context */");
+      emit_line ctx (sprintf "long result = bpf_loop(nr_loops, %s, callback_ctx, 0);" callback_name);
+      emit_line ctx (sprintf "if (result < 0) {");
+      increase_indent ctx;
+      emit_line ctx (sprintf "/* bpf_loop failed */");
+      emit_line ctx (sprintf "return XDP_ABORTED;");
+      decrease_indent ctx;
+      emit_line ctx (sprintf "}");
+      decrease_indent ctx;
+      emit_line ctx "}"
 
 (** Generate C code for basic block *)
 
@@ -409,6 +482,10 @@ let collect_registers_in_function ir_func =
     | IRCondJump (cond_val, _, _) -> collect_in_value cond_val
     | IRReturn ret_val_opt -> Option.iter collect_in_value ret_val_opt
     | IRJump _ -> ()
+    | IRComment _ -> () (* Comments don't use registers *)
+    | IRBpfLoop (start_val, end_val, counter_val, ctx_val, _body) ->
+        collect_in_value start_val; collect_in_value end_val; 
+        collect_in_value counter_val; collect_in_value ctx_val
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -469,8 +546,20 @@ let generate_c_program ir_prog =
   (* Generate map definitions *)
   List.iter (generate_map_definition ctx) (ir_prog.local_maps);
   
-  (* Generate main function *)
+  (* Generate main function - this will collect callbacks *)
   generate_c_function ctx ir_prog.main_function;
+  
+  (* Now emit any pending callbacks before other functions *)
+  if ctx.pending_callbacks <> [] then (
+    (* Insert callbacks at the beginning of the output, after includes and maps *)
+    let current_output = ctx.output_lines in
+    ctx.output_lines <- [];
+    List.iter (emit_line ctx) ctx.pending_callbacks;
+    ctx.pending_callbacks <- [];
+    emit_blank_line ctx;
+    (* Reverse and prepend current output *)
+    ctx.output_lines <- (List.rev current_output) @ ctx.output_lines;
+  );
   
   (* Generate other functions (excluding main to avoid duplicates) *)
   let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
@@ -498,7 +587,24 @@ let generate_c_multi_program ir_multi_prog =
     List.iter (generate_map_definition ctx) ir_prog.local_maps
   ) ir_multi_prog.programs;
   
-  (* Generate all functions from all programs *)
+  (* First pass: collect all callbacks by generating functions *)
+  let temp_ctx = create_c_context () in
+  List.iter (fun ir_prog ->
+    (* Generate main function *)
+    generate_c_function temp_ctx ir_prog.main_function;
+    
+    (* Generate other functions (excluding main to avoid duplicates) *)
+    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
+    List.iter (generate_c_function temp_ctx) other_functions
+  ) ir_multi_prog.programs;
+  
+  (* Now emit the collected callbacks *)
+  if temp_ctx.pending_callbacks <> [] then (
+    List.iter (emit_line ctx) temp_ctx.pending_callbacks;
+    emit_blank_line ctx;
+  );
+  
+  (* Second pass: generate actual functions (callbacks will be empty this time) *)
   List.iter (fun ir_prog ->
     (* Generate main function *)
     generate_c_function ctx ir_prog.main_function;

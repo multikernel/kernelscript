@@ -132,6 +132,8 @@ and ir_instr_desc =
   | IRJump of string
   | IRCondJump of ir_value * string * string
   | IRReturn of ir_value option
+  | IRComment of string (* for debugging and analysis comments *)
+  | IRBpfLoop of ir_value * ir_value * ir_value * ir_value * Ast.statement list (* start, end, counter, ctx, body *)
 
 and map_load_type = DirectLoad | MapLookup | MapPeek
 and map_store_type = DirectStore | MapUpdate | MapPush
@@ -456,6 +458,10 @@ let string_of_ir_instruction instr =
         (string_of_ir_value cond) true_label false_label
   | IRReturn None -> "return"
   | IRReturn (Some value) -> Printf.sprintf "return %s" (string_of_ir_value value)
+  | IRComment comment -> Printf.sprintf "/* %s */" comment
+  | IRBpfLoop (start, end_, counter, ctx, _body) ->
+      Printf.sprintf "bpf_loop(%s, %s, %s, %s) { /* AST body */ }" 
+        (string_of_ir_value start) (string_of_ir_value end_) (string_of_ir_value counter) (string_of_ir_value ctx)
 
 let string_of_ir_basic_block block =
   let instrs_str = String.concat "\n  " 

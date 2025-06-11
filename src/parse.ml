@@ -90,6 +90,8 @@ let validate_ast ast =
         (match else_opt with None -> true | Some stmts -> List.for_all validate_stmt stmts)
     | For (_, start, end_, body) ->
         validate_expr start && validate_expr end_ && List.for_all validate_stmt body
+    | ForIter (_, _, iterable, body) ->
+        validate_expr iterable && List.for_all validate_stmt body
     | While (cond, body) ->
         validate_expr cond && List.for_all validate_stmt body
   in

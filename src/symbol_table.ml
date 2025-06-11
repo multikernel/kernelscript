@@ -446,6 +446,14 @@ and process_statement table stmt =
       List.iter (process_statement table_with_loop) body;
       let _ = exit_scope table_with_loop in ()
       
+  | ForIter (index_var, value_var, iterable_expr, body) ->
+      process_expression table iterable_expr;
+      let table_with_loop = enter_scope table BlockScope in
+      add_variable table_with_loop index_var U32 stmt.stmt_pos;  (* index variable *)
+      add_variable table_with_loop value_var U32 stmt.stmt_pos;  (* value variable - TODO: infer proper type *)
+      List.iter (process_statement table_with_loop) body;
+      let _ = exit_scope table_with_loop in ()
+      
   | While (cond, body) ->
       process_expression table cond;
       let table_with_loop = enter_scope table BlockScope in

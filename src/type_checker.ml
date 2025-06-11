@@ -45,6 +45,7 @@ and typed_stmt_desc =
   | TReturn of typed_expr option
   | TIf of typed_expr * typed_statement list * typed_statement list option
   | TFor of string * typed_expr * typed_expr * typed_statement list
+  | TForIter of string * string * typed_expr * typed_statement list
   | TWhile of typed_expr * typed_statement list
 
 type typed_function = {
@@ -72,6 +73,9 @@ let create_context () = {
   current_function = None;
   current_program = None;
 }
+
+(** Track loop nesting depth to prevent nested loops *)
+let loop_depth = ref 0
 
 (** Helper to create type error *)
 let type_error msg pos = raise (Type_error (msg, pos))
@@ -208,12 +212,10 @@ let type_check_identifier ctx name pos =
       let typ = Hashtbl.find ctx.variables name in
       { texpr_desc = TIdentifier name; texpr_type = typ; texpr_pos = pos }
     with Not_found ->
-      (* Check if it's a map *)
-      try
-        let map_decl = Hashtbl.find ctx.maps name in
-        let map_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type) in
-        { texpr_desc = TIdentifier name; texpr_type = map_type; texpr_pos = pos }
-      with Not_found ->
+      (* Check if it's a map - but don't create a Map type for standalone identifiers *)
+      if Hashtbl.mem ctx.maps name then
+        type_error ("Map '" ^ name ^ "' cannot be used as a standalone identifier. Use map[key] for map access.") pos
+      else
         type_error ("Undefined variable: " ^ name) pos
 
 (** Type check function call *)
@@ -251,7 +253,6 @@ let rec type_check_function_call ctx name args pos =
 
 (** Type check array access *)
 and type_check_array_access ctx arr idx pos =
-  let typed_arr = type_check_expression ctx arr in
   let typed_idx = type_check_expression ctx idx in
   
   (* Index must be integer type *)
@@ -259,19 +260,33 @@ and type_check_array_access ctx arr idx pos =
    | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> ()
    | _ -> type_error "Array index must be integer type" pos);
   
-  (* Array must be array type or map type *)
-  match typed_arr.texpr_type with
-  | Array (element_type, _) ->
-      { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
-  | Pointer element_type ->
-      { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
-  | Map (key_type, value_type, _) ->
-      (* Check key type compatibility *)
-      (match unify_types key_type typed_idx.texpr_type with
-       | Some _ -> { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = value_type; texpr_pos = pos }
-       | None -> type_error ("Map key type mismatch") pos)
-  | _ ->
-      type_error "Cannot index non-array/non-map type" pos
+  (* Check if this is map access first *)
+  (match arr.expr_desc with
+   | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
+       (* This is map access *)
+       let map_decl = Hashtbl.find ctx.maps map_name in
+       (* Check key type compatibility *)
+       (match unify_types map_decl.key_type typed_idx.texpr_type with
+        | Some _ -> 
+            (* Create a synthetic map type for the result *)
+            let typed_arr = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = arr.expr_pos } in
+            { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = map_decl.value_type; texpr_pos = pos }
+        | None -> type_error ("Map key type mismatch") pos)
+   | _ ->
+       (* Regular array access *)
+       let typed_arr = type_check_expression ctx arr in
+       (match typed_arr.texpr_type with
+        | Array (element_type, _) ->
+            { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
+        | Pointer element_type ->
+            { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
+        | Map (key_type, value_type, _) ->
+            (* This shouldn't happen anymore, but handle it for safety *)
+            (match unify_types key_type typed_idx.texpr_type with
+             | Some _ -> { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = value_type; texpr_pos = pos }
+             | None -> type_error ("Map key type mismatch") pos)
+        | _ ->
+            type_error "Cannot index non-array/non-map type" pos))
 
 (** Type check field access *)
 and type_check_field_access ctx obj field pos =
@@ -297,7 +312,7 @@ and type_check_field_access ctx obj field pos =
   | XdpContext | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext ->
       (* Built-in context field access *)
       (match field with
-       | "data" | "data_end" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
+       | "data" | "data_end" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = U64; texpr_pos = pos }
        | "ingress_ifindex" | "rx_queue_index" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
        | _ -> type_error ("Unknown context field: " ^ field) pos)
   
@@ -416,23 +431,45 @@ let rec type_check_statement ctx stmt =
          type_error ("Undefined variable: " ^ name) stmt.stmt_pos)
   
   | IndexAssignment (map_expr, key_expr, value_expr) ->
-      let typed_map = type_check_expression ctx map_expr in
       let typed_key = type_check_expression ctx key_expr in
       let typed_value = type_check_expression ctx value_expr in
       
-      (* Validate that map_expr is actually a map type *)
-      (match typed_map.texpr_type with
-       | Map (key_type, value_type, _) ->
+      (* Check if this is map assignment *)
+      (match map_expr.expr_desc with
+       | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
+           (* This is map assignment *)
+           let map_decl = Hashtbl.find ctx.maps map_name in
            (* Check key type compatibility *)
-           (match unify_types key_type typed_key.texpr_type with
+           (match unify_types map_decl.key_type typed_key.texpr_type with
             | Some _ -> ()
             | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
            (* Check value type compatibility *)
-           (match unify_types value_type typed_value.texpr_type with
+           (match unify_types map_decl.value_type typed_value.texpr_type with
             | Some _ -> ()
             | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
+           (* Create a synthetic map type for the result *)
+           let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
            { tstmt_desc = TIndexAssignment (typed_map, typed_key, typed_value); tstmt_pos = stmt.stmt_pos }
-       | _ -> type_error ("Index assignment can only be used on maps") stmt.stmt_pos)
+       | _ ->
+           (* Regular index assignment (arrays, etc.) *)
+           let typed_map = type_check_expression ctx map_expr in
+           (match typed_map.texpr_type with
+            | Map (key_type, value_type, _) ->
+                (* This shouldn't happen anymore, but handle it for safety *)
+                (match unify_types key_type typed_key.texpr_type with
+                 | Some _ -> ()
+                 | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
+                (match unify_types value_type typed_value.texpr_type with
+                 | Some _ -> ()
+                 | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
+                { tstmt_desc = TIndexAssignment (typed_map, typed_key, typed_value); tstmt_pos = stmt.stmt_pos }
+            | Array (element_type, _) ->
+                (* Array element assignment *)
+                (match unify_types element_type typed_value.texpr_type with
+                 | Some _ -> ()
+                 | None -> type_error ("Array element type mismatch") stmt.stmt_pos);
+                { tstmt_desc = TIndexAssignment (typed_map, typed_key, typed_value); tstmt_pos = stmt.stmt_pos }
+            | _ -> type_error ("Index assignment can only be used on maps or arrays") stmt.stmt_pos))
   
   | Declaration (name, type_opt, expr) ->
       let typed_expr = type_check_expression ctx expr in
@@ -465,15 +502,45 @@ let rec type_check_statement ctx stmt =
       { tstmt_desc = TIf (typed_cond, typed_then, typed_else); tstmt_pos = stmt.stmt_pos }
   
   | For (var, start, end_, body) ->
+      if !loop_depth > 0 then
+        type_error "Nested loops are not currently supported" stmt.stmt_pos;
+      
       let typed_start = type_check_expression ctx start in
       let typed_end = type_check_expression ctx end_ in
       (* Loop variable should be integer type *)
       (match unify_types typed_start.texpr_type typed_end.texpr_type with
        | Some loop_type when (match loop_type with U8|U16|U32|U64|I8|I16|I32|I64 -> true | _ -> false) ->
            Hashtbl.replace ctx.variables var loop_type;
+           incr loop_depth;
            let typed_body = List.map (type_check_statement ctx) body in
+           decr loop_depth;
            { tstmt_desc = TFor (var, typed_start, typed_end, typed_body); tstmt_pos = stmt.stmt_pos }
        | _ -> type_error "For loop bounds must be integer types" stmt.stmt_pos)
+  
+  | ForIter (index_var, value_var, iterable, body) ->
+      if !loop_depth > 0 then
+        type_error "Nested loops are not currently supported" stmt.stmt_pos;
+        
+      let typed_iterable = type_check_expression ctx iterable in
+      (* Check that the expression is iterable (array or map) *)
+      (match typed_iterable.texpr_type with
+       | Array (element_type, _) ->
+           (* For arrays: index is u32, value is element type *)
+           Hashtbl.replace ctx.variables index_var U32;
+           Hashtbl.replace ctx.variables value_var element_type;
+           incr loop_depth;
+           let typed_body = List.map (type_check_statement ctx) body in
+           decr loop_depth;
+           { tstmt_desc = TForIter (index_var, value_var, typed_iterable, typed_body); tstmt_pos = stmt.stmt_pos }
+       | Map (key_type, value_type, _) ->
+           (* For maps: index is key type, value is value type *)
+           Hashtbl.replace ctx.variables index_var key_type;
+           Hashtbl.replace ctx.variables value_var value_type;
+           incr loop_depth;
+           let typed_body = List.map (type_check_statement ctx) body in
+           decr loop_depth;
+           { tstmt_desc = TForIter (index_var, value_var, typed_iterable, typed_body); tstmt_pos = stmt.stmt_pos }
+       | _ -> type_error "For-iter expression must be iterable (array or map)" stmt.stmt_pos)
   
   | While (cond, body) ->
       let typed_cond = type_check_expression ctx cond in
@@ -627,7 +694,18 @@ let rec typed_expr_to_expr texpr =
     | TBinaryOp (left, op, right) -> BinaryOp (typed_expr_to_expr left, op, typed_expr_to_expr right)
     | TUnaryOp (op, expr) -> UnaryOp (op, typed_expr_to_expr expr)
   in
-  { expr_desc; expr_pos = texpr.texpr_pos; expr_type = Some texpr.texpr_type }
+  (* Handle special cases for type annotations *)
+  let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with
+    | TIdentifier _, Map (_, _, _) -> 
+        (* Map identifiers used in expressions should be represented as pointers for IR generation *)
+        Some (Pointer U8)
+    | _, Map (_, _, _) -> 
+        (* Don't set Map types in expr_type for other expressions *)
+        None
+    | _, other_type -> 
+        Some other_type
+  in
+  { expr_desc; expr_pos = texpr.texpr_pos; expr_type = safe_expr_type }
 
 let rec typed_stmt_to_stmt tstmt =
   let stmt_desc = match tstmt.tstmt_desc with
@@ -643,6 +721,8 @@ let rec typed_stmt_to_stmt tstmt =
             Option.map (List.map typed_stmt_to_stmt) else_opt)
     | TFor (var, start, end_, body) ->
         For (var, typed_expr_to_expr start, typed_expr_to_expr end_, List.map typed_stmt_to_stmt body)
+    | TForIter (index_var, value_var, iterable, body) ->
+        ForIter (index_var, value_var, typed_expr_to_expr iterable, List.map typed_stmt_to_stmt body)
     | TWhile (cond, body) ->
         While (typed_expr_to_expr cond, List.map typed_stmt_to_stmt body)
   in

@@ -122,6 +122,7 @@ and stmt_desc =
   | Return of expr option
   | If of expr * statement list * statement list option
   | For of string * expr * expr * statement list
+  | ForIter of string * string * expr * statement list  (* for (index, value) in expr.iter() { ... } *)
   | While of expr * statement list
 
 (** Function definitions *)
@@ -393,6 +394,10 @@ let rec string_of_stmt stmt =
       let body_str = String.concat " " (List.map string_of_stmt body) in
       Printf.sprintf "for (%s in %s..%s) { %s }" 
         var (string_of_expr start) (string_of_expr end_) body_str
+  | ForIter (index_var, value_var, iterable, body) ->
+      let body_str = String.concat " " (List.map string_of_stmt body) in
+      Printf.sprintf "for (%s, %s) in %s.iter() { %s }" 
+        index_var value_var (string_of_expr iterable) body_str
   | While (cond, body) ->
       let body_str = String.concat " " (List.map string_of_stmt body) in
       Printf.sprintf "while (%s) { %s }" (string_of_expr cond) body_str

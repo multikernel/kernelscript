@@ -428,6 +428,33 @@ and eval_statement ctx stmt =
        | Some v -> Hashtbl.replace ctx.variables var v
        | None -> Hashtbl.remove ctx.variables var)
   
+  | ForIter (index_var, value_var, iterable_expr, body) ->
+      (* For evaluation purposes, implement as a simple bounded iteration *)
+      let _ = eval_expression ctx iterable_expr in
+      
+      (* Save old variable values if they exist *)
+      let old_index = try Some (Hashtbl.find ctx.variables index_var) with Not_found -> None in
+      let old_value = try Some (Hashtbl.find ctx.variables value_var) with Not_found -> None in
+      
+      (* For evaluation, iterate 0 to 9 as a simple example *)
+      for i = 0 to 9 do
+        Hashtbl.replace ctx.variables index_var (IntValue i);
+        Hashtbl.replace ctx.variables value_var (IntValue (i * 10)); (* Mock value *)
+        (try
+          eval_statements ctx body
+        with
+        | Break_loop -> raise Break_loop
+        | Continue_loop -> ())
+      done;
+      
+      (* Restore old variable values *)
+      (match old_index with
+       | Some v -> Hashtbl.replace ctx.variables index_var v
+       | None -> Hashtbl.remove ctx.variables index_var);
+      (match old_value with
+       | Some v -> Hashtbl.replace ctx.variables value_var v
+       | None -> Hashtbl.remove ctx.variables value_var)
+  
   | While (cond, body) ->
       let rec loop () =
         let cond_val = eval_expression ctx cond in
@@ -441,8 +468,6 @@ and eval_statement ctx stmt =
            | Continue_loop -> loop ())
       in
       loop ()
-
-
 
 (** Evaluate a complete program *)
 let eval_program ctx prog =

@@ -235,6 +235,10 @@ while_statement:
 for_statement:
   | FOR IDENTIFIER IN expression DOT DOT expression LBRACE statement_list RBRACE
     { make_stmt (For ($2, $4, $7, $9)) (make_pos ()) }
+  | FOR LPAREN IDENTIFIER COMMA IDENTIFIER RPAREN IN expression DOT IDENTIFIER LPAREN RPAREN LBRACE statement_list RBRACE
+    { match $10 with
+      | "iter" -> make_stmt (ForIter ($3, $5, $8, $14)) (make_pos ())
+      | method_name -> failwith ("Unknown iterator method: " ^ method_name) }
 
 /* Expressions */
 expression:
