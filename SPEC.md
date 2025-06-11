@@ -72,39 +72,53 @@ program = "program" identifier ":" program_type "{" program_body "}" ;
 program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
                "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" ;
 
-program_body = { config_section | local_map_declaration | 
+program_body = { local_map_declaration | 
                  type_declaration | function_declaration | import_declaration } ;
 ```
 
-### 3.2 Configuration Section
+**Note:** Programs no longer have local `config` sections. All configuration is done through global named config blocks.
+
+### 3.2 Named Configuration Blocks
 ```kernelscript
-program network_monitor : xdp {
-    config {
-        enable_logging: bool = true,
-        max_packet_size: u32 = 1500,
-        blocked_ports: [u16; 5] = [22, 23, 135, 445, 3389],
-        rate_limit: u64 = 1000000,
-    }
-    
+// Named configuration blocks - globally accessible
+config network {
+    enable_logging: bool = true,
+    max_packet_size: u32 = 1500,
+    blocked_ports: [u16; 5] = [22, 23, 135, 445, 3389],
+    rate_limit: u64 = 1000000,
+}
+
+config security {
+    threat_threshold: u32 = 100,
+    mut current_threat_level: u32 = 0,
+    mut enable_strict_mode: bool = false,
+}
+
+program network_monitor : xdp {    
     fn main(ctx: XdpContext) -> XdpAction {
         let packet = ctx.packet();
         
-        // Use configuration values directly
-        if packet.size > config.max_packet_size {
-            if config.enable_logging {
+        // Use named configuration values
+        if packet.size > network.max_packet_size {
+            if network.enable_logging {
                 bpf_printk("Packet too large: %d", packet.size);
             }
             return XdpAction::Drop;
         }
         
-        // Check blocked ports
+        // Check blocked ports from network config
         if packet.is_tcp() {
             let tcp = packet.tcp_header();
             for i in 0..5 {
-                if tcp.dst_port == config.blocked_ports[i] {
+                if tcp.dst_port == network.blocked_ports[i] {
                     return XdpAction::Drop;
                 }
             }
+        }
+        
+        // Use security config for additional checks
+        if security.enable_strict_mode && security.current_threat_level > security.threat_threshold {
+            return XdpAction::Drop;
         }
         
         return XdpAction::Pass;
@@ -114,15 +128,19 @@ program network_monitor : xdp {
 
 ### 3.3 User-Space Integration Section
 ```kernelscript
+// Additional configuration for monitoring
+config monitoring {
+    enable_stats: bool = true,
+    sample_rate: u32 = 100,
+    mut packets_processed: u64 = 0,
+}
+
 // Multiple eBPF programs working together
 program packet_analyzer : xdp {
-    config {
-        enable_stats: bool = true,
-    }
-    
     fn main(ctx: XdpContext) -> XdpAction {
-        if config.enable_stats {
+        if monitoring.enable_stats {
             // Process packet and update statistics
+            monitoring.packets_processed += 1;
         }
         return XdpAction::Pass;
     }
@@ -130,7 +148,10 @@ program packet_analyzer : xdp {
 
 program flow_tracker : tc {
     fn main(ctx: TcContext) -> TcAction {
-        // Track flow information
+        // Track flow information using shared config
+        if monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0) {
+            // Sample this flow
+        }
         return TcAction::Pass;
     }
 }
@@ -176,15 +197,16 @@ userspace {
         print("Received packet from ", event.src_ip);
     }
     
-    fn update_all_configs(new_config: GlobalConfig) -> bool {
-        // Update configuration for all programs
-        return update_program_configs(new_config);
+    fn update_security_configs(threat_level: u32) {
+        // Update security configuration at runtime
+        security.current_threat_level = threat_level;
+        security.enable_strict_mode = threat_level > security.threat_threshold;
     }
     
     fn get_combined_stats() -> PacketStats {
-        // Aggregate statistics from all programs
+        // Use monitoring config for stats
         return PacketStats {
-            packets: packet_stats_map[0],
+            packets: monitoring.packets_processed,
             bytes: packet_stats_map[1],
             drops: packet_stats_map[2],
         };
@@ -754,15 +776,15 @@ program network_monitor : xdp {
     // Local maps (only accessible within this program)
     map<u32, LocalStats> local_stats : hash_map(1024);
     
-    config {
-        enable_logging: bool = true,
-        threshold: u64 = 1000,
-    }
-    
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
         let flow_key = extract_flow_key(ctx)?;
         global_flows[flow_key] += 1;
+        
+        // Use named config for decisions
+        if monitoring.enable_stats {
+            monitoring.packets_processed += 1;
+        }
         
         // Send event to global stream
         global_events.submit(Event::PacketProcessed { flow_key });
@@ -865,12 +887,17 @@ userspace {
 
 ### 8.2 Cross-Language Bindings
 ```kernelscript
+// Runtime configuration for system behavior
+config runtime {
+    enable_logging: bool = true,
+    verbose_mode: bool = false,
+}
+
 program network_monitor : xdp {
-    config {
-        enable_logging: bool = true,
-    }
-    
     fn main(ctx: XdpContext) -> XdpAction {
+        if runtime.enable_logging {
+            bpf_printk("Processing packet");
+        }
         return XdpAction::Pass;
     }
 }
@@ -895,7 +922,10 @@ userspace {
         network_monitor.attach_xdp(interface);
         flow_analyzer.attach_tc(interface, TcDirection::Ingress);
         
-        if verbose {
+        // Update runtime config based on command line
+        runtime.verbose_mode = verbose;
+        
+        if runtime.verbose_mode {
             print("Multi-program system loaded on interface: ", interface);
             print("Verbose mode enabled");
         }
@@ -909,7 +939,7 @@ userspace {
     fn handle_system_events(verbose: bool) {
         while true {
             // Process events from all programs
-            if verbose {
+            if runtime.verbose_mode {
                 print("Processing system events...");
             }
             sleep(1000);
@@ -1077,25 +1107,35 @@ impl KprobeContext {
 
 ### 12.1 Simple Packet Filter
 ```kernelscript
+// Named configuration for packet filtering
+config filtering {
+    blocked_ports: [u16; 4] = [22, 23, 135, 445],
+    enable_logging: bool = false,
+    max_packet_size: u32 = 1500,
+}
+
+config system {
+    mut packets_dropped: u64 = 0,
+    mut packets_processed: u64 = 0,
+}
+
 program simple_filter : xdp {
-    config {
-        blocked_ports: [u16; 4] = [22, 23, 135, 445],
-        enable_logging: bool = false,
-    }
-    
     fn main(ctx: XdpContext) -> XdpAction {
         let packet = ctx.packet();
         if packet == null {
             return XdpAction::Pass;
         }
         
+        system.packets_processed += 1;
+        
         if packet.is_tcp() {
             let tcp = packet.tcp_header();
             for i in 0..4 {
-                if tcp.dst_port == config.blocked_ports[i] {
-                    if config.enable_logging {
+                if tcp.dst_port == filtering.blocked_ports[i] {
+                    if filtering.enable_logging {
                         bpf_printk("Blocked port %d", tcp.dst_port);
                     }
+                    system.packets_dropped += 1;
                     return XdpAction::Drop;
                 }
             }
@@ -1121,16 +1161,18 @@ userspace {
         let filter = BpfProgram::load("simple_filter");
         filter.attach_xdp(interface);
         
+        // Update config based on command line
+        filtering.enable_logging = !quiet;
+        
         if !quiet {
             print("Packet filter started on interface: ", interface);
             print("Blocking ports: 22, 23, 135, 445");
         }
         
         while true {
-            // Monitor system health
-            let stats = filter.get_stats();
-            if stats.dropped_packets > 1000 && !quiet {
-                print("High drop rate detected: ", stats.dropped_packets);
+            // Monitor system health using config stats
+            if system.packets_dropped > 1000 && !quiet {
+                print("High drop rate detected: ", system.packets_dropped);
             }
             sleep(10000);
         }
@@ -1264,7 +1306,7 @@ userspace {
 (* Top-level structure *)
 kernelscript_file = { global_declaration } ;
 
-global_declaration = map_declaration | type_declaration | namespace_declaration | 
+global_declaration = config_declaration | map_declaration | type_declaration | namespace_declaration | 
                     program_declaration | userspace_declaration | import_declaration ;
 
 (* Map declarations - global scope *)
@@ -1288,16 +1330,15 @@ program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" |
 
 program_body = { program_item } ;
 
-program_item = local_map_declaration | config_section |
-               function_declaration | type_declaration ;
+program_item = local_map_declaration | function_declaration | type_declaration ;
 
 (* Local maps - inside program scope *)
 local_map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" identifier 
                         ":" map_type "(" map_config ")" [ map_attributes ] ";" ;
 
-(* Configuration section *)
-config_section = "config" "{" { config_item } "}" ;
-config_item = identifier ":" type_annotation [ "=" expression ] "," ;
+(* Named configuration declarations *)
+config_declaration = "config" identifier "{" { config_field } "}" ;
+config_field = [ "mut" ] identifier ":" type_annotation [ "=" expression ] "," ;
 
 (* Top-level userspace declaration *)
 userspace_declaration = "userspace" "{" userspace_body "}" ;
@@ -1378,8 +1419,10 @@ multiplicative_operator = "*" | "/" | "%" ;
 unary_expression = [ unary_operator ] primary_expression ;
 unary_operator = "!" | "-" | "*" | "&" ;
 
-primary_expression = identifier | literal | function_call | field_access | 
+primary_expression = config_access | identifier | literal | function_call | field_access | 
                      array_access | parenthesized_expression | struct_literal ;
+
+config_access = identifier "." identifier ;
 
 function_call = identifier "(" argument_list ")" ;
 argument_list = [ expression { "," expression } ] ;

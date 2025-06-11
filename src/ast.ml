@@ -81,6 +81,7 @@ type literal =
   | StringLit of string 
   | CharLit of char 
   | BoolLit of bool
+  | ArrayLit of literal list
 
 (** Binary operators *)
 type binary_op =
@@ -121,6 +122,7 @@ type expr = {
 and expr_desc =
   | Literal of literal
   | Identifier of string
+  | ConfigAccess of string * string  (* config_name.field_name *)
   | FunctionCall of string * expr list
   | ArrayAccess of expr * expr
   | FieldAccess of expr * string
@@ -185,12 +187,28 @@ type program_def = {
   prog_pos: position;
 }
 
+(** Config field declaration *)
+type config_field = {
+  field_name: string;
+  field_type: bpf_type;
+  field_default: literal option;
+  field_pos: position;
+}
+
+(** Named configuration block *)
+type config_declaration = {
+  config_name: string;
+  config_fields: config_field list;
+  config_pos: position;
+}
+
 (** Top-level declarations *)
 type declaration =
   | Program of program_def
   | GlobalFunction of function_def
   | TypeDef of type_def
   | MapDecl of map_declaration
+  | ConfigDecl of config_declaration
   | Userspace of userspace_block  (* New: top-level userspace *)
 
 (** Complete AST *)
@@ -284,6 +302,19 @@ let make_userspace_config_item key value = {
   config_value = value;
 }
 
+let make_config_field name field_type default pos = {
+  field_name = name;
+  field_type = field_type;
+  field_default = default;
+  field_pos = pos;
+}
+
+let make_config_declaration name fields pos = {
+  config_name = name;
+  config_fields = fields;
+  config_pos = pos;
+}
+
 (** Pretty-printing functions for debugging *)
 
 let string_of_position pos =
@@ -352,11 +383,13 @@ let rec string_of_bpf_type = function
   | XdpAction -> "xdp_action"
   | TcAction -> "tc_action"
 
-let string_of_literal = function
+let rec string_of_literal = function
   | IntLit i -> string_of_int i
   | StringLit s -> Printf.sprintf "\"%s\"" s
   | CharLit c -> Printf.sprintf "'%c'" c
   | BoolLit b -> string_of_bool b
+  | ArrayLit literals -> 
+      Printf.sprintf "[%s]" (String.concat ", " (List.map string_of_literal literals))
 
 let string_of_binary_op = function
   | Add -> "+"
@@ -381,6 +414,8 @@ let rec string_of_expr expr =
   match expr.expr_desc with
   | Literal lit -> string_of_literal lit
   | Identifier name -> name
+  | ConfigAccess (config_name, field_name) ->
+      Printf.sprintf "%s.%s" config_name field_name
   | FunctionCall (name, args) ->
       Printf.sprintf "%s(%s)" name 
         (String.concat ", " (List.map string_of_expr args))
@@ -484,6 +519,15 @@ let string_of_declaration = function
         (string_of_map_type md.map_type)
         (string_of_int md.config.max_entries)
         (String.concat ";\n  " all_config)
+  | ConfigDecl config_decl ->
+      let fields_str = String.concat ",\n    " (List.map (fun field ->
+        let default_str = match field.field_default with
+          | Some lit -> " = " ^ string_of_literal lit
+          | None -> ""
+        in
+        Printf.sprintf "%s: %s%s" field.field_name (string_of_bpf_type field.field_type) default_str
+      ) config_decl.config_fields) in
+      Printf.sprintf "config %s {\n    %s\n}" config_decl.config_name fields_str
   | Userspace ub ->
       let functions_str = String.concat "\n\n  " 
         (List.map string_of_function ub.userspace_functions) in

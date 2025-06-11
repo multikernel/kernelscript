@@ -117,6 +117,7 @@ let generate_includes ctx =
     "#include <linux/if_ether.h>";
     "#include <linux/ip.h>";
     "#include <linux/in.h>";
+    "#include <linux/if_xdp.h>";
     "#include <stdint.h>";
     "#include <stdbool.h>";
   ] in
@@ -151,6 +152,67 @@ let generate_map_definition ctx map_def =
   emit_line ctx (sprintf "} %s SEC(\".maps\");" map_def.map_name);
   emit_blank_line ctx
 
+(** Generate config struct definition and map *)
+let generate_config_map_definition ctx config_decl =
+  let config_name = config_decl.Ast.config_name in
+  let struct_name = sprintf "%s_config" config_name in
+  
+  (* Generate C struct for config *)
+  emit_line ctx (sprintf "struct %s {" struct_name);
+  increase_indent ctx;
+  
+  List.iter (fun field ->
+    let field_declaration = match field.Ast.field_type with
+      | Ast.U8 -> sprintf "__u8 %s;" field.Ast.field_name
+      | Ast.U16 -> sprintf "__u16 %s;" field.Ast.field_name
+      | Ast.U32 -> sprintf "__u32 %s;" field.Ast.field_name
+      | Ast.U64 -> sprintf "__u64 %s;" field.Ast.field_name
+      | Ast.I8 -> sprintf "__s8 %s;" field.Ast.field_name
+      | Ast.I16 -> sprintf "__s16 %s;" field.Ast.field_name
+      | Ast.I32 -> sprintf "__s32 %s;" field.Ast.field_name
+      | Ast.I64 -> sprintf "__s64 %s;" field.Ast.field_name
+      | Ast.Bool -> sprintf "__u8 %s;" field.Ast.field_name  (* bool -> u8 for BPF compatibility *)
+      | Ast.Char -> sprintf "char %s;" field.Ast.field_name
+      | Ast.Array (Ast.U16, size) -> sprintf "__u16 %s[%d];" field.Ast.field_name size
+      | Ast.Array (Ast.U32, size) -> sprintf "__u32 %s[%d];" field.Ast.field_name size
+      | Ast.Array (Ast.U64, size) -> sprintf "__u64 %s[%d];" field.Ast.field_name size
+      | _ -> sprintf "__u32 %s;" field.Ast.field_name  (* fallback *)
+    in
+    emit_line ctx field_declaration
+  ) config_decl.Ast.config_fields;
+  
+  decrease_indent ctx;
+  emit_line ctx "};";
+  emit_blank_line ctx;
+  
+  (* Generate array map for config (single entry at index 0) *)
+  let map_name = sprintf "%s_config_map" config_name in
+  emit_line ctx "struct {";
+  increase_indent ctx;
+  emit_line ctx "__uint(type, BPF_MAP_TYPE_ARRAY);";
+  emit_line ctx "__uint(max_entries, 1);";
+  emit_line ctx "__uint(key_size, sizeof(__u32));";
+  emit_line ctx (sprintf "__uint(value_size, sizeof(struct %s));" struct_name);
+  decrease_indent ctx;
+  emit_line ctx (sprintf "} %s SEC(\".maps\");" map_name);
+  emit_blank_line ctx;
+  
+  (* Generate helper function to access config *)
+  emit_line ctx (sprintf "static inline struct %s* get_%s_config(void) {" struct_name config_name);
+  increase_indent ctx;
+  emit_line ctx "__u32 key = 0;";
+  emit_line ctx (sprintf "struct %s *config = bpf_map_lookup_elem(&%s, &key);" struct_name map_name);
+  emit_line ctx "if (!config) {";
+  increase_indent ctx;
+  emit_line ctx "/* Config not initialized - this should not happen in normal operation */";
+  emit_line ctx "return NULL;";
+  decrease_indent ctx;
+  emit_line ctx "}";
+  emit_line ctx "return config;";
+  decrease_indent ctx;
+  emit_line ctx "}";
+  emit_blank_line ctx
+
 (** Generate C expression from IR value *)
 
 let generate_c_value _ctx ir_val =
@@ -159,7 +221,19 @@ let generate_c_value _ctx ir_val =
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (StringLit s) -> sprintf "\"%s\"" s
-  | IRVariable name -> name
+  | IRLiteral (ArrayLit _) -> "/* Array literal not supported */"
+  | IRVariable name -> 
+      (* Check if this is a config access *)
+      if String.contains name '.' then
+        let parts = String.split_on_char '.' name in
+        match parts with
+        | [config_name; field_name] -> 
+            (* Generate safe config access with NULL check *)
+            sprintf "({ struct %s_config *cfg = get_%s_config(); cfg ? cfg->%s : 0; })" 
+              config_name config_name field_name
+        | _ -> name
+      else
+        name
   | IRRegister reg -> sprintf "tmp_%d" reg (* Convert registers to C variables *)
   | IRMapRef map_name -> sprintf "&%s" map_name
   | IRContextField (ctx_type, field) ->
@@ -367,10 +441,18 @@ let generate_c_instruction ctx ir_instr =
   | IRReturn ret_opt ->
       begin match ret_opt with
       | Some ret_val ->
-          let ret_str = generate_c_value ctx ret_val in
+          let ret_str = match ret_val.value_desc with
+            (* Convert integer literals to XDP constants for XDP programs *)
+            | IRLiteral (IntLit 0) when ret_val.val_type = IRAction XdpActionType -> "XDP_ABORTED"
+            | IRLiteral (IntLit 1) when ret_val.val_type = IRAction XdpActionType -> "XDP_DROP"
+            | IRLiteral (IntLit 2) when ret_val.val_type = IRAction XdpActionType -> "XDP_PASS"
+            | IRLiteral (IntLit 3) when ret_val.val_type = IRAction XdpActionType -> "XDP_REDIRECT"
+            | IRLiteral (IntLit 4) when ret_val.val_type = IRAction XdpActionType -> "XDP_TX"
+            | _ -> generate_c_value ctx ret_val
+          in
           emit_line ctx (sprintf "return %s;" ret_str)
       | None ->
-          emit_line ctx "return 0;"
+          emit_line ctx "return XDP_PASS;"  (* Default XDP action *)
       end
 
   | IRComment comment ->
@@ -539,11 +621,17 @@ let generate_c_function ctx ir_func =
 
 (** Generate complete C program from IR *)
 
-let generate_c_program ir_prog =
+let generate_c_program ?config_declarations ir_prog =
   let ctx = create_c_context () in
   
   (* Add standard includes *)
   generate_includes ctx;
+  
+  (* Generate config maps if provided *)
+  begin match config_declarations with
+  | Some configs -> List.iter (generate_config_map_definition ctx) configs
+  | None -> ()
+  end;
   
   (* Generate map definitions *)
   List.iter (generate_map_definition ctx) (ir_prog.local_maps);
@@ -575,11 +663,17 @@ let generate_c_program ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ir_multi_prog =
+let generate_c_multi_program ?config_declarations ir_multi_prog =
   let ctx = create_c_context () in
   
   (* Add standard includes *)
   generate_includes ctx;
+  
+  (* Generate config maps if provided *)
+  begin match config_declarations with
+  | Some configs -> List.iter (generate_config_map_definition ctx) configs
+  | None -> ()
+  end;
   
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
@@ -708,14 +802,14 @@ let compile_multi_to_c_with_analysis ir_multi_program
 
 (** Main compilation entry point *)
 
-let compile_to_c ir_program =
-  let c_code = generate_c_program ir_program in
+let compile_to_c ?config_declarations ir_program =
+  let c_code = generate_c_program ?config_declarations ir_program in
   c_code
 
 (** Multi-program compilation entry point *)
 
-let compile_multi_to_c ir_multi_program =
-  let c_code = generate_c_multi_program ir_multi_program in
+let compile_multi_to_c ?config_declarations ir_multi_program =
+  let c_code = generate_c_multi_program ?config_declarations ir_multi_program in
   c_code
 
 (** Helper function to write C code to file *)
@@ -736,4 +830,8 @@ let compile_c_to_ebpf c_filename obj_filename =
     Ok obj_filename
   else
     Error (sprintf "Compilation failed with exit code %d" exit_code)
+
+(** Generate config access expression *)
+let generate_config_access _ctx config_name field_name =
+  sprintf "get_%s_config()->%s" config_name field_name
 

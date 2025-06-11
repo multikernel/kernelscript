@@ -68,6 +68,7 @@ let validate_ast ast =
   let rec validate_expr expr =
     match expr.expr_desc with
     | Literal _ | Identifier _ -> true
+    | ConfigAccess (_, _) -> true  (* Config access is always valid syntactically *)
     | FunctionCall (_, args) -> List.for_all validate_expr args
     | ArrayAccess (arr, idx) -> validate_expr arr && validate_expr idx
     | FieldAccess (obj, _) -> validate_expr obj
@@ -102,11 +103,12 @@ let validate_ast ast =
     List.for_all validate_stmt func.func_body
   in
   
-  let validate_declaration = function
+  let validate_declaration =   function
     | Program prog -> List.for_all validate_function prog.prog_functions
     | GlobalFunction func -> validate_function func
     | TypeDef _ -> true (* Type definitions are always valid once parsed *)
     | MapDecl _ -> true (* Map declarations are always valid once parsed *)
+    | ConfigDecl _ -> true (* Config declarations are always valid once parsed *)
     | Userspace userspace_block -> List.for_all validate_function userspace_block.userspace_functions
   in
   

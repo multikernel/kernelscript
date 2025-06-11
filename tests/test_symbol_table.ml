@@ -131,6 +131,7 @@ let comprehensive_symbol_analysis symbol_table ast =
       | TypeDef _ -> incr type_count
       | GlobalMap _ | LocalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count
+      | Config _ -> incr type_count
     ) symbols
   ) symbol_table.symbols;
   

@@ -11,6 +11,7 @@ type symbol_kind =
   | LocalMap of map_declaration
   | Parameter of bpf_type
   | EnumConstant of string * int option  (* enum_name, value *)
+  | Config of config_declaration
 
 (** Symbol information *)
 type symbol = {
@@ -247,6 +248,11 @@ let add_variable table name var_type pos =
   in
   add_symbol table name kind Private pos
 
+(** Add config declaration to symbol table *)
+let add_config_decl table config_decl =
+  let pos = config_decl.config_pos in
+  add_symbol table config_decl.config_name (Config config_decl) Public pos
+
 (** Check if map is global *)
 let is_global_map table name =
   Hashtbl.mem table.global_maps name
@@ -310,6 +316,15 @@ and process_declaration_accumulate table declaration =
       
   | Ast.GlobalFunction func ->
       add_function table func Public;
+      (* Enter function scope to process function body *)
+      let table_with_func = enter_scope table (FunctionScope ("global", func.func_name)) in
+      (* Add function parameters to scope *)
+      List.iter (fun (param_name, param_type) ->
+        add_variable table_with_func param_name param_type func.func_pos
+      ) func.func_params;
+      (* Process function body statements *)
+      List.iter (process_statement table_with_func) func.func_body;
+      let _ = exit_scope table_with_func in
       table
       
   | Ast.Program prog ->
@@ -336,10 +351,23 @@ and process_declaration_accumulate table declaration =
       
       table
       
+  | Ast.ConfigDecl config_decl ->
+      add_config_decl table config_decl;
+      table
+      
   | Ast.Userspace userspace_block ->
       (* Process userspace functions as global functions *)
       List.iter (fun func ->
-        add_function table func Public
+        add_function table func Public;
+        (* Enter function scope to process function body *)
+        let table_with_func = enter_scope table (FunctionScope ("userspace", func.func_name)) in
+        (* Add function parameters to scope *)
+        List.iter (fun (param_name, param_type) ->
+          add_variable table_with_func param_name param_type func.func_pos
+        ) func.func_params;
+        (* Process function body statements *)
+        List.iter (process_statement table_with_func) func.func_body;
+        let _ = exit_scope table_with_func in ()
       ) userspace_block.userspace_functions;
       
       (* Process userspace structs as type definitions *)
@@ -360,7 +388,16 @@ and process_declaration table = function
       add_map_decl table map_decl
       
   | Ast.GlobalFunction func ->
-      add_function table func Public
+      add_function table func Public;
+      (* Enter function scope to process function body *)
+      let table_with_func = enter_scope table (FunctionScope ("global", func.func_name)) in
+      (* Add function parameters to scope *)
+      List.iter (fun (param_name, param_type) ->
+        add_variable table_with_func param_name param_type func.func_pos
+      ) func.func_params;
+      (* Process function body statements *)
+      List.iter (process_statement table_with_func) func.func_body;
+      let _ = exit_scope table_with_func in ()
       
   | Ast.Program prog ->
       let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
@@ -372,7 +409,16 @@ and process_declaration table = function
       
       (* Process program functions *)
       List.iter (fun func ->
-        add_function table_with_prog func Private
+        add_function table_with_prog func Private;
+        (* Enter function scope to process function body *)
+        let table_with_func = enter_scope table_with_prog (FunctionScope (prog.prog_name, func.func_name)) in
+        (* Add function parameters to scope *)
+        List.iter (fun (param_name, param_type) ->
+          add_variable table_with_func param_name param_type func.func_pos
+        ) func.func_params;
+        (* Process function body statements *)
+        List.iter (process_statement table_with_func) func.func_body;
+        let _ = exit_scope table_with_func in ()
       ) prog.prog_functions;
       
       (* Manually merge symbols from program scope back to main table *)
@@ -386,10 +432,22 @@ and process_declaration table = function
         )
       ) table_with_prog.symbols
       
+  | Ast.ConfigDecl config_decl ->
+      add_config_decl table config_decl
+      
   | Ast.Userspace userspace_block ->
       (* Process userspace functions as global functions *)
       List.iter (fun func ->
-        add_function table func Public
+        add_function table func Public;
+        (* Enter function scope to process function body *)
+        let table_with_func = enter_scope table (FunctionScope ("userspace", func.func_name)) in
+        (* Add function parameters to scope *)
+        List.iter (fun (param_name, param_type) ->
+          add_variable table_with_func param_name param_type func.func_pos
+        ) func.func_params;
+        (* Process function body statements *)
+        List.iter (process_statement table_with_func) func.func_body;
+        let _ = exit_scope table_with_func in ()
       ) userspace_block.userspace_functions;
       
       (* Process userspace structs as type definitions *)
@@ -488,8 +546,28 @@ and process_expression table expr =
       process_expression table arr;
       process_expression table idx
       
-  | FieldAccess (obj, _field) ->
-      process_expression table obj
+  | FieldAccess (obj, field_name) ->
+      (* Check if this is actually a config access *)
+      (match obj.expr_desc with
+       | Identifier config_name ->
+           (* Check if it's a config first *)
+           (match lookup_symbol table config_name with
+            | Some { kind = Config config_decl; _ } ->
+                (* This is a config access - validate the field *)
+                let field_exists = List.exists (fun field ->
+                  field.field_name = field_name
+                ) config_decl.config_fields in
+                if not field_exists then
+                  symbol_error (Printf.sprintf "Config '%s' has no field '%s'" config_name field_name) expr.expr_pos
+            | Some _ ->
+                (* Not a config - treat as regular field access, just process the object *)
+                process_expression table obj
+            | None ->
+                (* Undefined identifier *)
+                symbol_error ("Undefined symbol: " ^ config_name) expr.expr_pos)
+       | _ ->
+           (* Not a simple identifier - regular field access *)
+           process_expression table obj)
       
   | BinaryOp (left, _op, right) ->
       process_expression table left;
@@ -497,6 +575,23 @@ and process_expression table expr =
       
   | UnaryOp (_op, expr) ->
       process_expression table expr
+      
+  | ConfigAccess (config_name, field_name) ->
+      (* Validate that config exists and field is valid *)
+      (match lookup_symbol table config_name with
+       | Some { kind = Config config_decl; _ } ->
+           (* Validate that field exists in config *)
+           let field_exists = List.exists (fun field ->
+             field.field_name = field_name
+           ) config_decl.config_fields in
+           if not field_exists then
+             symbol_error (Printf.sprintf "Config '%s' has no field '%s'" config_name field_name) expr.expr_pos
+       | Some _ -> 
+           symbol_error (config_name ^ " is not a config") expr.expr_pos
+       | None -> 
+           symbol_error ("Undefined config: " ^ config_name) expr.expr_pos)
+      
+
 
 (** Query functions for symbol table *)
 
@@ -563,6 +658,7 @@ let string_of_symbol_kind = function
   | Parameter t -> "param:" ^ string_of_bpf_type t
   | EnumConstant (enum_name, value) ->
       "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")
+  | Config config_decl -> "config:" ^ config_decl.config_name
 
 let string_of_visibility = function
   | Public -> "pub"

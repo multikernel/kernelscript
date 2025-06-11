@@ -254,6 +254,13 @@ let generate_c_function_from_userspace (func : Ast.function_def) =
         goto cleanup;
     }
     
+    if (initialize_all_configs() != 0) {
+        fprintf(stderr, "Failed to initialize configs\n");
+        cleanup_bpf_programs();
+        __return_value = 1;
+        goto cleanup;
+    }
+    
     printf("Executing userspace logic...\n");
     
     // User-defined logic from KernelScript
@@ -596,8 +603,108 @@ let extract_map_declarations_from_ast (ast : Ast.ast) =
   ) ast in
   List.map Maps.ast_to_maps_declaration global_ast_map_decls
 
+(** Generate config initialization code *)
+let generate_config_initialization (config_declarations : Ast.config_declaration list) =
+  let config_structs = List.map (fun config_decl ->
+    let struct_name = Printf.sprintf "%s_config" config_decl.Ast.config_name in
+    let fields = List.map (fun field ->
+      let field_declaration = match field.Ast.field_type with
+        | Ast.U8 -> Printf.sprintf "    __u8 %s;" field.Ast.field_name
+        | Ast.U16 -> Printf.sprintf "    __u16 %s;" field.Ast.field_name
+        | Ast.U32 -> Printf.sprintf "    __u32 %s;" field.Ast.field_name
+        | Ast.U64 -> Printf.sprintf "    __u64 %s;" field.Ast.field_name
+        | Ast.I8 -> Printf.sprintf "    __s8 %s;" field.Ast.field_name
+        | Ast.I16 -> Printf.sprintf "    __s16 %s;" field.Ast.field_name
+        | Ast.I32 -> Printf.sprintf "    __s32 %s;" field.Ast.field_name
+        | Ast.I64 -> Printf.sprintf "    __s64 %s;" field.Ast.field_name
+        | Ast.Bool -> Printf.sprintf "    __u8 %s;" field.Ast.field_name  (* bool -> u8 for BPF compatibility *)
+        | Ast.Char -> Printf.sprintf "    char %s;" field.Ast.field_name
+        | Ast.Array (Ast.U16, size) -> Printf.sprintf "    __u16 %s[%d];" field.Ast.field_name size
+        | Ast.Array (Ast.U32, size) -> Printf.sprintf "    __u32 %s[%d];" field.Ast.field_name size
+        | Ast.Array (Ast.U64, size) -> Printf.sprintf "    __u64 %s[%d];" field.Ast.field_name size
+        | _ -> Printf.sprintf "    __u32 %s;" field.Ast.field_name  (* fallback *)
+      in
+      field_declaration
+     ) config_decl.Ast.config_fields in
+    
+    Printf.sprintf {|
+struct %s {
+%s
+};
+|} struct_name (String.concat "\n" fields)
+  ) config_declarations in
+  
+  let config_init_functions = List.map (fun config_decl ->
+    let config_name = config_decl.Ast.config_name in
+    let struct_name = Printf.sprintf "%s_config" config_name in
+    let map_name = Printf.sprintf "%s_config_map" config_name in
+    
+    let field_initializers = List.map (fun field ->
+      let default_value = match field.Ast.field_default with
+        | Some (Ast.IntLit i) -> string_of_int i
+        | Some (Ast.BoolLit b) -> if b then "1" else "0"
+        | Some (Ast.StringLit s) -> Printf.sprintf "\"%s\"" s
+        | Some (Ast.CharLit c) -> Printf.sprintf "'%c'" c
+        | Some (Ast.ArrayLit literals) ->
+            let values = List.map (function
+              | Ast.IntLit i -> string_of_int i
+              | Ast.BoolLit b -> if b then "1" else "0"
+              | _ -> "0"
+            ) literals in
+            Printf.sprintf "{%s}" (String.concat ", " values)
+        | None -> "0"  (* Default to zero *)
+      in
+      Printf.sprintf "        .%s = %s," field.Ast.field_name default_value
+    ) config_decl.Ast.config_fields in
+    
+    Printf.sprintf {|
+int init_%s_config(void) {
+    printf("Initializing %s config...\n");
+    
+    struct %s config_data = {
+%s
+    };
+    
+    int %s_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s");
+    if (%s_fd < 0) {
+        fprintf(stderr, "ERROR: Failed to find %s config map\n");
+        return -1;
+    }
+    
+    __u32 key = 0;
+    int ret = bpf_map_update_elem(%s_fd, &key, &config_data, BPF_ANY);
+    if (ret != 0) {
+        fprintf(stderr, "ERROR: Failed to initialize %s config: %%s\n", strerror(errno));
+        return -1;
+    }
+    
+    printf("%s config initialized successfully\n");
+    return 0;
+}
+|} config_name config_name struct_name (String.concat "\n" field_initializers) 
+   config_name map_name config_name config_name config_name config_name config_name
+  ) config_declarations in
+  
+  let master_init_function = 
+    let config_init_calls = List.map (fun config_decl ->
+      Printf.sprintf "    if (init_%s_config() != 0) {\n        return -1;\n    }" config_decl.Ast.config_name
+    ) config_declarations in
+    
+    Printf.sprintf {|
+int initialize_all_configs(void) {
+    printf("Initializing all configuration maps...\n");
+    
+%s
+    
+    printf("All configurations initialized successfully\n");
+    return 0;
+}
+|} (String.concat "\n" config_init_calls) in
+  
+  String.concat "\n" config_structs ^ String.concat "\n" config_init_functions ^ master_init_function
+
 (** Generate complete C userspace coordinator program *)
-let generate_complete_userspace_program (userspace_block : Ast.userspace_block) source_filename ?ast () =
+let generate_complete_userspace_program (userspace_block : Ast.userspace_block) source_filename ?ast ?config_declarations () =
   let includes = {|#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -623,6 +730,10 @@ let generate_complete_userspace_program (userspace_block : Ast.userspace_block) 
         let map_declarations = extract_map_declarations_from_ast ast_data in
         generate_enhanced_map_access_code map_declarations
     | None -> generate_map_access_code ()
+  in
+  let config_init = match config_declarations with
+    | Some configs -> generate_config_initialization configs
+    | None -> ""
   in
   let signal_handling = generate_signal_handling () in
   
@@ -659,6 +770,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     
+    if (initialize_all_configs() != 0) {
+        fprintf(stderr, "Failed to initialize configs\n");
+        cleanup_bpf_programs();
+        return 1;
+    }
+    
     printf("Multi-program eBPF system running on %s. Press Ctrl+C to exit.\n", interface);
     
     // Main coordination loop
@@ -688,7 +805,9 @@ int main(int argc, char **argv) {
 %s
 
 %s
-|} includes structs bpf_loader map_access signal_handling functions default_main
+
+%s
+|} includes structs bpf_loader config_init map_access signal_handling functions default_main
 
 (** Generate default userspace program when no userspace block is provided *)
 let generate_default_userspace_program program_name ?ast () =
@@ -770,7 +889,7 @@ let write_userspace_c_file content output_dir source_filename =
   filepath
 
 (** Main entry point for userspace code generation *)
-let generate_userspace_code_from_ast (ast : Ast.ast) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ast (ast : Ast.ast) ?(output_dir = ".") ?config_declarations source_filename =
   (* Extract userspace block from AST *)
   let userspace_block = 
     List.fold_left (fun acc decl ->
@@ -784,7 +903,7 @@ let generate_userspace_code_from_ast (ast : Ast.ast) ?(output_dir = ".") source_
   
   let content = match userspace_block with
     | Some ub -> 
-        generate_complete_userspace_program ub source_filename ~ast:ast ()
+        generate_complete_userspace_program ub source_filename ~ast:ast ?config_declarations ()
     | None -> 
         generate_default_userspace_program source_filename ~ast:ast ()
   in

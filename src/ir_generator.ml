@@ -103,6 +103,9 @@ let lower_literal lit pos =
     | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
+    | ArrayLit _ -> 
+        (* TODO: Implement proper array literal lowering *)
+        IRArray (IRU32, 0, make_bounds_info ())
   in
   make_ir_value ir_lit ir_type pos
 
@@ -208,7 +211,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.Literal lit ->
       lower_literal lit expr.expr_pos
       
-  | Ast.Identifier name ->
+        | Ast.Identifier name ->
       (* Check if this is a map identifier *)
       if Hashtbl.mem ctx.maps name then
         (* For map identifiers, create a map reference *)
@@ -222,6 +225,26 @@ let rec lower_expression ctx (expr : Ast.expr) =
           | None -> failwith ("Untyped identifier: " ^ name)
         in
         make_ir_value (IRRegister reg) ir_type expr.expr_pos
+      
+  | Ast.ConfigAccess (config_name, field_name) ->
+      (* Handle config access like config.field_name *)
+      let result_reg = allocate_register ctx in
+      let result_type = match expr.expr_type with
+        | Some ast_type -> ast_type_to_ir_type ast_type
+        | None -> IRU32 (* Default type for config fields *)
+      in
+      let _result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      
+      (* Generate a config access - this will be handled specially in codegen *)
+      let config_access_instr = make_ir_instruction
+        (IRComment (Printf.sprintf "CONFIG_ACCESS: %s.%s" config_name field_name))
+        expr.expr_pos
+      in
+      emit_instruction ctx config_access_instr;
+      
+      (* For now, store config name and field name in the value for later codegen *)
+      (* We'll handle this in the C codegen by generating get_config_name()->field_name *)
+      make_ir_value (IRVariable (Printf.sprintf "%s.%s" config_name field_name)) result_type expr.expr_pos
       
   | Ast.FunctionCall (name, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
@@ -1056,17 +1079,19 @@ let lower_multi_program ast symbol_table source_name =
     let initial_values = List.filter_map (fun assignment ->
       match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
       | Literal key_lit, Literal value_lit ->
-          let key_str = match key_lit with
+          let key_str =           match key_lit with
             | IntLit i -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
+            | ArrayLit _ -> "[]" (* TODO: Implement array literal string conversion *)
           in
-          let value_str = match value_lit with
+                      let value_str = match value_lit with
             | IntLit i -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
+            | ArrayLit _ -> "[]" (* TODO: Implement array literal string conversion *)
           in
           Some (key_str ^ ":" ^ value_str)
       | _ -> None

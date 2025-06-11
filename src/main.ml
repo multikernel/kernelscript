@@ -127,6 +127,13 @@ let compile opts source_file =
     Printf.printf "Phase 3: %s\n" (string_of_phase !current_phase);
     let multi_prog_analysis = analyze_multi_program_system ast in
     
+    (* Extract config declarations *)
+    let config_declarations = List.filter_map (function
+      | Ast.ConfigDecl config -> Some config
+      | _ -> None
+    ) ast in
+    Printf.printf "📋 Found %d config declarations\n" (List.length config_declarations);
+    
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := TypeChecking;
     Printf.printf "Phase 4: %s\n" (string_of_phase !current_phase);
@@ -145,14 +152,20 @@ let compile opts source_file =
     let optimization_strategies = generate_optimization_strategies multi_prog_analysis in
     
     (* Generate eBPF C code using enhanced existing generator *)
-    let ebpf_c_code = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      optimized_ir multi_prog_analysis resource_plan optimization_strategies in
+    let ebpf_c_code = 
+      if List.length config_declarations > 0 then
+        Ebpf_c_codegen.compile_multi_to_c ~config_declarations optimized_ir
+      else
+        Ebpf_c_codegen.compile_multi_to_c_with_analysis 
+          optimized_ir multi_prog_analysis resource_plan optimization_strategies in
       
     (* Generate userspace coordinator using original proven generator *)
     let temp_output_dir = "temp_userspace" in
     let temp_ast = annotated_ast in (* Use the original annotated AST *)
+    let config_declarations_opt = if List.length config_declarations > 0 then 
+      Some config_declarations else None in
     Userspace_codegen.generate_userspace_code_from_ast 
-      temp_ast ~output_dir:temp_output_dir source_file;
+      temp_ast ~output_dir:temp_output_dir ?config_declarations:config_declarations_opt source_file;
     
     (* Read the generated userspace code *)
     let base_name = Filename.remove_extension (Filename.basename source_file) in

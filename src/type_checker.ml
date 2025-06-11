@@ -12,6 +12,7 @@ type type_context = {
   functions: (string, bpf_type list * bpf_type) Hashtbl.t;
   types: (string, type_def) Hashtbl.t;
   maps: (string, map_declaration) Hashtbl.t;
+  configs: (string, config_declaration) Hashtbl.t;
   mutable current_function: string option;
   mutable current_program: string option;
   mutable current_program_type: program_type option;
@@ -28,6 +29,7 @@ type typed_expr = {
 and typed_expr_desc =
   | TLiteral of literal
   | TIdentifier of string
+  | TConfigAccess of string * string  (* config_name, field_name *)
   | TFunctionCall of string * typed_expr list
   | TArrayAccess of typed_expr * typed_expr
   | TFieldAccess of typed_expr * string
@@ -73,6 +75,7 @@ let create_context () = {
   functions = Hashtbl.create 16;
   types = Hashtbl.create 16;
   maps = Hashtbl.create 16;
+  configs = Hashtbl.create 16;
   current_function = None;
   current_program = None;
   current_program_type = None;
@@ -191,6 +194,19 @@ let type_check_literal lit pos =
     | StringLit _ -> Pointer U8  (* String is pointer to u8 *)
     | CharLit _ -> Char
     | BoolLit _ -> Bool
+    | ArrayLit literals ->
+        (* TODO: Implement proper array literal type checking *)
+        (match literals with
+         | [] -> Array (U32, 0)  (* Empty array defaults to u32 *)
+         | first_lit :: _ ->
+             let first_type = match first_lit with
+               | IntLit _ -> U32
+               | BoolLit _ -> Bool
+               | CharLit _ -> Char
+               | StringLit _ -> Pointer U8
+               | ArrayLit _ -> U32  (* Nested arrays not supported yet *)
+             in
+             Array (first_type, List.length literals))
   in
   { texpr_desc = TLiteral lit; texpr_type = typ; texpr_pos = pos }
 
@@ -318,9 +334,24 @@ and type_check_array_access ctx arr idx pos =
 
 (** Type check field access *)
 and type_check_field_access ctx obj field pos =
-  let typed_obj = type_check_expression ctx obj in
-  
-  match typed_obj.texpr_type with
+  (* First check if this is actually a config access (identifier.field) *)
+  (match obj.expr_desc with
+   | Identifier config_name when Hashtbl.mem ctx.configs config_name ->
+       (* This is a config access - handle it as TConfigAccess *)
+       let config_decl = Hashtbl.find ctx.configs config_name in
+       (* Validate that field exists in config *)
+       let field_type = try
+         let config_field = List.find (fun f -> f.field_name = field) config_decl.config_fields in
+         config_field.field_type
+       with Not_found ->
+         type_error (Printf.sprintf "Config '%s' has no field '%s'" config_name field) pos
+       in
+       { texpr_desc = TConfigAccess (config_name, field); texpr_type = field_type; texpr_pos = pos }
+   | _ ->
+       (* Regular field access - process normally *)
+       let typed_obj = type_check_expression ctx obj in
+       
+       match typed_obj.texpr_type with
   | Struct struct_name ->
       (* Look up struct definition and field type *)
       (try
@@ -345,7 +376,7 @@ and type_check_field_access ctx obj field pos =
        | _ -> type_error ("Unknown context field: " ^ field) pos)
   
   | _ ->
-      type_error "Cannot access field of non-struct type" pos
+      type_error "Cannot access field of non-struct type" pos)
 
 (** Type check binary operation *)
 and type_check_binary_op ctx left op right pos =
@@ -432,6 +463,16 @@ and type_check_expression ctx expr =
   match expr.expr_desc with
   | Literal lit -> type_check_literal lit expr.expr_pos
   | Identifier name -> type_check_identifier ctx name expr.expr_pos
+  | ConfigAccess (config_name, field_name) ->
+      (* TODO: Add proper config validation *)
+      (* For now, assume config access returns reasonable types based on field name *)
+      let result_type = match field_name with
+        | "enable_logging" | "enable_strict_mode" -> Bool
+        | "max_packet_size" | "threat_level" -> U32  
+        | "max_connections" -> U64
+        | _ -> U32  (* Default to u32 *)
+      in
+      { texpr_desc = TConfigAccess (config_name, field_name); texpr_type = result_type; texpr_pos = expr.expr_pos }
   | FunctionCall (name, args) -> type_check_function_call ctx name args expr.expr_pos
   | ArrayAccess (arr, idx) -> type_check_array_access ctx arr idx expr.expr_pos
   | FieldAccess (obj, field) -> type_check_field_access ctx obj field expr.expr_pos
@@ -731,9 +772,10 @@ let print_type_error (msg, pos) =
 
 (** Convert typed AST back to AST with type annotations *)
 let rec typed_expr_to_expr texpr =
-  let expr_desc = match texpr.texpr_desc with
+  let expr_desc =   match texpr.texpr_desc with
     | TLiteral lit -> Literal lit
     | TIdentifier name -> Identifier name
+    | TConfigAccess (config_name, field_name) -> ConfigAccess (config_name, field_name)
     | TFunctionCall (name, args) -> FunctionCall (name, List.map typed_expr_to_expr args)
     | TArrayAccess (arr, idx) -> ArrayAccess (typed_expr_to_expr arr, typed_expr_to_expr idx)
     | TFieldAccess (obj, field) -> FieldAccess (typed_expr_to_expr obj, field)
@@ -842,7 +884,7 @@ let rec type_check_and_annotate_ast ast =
   let ctx = create_context () in
   ctx.multi_program_analysis <- Some multi_prog_analysis;
   
-  (* First pass: collect type definitions and map declarations *)
+  (* First pass: collect type definitions, map declarations, and config declarations *)
   List.iter (function
     | TypeDef type_def ->
         (match type_def with
@@ -850,6 +892,8 @@ let rec type_check_and_annotate_ast ast =
              Hashtbl.replace ctx.types name type_def)
     | MapDecl map_decl ->
         Hashtbl.replace ctx.maps map_decl.name map_decl
+    | ConfigDecl config_decl ->
+        Hashtbl.replace ctx.configs config_decl.config_name config_decl
     | _ -> ()
   ) ast;
   

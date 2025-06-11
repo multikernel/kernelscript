@@ -46,6 +46,9 @@
 %type <Ast.ast> program
 %type <Ast.declaration list> declarations
 %type <Ast.declaration> declaration
+%type <Ast.config_declaration> config_declaration
+%type <Ast.config_field list> config_fields
+%type <Ast.config_field> config_field
 %type <Ast.program_def> program_declaration
 %type <Ast.program_type> program_type
 %type <Ast.map_declaration> map_declaration
@@ -94,6 +97,7 @@
 %type <Ast.expr list> argument_list
 %type <Ast.expr> field_access
 %type <Ast.expr> array_access
+%type <Ast.literal list> literal_list
 
 /* Start symbol */
 %start program
@@ -109,10 +113,26 @@ declarations:
   | declaration declarations { $1 :: $2 }
 
 declaration:
+  | config_declaration { ConfigDecl $1 }
   | program_declaration { Program $1 }
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
   | userspace_declaration { Userspace $1 }
+
+/* Config declaration: config name { config_fields } */
+config_declaration:
+  | CONFIG IDENTIFIER LBRACE config_fields RBRACE
+    { make_config_declaration $2 $4 (make_pos ()) }
+
+config_fields:
+  | /* empty */ { [] }
+  | config_field config_fields { $1 :: $2 }
+
+config_field:
+  | IDENTIFIER COLON bpf_type ASSIGN literal COMMA
+    { make_config_field $1 $3 (Some $5) (make_pos ()) }
+  | IDENTIFIER COLON bpf_type COMMA
+    { make_config_field $1 $3 None (make_pos ()) }
 
 /* Program declaration: program name : type { program_items } */
 program_declaration:
@@ -265,6 +285,12 @@ literal:
   | STRING { StringLit $1 }
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
+  | LBRACKET literal_list RBRACKET { ArrayLit $2 }
+
+literal_list:
+  | /* empty */ { [] }
+  | literal { [$1] }
+  | literal COMMA literal_list { $1 :: $3 }
 
 binary_expression:
   | expression PLUS expression { make_expr (BinaryOp ($1, Add, $3)) (make_pos ()) }
@@ -295,7 +321,10 @@ argument_list:
   | expression COMMA argument_list { $1 :: $3 }
 
 field_access:
-  | expression DOT IDENTIFIER { make_expr (FieldAccess ($1, $3)) (make_pos ()) }
+  | expression DOT IDENTIFIER { 
+      (* Parse all identifier.field as FieldAccess - let type checker determine if it's a config *)
+      make_expr (FieldAccess ($1, $3)) (make_pos ())
+    }
 
 array_access:
   | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }
