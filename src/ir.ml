@@ -133,9 +133,10 @@ and ir_instr_desc =
   | IRCondJump of ir_value * string * string
   | IRReturn of ir_value option
   | IRComment of string (* for debugging and analysis comments *)
-  | IRBpfLoop of ir_value * ir_value * ir_value * ir_value * Ast.statement list (* start, end, counter, ctx, body *)
+  | IRBpfLoop of ir_value * ir_value * ir_value * ir_value * ir_instruction list (* start, end, counter, ctx, body_instructions *)
   | IRBreak
   | IRContinue
+  | IRCondReturn of ir_value * ir_value option * ir_value option (* condition, return_if_true, return_if_false *)
 
 and map_load_type = DirectLoad | MapLookup | MapPeek
 and map_store_type = DirectStore | MapUpdate | MapPush
@@ -418,7 +419,7 @@ let string_of_ir_expr expr =
   | IRCast (value, typ) ->
       Printf.sprintf "(%s as %s)" (string_of_ir_value value) (string_of_ir_type typ)
 
-let string_of_ir_instruction instr =
+let rec string_of_ir_instruction instr =
   match instr.instr_desc with
   | IRAssign (dest, expr) ->
       Printf.sprintf "%s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
@@ -461,11 +462,24 @@ let string_of_ir_instruction instr =
   | IRReturn None -> "return"
   | IRReturn (Some value) -> Printf.sprintf "return %s" (string_of_ir_value value)
   | IRComment comment -> Printf.sprintf "/* %s */" comment
-  | IRBpfLoop (start, end_, counter, ctx, _body) ->
-      Printf.sprintf "bpf_loop(%s, %s, %s, %s) { /* AST body */ }" 
-        (string_of_ir_value start) (string_of_ir_value end_) (string_of_ir_value counter) (string_of_ir_value ctx)
+  | IRBpfLoop (start, end_, counter, ctx, body_instructions) ->
+      let body_str = String.concat "\n  " 
+        (List.map string_of_ir_instruction body_instructions) in
+      Printf.sprintf "bpf_loop(%s, %s, %s, %s) { /* IR body */ }\n  %s" 
+        (string_of_ir_value start) (string_of_ir_value end_) (string_of_ir_value counter) (string_of_ir_value ctx) body_str
   | IRBreak -> "break"
   | IRContinue -> "continue"
+  | IRCondReturn (cond, ret_if_true, ret_if_false) ->
+      let ret_if_true_str = match ret_if_true with
+        | None -> ""
+        | Some ret -> Printf.sprintf "return %s" (string_of_ir_value ret)
+      in
+      let ret_if_false_str = match ret_if_false with
+        | None -> ""
+        | Some ret -> Printf.sprintf "return %s" (string_of_ir_value ret)
+      in
+      Printf.sprintf "cond_return(%s, %s, %s)" 
+        (string_of_ir_value cond) ret_if_true_str ret_if_false_str
 
 let string_of_ir_basic_block block =
   let instrs_str = String.concat "\n  " 

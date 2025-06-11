@@ -167,6 +167,18 @@ let rec generate_c_statement_with_context ctx (stmt : Ast.statement) =
       (* For userspace, we generate a simple indexed loop since we don't have complex iterators *)
       sprintf "/* ForIter: iterating over %s */\n    for (__u32 %s = 0; %s < sizeof(%s)/sizeof((%s)[0]); %s++) {\n        __u32 %s = (%s)[%s];\n        %s\n    }"
         iterable_c index_var index_var iterable_c iterable_c index_var value_var iterable_c index_var body_c
+  | Ast.If (condition, then_stmts, else_stmts_opt) ->
+      (* Generate C if statement *)
+      let condition_c = generate_c_expression condition in
+      let then_body = List.map (generate_c_statement_with_context ctx) then_stmts in
+      let then_c = String.concat "\n        " then_body in
+      (match else_stmts_opt with
+       | Some else_stmts ->
+           let else_body = List.map (generate_c_statement_with_context ctx) else_stmts in
+           let else_c = String.concat "\n        " else_body in
+           sprintf "if (%s) {\n        %s\n    } else {\n        %s\n    }" condition_c then_c else_c
+       | None ->
+           sprintf "if (%s) {\n        %s\n    }" condition_c then_c)
   | Ast.Break ->
       "break;"
   | Ast.Continue ->
@@ -202,6 +214,26 @@ and generate_c_expression (expr : Ast.expr) =
       sprintf "(%s - %s)" (generate_c_expression left) (generate_c_expression right)
   | Ast.BinaryOp (left, Ast.Mul, right) ->
       sprintf "(%s * %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Div, right) ->
+      sprintf "(%s / %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Mod, right) ->
+      sprintf "(%s %% %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Eq, right) ->
+      sprintf "(%s == %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Ne, right) ->
+      sprintf "(%s != %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Lt, right) ->
+      sprintf "(%s < %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Le, right) ->
+      sprintf "(%s <= %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Gt, right) ->
+      sprintf "(%s > %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Ge, right) ->
+      sprintf "(%s >= %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.And, right) ->
+      sprintf "(%s && %s)" (generate_c_expression left) (generate_c_expression right)
+  | Ast.BinaryOp (left, Ast.Or, right) ->
+      sprintf "(%s || %s)" (generate_c_expression left) (generate_c_expression right)
   | _ -> "0"  (* fallback *)
 
 (** Helper function to generate safe key and value expressions for map operations *)

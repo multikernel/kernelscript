@@ -36,6 +36,7 @@ type ir_context = {
   mutable assignment_optimizations: Map_assignment.optimization_info option;
   (* Constant environment for loop analysis *)
   mutable const_env: Loop_analysis.const_env option;
+  mutable in_bpf_loop_callback: bool; (* New field to track bpf_loop context *)
 }
 
 (** Create new IR generation context *)
@@ -51,6 +52,7 @@ let create_context symbol_table = {
   symbol_table;
   assignment_optimizations = None;
   const_env = None;
+  in_bpf_loop_callback = false;
 }
 
 (** Register allocation *)
@@ -493,40 +495,71 @@ let rec lower_statement ctx stmt =
   | Ast.If (cond_expr, then_stmts, else_opt) ->
       let cond_val = lower_expression ctx cond_expr in
       
-      (* Create labels for control flow *)
-      let cond_label = Printf.sprintf "cond_%d" ctx.next_block_id in
-      let then_label = Printf.sprintf "then_%d" (ctx.next_block_id + 1) in
-      let else_label = Printf.sprintf "else_%d" (ctx.next_block_id + 2) in
-      let merge_label = Printf.sprintf "merge_%d" (ctx.next_block_id + 3) in
-      
-      (* Conditional jump *)
-      let cond_jump = make_ir_instruction 
-        (IRCondJump (cond_val, then_label, else_label)) 
-        stmt.stmt_pos in
-      emit_instruction ctx cond_jump;
-      
-      (* End current block *)
-      let _ = create_basic_block ctx cond_label in
-      
-      (* Then block *)
-      List.iter (lower_statement ctx) then_stmts;
-      let jump_to_merge = make_ir_instruction (IRJump merge_label) stmt.stmt_pos in
-      emit_instruction ctx jump_to_merge;
-      let _then_block = create_basic_block ctx then_label in
-      
-      (* Else block *)
-      (match else_opt with
-       | Some else_stmts -> List.iter (lower_statement ctx) else_stmts
-       | None -> ());
-      let else_jump_to_merge = make_ir_instruction (IRJump merge_label) stmt.stmt_pos in
-      emit_instruction ctx else_jump_to_merge;
-      let _else_block = create_basic_block ctx else_label in
-      
-      (* Merge block *)
-      let _merge_block = create_basic_block ctx merge_label in
-      
-      (* Note: Control flow connections will be established during CFG construction *)
-      ()
+      if ctx.in_bpf_loop_callback then
+        (* Special handling for bpf_loop callbacks - use conditional returns *)
+        let check_for_break_continue stmts =
+          List.fold_left (fun acc stmt ->
+            match stmt.Ast.stmt_desc with
+            | Ast.Break -> Some (make_ir_value (IRLiteral (IntLit 1)) IRU32 stmt.stmt_pos)
+            | Ast.Continue -> Some (make_ir_value (IRLiteral (IntLit 0)) IRU32 stmt.stmt_pos)
+            | _ -> acc
+          ) None stmts
+        in
+        
+        let then_return = check_for_break_continue then_stmts in
+        let else_return = match else_opt with
+          | Some else_stmts -> check_for_break_continue else_stmts
+          | None -> None
+        in
+        
+        if then_return <> None || else_return <> None then
+          (* Generate conditional return instruction *)
+          let cond_return_instr = make_ir_instruction 
+            (IRCondReturn (cond_val, then_return, else_return))
+            stmt.stmt_pos in
+          emit_instruction ctx cond_return_instr
+        else
+          (* Regular if statement without break/continue - process normally *)
+          List.iter (lower_statement ctx) then_stmts;
+          (match else_opt with
+           | Some else_stmts -> List.iter (lower_statement ctx) else_stmts
+           | None -> ())
+      else
+        (* Regular control flow for non-bpf_loop contexts *)
+        (* Create labels for control flow *)
+        let cond_label = Printf.sprintf "cond_%d" ctx.next_block_id in
+        let then_label = Printf.sprintf "then_%d" (ctx.next_block_id + 1) in
+        let else_label = Printf.sprintf "else_%d" (ctx.next_block_id + 2) in
+        let merge_label = Printf.sprintf "merge_%d" (ctx.next_block_id + 3) in
+        
+        (* Conditional jump *)
+        let cond_jump = make_ir_instruction 
+          (IRCondJump (cond_val, then_label, else_label)) 
+          stmt.stmt_pos in
+        emit_instruction ctx cond_jump;
+        
+        (* End current block *)
+        let _ = create_basic_block ctx cond_label in
+        
+        (* Then block *)
+        List.iter (lower_statement ctx) then_stmts;
+        let jump_to_merge = make_ir_instruction (IRJump merge_label) stmt.stmt_pos in
+        emit_instruction ctx jump_to_merge;
+        let _then_block = create_basic_block ctx then_label in
+        
+        (* Else block *)
+        (match else_opt with
+         | Some else_stmts -> List.iter (lower_statement ctx) else_stmts
+         | None -> ());
+        let else_jump_to_merge = make_ir_instruction (IRJump merge_label) stmt.stmt_pos in
+        emit_instruction ctx else_jump_to_merge;
+        let _else_block = create_basic_block ctx else_label in
+        
+        (* Merge block *)
+        let _merge_block = create_basic_block ctx merge_label in
+        
+        (* Note: Control flow connections will be established during CFG construction *)
+        ()
       
   | Ast.For (var, start_expr, end_expr, body_stmts) ->
       (* Analyze the loop to determine if it's bounded or unbounded *)
@@ -570,14 +603,26 @@ let rec lower_statement ctx stmt =
              stmt.stmt_pos in
            emit_instruction ctx bpf_loop_comment;
            
-           (* For now, mark this as a special case that will be handled in C codegen *)
+           (* Create a separate context for the loop body *)
+           let body_ctx = {
+             ctx with
+             current_block = [];
+             blocks = [];
+             in_bpf_loop_callback = true; (* Set flag for bpf_loop context *)
+           } in
+           
+           (* Lower the loop body statements to IR instructions *)
+           List.iter (lower_statement body_ctx) body_stmts;
+           let body_instructions = List.rev body_ctx.current_block in
+           
+           (* Create loop context register *)
            let loop_ctx_reg = allocate_register ctx in
            let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
              (IRPointer (IRStruct ("loop_ctx", []), make_bounds_info ())) stmt.stmt_pos in
            
-           (* Mark this as a bpf_loop placeholder *)
+           (* Create the bpf_loop instruction with IR body *)
            let bpf_loop_instr = make_ir_instruction 
-             (IRBpfLoop (start_val, end_val, counter_val, loop_ctx_val, body_stmts))
+             (IRBpfLoop (start_val, end_val, counter_val, loop_ctx_val, body_instructions))
              stmt.stmt_pos in
            emit_instruction ctx bpf_loop_instr
            
@@ -657,11 +702,23 @@ let rec lower_statement ctx stmt =
       let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
         (IRPointer (IRStruct ("iter_ctx", []), make_bounds_info ())) stmt.stmt_pos in
       
+      (* Create a separate context for the loop body *)
+      let body_ctx = {
+        ctx with
+        current_block = [];
+        blocks = [];
+        in_bpf_loop_callback = true; (* Set flag for bpf_loop context *)
+      } in
+      
+      (* Lower the loop body statements to IR instructions *)
+      List.iter (lower_statement body_ctx) body_stmts;
+      let body_instructions = List.rev body_ctx.current_block in
+      
       (* Mark as iterator bpf_loop *)
       let start_val = make_ir_value (IRLiteral (IntLit 0)) IRU32 stmt.stmt_pos in
       let end_val = make_ir_value (IRLiteral (IntLit 100)) IRU32 stmt.stmt_pos in (* Placeholder *)
       let bpf_iter_instr = make_ir_instruction 
-        (IRBpfLoop (start_val, end_val, index_val, loop_ctx_val, body_stmts))
+        (IRBpfLoop (start_val, end_val, index_val, loop_ctx_val, body_instructions))
         stmt.stmt_pos in
       emit_instruction ctx bpf_iter_instr
       

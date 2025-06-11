@@ -387,7 +387,35 @@ let generate_map_delete ctx map_val key_val =
 
 (** Generate C code for IR instruction *)
 
-let generate_c_instruction ctx ir_instr =
+(** Helper function to convert AST expressions to C code for bpf_loop callbacks *)
+let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
+  match expr.Ast.expr_desc with
+  | Ast.Literal (Ast.IntLit i) -> string_of_int i
+  | Ast.Literal (Ast.BoolLit b) -> if b then "true" else "false"
+  | Ast.Identifier name when name = "i" -> counter_var (* Map loop variable to counter *)
+  | Ast.Identifier name -> name
+  | Ast.BinaryOp (left, op, right) ->
+      let left_c = generate_ast_expr_to_c left counter_var in
+      let right_c = generate_ast_expr_to_c right counter_var in
+      let op_c = match op with
+        | Ast.Add -> "+"
+        | Ast.Sub -> "-"
+        | Ast.Mul -> "*"
+        | Ast.Div -> "/"
+        | Ast.Mod -> "%"
+        | Ast.Eq -> "=="
+        | Ast.Ne -> "!="
+        | Ast.Lt -> "<"
+        | Ast.Le -> "<="
+        | Ast.Gt -> ">"
+        | Ast.Ge -> ">="
+        | Ast.And -> "&&"
+        | Ast.Or -> "||"
+      in
+      sprintf "(%s %s %s)" left_c op_c right_c
+  | _ -> "/* complex expr */"
+
+let rec generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) ->
       let dest_str = generate_c_value ctx dest_val in
@@ -458,7 +486,7 @@ let generate_c_instruction ctx ir_instr =
   | IRComment comment ->
       emit_line ctx (sprintf "/* %s */" comment)
 
-  | IRBpfLoop (start_val, end_val, counter_val, _ctx_val, body) ->
+  | IRBpfLoop (start_val, end_val, counter_val, _ctx_val, body_instructions) ->
       let start_str = generate_c_value ctx start_val in
       let end_str = generate_c_value ctx end_val in
       
@@ -466,12 +494,13 @@ let generate_c_instruction ctx ir_instr =
       let callback_name = sprintf "loop_callback_%d" ctx.next_label_id in
       ctx.next_label_id <- ctx.next_label_id + 1;
       
-      (* Generate callback function code - store it for later emission *)
-      let callback_code = ref [] in
+      (* Create a separate context for the callback function *)
+      let callback_ctx = create_c_context () in
+      callback_ctx.indent_level <- 1; (* Start with one level of indentation *)
       
-      (* Generate callback function signature and body *)
-      callback_code := sprintf "static long %s(__u32 index, void *ctx_ptr) {" callback_name :: !callback_code;
-      callback_code := "    /* Loop body for bpf_loop() */" :: !callback_code;
+      (* Generate callback function signature *)
+      emit_line callback_ctx (sprintf "static long %s(__u32 index, void *ctx_ptr) {" callback_name);
+      increase_indent callback_ctx;
       
       (* Extract the variable name from counter_val for proper declaration in callback *)
       let counter_var_name = match counter_val.value_desc with
@@ -480,26 +509,76 @@ let generate_c_instruction ctx ir_instr =
         | _ -> "loop_counter"
       in
       
+      (* Collect all registers used in the callback body *)
+      let callback_registers = ref [] in
+      let collect_callback_registers ir_instr =
+        let collect_in_value ir_val =
+          match ir_val.value_desc with
+          | IRRegister reg -> 
+              if not (List.mem_assoc reg !callback_registers) then
+                callback_registers := (reg, ir_val.val_type) :: !callback_registers
+          | _ -> ()
+        in
+                 let collect_in_expr ir_expr =
+          match ir_expr.expr_desc with
+          | IRValue ir_val -> collect_in_value ir_val
+          | IRBinOp (left, _, right) -> collect_in_value left; collect_in_value right
+          | IRUnOp (_, ir_val) -> collect_in_value ir_val
+          | IRCast (ir_val, _) -> collect_in_value ir_val
+        in
+                 let collect_in_instr ir_instr =
+           match ir_instr.instr_desc with
+           | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
+           | IRMapStore (map_val, key_val, value_val, _) ->
+               collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
+           | _ -> () (* Add other cases as needed *)
+        in
+        collect_in_instr ir_instr
+      in
+      
+      (* Collect registers from all body instructions *)
+      List.iter collect_callback_registers body_instructions;
+      
       (* Declare the loop counter variable in callback scope *)
       let counter_type = ir_type_to_c_type counter_val.val_type in
-      callback_code := sprintf "    %s %s;" counter_type counter_var_name :: !callback_code;
-      callback_code := sprintf "    %s = index;" counter_var_name :: !callback_code;
+      emit_line callback_ctx (sprintf "%s %s = index;" counter_type counter_var_name);
       
-      (* Generate actual loop body statements from 'body' parameter *)
-      (match body with
-      | [] -> 
-          callback_code := "    /* Empty loop body */" :: !callback_code;
-      | _ -> 
-          callback_code := "    /* Loop body statements would be generated here */" :: !callback_code;
-          callback_code := sprintf "    /* %d statements in loop body */" (List.length body) :: !callback_code;
-      );
+      (* Declare all other registers used in the callback *)
+      List.iter (fun (reg, reg_type) ->
+        let c_type = ir_type_to_c_type reg_type in
+        let reg_name = sprintf "tmp_%d" reg in
+        if reg_name <> counter_var_name then
+          emit_line callback_ctx (sprintf "%s %s;" c_type reg_name)
+      ) (List.sort (fun (r1, _) (r2, _) -> compare r1 r2) !callback_registers);
       
-      callback_code := "    return 0; /* Continue loop */" :: !callback_code;
-      callback_code := "}" :: !callback_code;
-      callback_code := "" :: !callback_code; (* blank line *)
+      emit_blank_line callback_ctx;
       
-      (* Store callback for later emission *)
-      ctx.pending_callbacks <- (List.rev !callback_code) @ ctx.pending_callbacks;
+      (* Generate C code for each IR instruction in the loop body *)
+      let has_early_return = ref false in
+      List.iter (fun ir_instr ->
+        if not !has_early_return then
+          match ir_instr.instr_desc with
+          | IRBreak -> 
+              emit_line callback_ctx "return 1; /* Break loop */";
+              has_early_return := true
+          | IRContinue -> 
+              emit_line callback_ctx "return 0; /* Continue loop */";
+              has_early_return := true
+          | _ ->
+              (* Generate C code for regular IR instructions *)
+              generate_c_instruction callback_ctx ir_instr
+      ) body_instructions;
+      
+      (* Add default return if no early return was encountered *)
+      if not !has_early_return then
+        emit_line callback_ctx "return 0; /* Continue loop */";
+      
+      decrease_indent callback_ctx;
+      emit_line callback_ctx "}";
+      emit_blank_line callback_ctx;
+      
+      (* Store callback for later emission - reverse to get correct order *)
+      ctx.pending_callbacks <- (List.rev callback_ctx.output_lines) @ ctx.pending_callbacks;
       
       (* Generate the actual bpf_loop() call *)
       emit_line ctx (sprintf "/* bpf_loop() call for unbounded loop */");
@@ -528,6 +607,29 @@ let generate_c_instruction ctx ir_instr =
       (* In bpf_loop() callbacks, return 0 to continue the loop *)
       (* In regular C loops, emit continue statement *)
       emit_line ctx "continue;"
+
+  | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
+      (* Generate conditional return for bpf_loop() callbacks *)
+      let cond_c = generate_c_value ctx cond_val in
+      emit_line ctx (sprintf "if (%s) {" cond_c);
+      increase_indent ctx;
+      (match ret_if_true with
+       | Some ret_val -> 
+           let ret_c = generate_c_value ctx ret_val in
+           emit_line ctx (sprintf "return %s; /* Break/Continue loop */" ret_c)
+       | None -> 
+           emit_line ctx "/* No action for true branch */");
+      decrease_indent ctx;
+      (match ret_if_false with
+       | Some ret_val ->
+           emit_line ctx "} else {";
+           increase_indent ctx;
+           let ret_c = generate_c_value ctx ret_val in
+           emit_line ctx (sprintf "return %s; /* Break/Continue loop */" ret_c);
+           decrease_indent ctx;
+           emit_line ctx "}"
+       | None ->
+           emit_line ctx "}")
 
 (** Generate C code for basic block *)
 
@@ -559,7 +661,7 @@ let collect_registers_in_function ir_func =
     | IRUnOp (_, ir_val) -> collect_in_value ir_val
     | IRCast (ir_val, _) -> collect_in_value ir_val
   in
-  let collect_in_instr ir_instr =
+  let rec collect_in_instr ir_instr =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
     | IRCall (_, args, ret_opt) -> 
@@ -577,11 +679,17 @@ let collect_registers_in_function ir_func =
     | IRReturn ret_val_opt -> Option.iter collect_in_value ret_val_opt
     | IRJump _ -> ()
     | IRComment _ -> () (* Comments don't use registers *)
-    | IRBpfLoop (start_val, end_val, counter_val, ctx_val, _body) ->
+    | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->
         collect_in_value start_val; collect_in_value end_val; 
-        collect_in_value counter_val; collect_in_value ctx_val
+        collect_in_value counter_val; collect_in_value ctx_val;
+        (* Also collect registers from body instructions *)
+        List.iter collect_in_instr body_instructions
     | IRBreak -> ()
     | IRContinue -> ()
+    | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
+        collect_in_value cond_val;
+        Option.iter collect_in_value ret_if_true;
+        Option.iter collect_in_value ret_if_false
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
