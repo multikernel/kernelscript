@@ -1,92 +1,31 @@
-(** KernelScript Compiler - Main Entry Point
+(** KernelScript Compiler - Advanced Multi-Program Pipeline
     
-    This is the main compiler driver that:
-    1. Parses command line arguments
-    2. Reads and parses KernelScript (.ks) files
-    3. Performs type checking and analysis
-    4. Generates IR representation
-    5. Outputs eBPF C code (.ebpf.c)
-    6. Creates a Makefile for compilation
+    Advanced Multi-Program Compilation Pipeline:
+    Parser → Multi-Program Analyzer → Enhanced Type Checker → 
+    Multi-Program IR Optimizer → Advanced Multi-Target Code Generator
 *)
 
 open Kernelscript
 open Printf
+open Multi_program_analyzer
+open Multi_program_ir_optimizer
 
 (** Command line options *)
-type compiler_options = {
+type options = {
   input_file: string;
-  output_file: string option;
+  output_dir: string option;
   verbose: bool;
   generate_makefile: bool;
-  optimization_level: int;
 }
 
-(** Print usage information *)
-let print_usage () =
-  printf "KernelScript Compiler\n";
-  printf "Usage: kernelscript [options] <input.ks>\n";
-  printf "\n";
-  printf "Options:\n";
-  printf "  -o, --output <file>     Output file (default: <input>.ebpf.c)\n";
-  printf "  -v, --verbose           Enable verbose output\n";
-  printf "  -M, --makefile          Generate Makefile (default: true)\n";
-  printf "  -O<level>               Optimization level (0-2, default: 2)\n";
-  printf "  -h, --help              Show this help\n";
-  printf "\n";
-  printf "Examples:\n";
-  printf "  kernelscript program.ks              # Generates program.ebpf.c\n";
-  printf "  kernelscript -o xdp_drop.c prog.ks  # Custom output file\n";
-  printf "  kernelscript -v program.ks          # Verbose compilation\n"
+let default_opts = {
+  input_file = "";
+  output_dir = None;
+  verbose = false;
+  generate_makefile = true;
+}
 
-(** Parse command line arguments *)
-let parse_args () =
-  let input_file = ref "" in
-  let output_file = ref None in
-  let verbose = ref false in
-  let generate_makefile = ref true in
-  let optimization_level = ref 2 in
-  
-  let set_output file = output_file := Some file in
-  let set_input file = input_file := file in
-  let set_opt_level level = optimization_level := level in
-  
-  let spec = [
-    ("-o", Arg.String set_output, " Set output file");
-    ("--output", Arg.String set_output, " Set output file");
-    ("-v", Arg.Set verbose, " Enable verbose output");
-    ("--verbose", Arg.Set verbose, " Enable verbose output");
-    ("-M", Arg.Set generate_makefile, " Generate Makefile");
-    ("--makefile", Arg.Set generate_makefile, " Generate Makefile");
-    ("-O0", Arg.Unit (fun () -> set_opt_level 0), " No optimization");
-    ("-O1", Arg.Unit (fun () -> set_opt_level 1), " Basic optimization");
-    ("-O2", Arg.Unit (fun () -> set_opt_level 2), " Full optimization");
-    ("-h", Arg.Unit (fun () -> print_usage (); exit 0), " Show help");
-    ("--help", Arg.Unit (fun () -> print_usage (); exit 0), " Show help");
-  ] in
-  
-  let usage_msg = "kernelscript [options] <input.ks>" in
-  Arg.parse spec set_input usage_msg;
-  
-  if !input_file = "" then (
-    printf "Error: No input file specified\n\n";
-    print_usage ();
-    exit 1
-  );
-  
-  if not (Filename.check_suffix !input_file ".ks") then (
-    printf "Error: Input file must have .ks extension\n";
-    exit 1
-  );
-  
-  {
-    input_file = !input_file;
-    output_file = !output_file;
-    verbose = !verbose;
-    generate_makefile = !generate_makefile;
-    optimization_level = !optimization_level;
-  }
-
-(** Print verbose message *)
+(** Print verbose output *)
 let vprintf opts fmt = 
   if opts.verbose then printf fmt else Printf.ifprintf stdout fmt
 
@@ -101,43 +40,178 @@ let read_file filename =
   | Sys_error msg -> Error ("Failed to read file: " ^ msg)
   | e -> Error ("Error reading file: " ^ Printexc.to_string e)
 
-(** Create directory if it doesn't exist *)
-let create_directory dirname =
-  try
-    if not (Sys.file_exists dirname) then
-      Unix.mkdir dirname 0o755;
-    Ok ()
-  with
-  | Unix.Unix_error (err, _, _) -> 
-      Error ("Failed to create directory: " ^ Unix.error_message err)
-  | e -> Error ("Error creating directory: " ^ Printexc.to_string e)
+(** Argument parsing *)
+let rec parse_args_aux opts = function
+  | [] -> opts
+  | "-o" :: output :: rest -> parse_args_aux { opts with output_dir = Some output } rest
+  | "--output" :: output :: rest -> parse_args_aux { opts with output_dir = Some output } rest
+  | "-v" :: rest -> parse_args_aux { opts with verbose = true } rest
+  | "--verbose" :: rest -> parse_args_aux { opts with verbose = true } rest
+  | "--no-makefile" :: rest -> parse_args_aux { opts with generate_makefile = false } rest
+  | arg :: rest when not (String.starts_with ~prefix:"-" arg) ->
+      parse_args_aux { opts with input_file = arg } rest
+  | unknown :: _ ->
+      printf "Unknown option: %s\n" unknown;
+      printf "Usage: kernelscript [options] <input_file>\n";
+      printf "Options:\n";
+      printf "  -o, --output <dir>     Specify output directory\n";
+      printf "  -v, --verbose          Enable verbose output\n";
+      printf "  --no-makefile          Don't generate Makefile\n";
+      exit 1
 
-(** Write file contents *)
-let write_file filename content =
-  try
-    (* Create parent directory if needed *)
-    let dirname = Filename.dirname filename in
-    if dirname <> "." && dirname <> "/" then (
-      match create_directory dirname with
-      | Ok () -> ()
-      | Error msg -> failwith msg
-    );
-    
-    let oc = open_out filename in
-    output_string oc content;
-    close_out oc;
-    Ok ()
-  with
-  | Sys_error msg -> Error ("Failed to write file: " ^ msg)
-  | e -> Error ("Error writing file: " ^ Printexc.to_string e)
+let parse_args () =
+  let args = List.tl (Array.to_list Sys.argv) in
+  let opts = parse_args_aux default_opts args in
+  if opts.input_file = "" then (
+    printf "Error: No input file specified\n";
+    printf "Usage: kernelscript [options] <input_file>\n";
+    exit 1
+  );
+  opts
 
-(** Generate Makefile for building both eBPF and userspace programs *)
-let generate_makefile opts c_filename program_name =
-  let ebpf_base_name = program_name in
-  let userspace_base_name = Filename.remove_extension (Filename.basename opts.input_file) in
-  let obj_name = ebpf_base_name ^ ".ebpf.o" in
+(** Compilation phase tracking *)
+type compilation_phase = 
+  | Parsing
+  | SymbolAnalysis  
+  | MultiProgramAnalysis
+  | TypeChecking
+  | IROptimization
+  | CodeGeneration
+
+let string_of_phase = function
+  | Parsing -> "Parsing"
+  | SymbolAnalysis -> "Symbol Analysis"
+  | MultiProgramAnalysis -> "Multi-Program Analysis"
+  | TypeChecking -> "Type Checking & AST Enhancement"
+  | IROptimization -> "Multi-Program IR Optimization"
+  | CodeGeneration -> "Code Generation"
+
+(** List utility functions *)
+let rec take n = function
+  | [] -> []
+  | x :: xs when n > 0 -> x :: take (n - 1) xs
+  | _ -> []
+
+(** Code generation targets *)
+type code_target =
+  | EbpfC
+  | UserspaceCoordinator
+
+(** Unified compilation pipeline with multi-program analysis *)
+let compile opts source_file =
+  let current_phase = ref Parsing in
   
-  let makefile_content = sprintf {|# Makefile for %s
+  try
+    Printf.printf "\n🔥 KernelScript Compiler\n";
+    Printf.printf "========================\n\n";
+    Printf.printf "📁 Source: %s\n\n" source_file;
+    
+    (* Phase 1: Parse source file *)
+    Printf.printf "Phase 1: %s\n" (string_of_phase !current_phase);
+    let ic = open_in source_file in
+    let content = really_input_string ic (in_channel_length ic) in
+    close_in ic;
+    
+    let lexbuf = Lexing.from_string content in
+    let ast = Parser.program Lexer.token lexbuf in
+    Printf.printf "✅ Successfully parsed %d declarations\n\n" (List.length ast);
+    
+    (* Phase 2: Symbol table analysis *)
+    current_phase := SymbolAnalysis;
+    Printf.printf "Phase 2: %s\n" (string_of_phase !current_phase);
+    let symbol_table = Symbol_table.build_symbol_table ast in
+    Printf.printf "✅ Symbol table created successfully\n\n";
+    
+    (* Phase 3: Multi-program analysis *)
+    current_phase := MultiProgramAnalysis;
+    Printf.printf "Phase 3: %s\n" (string_of_phase !current_phase);
+    let multi_prog_analysis = analyze_multi_program_system ast in
+    
+    (* Phase 4: Enhanced type checking with multi-program context *)
+    current_phase := TypeChecking;
+    Printf.printf "Phase 4: %s\n" (string_of_phase !current_phase);
+    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ast in
+    Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
+    
+    (* Phase 5: Multi-program IR optimization *)
+    current_phase := IROptimization;
+    Printf.printf "Phase 5: %s\n" (string_of_phase !current_phase);
+    let optimized_ir = generate_optimized_ir annotated_ast multi_prog_analysis symbol_table source_file in
+    
+    (* Phase 6: Advanced multi-target code generation *)
+    current_phase := CodeGeneration;
+    Printf.printf "Phase 6: %s\n" (string_of_phase !current_phase);
+    let resource_plan = plan_system_resources optimized_ir.programs multi_prog_analysis in
+    let optimization_strategies = generate_optimization_strategies multi_prog_analysis in
+    
+    (* Generate eBPF C code using enhanced existing generator *)
+    let ebpf_c_code = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
+      optimized_ir multi_prog_analysis resource_plan optimization_strategies in
+      
+    (* Generate userspace coordinator using original proven generator *)
+    let temp_output_dir = "temp_userspace" in
+    let temp_ast = annotated_ast in (* Use the original annotated AST *)
+    Userspace_codegen.generate_userspace_code_from_ast 
+      temp_ast ~output_dir:temp_output_dir source_file;
+    
+    (* Read the generated userspace code *)
+    let base_name = Filename.remove_extension (Filename.basename source_file) in
+    let userspace_file = temp_output_dir ^ "/" ^ base_name ^ ".c" in
+    let userspace_c_code = 
+      try
+        let ic = open_in userspace_file in
+        let content = really_input_string ic (in_channel_length ic) in
+        close_in ic;
+        (* Clean up temp directory *)
+        Sys.remove userspace_file;
+        (try Unix.rmdir temp_output_dir with _ -> ());
+        content
+      with _ -> "/* Failed to read generated userspace code */"
+    in
+    
+    let generated_codes = [
+      (EbpfC, ebpf_c_code);
+      (UserspaceCoordinator, userspace_c_code);
+    ] in
+    
+    Printf.printf "🎉 Compilation completed successfully!\n\n";
+    
+    (* Output results to files *)
+    let base_name = Filename.remove_extension (Filename.basename source_file) in
+    let output_dir = match opts.output_dir with
+      | Some dir -> dir
+      | None -> base_name
+    in
+    
+    (* Create output directory *)
+    (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+    
+    Printf.printf "📤 Generated Code Outputs:\n";
+    Printf.printf "=========================\n";
+    List.iter (fun (target, code) ->
+      let (target_name, filename) = match target with
+        | EbpfC -> ("eBPF C Code", output_dir ^ "/" ^ base_name ^ ".ebpf.c")
+        | UserspaceCoordinator -> ("Userspace Coordinator", output_dir ^ "/" ^ base_name ^ ".c")
+      in
+      
+      (* Write file *)
+      let oc = open_out filename in
+      output_string oc code;
+      close_out oc;
+      
+      Printf.printf "\n--- %s → %s ---\n" target_name filename;
+      let lines = String.split_on_char '\n' code in
+      let preview_lines = take (min 10 (List.length lines)) lines in
+      List.iter (Printf.printf "%s\n") preview_lines;
+      if List.length lines > 10 then
+        Printf.printf "... (%d more lines)\n" (List.length lines - 10);
+    ) generated_codes;
+    
+    Printf.printf "\n✨ Multi-program compilation completed successfully!\n";
+    Printf.printf "📁 Output directory: %s/\n" output_dir;
+    
+    (* Generate Makefile *)
+    let makefile_content = Printf.sprintf {|# Multi-Program eBPF Makefile
 # Generated by KernelScript compiler
 
 # Compilers
@@ -145,7 +219,7 @@ BPF_CC = clang
 CC = gcc
 
 # BPF compilation flags
-BPF_CFLAGS = -target bpf -O%d -Wall -Wextra -g
+BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g
 BPF_INCLUDES = -I/usr/include -I/usr/include/x86_64-linux-gnu
 
 # Userspace compilation flags
@@ -153,7 +227,7 @@ CFLAGS = -Wall -Wextra -O2
 LIBS = -lbpf -lelf -lz
 
 # Object files
-BPF_OBJ = %s
+BPF_OBJ = %s.ebpf.o
 USERSPACE_BIN = %s
 
 # Source files
@@ -175,204 +249,41 @@ $(USERSPACE_BIN): $(USERSPACE_SRC) $(BPF_OBJ)
 clean:
 	rm -f $(BPF_OBJ) $(USERSPACE_BIN)
 
-# Install programs (customize as needed)
-install: $(BPF_OBJ) $(USERSPACE_BIN)
-	@echo "Install target not implemented - copy files to your deployment location"
-	@echo "BPF object: $(BPF_OBJ)"
-	@echo "Userspace binary: $(USERSPACE_BIN)"
-
 # Run the userspace program
 run: $(USERSPACE_BIN)
 	sudo ./$(USERSPACE_BIN)
 
-# Load program (example - customize for your use case)
-load: $(BPF_OBJ)
-	@echo "Loading eBPF program..."
-	@echo "Example: sudo ip link set dev eth0 xdpgeneric obj $(BPF_OBJ) sec xdp"
-
-# Verify the BPF object file
-verify: $(BPF_OBJ)
-	@echo "Verifying eBPF object file..."
-	llvm-objdump -h $(BPF_OBJ) || objdump -h $(BPF_OBJ)
-
-.PHONY: all clean install run load verify
-
-# Help target
-help:
-	@echo "Available targets:"
-	@echo "  all       - Build both eBPF and userspace programs"
-	@echo "  clean     - Remove generated files"
-	@echo "  install   - Install the programs"
-	@echo "  run       - Run the userspace program (requires sudo)"
-	@echo "  load      - Load the eBPF program (example)"
-	@echo "  verify    - Verify the eBPF object file structure"
-	@echo "  help      - Show this help"
-|} 
-    userspace_base_name
-    opts.optimization_level
-    obj_name
-    userspace_base_name
-    ebpf_base_name
-    userspace_base_name
-  in
-  
-  let makefile_path = (Filename.dirname c_filename) ^ "/Makefile" in
-  write_file makefile_path makefile_content
-
-(** Compile KernelScript to eBPF C *)
-let compile_kernelscript opts =
-  vprintf opts "KernelScript Compiler v0.1.0\n";
-  vprintf opts "===============================\n\n";
-  
-  (* Step 1: Read input file *)
-  vprintf opts "Reading input file: %s\n" opts.input_file;
-  let content = match read_file opts.input_file with
-    | Ok content -> content
-    | Error msg -> 
-        printf "Error: %s\n" msg;
-        exit 1
-  in
-  
-  (* Step 2: Parsing *)
-  vprintf opts "Parsing AST...\n";
-  let ast = try
-    Parse.parse_string ~filename:opts.input_file content
+.PHONY: all clean run
+|} base_name base_name base_name base_name in
+    
+    let makefile_path = output_dir ^ "/Makefile" in
+    let oc = open_out makefile_path in
+    output_string oc makefile_content;
+    close_out oc;
+    
+    Printf.printf "📄 Generated Makefile: %s/Makefile\n" output_dir;
+    Printf.printf "🔨 To compile: cd %s && make\n" output_dir;
+    
   with
-  | Parse.Parse_error (msg, pos) ->
-    printf "Parse error at %s: %s\n" (Ast.string_of_position pos) msg;
-    exit 1
-  | e ->
-    printf "Parser error: %s\n" (Printexc.to_string e);
-    exit 1
-  in
-  vprintf opts "AST parsing completed\n";
-  
-  (* Step 3: Symbol table analysis *)
-  vprintf opts "Building symbol table...\n";
-  let _symbol_table = try
-    Symbol_table.build_symbol_table ast
-  with
-  | Symbol_table.Symbol_error (msg, pos) ->
-    printf "Symbol error at %s: %s\n" (Ast.string_of_position pos) msg;
-    exit 1
-  | e ->
-    printf "Symbol table error: %s\n" (Printexc.to_string e);
-    exit 1
-  in
-  vprintf opts "Symbol table analysis completed\n";
-  
-  (* Step 4: Multi-program analysis and type checking *)
-  vprintf opts "Type checking with multi-program analysis...\n";
-  let (annotated_ast, _typed_programs) = try
-    Type_checker.type_check_and_annotate_ast ast
-  with
-  | Type_checker.Type_error (msg, pos) ->
-    printf "Type error at %s: %s\n" (Ast.string_of_position pos) msg;
-    exit 1
-  | e ->
-    printf "Type checking error: %s\n" (Printexc.to_string e);
-    exit 1
-  in
-  vprintf opts "Type checking completed\n";
-  
-  (* Step 5: IR Generation *)
-  vprintf opts "Generating intermediate representation...\n";
-  let ir_multi_program = try
-    match annotated_ast with
-    | [] -> 
-      printf "Error: No program found in input file\n";
+  | Parsing.Parse_error ->
+      Printf.eprintf "❌ Parse error in phase: %s\n" (string_of_phase !current_phase);
       exit 1
-    | _ -> 
-      (* Use proper AST-to-IR conversion *)
-      let source_name = Filename.remove_extension (Filename.basename opts.input_file) in
-      Ir_generator.generate_ir annotated_ast _symbol_table source_name
-  with
-  | e ->
-    printf "IR generation error: %s\n" (Printexc.to_string e);
-    exit 1
-  in
-  vprintf opts "IR generation completed\n";
-  
-  (* Step 6: C Code Generation *)
-  vprintf opts "Generating eBPF C code...\n";
-  let c_code = try
-    Ebpf_c_codegen.compile_multi_to_c ir_multi_program
-  with
-  | e ->
-    printf "C code generation error: %s\n" (Printexc.to_string e);
-    exit 1
-  in
-  vprintf opts "C code generation completed\n";
-  
-  (* Determine output directory and filenames based on input file name *)
-  let base_name = Filename.remove_extension (Filename.basename opts.input_file) in
-  let output_dir = base_name in
-  
-  (* Create the output directory if it doesn't exist *)
-  (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
-  
-  (* Step 6.5: Generate userspace coordinator program *)
-  vprintf opts "Generating userspace coordinator program...\n";
-  (try
-    Userspace_codegen.generate_userspace_code_from_ast annotated_ast ~output_dir opts.input_file;
-    vprintf opts "Userspace coordinator program generation completed\n"
-  with
-  | e ->
-    printf "Warning: Userspace coordinator program generation failed: %s\n" (Printexc.to_string e));
-  
-  (* Step 7: Write output file *)
-  let output_filename = match opts.output_file with
-    | Some f -> f
-    | None -> output_dir ^ "/" ^ base_name ^ ".ebpf.c"
-  in
-  
-  vprintf opts "Writing output file: %s\n" output_filename;
-  (match write_file output_filename c_code with
-  | Ok () -> ()
-  | Error msg ->
-    printf "Error writing output: %s\n" msg;
-    exit 1);
-  
-  (* Step 8: Generate Makefile *)
-  if opts.generate_makefile then (
-    vprintf opts "Generating Makefile...\n";
-    match generate_makefile opts output_filename base_name with
-    | Ok () -> vprintf opts "Makefile generated successfully\n"
-    | Error msg ->
-      printf "Warning: Failed to generate Makefile: %s\n" msg
-  );
-  
-  (* Step 9: Success message *)
-  let output_dir = Filename.dirname output_filename in
-  let source_base_name = Filename.remove_extension (Filename.basename opts.input_file) in
-  let program_names = List.map (fun (p : Ir.ir_program) -> p.name) ir_multi_program.programs in
-  printf "✅ Compilation successful!\n";
-  printf "Generated directory: %s/\n" output_dir;
-  printf "  ├── %s.ebpf.c (eBPF kernel programs: %s)\n" base_name (String.concat ", " program_names);
-  printf "  ├── %s.c (userspace coordinator)\n" source_base_name;
-  if opts.generate_makefile then
-    printf "  └── Makefile\n";
-  printf "\nTo compile both eBPF and userspace programs:\n";
-  printf "  cd %s && make\n" output_dir;
-  printf "\nGenerated files will be:\n";
-  printf "  - eBPF object: %s/%s.ebpf.o\n" output_dir base_name;
-  printf "  - Userspace binary: %s/%s\n" output_dir source_base_name
-
-(** Error handler *)
-let handle_error e =
-  printf "Fatal error: %s\n" (Printexc.to_string e);
-  if Printexc.backtrace_status () then
-    Printexc.print_backtrace stdout;
-  exit 2
+  | Type_checker.Type_error (msg, pos) ->
+      Printf.eprintf "❌ Type error in phase %s at %s: %s\n" 
+        (string_of_phase !current_phase) (Ast.string_of_position pos) msg;
+      exit 1
+  | exn ->
+      Printf.eprintf "❌ Compilation failed in phase %s: %s\n" 
+        (string_of_phase !current_phase) (Printexc.to_string exn);
+      exit 1
 
 (** Main entry point *)
 let () =
-  try
-    Printexc.record_backtrace true;
-    let opts = parse_args () in
-    compile_kernelscript opts
-  with
-  | Sys.Break -> 
-    printf "\nCompilation interrupted\n";
-    exit 130
-  | e -> handle_error e 
+  if Array.length Sys.argv < 2 then (
+    Printf.printf "Usage: %s <source_file>\n" Sys.argv.(0);
+    exit 1
+  );
+  
+  let opts = parse_args () in
+  
+  compile opts opts.input_file 

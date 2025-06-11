@@ -606,7 +606,7 @@ let generate_c_multi_program ir_multi_prog =
     emit_blank_line ctx;
   );
   
-  (* Second pass: generate actual functions (callbacks will be empty this time) *)
+  (* Second pass: generate actual functions *)
   List.iter (fun ir_prog ->
     (* Generate main function *)
     generate_c_function ctx ir_prog.main_function;
@@ -615,6 +615,90 @@ let generate_c_multi_program ir_multi_prog =
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
     List.iter (generate_c_function ctx) other_functions
   ) ir_multi_prog.programs;
+  
+  (* Add license (required for eBPF) *)
+  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
+  
+  (* Return generated code *)
+  String.concat "\n" (List.rev ctx.output_lines)
+
+(** Enhanced multi-program compilation entry point with analysis *)
+
+let compile_multi_to_c_with_analysis ir_multi_program 
+                                   (multi_prog_analysis: Multi_program_analyzer.multi_program_analysis) 
+                                   (resource_plan: Multi_program_ir_optimizer.resource_plan)
+                                   (_optimization_results: Multi_program_ir_optimizer.optimization_strategy list) =
+  let ctx = create_c_context () in
+  
+  (* Add enhanced includes for multi-program systems *)
+  generate_includes ctx;
+  emit_line ctx "/* Enhanced Multi-Program eBPF System */";
+  emit_line ctx (sprintf "/* Programs: %d, Global Maps: %d */" 
+    (List.length ir_multi_program.programs) 
+    (List.length ir_multi_program.global_maps));
+  
+  (* Add multi-program analysis comments *)
+  if List.length multi_prog_analysis.potential_conflicts > 0 then (
+    emit_line ctx "/* ⚠️  Multi-Program Conflicts Detected: */";
+    List.iter (fun conflict ->
+      emit_line ctx (sprintf "/*   - %s */" conflict)
+    ) multi_prog_analysis.potential_conflicts;
+  );
+  
+  if List.length multi_prog_analysis.optimization_opportunities > 0 then (
+    emit_line ctx "/* 💡 Multi-Program Optimizations Applied: */";
+    List.iter (fun opt ->
+      emit_line ctx (sprintf "/*   - %s */" opt)
+    ) multi_prog_analysis.optimization_opportunities;
+  );
+  
+  emit_line ctx (sprintf "/* Resource Plan: %d instructions, %d bytes stack */"
+    resource_plan.estimated_instructions resource_plan.estimated_stack);
+  emit_blank_line ctx;
+  
+  (* Generate global map definitions with analysis info *)
+  List.iter (fun map_def ->
+    (* Add analysis comments for maps *)
+    let accessing_programs = 
+      List.fold_left (fun acc (map_name, programs) ->
+        if map_name = map_def.map_name then
+          programs @ acc
+        else acc
+      ) [] multi_prog_analysis.map_usage_patterns
+    in
+    if List.length accessing_programs > 1 then (
+      emit_line ctx (sprintf "/* Map '%s' shared by programs: %s */" 
+        map_def.map_name 
+        (String.concat ", " accessing_programs));
+    );
+    generate_map_definition ctx map_def
+  ) ir_multi_program.global_maps;
+  
+  (* Generate all local map definitions from all programs *)
+  List.iter (fun ir_prog ->
+    List.iter (generate_map_definition ctx) ir_prog.local_maps
+  ) ir_multi_program.programs;
+  
+  (* First pass: collect all callbacks *)
+  let temp_ctx = create_c_context () in
+  List.iter (fun ir_prog ->
+    generate_c_function temp_ctx ir_prog.main_function;
+    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
+    List.iter (generate_c_function temp_ctx) other_functions
+  ) ir_multi_program.programs;
+  
+  (* Emit collected callbacks *)
+  if temp_ctx.pending_callbacks <> [] then (
+    List.iter (emit_line ctx) temp_ctx.pending_callbacks;
+    emit_blank_line ctx;
+  );
+  
+  (* Second pass: generate actual functions *)
+  List.iter (fun ir_prog ->
+    generate_c_function ctx ir_prog.main_function;
+    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
+    List.iter (generate_c_function ctx) other_functions
+  ) ir_multi_program.programs;
   
   (* Add license (required for eBPF) *)
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
@@ -651,4 +735,5 @@ let compile_c_to_ebpf c_filename obj_filename =
   if exit_code = 0 then
     Ok obj_filename
   else
-    Error (sprintf "Compilation failed with exit code %d" exit_code) 
+    Error (sprintf "Compilation failed with exit code %d" exit_code)
+
