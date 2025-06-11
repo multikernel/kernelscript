@@ -10,28 +10,40 @@ let dummy_loc = {
   filename = "test";
 }
 
-let make_int_lit value = {
+let make_int_lit value =   {
   expr_desc = Literal (IntLit value);
   expr_type = Some U32;
   expr_pos = dummy_loc;
+  type_checked = false;
+  program_context = None;
+  map_scope = None;
 }
 
 let make_id name = {
   expr_desc = Identifier name;
   expr_type = None;
   expr_pos = dummy_loc;
+  type_checked = false;
+  program_context = None;
+  map_scope = None;
 }
 
 let make_binop left op right = {
   expr_desc = BinaryOp (left, op, right);
   expr_type = None;
   expr_pos = dummy_loc;
+  type_checked = false;
+  program_context = None;
+  map_scope = None;
 }
 
 let make_call name args = {
   expr_desc = FunctionCall (name, args);
   expr_type = None;
   expr_pos = dummy_loc;
+  type_checked = false;
+  program_context = None;
+  map_scope = None;
 }
 
 let make_decl name expr = {

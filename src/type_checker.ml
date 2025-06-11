@@ -14,6 +14,8 @@ type type_context = {
   maps: (string, map_declaration) Hashtbl.t;
   mutable current_function: string option;
   mutable current_program: string option;
+  mutable current_program_type: program_type option;
+  mutable multi_program_analysis: Multi_program_analyzer.multi_program_analysis option;
 }
 
 (** Typed AST nodes *)
@@ -73,6 +75,8 @@ let create_context () = {
   maps = Hashtbl.create 16;
   current_function = None;
   current_program = None;
+  current_program_type = None;
+  multi_program_analysis = None;
 }
 
 (** Track loop nesting depth to prevent nested loops *)
@@ -190,7 +194,30 @@ let type_check_literal lit pos =
   in
   { texpr_desc = TLiteral lit; texpr_type = typ; texpr_pos = pos }
 
-(** Type check identifier *)
+(** Set multi-program context for an expression *)
+let set_multi_program_context ctx expr =
+  (* Set program context *)
+  (match ctx.current_program_type with
+   | Some prog_type ->
+       expr.program_context <- Some {
+         current_program = Some prog_type;
+         accessing_programs = [prog_type];
+         data_flow_direction = Some Read; (* Default to read, will be updated for writes *)
+       }
+   | None -> ());
+  
+  (* Set map scope if this is a map access *)
+  (match expr.expr_desc with
+   | Identifier name | ArrayAccess ({expr_desc = Identifier name; _}, _) ->
+       if Hashtbl.mem ctx.maps name then (
+         let map_decl = Hashtbl.find ctx.maps name in
+         expr.map_scope <- Some (if map_decl.is_global then Global else Local)
+       )
+   | _ -> ());
+  
+  (* Mark as type checked *)
+  expr.type_checked <- true
+
 let type_check_identifier ctx name pos =
   (* Check for special constants first *)
   if String.contains name ':' then
@@ -724,7 +751,9 @@ let rec typed_expr_to_expr texpr =
     | _, other_type -> 
         Some other_type
   in
-  { expr_desc; expr_pos = texpr.texpr_pos; expr_type = safe_expr_type }
+  let enhanced_expr = { expr_desc; expr_pos = texpr.texpr_pos; expr_type = safe_expr_type; 
+    type_checked = true; program_context = None; map_scope = None } in
+  enhanced_expr
 
 let rec typed_stmt_to_stmt tstmt =
   let stmt_desc = match tstmt.tstmt_desc with
@@ -800,13 +829,148 @@ let typed_ast_to_annotated_ast typed_ast original_ast =
     | other_decl -> other_decl  (* Keep maps, types, etc. unchanged *)
   ) original_ast 
 
-(** PHASE 1: Type check and annotate AST - main entry point for IR generator *)
-let type_check_and_annotate_ast ast =
-  (* Perform type checking to get typed AST *)
-  let typed_programs = type_check_ast ast in
+(** PHASE 2: Type check and annotate AST with multi-program analysis *)
+let rec type_check_and_annotate_ast ast =
+  (* STEP 1: Multi-program analysis *)
+  let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system ast in
   
-  (* Convert back to annotated AST (original AST with expr_type fields populated) *)
+  (* Print analysis results for debugging *)
+  if true then (* TODO: make this configurable *)
+    Multi_program_analyzer.print_analysis_results multi_prog_analysis;
+  
+  (* STEP 2: Type checking with multi-program context *)
+  let ctx = create_context () in
+  ctx.multi_program_analysis <- Some multi_prog_analysis;
+  
+  (* First pass: collect type definitions and map declarations *)
+  List.iter (function
+    | TypeDef type_def ->
+        (match type_def with
+         | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+             Hashtbl.replace ctx.types name type_def)
+    | MapDecl map_decl ->
+        Hashtbl.replace ctx.maps map_decl.name map_decl
+    | _ -> ()
+  ) ast;
+  
+  (* Second pass: type check programs with multi-program awareness *)
+  let typed_programs = List.fold_left (fun acc decl ->
+    match decl with
+    | Program prog ->
+        (* Set current program type for multi-program context *)
+        ctx.current_program_type <- Some prog.prog_type;
+        let typed_prog = type_check_program ctx prog in
+        ctx.current_program_type <- None;
+        typed_prog :: acc
+    | GlobalFunction func ->
+        let _ = type_check_function ctx func in
+        acc
+    | Userspace userspace_block ->
+        let _ = type_check_userspace ctx userspace_block in
+        acc
+    | _ -> acc
+  ) [] ast |> List.rev in
+  
+  (* STEP 3: Convert back to annotated AST with multi-program context *)
   let annotated_ast = typed_ast_to_annotated_ast typed_programs ast in
   
-  (* Return both the annotated AST (for IR generator) and typed programs (for other uses) *)
-  (annotated_ast, typed_programs) 
+  (* STEP 4: Post-process to populate multi-program fields *)
+  let enhanced_ast = populate_multi_program_context annotated_ast multi_prog_analysis in
+  
+  (* Return enhanced AST and typed programs *)
+  (enhanced_ast, typed_programs)
+
+(** Populate multi-program context in annotated AST *)
+and populate_multi_program_context ast multi_prog_analysis =
+  let rec enhance_expr prog_type expr =
+    (* Set program context *)
+    expr.program_context <- Some {
+      current_program = Some prog_type;
+      accessing_programs = [prog_type];
+      data_flow_direction = Some Read;
+    };
+    
+    (* Set map scope if this expression accesses a map *)
+    (match expr.expr_desc with
+     | Identifier name ->
+         if List.exists (fun (map_name, _) -> map_name = name) multi_prog_analysis.map_usage_patterns then
+           expr.map_scope <- Some Global
+     | ArrayAccess ({expr_desc = Identifier map_name; _}, _) ->
+         if List.exists (fun (name, _) -> name = map_name) multi_prog_analysis.map_usage_patterns then
+           expr.map_scope <- Some Global
+     | _ -> ());
+    
+    (* Mark as type checked *)
+    expr.type_checked <- true;
+    
+    (* Recursively enhance sub-expressions *)
+    (match expr.expr_desc with
+     | FunctionCall (_, args) ->
+         List.iter (enhance_expr prog_type) args
+     | ArrayAccess (arr_expr, idx_expr) ->
+         enhance_expr prog_type arr_expr;
+         enhance_expr prog_type idx_expr
+     | BinaryOp (left, _, right) ->
+         enhance_expr prog_type left;
+         enhance_expr prog_type right
+     | UnaryOp (_, sub_expr) ->
+         enhance_expr prog_type sub_expr
+     | FieldAccess (obj_expr, _) ->
+         enhance_expr prog_type obj_expr
+     | _ -> ())
+  in
+  
+  let rec enhance_stmt prog_type stmt =
+    match stmt.stmt_desc with
+    | ExprStmt expr ->
+        enhance_expr prog_type expr
+    | Assignment (_, expr) ->
+        enhance_expr prog_type expr
+    | IndexAssignment (map_expr, key_expr, value_expr) ->
+        (* This is a write operation *)
+        enhance_expr prog_type map_expr;
+        enhance_expr prog_type key_expr;
+        enhance_expr prog_type value_expr;
+        (* Update the map expression to indicate write access *)
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
+    | Declaration (_, _, expr) ->
+        enhance_expr prog_type expr
+    | Return (Some expr) ->
+        enhance_expr prog_type expr
+    | If (cond_expr, then_stmts, else_stmts_opt) ->
+        enhance_expr prog_type cond_expr;
+        List.iter (enhance_stmt prog_type) then_stmts;
+        (match else_stmts_opt with
+         | Some else_stmts -> List.iter (enhance_stmt prog_type) else_stmts
+         | None -> ())
+    | For (_, start_expr, end_expr, body_stmts) ->
+        enhance_expr prog_type start_expr;
+        enhance_expr prog_type end_expr;
+        List.iter (enhance_stmt prog_type) body_stmts
+    | ForIter (_, _, iter_expr, body_stmts) ->
+        enhance_expr prog_type iter_expr;
+        List.iter (enhance_stmt prog_type) body_stmts
+    | While (cond_expr, body_stmts) ->
+        enhance_expr prog_type cond_expr;
+        List.iter (enhance_stmt prog_type) body_stmts
+    | Delete (map_expr, key_expr) ->
+        enhance_expr prog_type map_expr;
+        enhance_expr prog_type key_expr;
+        (* Delete is a write operation *)
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
+    | Return None -> ()
+  in
+  
+  (* Enhance each program in the AST *)
+  List.map (function
+    | Program prog ->
+        List.iter (fun func ->
+          List.iter (enhance_stmt prog.prog_type) func.func_body
+        ) prog.prog_functions;
+        Program prog
+    | other_decl -> other_decl
+  ) ast 

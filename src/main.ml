@@ -261,10 +261,10 @@ let compile_kernelscript opts =
   in
   vprintf opts "Symbol table analysis completed\n";
   
-  (* Step 4: Type checking *)
-  vprintf opts "Type checking...\n";
-  let typed_ast = try
-    Type_checker.type_check_ast ast
+  (* Step 4: Multi-program analysis and type checking *)
+  vprintf opts "Type checking with multi-program analysis...\n";
+  let (annotated_ast, _typed_programs) = try
+    Type_checker.type_check_and_annotate_ast ast
   with
   | Type_checker.Type_error (msg, pos) ->
     printf "Type error at %s: %s\n" (Ast.string_of_position pos) msg;
@@ -274,15 +274,6 @@ let compile_kernelscript opts =
     exit 1
   in
   vprintf opts "Type checking completed\n";
-  
-  (* Convert typed AST back to annotated AST *)
-  let annotated_ast = try
-    Type_checker.typed_ast_to_annotated_ast typed_ast ast
-  with
-  | e ->
-    printf "AST annotation error: %s\n" (Printexc.to_string e);
-    exit 1
-  in
   
   (* Step 5: IR Generation *)
   vprintf opts "Generating intermediate representation...\n";

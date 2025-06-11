@@ -92,11 +92,30 @@ type binary_op =
 type unary_op =
   | Not | Neg
 
-(** Expressions with position tracking *)
+(** Map scope for multi-program analysis *)
+type map_scope =
+  | Global          (* Globally accessible across all programs *)
+  | Local           (* Local to current program only *)
+  | CrossProgram    (* Shared between specific programs *)
+
+(** Multi-program analysis context *)
+type program_context = {
+  current_program: program_type option;
+  accessing_programs: program_type list;  (* Programs that access this expression *)
+  data_flow_direction: data_flow_direction option;
+}
+
+and data_flow_direction =
+  | Read | Write | ReadWrite
+
+(** Enhanced expressions with multi-program analysis *)
 type expr = {
   expr_desc: expr_desc;
   expr_pos: position;
-  expr_type: bpf_type option; (* filled by type checker *)
+  mutable expr_type: bpf_type option;       (* filled by type checker *)
+  mutable type_checked: bool;               (* whether type checking completed *)
+  mutable program_context: program_context option;  (* multi-program context *)
+  mutable map_scope: map_scope option;      (* map access scope *)
 }
 
 and expr_desc =
@@ -181,7 +200,14 @@ type ast = declaration list
 
 let make_position line col filename = { line; column = col; filename }
 
-let make_expr desc pos = { expr_desc = desc; expr_pos = pos; expr_type = None }
+let make_expr desc pos = { 
+  expr_desc = desc; 
+  expr_pos = pos; 
+  expr_type = None;
+  type_checked = false;
+  program_context = None;
+  map_scope = None;
+}
 
 let make_stmt desc pos = { stmt_desc = desc; stmt_pos = pos }
 

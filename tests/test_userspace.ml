@@ -444,10 +444,12 @@ userspace {
 let make_test_pos () = { line = 1; column = 1; filename = "test.ks" }
 
 let make_int_literal i = 
-  { expr_desc = Literal (IntLit i); expr_pos = make_test_pos (); expr_type = Some U32 }
+  { expr_desc = Literal (IntLit i); expr_pos = make_test_pos (); expr_type = Some U32;
+    type_checked = false; program_context = None; map_scope = None }
 
 let make_identifier name = 
-  { expr_desc = Identifier name; expr_pos = make_test_pos (); expr_type = Some U32 }
+  { expr_desc = Identifier name; expr_pos = make_test_pos (); expr_type = Some U32;
+    type_checked = false; program_context = None; map_scope = None }
 
 let make_index_assignment map_name key_val value_val =
   let map_expr = make_identifier map_name in
@@ -455,7 +457,8 @@ let make_index_assignment map_name key_val value_val =
 
 let make_array_access map_name key_val =
   let map_expr = make_identifier map_name in
-  { expr_desc = ArrayAccess (map_expr, key_val); expr_pos = make_test_pos (); expr_type = Some U32 }
+  { expr_desc = ArrayAccess (map_expr, key_val); expr_pos = make_test_pos (); expr_type = Some U32;
+    type_checked = false; program_context = None; map_scope = None }
 
 let contains_substr str substr =
   let len = String.length substr in
