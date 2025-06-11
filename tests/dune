@@ -107,6 +107,11 @@
  (modules test_for_statements)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_config)
+ (modules test_config)
+ (libraries kernelscript alcotest str))
+
 
 
 ; Test aliases for organized execution
@@ -143,7 +148,8 @@
   test_type_checker.exe
   test_symbol_table.exe
   test_comment_positions.exe
-  test_for_statements.exe)
+  test_for_statements.exe
+  test_config.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -152,7 +158,8 @@
    (run ./test_type_checker.exe)
    (run ./test_symbol_table.exe)
    (run ./test_comment_positions.exe)
-   (run ./test_for_statements.exe))))
+   (run ./test_for_statements.exe)
+   (run ./test_config.exe))))
 
 (rule
  (alias ir-tests)
