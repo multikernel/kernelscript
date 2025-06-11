@@ -234,7 +234,7 @@ let test_global_local_scoping () =
       
       fn main(ctx: XdpContext) -> XdpAction {
         global_counter[0] = 1;
-        local_map.insert(1, LocalData::new());
+        local_map[1] = LocalData::new();
         return XdpAction::Pass;
       }
     }

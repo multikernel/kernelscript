@@ -50,30 +50,27 @@ program packet_analyzer : xdp {
     cpu_counters[cpu_id] = cpu_counters[cpu_id] + 1;
     
     // Update IP statistics
-    let stats = ip_stats.lookup(src_ip);
-    match stats {
-      some existing -> {
-        existing.count = existing.count + 1;
-        existing.total_bytes = existing.total_bytes + packet_len;
-        existing.last_seen = get_timestamp();
-        ip_stats.update(src_ip, existing);
-      },
-      none -> {
-        let new_stats = PacketStats {
-          count: 1,
-          total_bytes: packet_len,
-          last_seen: get_timestamp()
-        };
-        ip_stats.insert(src_ip, new_stats);
+    let stats = ip_stats[src_ip];
+    if stats != null {
+      stats.count = stats.count + 1;
+      stats.total_bytes = stats.total_bytes + packet_len;
+      stats.last_seen = get_timestamp();
+      ip_stats[src_ip] = stats;
+    } else {
+      let new_stats = PacketStats {
+        count: 1,
+        total_bytes: packet_len,
+        last_seen: get_timestamp()
       };
-    };
+      ip_stats[src_ip] = new_stats;
+    }
     
     // Check recent connections
-    let recent = recent_connections.lookup(src_ip);
-    if recent.is_some() {
+    let recent = recent_connections[src_ip];
+    if recent != null {
       // Log repeated connection
-      event_log.insert(0, 1);
-    };
+      event_log[0] = 1;
+    }
     
     // Update local state
     local_state[0] = local_state[0] + 1;

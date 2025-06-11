@@ -39,6 +39,7 @@ for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
 as          is          try         catch       throw       defer       go
+delete
 ```
 
 ### 2.2 Identifiers
@@ -183,9 +184,9 @@ userspace {
     fn get_combined_stats() -> PacketStats {
         // Aggregate statistics from all programs
         return PacketStats {
-            packets: packet_stats_map.get(0),
-            bytes: packet_stats_map.get(1),
-            drops: packet_stats_map.get(2),
+            packets: packet_stats_map[0],
+            bytes: packet_stats_map[1],
+            drops: packet_stats_map[2],
         };
     }
 }
@@ -299,9 +300,11 @@ program ingress_monitor : xdp {
         let flow_key = extract_flow_key(ctx)?;
         
         // Access global map directly
-        let stats = global_flows.get_or_create(flow_key, FlowStats::new());
-        stats.ingress_packets += 1;
-        stats.ingress_bytes += ctx.packet_size();
+        if global_flows[flow_key] == null {
+            global_flows[flow_key] = FlowStats::new();
+        }
+        global_flows[flow_key].ingress_packets += 1;
+        global_flows[flow_key].ingress_bytes += ctx.packet_size();
         
         // Update interface stats
         interface_stats[ctx.ingress_ifindex()].packets += 1;
@@ -325,8 +328,11 @@ program egress_monitor : tc {
         }
         
         // Check global configuration
-        let enable_filtering = global_config.get(ConfigKey::EnableFiltering)
-            .unwrap_or(ConfigValue::Bool(false));
+        let enable_filtering = if global_config[ConfigKey::EnableFiltering] != null {
+            global_config[ConfigKey::EnableFiltering]
+        } else {
+            ConfigValue::Bool(false)
+        };
         
         if enable_filtering.as_bool() && should_drop(flow_key) {
             // Log to global security events
@@ -348,7 +354,8 @@ program security_analyzer : lsm("socket_connect") {
         let flow_key = extract_flow_key_from_socket(ctx)?;
         
         // Check global flow statistics
-        if let Some(flow_stats) = global_flows.get(flow_key) {
+        if global_flows[flow_key] != null {
+            let flow_stats = global_flows[flow_key];
             if flow_stats.is_suspicious() {
                 security_events.submit(SecurityEvent {
                     event_type: EventType::SuspiciousConnection,
@@ -379,10 +386,10 @@ program producer : kprobe("sys_read") {
         let pid = bpf_get_current_pid_tgid() as u32;
         
         // Update local state
-        producer_state.increment(pid, 1);
+        producer_state[pid] += 1;
         
         // Update global counter (accessible by other programs)
-        global_counters.increment(pid % 256, 1);
+        global_counters[pid % 256] += 1;
         
         // Send event to global stream
         let event = Event {
@@ -412,14 +419,14 @@ program consumer : kprobe("sys_write") {
         let pid = bpf_get_current_pid_tgid() as u32;
         
         // Access global counter (same map as producer program)
-        let read_count = global_counters.get(pid % 256);
+        let read_count = global_counters[pid % 256];
         
         // Update local state
         let local_state = LocalState {
             write_count: 1,
             corresponding_reads: read_count,
         };
-        consumer_state.insert(pid, local_state);
+        consumer_state[pid] = local_state;
         
         return 0;
     }
@@ -458,9 +465,8 @@ program network_monitor : xdp {
         let flow_key = extract_flow_key(ctx);
         
         // Access namespaced global maps
-        network::flows.increment(flow_key);
-        network::interfaces[ctx.ingress_ifindex()].packets = 
-            network::interfaces[ctx.ingress_ifindex()].packets + 1;
+        network::flows[flow_key] += 1;
+        network::interfaces[ctx.ingress_ifindex()].packets += 1;
         
         return XdpAction::Pass;
     }
@@ -479,12 +485,12 @@ program security_monitor : lsm("socket_connect") {
         let flow_key = extract_flow_key_from_socket(ctx);
         
         // Check both network and security namespaces
-        let flow_stats = network::flows.get(flow_key);
+        let flow_stats = network::flows[flow_key];
         if flow_stats != null {
             let threat_score = calculate_threat_score(flow_stats);
-            security::threat_scores.insert(flow_key.src_ip, threat_score);
+            security::threat_scores[flow_key.src_ip] = threat_score;
             
-            let threshold = security::policy.get(ConfigKey::ThreatThreshold);
+            let threshold = security::policy[ConfigKey::ThreatThreshold];
             if threat_score > threshold {
                 let alert = SecurityEvent::HighThreatDetected {
                     flow_key: flow_key,
@@ -537,11 +543,11 @@ program simple_monitor : xdp {
     
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
-        packet_stats.increment(ctx.packet_type(), 1);
-        counters.increment(0, 1);
+        packet_stats[ctx.packet_type()] += 1;
+        counters[0] += 1;
         
         // Access local map
-        cache.insert(ctx.hash(), LocalCache::new());
+        cache[ctx.hash()] = LocalCache::new();
         
         return XdpAction::Pass;
     }
@@ -756,7 +762,7 @@ program network_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
         let flow_key = extract_flow_key(ctx)?;
-        global_flows.increment(flow_key);
+        global_flows[flow_key] += 1;
         
         // Send event to global stream
         global_events.submit(Event::PacketProcessed { flow_key });
@@ -770,7 +776,8 @@ program security_filter : lsm("socket_connect") {
         let flow_key = extract_flow_key_from_socket(ctx)?;
         
         // Check global flow statistics for threat detection
-        if let Some(flow_stats) = global_flows.get(flow_key) {
+        if global_flows[flow_key] != null {
+            let flow_stats = global_flows[flow_key];
             if flow_stats.is_suspicious() {
                 global_events.submit(Event::ThreatDetected { flow_key });
                 return -EPERM;  // Block connection
@@ -833,7 +840,7 @@ userspace {
         
         fn handle_threat(&self, flow_key: FlowKey) {
             // Coordinated response across all programs
-            self.global_config.update(ConfigKey::ThreatLevel, ConfigValue::High);
+            self.global_config[ConfigKey::ThreatLevel] = ConfigValue::High;
         }
     }
     
@@ -1153,18 +1160,18 @@ program perf_monitor : kprobe("sys_read") {
             bytes_requested: ctx.arg_u32(2),
         };
         
-        active_calls.insert(pid, call_info);
+        active_calls[pid] = call_info;
         return 0;
     }
     
     fn on_return(ctx: KretprobeContext) -> i32 {
         let pid = bpf_get_current_pid_tgid() as u32;
         
-        let call_info = active_calls.get(pid);
+        let call_info = active_calls[pid];
         if call_info != null {
             let duration = bpf_ktime_get_ns() - call_info.start_time;
-            read_stats.add(pid % 1024, duration);
-            active_calls.remove(pid);
+            read_stats[pid % 1024] += duration;
+            delete active_calls[pid];
         }
         
         return 0;
@@ -1175,7 +1182,7 @@ program write_monitor : kprobe("sys_write") {
     fn main(ctx: KprobeContext) -> i32 {
         let pid = bpf_get_current_pid_tgid() as u32;
         let duration = measure_write_time(ctx);
-        write_stats.add(pid % 1024, duration);
+        write_stats[pid % 1024] += duration;
         return 0;
     }
 }
@@ -1328,7 +1335,7 @@ parameter = identifier ":" type_annotation ;
 statement_list = { statement } ;
 statement = expression_statement | assignment_statement | declaration_statement |
             if_statement | for_statement | while_statement | return_statement |
-            break_statement | continue_statement | block_statement ;
+            break_statement | continue_statement | block_statement | delete_statement ;
 
 expression_statement = expression ";" ;
 assignment_statement = identifier assignment_operator expression ";" ;
@@ -1348,6 +1355,7 @@ while_statement = "while" expression "{" statement_list "}" ;
 return_statement = "return" [ expression ] ";" ;
 break_statement = "break" ";" ;
 continue_statement = "continue" ";" ;
+delete_statement = "delete" primary_expression "[" expression "]" ";" ;
 block_statement = "{" statement_list "}" ;
 
 (* Expressions *)

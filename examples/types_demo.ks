@@ -68,32 +68,32 @@ program packet_inspector : xdp {
   
   fn get_filter_action(info: PacketInfo) -> FilterAction {
     // Look up in the filter map
-    let action = packet_filter.lookup(info);
-    match action {
-      some act -> return act,
-      none -> return FilterAction::Allow
+    let action = packet_filter[info];
+    if action != null {
+      return action;
+    } else {
+      return FilterAction::Allow;
     }
   }
   
   fn update_stats(info: PacketInfo) {
     // Update connection count
-    let current_count = connection_count.lookup(info.src_ip);
-    match current_count {
-      some count -> connection_count.update(info.src_ip, count + 1),
-      none -> connection_count.insert(info.src_ip, 1)
+    let current_count = connection_count[info.src_ip];
+    if current_count != null {
+      connection_count[info.src_ip] = current_count + 1;
+    } else {
+      connection_count[info.src_ip] = 1;
     }
     
     // Update protocol stats
     let proto = Protocol::from_u8(info.protocol);
-    match proto {
-      some p -> {
-        let stats = protocol_stats.lookup(p);
-        match stats {
-          some count -> protocol_stats.update(p, count + 1),
-          none -> protocol_stats.insert(p, 1)
-        }
-      },
-      none -> {} // Unknown protocol, ignore
+    if proto != null {
+      let stats = protocol_stats[proto];
+      if stats != null {
+        protocol_stats[proto] = stats + 1;
+      } else {
+        protocol_stats[proto] = 1;
+      }
     }
   }
   
@@ -111,7 +111,7 @@ program packet_inspector : xdp {
         
         // Store in recent packets for userspace inspection
         let packet_id = ctx.get_packet_id();
-        recent_packets.update(packet_id, some info);
+        recent_packets[packet_id] = info;
         
         // Apply filtering action
         match action {

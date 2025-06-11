@@ -32,7 +32,7 @@ program safety_demo : xdp {
     small_buffer[10] = protocol; // Safe: index 10 < 64
     
     // Safe map operations
-    packet_stats.update(1, counter);
+    packet_stats[1] = counter;
     
     return XdpAction::Pass;
   }
@@ -112,13 +112,11 @@ program safety_demo : xdp {
     
     // Safe map access
     let key: u32 = 1;
-    match packet_stats.lookup(key) {
-      some count -> {
-        packet_stats.update(key, count + 1);
-      },
-      none -> {
-        packet_stats.insert(key, 1);
-      }
+    let count = packet_stats[key];
+    if count != null {
+      packet_stats[key] = count + 1;
+    } else {
+      packet_stats[key] = 1;
     }
     
     return result;

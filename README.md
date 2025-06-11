@@ -327,12 +327,11 @@ map<IpAddress, Counter> connection_count : hash_map(1024) {
 program packet_filter : xdp {
   fn main(ctx: xdp_context) -> xdp_action {
     let info = extract_packet_info(ctx);
-    match info {
-      some packet -> {
-        connection_count.update(packet.src_ip, 1);
-        return xdp_action::Pass;
-      },
-      none -> return xdp_action::Drop
+    if info != null {
+      connection_count[info.src_ip] = 1;
+      return xdp_action::Pass;
+    } else {
+      return xdp_action::Drop;
     }
   }
 }

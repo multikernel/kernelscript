@@ -68,17 +68,14 @@ program packet_analyzer : xdp {
   
   fn update_statistics(header: PacketHeader) {
     // Type checker validates map operations and key/value types
-    let current_count = connection_stats.lookup(header.src_ip);
+    let current_count = connection_stats[header.src_ip];
     
-    match current_count {
-      some count -> {
-        // Type checker ensures arithmetic on compatible types
-        connection_stats.update(header.src_ip, count + 1);
-      },
-      none -> {
-        // Type checker validates map insert operation
-        connection_stats.insert(header.src_ip, 1);
-      }
+    if current_count != null {
+      // Type checker ensures arithmetic on compatible types
+      connection_stats[header.src_ip] = current_count + 1;
+    } else {
+      // Type checker validates map insert operation
+      connection_stats[header.src_ip] = 1;
     }
   }
   

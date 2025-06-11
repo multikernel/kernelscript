@@ -52,33 +52,29 @@ program traffic_monitor : xdp {
         let key = ctx.ingress_ifindex();
         
         // Safe concurrent read access - multiple programs can read simultaneously
-        match global_counter.lookup(&key) {
-            Some(counter) => {
-                // High-frequency lookup pattern - will generate optimization suggestions
-                for i in 0..100 {
-                    let _ = global_counter.lookup(&(key + i));
-                }
-            },
-            None => {
-                // Initialize counter for new interface
-                global_counter.insert(&key, &1);
+        let counter = global_counter[key];
+        if counter != null {
+            // High-frequency lookup pattern - will generate optimization suggestions
+            for i in 0..100 {
+                let _ = global_counter[key + i];
             }
+        } else {
+            // Initialize counter for new interface
+            global_counter[key] = 1;
         }
         
         // Per-CPU access for maximum performance
         let cpu_id = bpf_get_smp_processor_id();
-        match percpu_data.lookup(&cpu_id) {
-            Some(data) => {
-                data.local_counter += 1;
-                percpu_data.update(&cpu_id, data);
-            },
-            None => {
-                let new_data = PerCpuData {
-                    local_counter: 1,
-                    temp_storage: [0; 64],
-                };
-                percpu_data.insert(&cpu_id, &new_data);
-            }
+        let data = percpu_data[cpu_id];
+        if data != null {
+            data.local_counter += 1;
+            percpu_data[cpu_id] = data;
+        } else {
+            let new_data = PerCpuData {
+                local_counter: 1,
+                temp_storage: [0; 64],
+            };
+            percpu_data[cpu_id] = new_data;
         }
         
         return XdpAction::Pass;
@@ -91,15 +87,15 @@ program stats_updater : tc {
         let ifindex = ctx.ifindex();
         
         // Potential write conflict with other programs
-        let stats = match shared_stats.lookup(&ifindex) {
-            Some(s) => s,
-            None => Statistics {
+        let stats = shared_stats[ifindex];
+        if stats == null {
+            stats = Statistics {
                 packet_count: 0,
                 byte_count: 0,
                 last_seen: 0,
                 error_rate: 0,
-            }
-        };
+            };
+        }
         
         // Update statistics - this creates a write operation
         stats.packet_count += 1;
@@ -111,17 +107,15 @@ program stats_updater : tc {
             stats.error_rate += 1;
         }
         
-        shared_stats.update(&ifindex, &stats);
+        shared_stats[ifindex] = stats;
         
         // Batch operation pattern - will be detected as batch access
         for i in 0..20 {
             let batch_key = ifindex + i;
-            match shared_stats.lookup(&batch_key) {
-                Some(entry) => {
-                    entry.packet_count += 1;
-                    shared_stats.update(&batch_key, entry);
-                },
-                None => {}
+            let entry = shared_stats[batch_key];
+            if entry != null {
+                entry.packet_count += 1;
+                shared_stats[batch_key] = entry;
             }
         }
         
@@ -156,21 +150,19 @@ program data_processor : kprobe {
     fn main(ctx: KprobeContext) -> i32 {
         // Sequential access pattern - will be detected and optimized
         for i in 0..32 {
-            match sequential_data.lookup(&i) {
-                Some(element) => {
-                    if !element.processed {
-                        element.value = element.value * 2;
-                        element.processed = true;
-                        sequential_data.update(&i, element);
-                    }
-                },
-                None => {
-                    let new_element = ArrayElement {
-                        value: i as u64,
-                        processed: false,
-                    };
-                    sequential_data.insert(&i, &new_element);
+            let element = sequential_data[i];
+            if element != null {
+                if !element.processed {
+                    element.value = element.value * 2;
+                    element.processed = true;
+                    sequential_data[i] = element;
                 }
+            } else {
+                let new_element = ArrayElement {
+                    value: i as u64,
+                    processed: false,
+                };
+                sequential_data[i] = new_element;
             }
         }
         
