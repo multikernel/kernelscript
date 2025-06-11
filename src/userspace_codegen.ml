@@ -151,6 +151,22 @@ let rec generate_c_statement_with_context ctx (stmt : Ast.statement) =
         generate_safe_map_args ctx key_expr None in
       let setup = if key_decl = "" then "" else key_decl ^ "\n    " in
       sprintf "%s%s_delete(%s);" setup map_name key_arg
+  | Ast.For (loop_var, start_expr, end_expr, body) ->
+      (* Generate ordinary C for loop - no unrolling, no goto, no bounds checking *)
+      let start_c = generate_c_expression start_expr in
+      let end_c = generate_c_expression end_expr in
+      let body_statements = List.map (generate_c_statement_with_context ctx) body in
+      let body_c = String.concat "\n        " body_statements in
+      sprintf "for (__u32 %s = %s; %s <= %s; %s++) {\n        %s\n    }" 
+        loop_var start_c loop_var end_c loop_var body_c
+  | Ast.ForIter (index_var, value_var, iterable_expr, body) ->
+      (* Generate C-style iteration over collections *)
+      let iterable_c = generate_c_expression iterable_expr in
+      let body_statements = List.map (generate_c_statement_with_context ctx) body in
+      let body_c = String.concat "\n        " body_statements in
+      (* For userspace, we generate a simple indexed loop since we don't have complex iterators *)
+      sprintf "/* ForIter: iterating over %s */\n    for (__u32 %s = 0; %s < sizeof(%s)/sizeof((%s)[0]); %s++) {\n        __u32 %s = (%s)[%s];\n        %s\n    }"
+        iterable_c index_var index_var iterable_c iterable_c index_var value_var iterable_c index_var body_c
   | _ -> "// TODO: Unsupported statement"
 
 (** Generate C code for expressions *)

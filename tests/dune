@@ -113,6 +113,12 @@
  (libraries kernelscript alcotest str))
 
 
+(executable
+ (name test_userspace_for_codegen)
+ (modules test_userspace_for_codegen)
+ (libraries kernelscript alcotest str unix))
+
+
 
 ; Test aliases for organized execution
 (rule
@@ -133,11 +139,13 @@
  (alias userspace-tests)
  (deps
   test_userspace.exe
-  test_userspace_maps.exe)
+  test_userspace_maps.exe
+  test_userspace_for_codegen.exe)
  (action
   (progn
    (run ./test_userspace.exe)
-   (run ./test_userspace_maps.exe))))
+   (run ./test_userspace_maps.exe)
+   (run ./test_userspace_for_codegen.exe))))
 
 (rule
  (alias core-tests)
