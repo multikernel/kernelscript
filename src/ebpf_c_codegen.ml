@@ -519,6 +519,16 @@ let generate_c_instruction ctx ir_instr =
       decrease_indent ctx;
       emit_line ctx "}"
 
+  | IRBreak ->
+      (* In bpf_loop() callbacks, return 1 to break the loop *)
+      (* In regular C loops, emit break statement *)
+      emit_line ctx "break;"
+
+  | IRContinue ->
+      (* In bpf_loop() callbacks, return 0 to continue the loop *)
+      (* In regular C loops, emit continue statement *)
+      emit_line ctx "continue;"
+
 (** Generate C code for basic block *)
 
 let generate_c_basic_block ctx ir_block =
@@ -570,6 +580,8 @@ let collect_registers_in_function ir_func =
     | IRBpfLoop (start_val, end_val, counter_val, ctx_val, _body) ->
         collect_in_value start_val; collect_in_value end_val; 
         collect_in_value counter_val; collect_in_value ctx_val
+    | IRBreak -> ()
+    | IRContinue -> ()
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions

@@ -112,13 +112,15 @@
  (modules test_config)
  (libraries kernelscript alcotest str))
 
+(executable
+ (name test_break_continue)
+ (modules test_break_continue)
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_userspace_for_codegen)
  (modules test_userspace_for_codegen)
  (libraries kernelscript alcotest str unix))
-
-
 
 ; Test aliases for organized execution
 (rule
@@ -157,6 +159,7 @@
   test_symbol_table.exe
   test_comment_positions.exe
   test_for_statements.exe
+  test_break_continue.exe
   test_config.exe)
  (action
   (progn
@@ -167,6 +170,7 @@
    (run ./test_symbol_table.exe)
    (run ./test_comment_positions.exe)
    (run ./test_for_statements.exe)
+   (run ./test_break_continue.exe)
    (run ./test_config.exe))))
 
 (rule

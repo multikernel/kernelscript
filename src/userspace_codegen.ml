@@ -167,6 +167,10 @@ let rec generate_c_statement_with_context ctx (stmt : Ast.statement) =
       (* For userspace, we generate a simple indexed loop since we don't have complex iterators *)
       sprintf "/* ForIter: iterating over %s */\n    for (__u32 %s = 0; %s < sizeof(%s)/sizeof((%s)[0]); %s++) {\n        __u32 %s = (%s)[%s];\n        %s\n    }"
         iterable_c index_var index_var iterable_c iterable_c index_var value_var iterable_c index_var body_c
+  | Ast.Break ->
+      "break;"
+  | Ast.Continue ->
+      "continue;"
   | _ -> "// TODO: Unsupported statement"
 
 (** Generate C code for expressions *)

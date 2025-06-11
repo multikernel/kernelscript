@@ -146,6 +146,8 @@ and stmt_desc =
   | ForIter of string * string * expr * statement list  (* for (index, value) in expr.iter() { ... } *)
   | While of expr * statement list
   | Delete of expr * expr  (* delete map[key] *)
+  | Break
+  | Continue
 
 (** Function definitions *)
 type function_def = {
@@ -465,6 +467,8 @@ let rec string_of_stmt stmt =
       Printf.sprintf "while (%s) { %s }" (string_of_expr cond) body_str
   | Delete (map_expr, key_expr) ->
       Printf.sprintf "delete %s[%s];" (string_of_expr map_expr) (string_of_expr key_expr)
+  | Break -> "break;"
+  | Continue -> "continue;"
 
 let string_of_function func =
   let params_str = String.concat ", " 

@@ -695,6 +695,16 @@ let rec lower_statement ctx stmt =
       
       (* Note: Control flow connections and loop depth will be established during CFG construction *)
       ()
+  
+  | Ast.Break ->
+      (* Generate break instruction for IR *)
+      let instr = make_ir_instruction IRBreak stmt.stmt_pos in
+      emit_instruction ctx instr
+  
+  | Ast.Continue ->
+      (* Generate continue instruction for IR *)
+      let instr = make_ir_instruction IRContinue stmt.stmt_pos in
+      emit_instruction ctx instr
 
 (** Helper function to take first n elements from a list *)
 let rec list_take n lst =

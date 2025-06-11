@@ -88,6 +88,8 @@
 %type <Ast.statement> while_statement
 %type <Ast.statement> for_statement
 %type <Ast.statement> delete_statement
+%type <Ast.statement> break_statement
+%type <Ast.statement> continue_statement
 %type <Ast.expr> expression
 %type <Ast.expr> primary_expression
 %type <Ast.literal> literal
@@ -220,6 +222,8 @@ statement:
   | while_statement { $1 }
   | for_statement { $1 }
   | delete_statement { $1 }
+  | break_statement { $1 }
+  | continue_statement { $1 }
 
 expression_statement:
   | expression SEMICOLON { make_stmt (ExprStmt $1) (make_pos ()) }
@@ -265,6 +269,12 @@ for_statement:
 delete_statement:
   | DELETE expression LBRACKET expression RBRACKET SEMICOLON 
     { make_stmt (Delete ($2, $4)) (make_pos ()) }
+
+break_statement:
+  | BREAK SEMICOLON { make_stmt (Break) (make_pos ()) }
+
+continue_statement:
+  | CONTINUE SEMICOLON { make_stmt (Continue) (make_pos ()) }
 
 /* Expressions */
 expression:

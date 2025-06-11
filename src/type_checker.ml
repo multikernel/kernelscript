@@ -52,6 +52,8 @@ and typed_stmt_desc =
   | TForIter of string * string * typed_expr * typed_statement list
   | TWhile of typed_expr * typed_statement list
   | TDelete of typed_expr * typed_expr
+  | TBreak
+  | TContinue
 
 type typed_function = {
   tfunc_name: string;
@@ -615,7 +617,9 @@ let rec type_check_statement ctx stmt =
       let typed_cond = type_check_expression ctx cond in
       if typed_cond.texpr_type <> Bool then
         type_error "While condition must be boolean" stmt.stmt_pos;
+      incr loop_depth;
       let typed_body = List.map (type_check_statement ctx) body in
+      decr loop_depth;
       { tstmt_desc = TWhile (typed_cond, typed_body); tstmt_pos = stmt.stmt_pos }
 
   | Delete (map_expr, key_expr) ->
@@ -635,6 +639,18 @@ let rec type_check_statement ctx stmt =
            { tstmt_desc = TDelete (typed_map, typed_key); tstmt_pos = stmt.stmt_pos }
        | _ ->
            type_error ("Delete can only be used on maps") stmt.stmt_pos)
+  
+  | Break ->
+      (* Break statements are only valid inside loops *)
+      if !loop_depth = 0 then
+        type_error "Break statement can only be used inside loops" stmt.stmt_pos;
+      { tstmt_desc = TBreak; tstmt_pos = stmt.stmt_pos }
+  
+  | Continue ->
+      (* Continue statements are only valid inside loops *)
+      if !loop_depth = 0 then
+        type_error "Continue statement can only be used inside loops" stmt.stmt_pos;
+      { tstmt_desc = TContinue; tstmt_pos = stmt.stmt_pos }
 
 (** Type check function *)
 let type_check_function ctx func =
@@ -817,6 +833,8 @@ let rec typed_stmt_to_stmt tstmt =
         While (typed_expr_to_expr cond, List.map typed_stmt_to_stmt body)
     | TDelete (cond, body) ->
         Delete (typed_expr_to_expr cond, typed_expr_to_expr body)
+    | TBreak -> Break
+    | TContinue -> Continue
   in
   { stmt_desc; stmt_pos = tstmt.tstmt_pos }
 
@@ -1007,6 +1025,8 @@ and populate_multi_program_context ast multi_prog_analysis =
          | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
          | None -> ())
     | Return None -> ()
+    | Break -> ()
+    | Continue -> ()
   in
   
   (* Enhance each program in the AST *)

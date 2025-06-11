@@ -521,6 +521,14 @@ and process_statement table stmt =
   | Delete (map_expr, key_expr) ->
       process_expression table map_expr;
       process_expression table key_expr
+  
+  | Break ->
+      (* Break statements don't need symbol processing *)
+      ()
+  
+  | Continue ->
+      (* Continue statements don't need symbol processing *)
+      ()
 
 and process_expression table expr =
   match expr.expr_desc with

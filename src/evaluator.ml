@@ -552,6 +552,12 @@ and eval_statement ctx stmt =
       
       Printf.printf "[MAP DELETE]: %s[%s] (existed: %b)\n" 
         map_name key_str existed
+  
+  | Break ->
+      raise Break_loop
+  
+  | Continue ->
+      raise Continue_loop
 
 (** Evaluate a complete program *)
 let eval_program ctx prog =

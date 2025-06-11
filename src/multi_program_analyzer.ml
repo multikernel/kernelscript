@@ -180,6 +180,8 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         analyze_expr_for_maps prog_name map_expr;
         analyze_expr_for_maps prog_name key_expr
     | Return None -> ()
+    | Break -> ()
+    | Continue -> ()
   in
   
   (* Analyze all programs *)
