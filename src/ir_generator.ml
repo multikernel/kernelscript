@@ -944,7 +944,6 @@ let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.us
          | None -> "void"));
   );
   
-  (* Set userspace flag for proper loop generation *)
   ctx.is_userspace <- true;
   
   (* Lower userspace functions to IR functions *)
