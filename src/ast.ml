@@ -375,15 +375,15 @@ let rec string_of_bpf_type = function
         (string_of_bpf_type key_type)
         (string_of_bpf_type value_type)
         (string_of_map_type map_type)
-  | XdpContext -> "xdp_context"
-  | TcContext -> "tc_context"
-  | KprobeContext -> "kprobe_context"
-  | UprobeContext -> "uprobe_context"
-  | TracepointContext -> "tracepoint_context"
-  | LsmContext -> "lsm_context"
-  | CgroupSkbContext -> "cgroup_skb_context"
-  | XdpAction -> "xdp_action"
-  | TcAction -> "tc_action"
+  | XdpContext -> "XdpContext"
+  | TcContext -> "TcContext"
+  | KprobeContext -> "KprobeContext"
+  | UprobeContext -> "UprobeContext"
+  | TracepointContext -> "TracepointContext"
+  | LsmContext -> "LsmContext"
+  | CgroupSkbContext -> "CgroupSkbContext"
+  | XdpAction -> "XdpAction"
+  | TcAction -> "TcAction"
 
 let rec string_of_literal = function
   | IntLit i -> string_of_int i

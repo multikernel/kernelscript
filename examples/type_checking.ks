@@ -31,7 +31,7 @@ map<IpAddress, u64> connection_stats : hash_map(1024) {
 
 program packet_analyzer : xdp {
   
-  fn extract_header(ctx: xdp_context) -> option PacketHeader {
+  fn extract_header(ctx: XdpContext) -> XdpAction {
     // Type checker validates that ctx is xdp_context type
     let data = ctx.data;
     let data_end = ctx.data_end;
@@ -40,7 +40,7 @@ program packet_analyzer : xdp {
     let packet_len = data_end - data;
     
     if packet_len < 20 {
-      return none;
+      return 1;
     }
     
     // Type checker validates struct field types
@@ -51,10 +51,10 @@ program packet_analyzer : xdp {
       length: packet_len     // Type promoted from arithmetic to u16
     };
     
-    return some header;
+    return 2;
   }
   
-  fn classify_protocol(proto: u8) -> option ProtocolType {
+  fn classify_protocol(proto: u8) -> ProtocolType {
     // Type checker validates enum constant access
     if proto == 6 {
       return some ProtocolType::TCP;
@@ -97,7 +97,7 @@ program packet_analyzer : xdp {
     }
   }
   
-  fn main(ctx: xdp_context) -> xdp_action {
+  fn main(ctx: XdpContext) -> XdpAction {
     // Type checker validates context parameter and return type
     let packet_header = extract_header(ctx);
     
