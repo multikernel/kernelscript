@@ -135,7 +135,7 @@
 (executable
  (name test_stdlib)
  (modules test_stdlib)
- (libraries kernelscript))
+ (libraries kernelscript alcotest))
 
 ; Test aliases for organized execution
 (rule
