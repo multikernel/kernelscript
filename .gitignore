@@ -1,0 +1,28 @@
+# Build directories
+_build/
+*.install
+
+# Cursor editor files
+.cursor/
+
+# OCaml build artifacts
+*.cmi
+*.cmo
+*.cmx
+*.cma
+*.cmxa
+*.a
+*.o
+*.so
+*.exe
+
+# Dune artifacts
+.merlin
+*.opam.locked
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
