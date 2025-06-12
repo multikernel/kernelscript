@@ -394,12 +394,7 @@ let generate_map_operation_functions maps =
   sprintf {|
 // Map operations for %s
 int %s_lookup(%s *key, %s *value) {
-    void *result = bpf_map_lookup_elem(%s_fd, key);
-    if (result) {
-        *value = *(%s*)result;
-        return 0;
-    }
-    return -1;
+    return bpf_map_lookup_elem(%s_fd, key, value);
 }
 
 int %s_update(%s *key, %s *value) {
@@ -414,7 +409,7 @@ int %s_get_next_key(%s *key, %s *next_key) {
     return bpf_map_get_next_key(%s_fd, key, next_key);
 }|} 
       map.map_name
-      map.map_name key_type value_type map.map_name value_type
+      map.map_name key_type value_type map.map_name
       map.map_name key_type value_type map.map_name
       map.map_name key_type map.map_name
       map.map_name key_type key_type map.map_name
@@ -424,7 +419,7 @@ int %s_get_next_key(%s *key, %s *next_key) {
 let generate_map_setup_code maps =
   List.map (fun map ->
     sprintf {|    /* Setup %s map */
-    %s_fd = bpf_create_map(BPF_MAP_TYPE_HASH, sizeof(%s), sizeof(%s), %d, 0);
+    %s_fd = bpf_map_create(BPF_MAP_TYPE_HASH, NULL, sizeof(%s), sizeof(%s), %d, NULL);
     if (%s_fd < 0) {
         fprintf(stderr, "Failed to create %s map: %%s\n", strerror(errno));
         return -1;
