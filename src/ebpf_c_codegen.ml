@@ -466,6 +466,35 @@ let rec generate_c_instruction ctx ir_instr =
       let cond_str = generate_c_value ctx cond_val in
       emit_line ctx (sprintf "if (%s) goto %s; else goto %s;" cond_str true_label false_label)
 
+  | IRIf (cond_val, then_body, else_body) ->
+      (* For eBPF, convert structured if to goto-based control flow *)
+      let cond_str = generate_c_value ctx cond_val in
+      let then_label = sprintf "then_%d" ctx.label_counter in
+      let else_label = sprintf "else_%d" (ctx.label_counter + 1) in
+      let merge_label = sprintf "merge_%d" (ctx.label_counter + 2) in
+      ctx.label_counter <- ctx.label_counter + 3;
+      
+      emit_line ctx (sprintf "if (%s) goto %s; else goto %s;" cond_str then_label else_label);
+      
+      (* Then block *)
+      emit_line ctx (sprintf "%s:" then_label);
+      increase_indent ctx;
+      List.iter (generate_c_instruction ctx) then_body;
+      emit_line ctx (sprintf "goto %s;" merge_label);
+      decrease_indent ctx;
+      
+      (* Else block *)
+      emit_line ctx (sprintf "%s:" else_label);
+      increase_indent ctx;
+      (match else_body with
+       | Some else_instrs -> List.iter (generate_c_instruction ctx) else_instrs
+       | None -> emit_line ctx "/* empty else block */");
+      emit_line ctx (sprintf "goto %s;" merge_label);
+      decrease_indent ctx;
+      
+      (* Merge point *)
+      emit_line ctx (sprintf "%s:" merge_label)
+
   | IRReturn ret_opt ->
       begin match ret_opt with
       | Some ret_val ->
@@ -676,7 +705,13 @@ let collect_registers_in_function ir_func =
     | IRContextAccess (dest_val, _) -> collect_in_value dest_val
     | IRBoundsCheck (ir_val, _, _) -> collect_in_value ir_val
     | IRCondJump (cond_val, _, _) -> collect_in_value cond_val
-    | IRReturn ret_val_opt -> Option.iter collect_in_value ret_val_opt
+    | IRIf (cond_val, then_body, else_body) ->
+        collect_in_value cond_val;
+        List.iter collect_in_instr then_body;
+        (match else_body with
+         | Some else_instrs -> List.iter collect_in_instr else_instrs
+         | None -> ())
+    | IRReturn ret_opt -> Option.iter collect_in_value ret_opt
     | IRJump _ -> ()
     | IRComment _ -> () (* Comments don't use registers *)
     | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->

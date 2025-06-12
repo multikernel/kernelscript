@@ -7,7 +7,7 @@ open Alcotest
 
 (** Helper functions for creating test IR structures *)
 
-let make_test_position = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" }
+let _make_test_position = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" }
 
 let make_test_ir_position = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" }
 
@@ -38,14 +38,14 @@ let make_simple_ir_value desc typ = {
   val_pos = make_test_ir_position;
 }
 
-let make_simple_ir_expr desc typ = {
+let _make_simple_ir_expr desc typ = {
   expr_desc = desc;
   expr_type = typ;
   expr_pos = make_test_ir_position;
 }
 
 (** Helper function for position printing *)
-let string_of_position pos =
+let _string_of_position pos =
   Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
 
 (* Placeholder modules for unimplemented functionality *)
@@ -170,7 +170,7 @@ let comprehensive_analysis _ : comprehensive_analysis_result = {
 }
 
 (** Test Control Flow Graph Analysis *)
-let test_cfg_construction _ =
+let _test_cfg_construction _ =
   (* Create a CFG test with branching control flow *)
   let var_x = make_simple_ir_value (IRVariable "x") IRU32 in
   let const_5 = make_simple_ir_value (IRLiteral (IntLit 5)) IRU32 in
@@ -210,7 +210,7 @@ let test_cfg_construction _ =
   check int "CFG block count" 3 (List.length cfg.blocks) (* entry, then, else *)
 
 (** Test Return Path Analysis *)
-let test_function_with_return _ =
+let _test_function_with_return _ =
   (* Create a function with multiple return paths to test return analysis *)
   let var_x = make_simple_ir_value (IRVariable "x") IRU32 in
   let const_10 = make_simple_ir_value (IRLiteral (IntLit 10)) IRU32 in
@@ -250,7 +250,7 @@ let test_function_with_return _ =
   check bool "All paths should return" true return_info.all_paths_return
 
 (** Test Loop Analysis *)
-let test_loop_termination_verification _ =
+let _test_loop_termination_verification _ =
   let bounds_check = {
     value = make_simple_ir_value (IRVariable "i") IRU32;
     min_bound = 0;
@@ -280,7 +280,7 @@ let test_loop_termination_verification _ =
     (LoopAnalysis.verify_termination bounded_function)
 
 (** Test Statement Processing *)
-let test_complete_statement_processing _ =
+let _test_complete_statement_processing _ =
   (* Create a function with various statement types for processing *)
   let var_a = make_simple_ir_value (IRVariable "a") IRU32 in
   let var_b = make_simple_ir_value (IRVariable "b") IRU32 in
@@ -313,7 +313,7 @@ let test_complete_statement_processing _ =
   check bool "No optimization applied initially" false result.optimization_applied
 
 (** Test Program Analysis *)
-let test_analyze_ir_function _ =
+let _test_analyze_ir_function _ =
   (* Create a function with analysis targets: variables, operations, and control flow *)
   let var_result = make_simple_ir_value (IRVariable "result") IRU32 in
   let var_temp = make_simple_ir_value (IRVariable "temp") IRU32 in
@@ -352,7 +352,7 @@ let test_analyze_ir_function _ =
   check bool "loop analysis complete" true (List.length first_loop.body_blocks >= 0)
 
 (** Test Utilities *)
-let test_analysis_report_generation _ =
+let _test_analysis_report_generation _ =
   (* Create a function with reportable analysis features *)
   let var_count = make_simple_ir_value (IRVariable "count") IRU32 in
   let const_0 = make_simple_ir_value (IRLiteral (IntLit 0)) IRU32 in

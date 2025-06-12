@@ -722,18 +722,17 @@ let type_check_program ctx prog =
     tprog_pos = prog.prog_pos;
   }
 
-(** Type check userspace block - only validates, doesn't transform *)
+(** Type check userspace block - validates and returns typed functions *)
 let type_check_userspace ctx userspace_block =
   (* Userspace code should only have access to global maps, not program-scoped maps *)
   (* The global maps are already in ctx.maps from the first pass *)
   
-  (* Type check all userspace functions for validation *)
-  List.iter (fun func ->
-    let _ = type_check_function ctx func in
-    ()
-  ) userspace_block.userspace_functions;
+  (* Type check all userspace functions and return typed functions *)
+  let typed_functions = List.map (fun func ->
+    type_check_function ctx func
+  ) userspace_block.userspace_functions in
   
-  () (* No return value needed - validation only *)
+  typed_functions
 
 (** Main type checking entry point *)
 let type_check_ast ast =
@@ -853,7 +852,7 @@ let typed_program_to_program tprog original_prog =
     prog_pos = tprog.tprog_pos }
 
 (** Convert typed AST back to annotated AST declarations *)
-let typed_ast_to_annotated_ast typed_ast original_ast =
+let typed_ast_to_annotated_ast typed_ast typed_userspace_functions original_ast =
   (* Create a mapping of original programs by name *)
   let original_programs = List.fold_left (fun acc decl ->
     match decl with
@@ -876,6 +875,9 @@ let typed_ast_to_annotated_ast typed_ast original_ast =
     (prog.prog_name, prog) :: acc
   ) [] annotated_programs in
   
+  (* Convert typed userspace functions back to annotated functions *)
+  let annotated_userspace_functions = List.map typed_function_to_function typed_userspace_functions in
+  
   (* Reconstruct the declarations list, preserving order and non-program declarations *)
   List.map (function
     | Program orig_prog -> 
@@ -886,6 +888,13 @@ let typed_ast_to_annotated_ast typed_ast original_ast =
           failwith ("No annotated program found for " ^ orig_prog.prog_name)
         in
         Program annotated_prog
+    | Userspace orig_userspace_block ->
+        (* Create annotated userspace block with typed functions *)
+        let annotated_userspace_block = {
+          orig_userspace_block with
+          userspace_functions = annotated_userspace_functions
+        } in
+        Userspace annotated_userspace_block
     | other_decl -> other_decl  (* Keep maps, types, etc. unchanged *)
   ) original_ast 
 
@@ -916,25 +925,27 @@ let rec type_check_and_annotate_ast ast =
   ) ast;
   
   (* Second pass: type check programs with multi-program awareness *)
-  let typed_programs = List.fold_left (fun acc decl ->
+  let (typed_programs, typed_userspace_functions) = List.fold_left (fun (prog_acc, userspace_acc) decl ->
     match decl with
     | Program prog ->
         (* Set current program type for multi-program context *)
         ctx.current_program_type <- Some prog.prog_type;
         let typed_prog = type_check_program ctx prog in
         ctx.current_program_type <- None;
-        typed_prog :: acc
+        (typed_prog :: prog_acc, userspace_acc)
     | GlobalFunction func ->
         let _ = type_check_function ctx func in
-        acc
+        (prog_acc, userspace_acc)
     | Userspace userspace_block ->
-        let _ = type_check_userspace ctx userspace_block in
-        acc
-    | _ -> acc
-  ) [] ast |> List.rev in
+        let typed_functions = type_check_userspace ctx userspace_block in
+        (prog_acc, typed_functions @ userspace_acc)
+    | _ -> (prog_acc, userspace_acc)
+  ) ([], []) ast in
+  let typed_programs = List.rev typed_programs in
+  let typed_userspace_functions = List.rev typed_userspace_functions in
   
   (* STEP 3: Convert back to annotated AST with multi-program context *)
-  let annotated_ast = typed_ast_to_annotated_ast typed_programs ast in
+  let annotated_ast = typed_ast_to_annotated_ast typed_programs typed_userspace_functions ast in
   
   (* STEP 4: Post-process to populate multi-program fields *)
   let enhanced_ast = populate_multi_program_context annotated_ast multi_prog_analysis in
@@ -1036,5 +1047,11 @@ and populate_multi_program_context ast multi_prog_analysis =
           List.iter (enhance_stmt prog.prog_type) func.func_body
         ) prog.prog_functions;
         Program prog
+    | Userspace userspace_block ->
+        (* For userspace functions, use a generic program type or None *)
+        List.iter (fun func ->
+          List.iter (enhance_stmt Xdp) func.func_body  (* Use Xdp as default for userspace *)
+        ) userspace_block.userspace_functions;
+        Userspace userspace_block
     | other_decl -> other_decl
   ) ast 

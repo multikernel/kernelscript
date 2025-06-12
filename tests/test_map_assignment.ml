@@ -1,12 +1,9 @@
-open Kernelscript.Ast
 open Kernelscript.Parse
 open Alcotest
 module MapAssign = Kernelscript.Map_assignment
 open MapAssign
 
-(* Helper function for position printing *)
-let string_of_position pos =
-  Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
+
 
 (* Record types for other unimplemented functions *)
 type validation_result = { all_valid: bool; errors: string list; analysis_complete: bool }

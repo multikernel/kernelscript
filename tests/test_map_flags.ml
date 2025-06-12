@@ -4,12 +4,7 @@ open Alcotest
 
 module Maps = Kernelscript.Maps
 
-(** Helper function for position printing *)
-let string_of_position pos =
-  Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
 
-(** Dummy position for testing *)
-let dummy_pos = {filename = "test.ks"; line = 1; column = 1}
 
 (* Type aliases from Maps module *)
 type map_flag_info = Maps.map_flag_info = {

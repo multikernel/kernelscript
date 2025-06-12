@@ -69,10 +69,10 @@ let create_test_program name functions =
   }
 
 (** Helper function to create a dummy position *)
-let make_pos () = { line = 1; column = 1; filename = "test" }
+let _make_pos () = { line = 1; column = 1; filename = "test" }
 
 (** Helper function for position printing *)
-let string_of_position pos =
+let _string_of_position pos =
   Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
 
 (* Placeholder functions for unimplemented functionality *)

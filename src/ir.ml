@@ -13,7 +13,7 @@ type ir_multi_program = {
   source_name: string; (* Base name of source file *)
   programs: ir_program list; (* List of eBPF programs *)
   global_maps: ir_map_def list; (* Maps shared across programs *)
-  userspace_block: Ast.userspace_block option; (* Userspace code block *)
+  userspace_program: ir_userspace_program option; (* IR-based userspace program *)
   userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
   multi_pos: ir_position;
 }
@@ -26,6 +26,78 @@ and ir_program = {
   functions: ir_function list;
   main_function: ir_function;
   ir_pos: ir_position;
+}
+
+(** Userspace Program IR - complete userspace program with coordinator logic *)
+and ir_userspace_program = {
+  userspace_functions: ir_function list; (* All userspace functions including main *)
+  userspace_structs: ir_struct_def list; (* Userspace struct definitions *)
+  userspace_configs: ir_userspace_config list; (* Userspace configuration *)
+  coordinator_logic: ir_coordinator_logic; (* BPF management and coordination logic *)
+  userspace_pos: ir_position;
+}
+
+(** Coordinator logic for BPF program management *)
+and ir_coordinator_logic = {
+  map_management: ir_map_management; (* Map setup and access logic *)
+  program_lifecycle: ir_program_lifecycle; (* BPF program loading/unloading *)
+  event_processing: ir_event_processing; (* Event loop and processing *)
+  signal_handling: ir_signal_handling; (* Signal handling for graceful shutdown *)
+}
+
+and ir_map_management = {
+  setup_operations: ir_instruction list; (* Map initialization instructions *)
+  access_patterns: (string * ir_map_access_pattern) list; (* Map access optimizations *)
+  cleanup_operations: ir_instruction list; (* Map cleanup instructions *)
+}
+
+and ir_map_access_pattern = 
+  | ReadHeavy of int (* Expected reads per second *)
+  | WriteHeavy of int (* Expected writes per second *)
+  | Mixed of int * int (* Reads, writes per second *)
+
+and ir_program_lifecycle = {
+  loading_sequence: ir_instruction list; (* BPF program loading logic *)
+  attachment_logic: ir_instruction list; (* Program attachment logic *)
+  detachment_logic: ir_instruction list; (* Program detachment logic *)
+  error_handling: ir_instruction list; (* Error handling for lifecycle operations *)
+}
+
+and ir_event_processing = {
+  event_loop: ir_instruction list; (* Main event processing loop *)
+  ring_buffer_handling: ir_instruction list; (* Ring buffer event processing *)
+  perf_event_handling: ir_instruction list; (* Perf event processing *)
+  polling_strategy: ir_polling_strategy; (* Event polling configuration *)
+}
+
+and ir_polling_strategy =
+  | Blocking (* Block waiting for events *)
+  | NonBlocking of int (* Non-blocking with timeout in ms *)
+  | Adaptive of int * int (* Adaptive polling: min_timeout, max_timeout *)
+
+and ir_signal_handling = {
+  setup_handlers: ir_instruction list; (* Signal handler setup *)
+  cleanup_handlers: ir_instruction list; (* Signal cleanup logic *)
+  graceful_shutdown: ir_instruction list; (* Graceful shutdown sequence *)
+}
+
+(** Userspace struct definition in IR *)
+and ir_struct_def = {
+  struct_name: string;
+  struct_fields: (string * ir_type) list; (* IR types, not AST types *)
+  struct_alignment: int; (* Memory alignment requirements *)
+  struct_size: int; (* Total struct size in bytes *)
+  struct_pos: ir_position;
+}
+
+(** Userspace configuration in IR *)
+and ir_userspace_config = 
+  | IRCustomConfig of string * ir_config_item list
+
+and ir_config_item = {
+  config_key: string;
+  config_value: ir_value; (* Use IR values instead of AST literals *)
+  config_type: ir_type; (* Explicit type information *)
 }
 
 (** Enhanced type system for IR with bounds and safety information *)
@@ -131,6 +203,7 @@ and ir_instr_desc =
   | IRBoundsCheck of ir_value * int * int (* value, min, max *)
   | IRJump of string
   | IRCondJump of ir_value * string * string
+  | IRIf of ir_value * ir_instruction list * ir_instruction list option (* condition, then_body, else_body *)
   | IRReturn of ir_value option
   | IRComment of string (* for debugging and analysis comments *)
   | IRBpfLoop of ir_value * ir_value * ir_value * ir_value * ir_instruction list (* start, end, counter, ctx, body_instructions *)
@@ -216,7 +289,7 @@ and ir_event_handler = {
 and buffer_type = RingBuffer | PerfEvent
 
 and ir_config_struct = {
-  struct_name: string;
+  config_struct_name: string;
   fields: (string * ir_type) list;
   serialization: serialization_type;
 }
@@ -305,13 +378,68 @@ let make_ir_program name prog_type local_maps functions main_function pos = {
 }
 
 let make_ir_multi_program source_name programs global_maps 
-                          ?userspace_block ?(userspace_bindings = []) pos = {
+                          ?userspace_program ?(userspace_bindings = []) pos = {
   source_name;
   programs;
   global_maps;
-  userspace_block;
+  userspace_program;
   userspace_bindings;
   multi_pos = pos;
+}
+
+let make_ir_userspace_program functions structs configs coordinator_logic pos = {
+  userspace_functions = functions;
+  userspace_structs = structs;
+  userspace_configs = configs;
+  coordinator_logic;
+  userspace_pos = pos;
+}
+
+let make_ir_struct_def name fields alignment size pos = {
+  struct_name = name;
+  struct_fields = fields;
+  struct_alignment = alignment;
+  struct_size = size;
+  struct_pos = pos;
+}
+
+let make_ir_config_item key value config_type = {
+  config_key = key;
+  config_value = value;
+  config_type;
+}
+
+let make_ir_coordinator_logic map_mgmt prog_lifecycle event_proc signal_handling = {
+  map_management = map_mgmt;
+  program_lifecycle = prog_lifecycle;
+  event_processing = event_proc;
+  signal_handling = signal_handling;
+}
+
+let make_ir_map_management setup_ops access_patterns cleanup_ops = {
+  setup_operations = setup_ops;
+  access_patterns = access_patterns;
+  cleanup_operations = cleanup_ops;
+}
+
+let make_ir_program_lifecycle loading_seq attach_logic detach_logic error_handling = {
+  loading_sequence = loading_seq;
+  attachment_logic = attach_logic;
+  detachment_logic = detach_logic;
+  error_handling = error_handling;
+}
+
+let make_ir_event_processing event_loop ring_buf_handling perf_handling polling_strategy = {
+  event_loop = event_loop;
+  ring_buffer_handling = ring_buf_handling;
+  perf_event_handling = perf_handling;
+  polling_strategy = polling_strategy;
+}
+
+let make_ir_signal_handling setup_handlers cleanup_handlers graceful_shutdown = {
+  setup_handlers = setup_handlers;
+  cleanup_handlers = cleanup_handlers;
+  graceful_shutdown = graceful_shutdown;
 }
 
 (** Type conversion utilities *)
@@ -459,6 +587,16 @@ let rec string_of_ir_instruction instr =
   | IRCondJump (cond, true_label, false_label) ->
       Printf.sprintf "if (%s) goto %s else goto %s" 
         (string_of_ir_value cond) true_label false_label
+  | IRIf (cond, then_body, else_body) ->
+      let then_str = String.concat "\n  " 
+        (List.map string_of_ir_instruction then_body) in
+      let else_str = match else_body with
+        | None -> ""
+        | Some body -> Printf.sprintf "else {\n%s\n}" (String.concat "\n  " 
+          (List.map string_of_ir_instruction body))
+      in
+      Printf.sprintf "if (%s) {\n%s\n} %s" 
+        (string_of_ir_value cond) then_str else_str
   | IRReturn None -> "return"
   | IRReturn (Some value) -> Printf.sprintf "return %s" (string_of_ir_value value)
   | IRComment comment -> Printf.sprintf "/* %s */" comment

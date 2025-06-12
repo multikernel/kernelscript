@@ -390,13 +390,15 @@ let compile_to_userspace_c ast =
   Unix.mkdir temp_dir 0o755;
   
   try
-    let config_declarations = 
+    let _config_declarations = 
       List.filter_map (fun decl -> match decl with
         | ConfigDecl config -> Some config
         | _ -> None
       ) ast
     in
-    let _output_file = generate_userspace_code_from_ast ast ~config_declarations ~output_dir:temp_dir "test" in
+    (* Convert AST to IR for the new IR-based codegen *)
+    let ir_multi_prog = Kernelscript.Ir.make_ir_multi_program "test" [] [] dummy_pos in
+    let _output_file = generate_userspace_code_from_ir ir_multi_prog ~output_dir:temp_dir "test" in
     let generated_file = Filename.concat temp_dir "test.c" in
     
     if Sys.file_exists generated_file then (

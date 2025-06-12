@@ -25,21 +25,6 @@ let default_opts = {
   generate_makefile = true;
 }
 
-(** Print verbose output *)
-let vprintf opts fmt = 
-  if opts.verbose then printf fmt else Printf.ifprintf stdout fmt
-
-(** Read file contents *)
-let read_file filename =
-  try
-    let ic = open_in filename in
-    let content = really_input_string ic (in_channel_length ic) in
-    close_in ic;
-    Ok content
-  with
-  | Sys_error msg -> Error ("Failed to read file: " ^ msg)
-  | e -> Error ("Error reading file: " ^ Printexc.to_string e)
-
 (** Argument parsing *)
 let rec parse_args_aux opts = function
   | [] -> opts
@@ -159,13 +144,10 @@ let compile opts source_file =
         Ebpf_c_codegen.compile_multi_to_c_with_analysis 
           optimized_ir multi_prog_analysis resource_plan optimization_strategies in
       
-    (* Generate userspace coordinator using original proven generator *)
+    (* Generate userspace coordinator using new IR-based generator *)
     let temp_output_dir = "temp_userspace" in
-    let temp_ast = annotated_ast in (* Use the original annotated AST *)
-    let config_declarations_opt = if List.length config_declarations > 0 then 
-      Some config_declarations else None in
-    Userspace_codegen.generate_userspace_code_from_ast 
-      temp_ast ~output_dir:temp_output_dir ?config_declarations:config_declarations_opt source_file;
+    Userspace_codegen.generate_userspace_code_from_ir 
+      optimized_ir ~output_dir:temp_output_dir source_file;
     
     (* Read the generated userspace code *)
     let base_name = Filename.remove_extension (Filename.basename source_file) in

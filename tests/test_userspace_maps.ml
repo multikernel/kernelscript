@@ -32,7 +32,7 @@ open Kernelscript.Userspace_codegen
 open Alcotest
 
 (** Helper function for position printing *)
-let string_of_position pos =
+let _string_of_position pos =
   Printf.sprintf "line %d, column %d" pos.line pos.column
 
 (** Helper function to check if a pattern exists in content (case-insensitive) *)
@@ -65,7 +65,10 @@ let get_generated_userspace_code ast source_filename =
   Unix.mkdir temp_dir 0o755;
   
   try
-    let _output_file = generate_userspace_code_from_ast ast ~output_dir:temp_dir source_filename in
+    (* Convert AST to IR properly for the new IR-based codegen *)
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let ir_multi_prog = Kernelscript.Ir_generator.generate_ir ast symbol_table source_filename in
+    let _output_file = generate_userspace_code_from_ir ir_multi_prog ~output_dir:temp_dir source_filename in
     let generated_file = Filename.concat temp_dir (Filename.remove_extension source_filename ^ ".c") in
     
     if Sys.file_exists generated_file then (
@@ -95,8 +98,8 @@ map<u32, u64> global_counter : HashMap(1024);
 map<u32, u32> global_config : Array(256);
 
 program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+  fn main(ctx: XdpContext) -> u32 {
+    return 2;
   }
 }
 
@@ -154,8 +157,8 @@ program test : xdp {
   map<u32, u32> local_state : Array(256);
   map<u32, u64> local_cache : HashMap(512);
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+  fn main(ctx: XdpContext) -> u32 {
+    return 2;
   }
 }
 
@@ -204,8 +207,8 @@ let test_map_operation_generation () =
 map<u32, u64> test_map : HashMap(1024);
 
 program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+  fn main(ctx: XdpContext) -> u32 {
+    return 2;
   }
 }
 
@@ -258,8 +261,8 @@ map<u32, u64> lru_map : LruHash(512);
 map<u64, u32> percpu_map : PercpuHash(128);
 
 program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+  fn main(ctx: XdpContext) -> u32 {
+    return 2;
   }
 }
 
@@ -313,8 +316,8 @@ let test_userspace_code_structure () =
 map<u32, u64> test_map : HashMap(1024);
 
 program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+  fn main(ctx: XdpContext) -> u32 {
+    return 2;
   }
 }
 
@@ -362,7 +365,7 @@ let test_userspace_error_handling () =
 map<u32, u64> test_map : HashMap(1024);
 
 program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+  fn main(ctx: XdpContext) -> u32 {
     return 2;
   }
 }
@@ -379,7 +382,7 @@ userspace {
 map<u32, u64> test_map : HashMap(1024);
 
 program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+  fn main(ctx: XdpContext) -> u32 {
     return 2;
   }
 }

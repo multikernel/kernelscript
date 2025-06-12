@@ -1,14 +1,8 @@
 open Alcotest
-open Kernelscript.Ast
 open Kernelscript.Parse
 open Kernelscript.Type_checker
 
-(** Helper function to create test expressions *)
-let dummy_loc = {
-  line = 1;
-  column = 1;
-  filename = "test";
-}
+(** Helper function to create test positions *)
 
 (** Test for loop with constant bounds *)
 let test_for_constant_bounds () =

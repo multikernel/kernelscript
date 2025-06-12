@@ -1,4 +1,3 @@
-open Kernelscript.Ast
 open Kernelscript.Parse
 open Kernelscript.Ebpf_c_codegen
 open Alcotest
@@ -14,13 +13,13 @@ let string_contains_substring s sub =
   | Not_found -> false
 
 (** Helper function for position printing *)
-let string_of_position pos =
-  Printf.sprintf "%s:%d:%d" pos.filename pos.line pos.column
+let _string_of_position pos =
+  Printf.sprintf "%s:%d:%d" pos.Kernelscript.Ast.filename pos.Kernelscript.Ast.line pos.Kernelscript.Ast.column
 
 (** Helper function to extract maps from AST *)
 let extract_maps_from_ast ast =
   List.filter_map (function
-    | MapDecl map_decl -> Some map_decl
+    | Kernelscript.Ast.MapDecl map_decl -> Some map_decl
     | _ -> None
   ) ast
 
@@ -63,11 +62,11 @@ program rate_limiter : xdp {
     (* Verify parsing *)
     check int "two maps parsed" 2 (List.length maps);
     
-    let packet_counts = List.find (fun m -> m.name = "packet_counts") maps in
-    let rate_limits = List.find (fun m -> m.name = "rate_limits") maps in
+    let packet_counts = List.find (fun m -> m.Kernelscript.Ast.name = "packet_counts") maps in
+    let rate_limits = List.find (fun m -> m.Kernelscript.Ast.name = "rate_limits") maps in
     
-    check string "packet_counts type" "hash_map" (string_of_map_type packet_counts.map_type);
-    check string "rate_limits type" "hash_map" (string_of_map_type rate_limits.map_type);
+    check string "packet_counts type" "hash_map" (Kernelscript.Ast.string_of_map_type packet_counts.Kernelscript.Ast.map_type);
+    check string "rate_limits type" "hash_map" (Kernelscript.Ast.string_of_map_type rate_limits.Kernelscript.Ast.map_type);
     
     (* Follow the complete compiler pipeline *)
     match compile_to_c_code ast with
@@ -130,9 +129,9 @@ program multi_map : xdp {
     ] in
     
     List.iter (fun (name, expected_type, expected_size) ->
-      let map = List.find (fun m -> m.name = name) maps in
-      check string (name ^ " type") expected_type (string_of_map_type map.map_type);
-      check int (name ^ " size") expected_size map.config.max_entries
+              let map = List.find (fun m -> m.Kernelscript.Ast.name = name) maps in
+      check string (name ^ " type") expected_type (Kernelscript.Ast.string_of_map_type map.Kernelscript.Ast.map_type);
+              check int (name ^ " size") expected_size map.Kernelscript.Ast.config.Kernelscript.Ast.max_entries
     ) expected_maps;
     
     (* Generate C code and verify all map types are present *)
@@ -234,7 +233,7 @@ program complex_ops : xdp {
     
     (* Extract program functions *)
     let programs = List.filter_map (function
-      | Program prog -> Some prog
+      | Kernelscript.Ast.Program prog -> Some prog
       | _ -> None
     ) ast in
     
@@ -299,11 +298,11 @@ program conditional_maps : xdp {
     
     (* Verify map types *)
     check int "two maps parsed" 2 (List.length maps);
-    let packet_counts = List.find (fun m -> m.name = "packet_counts") maps in
-    let blacklist = List.find (fun m -> m.name = "blacklist") maps in
+    let packet_counts = List.find (fun m -> m.Kernelscript.Ast.name = "packet_counts") maps in
+          let blacklist = List.find (fun m -> m.Kernelscript.Ast.name = "blacklist") maps in
     
-    check string "packet_counts value type" "u64" (string_of_bpf_type packet_counts.value_type);
-    check string "blacklist value type" "u32" (string_of_bpf_type blacklist.value_type);
+    check string "packet_counts value type" "u64" (Kernelscript.Ast.string_of_bpf_type packet_counts.Kernelscript.Ast.value_type);
+          check string "blacklist value type" "u32" (Kernelscript.Ast.string_of_bpf_type blacklist.Kernelscript.Ast.value_type);
     
     (* Compile and verify conditional logic and map operations *)
     match compile_to_c_code ast with

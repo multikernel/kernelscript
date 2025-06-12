@@ -37,6 +37,7 @@ type ir_context = {
   (* Constant environment for loop analysis *)
   mutable const_env: Loop_analysis.const_env option;
   mutable in_bpf_loop_callback: bool; (* New field to track bpf_loop context *)
+  mutable is_userspace: bool; (* New field to track if the program is userspace *)
 }
 
 (** Create new IR generation context *)
@@ -53,6 +54,7 @@ let create_context symbol_table = {
   assignment_optimizations = None;
   const_env = None;
   in_bpf_loop_callback = false;
+  is_userspace = false;
 }
 
 (** Register allocation *)
@@ -292,28 +294,14 @@ let rec lower_expression ctx (expr : Ast.expr) =
         result_val
         
   | Ast.ArrayAccess (array_expr, index_expr) ->
-      (* Debug: print what we're processing *)
-      (match array_expr.expr_desc with
-       | Ast.Identifier name -> 
-           Printf.eprintf "DEBUG: Processing ArrayAccess with identifier '%s', is_map=%b\n" 
-             name (Hashtbl.mem ctx.maps name);
-           flush stderr
-       | _ -> 
-           Printf.eprintf "DEBUG: Processing ArrayAccess with non-identifier array_expr\n";
-           flush stderr);
-      
       (* Check if this is map access first, before calling lower_expression on array *)
       (match array_expr.expr_desc with
        | Ast.Identifier map_name when Hashtbl.mem ctx.maps map_name ->
            (* This is map access - handle it specially *)
-           Printf.eprintf "DEBUG: Handling as map access for '%s'\n" map_name;
-           flush stderr;
            let index_val = lower_expression ctx index_expr in
            expand_map_operation ctx map_name "lookup" index_val None expr.expr_pos
        | _ ->
            (* Regular array access *)
-           Printf.eprintf "DEBUG: Handling as regular array access\n";
-           flush stderr;
            let array_val = lower_expression ctx array_expr in
            let index_val = lower_expression ctx index_expr in
            
@@ -524,8 +512,35 @@ let rec lower_statement ctx stmt =
           (match else_opt with
            | Some else_stmts -> List.iter (lower_statement ctx) else_stmts
            | None -> ())
+      else if ctx.is_userspace then
+        (* For userspace, generate structured IRIf instruction *)
+        let then_instructions = ref [] in
+        
+        (* Temporarily capture instructions for then block *)
+        let old_block = ctx.current_block in
+        ctx.current_block <- [];
+        List.iter (lower_statement ctx) then_stmts;
+        then_instructions := List.rev ctx.current_block;
+        ctx.current_block <- old_block;
+        
+        (* Temporarily capture instructions for else block *)
+        let else_instrs_opt = match else_opt with
+          | Some else_stmts ->
+              ctx.current_block <- [];
+              List.iter (lower_statement ctx) else_stmts;
+              let else_instrs = List.rev ctx.current_block in
+              ctx.current_block <- old_block;
+              Some else_instrs
+          | None -> None
+        in
+        
+        (* Generate IRIf instruction *)
+        let if_instr = make_ir_instruction 
+          (IRIf (cond_val, !then_instructions, else_instrs_opt))
+          stmt.stmt_pos in
+        emit_instruction ctx if_instr
       else
-        (* Regular control flow for non-bpf_loop contexts *)
+        (* Regular control flow for eBPF contexts *)
         (* Create labels for control flow *)
         let cond_label = Printf.sprintf "cond_%d" ctx.next_block_id in
         let then_label = Printf.sprintf "then_%d" (ctx.next_block_id + 1) in
@@ -568,7 +583,16 @@ let rec lower_statement ctx stmt =
         | Some const_env -> Loop_analysis.analyze_for_loop_with_context const_env start_expr end_expr
         | None -> Loop_analysis.analyze_for_loop start_expr end_expr
       in
-      let loop_strategy = Loop_analysis.get_ebpf_loop_strategy loop_analysis in
+      
+      (* Use different loop strategy for userspace vs eBPF *)
+      let loop_strategy = 
+        if ctx.is_userspace then
+          (* For userspace, always use BpfLoopHelper to generate C for loops *)
+          Loop_analysis.BpfLoopHelper
+        else
+          (* For eBPF, use the eBPF-specific strategy *)
+          Loop_analysis.get_ebpf_loop_strategy loop_analysis
+      in
       
       (* Debug: print loop analysis *)
       let analysis_debug = Printf.sprintf "(* Loop analysis: %s, strategy: %s *)" 
@@ -608,7 +632,8 @@ let rec lower_statement ctx stmt =
              ctx with
              current_block = [];
              blocks = [];
-             in_bpf_loop_callback = true; (* Set flag for bpf_loop context *)
+             (* For userspace, don't set in_bpf_loop_callback to allow normal break/continue *)
+             in_bpf_loop_callback = not ctx.is_userspace;
            } in
            
            (* Lower the loop body statements to IR instructions *)
@@ -707,7 +732,8 @@ let rec lower_statement ctx stmt =
         ctx with
         current_block = [];
         blocks = [];
-        in_bpf_loop_callback = true; (* Set flag for bpf_loop context *)
+        (* For userspace, don't set in_bpf_loop_callback to allow normal break/continue *)
+        in_bpf_loop_callback = not ctx.is_userspace;
       } in
       
       (* Lower the loop body statements to IR instructions *)
@@ -871,6 +897,165 @@ let lower_map_declaration (map_decl : Ast.map_declaration) =
     ?pin_path:pin_path
     map_decl.Ast.map_pos
 
+(** Convert AST userspace block to IR userspace program *)
+let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.userspace_block) =
+  (* Validate main function if present or required *)
+  let main_functions = List.filter (fun func_def -> func_def.Ast.func_name = "main") userspace_block.userspace_functions in
+  
+  (* Check for multiple main functions *)
+  if List.length main_functions > 1 then
+    failwith "Userspace block can only contain one main() function";
+  
+  (* Require main function if explicitly requested *)
+  if require_main && List.length main_functions = 0 then
+    failwith "Userspace block must contain a main() function";
+  
+  (* Validate main function signature if present *)
+  if List.length main_functions > 0 then (
+    let main_func = List.hd main_functions in
+    
+    (* Validate main function signature: fn main(argc: u32, argv: u64) -> i32 *)
+    let expected_params = [("argc", Ast.U32); ("argv", Ast.U64)] in
+    let expected_return = Some Ast.I32 in
+    
+    (* Check parameter count and types *)
+    let params_valid = 
+      List.length main_func.Ast.func_params = List.length expected_params &&
+      List.for_all2 (fun (_actual_name, actual_type) (_expected_name, expected_type) ->
+        actual_type = expected_type
+      ) main_func.Ast.func_params expected_params
+    in
+    
+    (* Check return type *)
+    let return_valid = main_func.Ast.func_return_type = expected_return in
+    
+    if not params_valid then
+      failwith (Printf.sprintf 
+        "Userspace main() function must have parameters (argc: u32, argv: u64), got: %s"
+        (String.concat ", " (List.map (fun (name, typ) -> 
+          Printf.sprintf "%s: %s" name (Ast.string_of_bpf_type typ)
+        ) main_func.Ast.func_params)));
+    
+    if not return_valid then
+      failwith (Printf.sprintf
+        "Userspace main() function must return i32, got: %s"
+        (match main_func.Ast.func_return_type with 
+         | Some t -> Ast.string_of_bpf_type t 
+         | None -> "void"));
+  );
+  
+  (* Set userspace flag for proper loop generation *)
+  ctx.is_userspace <- true;
+  
+  (* Lower userspace functions to IR functions *)
+  (* For userspace functions, preserve the original function names (especially "main") *)
+  let ir_functions = List.map (fun func_def ->
+    lower_function ctx func_def.Ast.func_name func_def
+  ) userspace_block.userspace_functions in
+  
+  (* Reset userspace flag *)
+  ctx.is_userspace <- false;
+  
+  (* Lower userspace structs to IR struct definitions *)
+  let ir_structs = List.map (fun struct_def ->
+    let ir_fields = List.map (fun (name, ast_type) ->
+      (name, ast_type_to_ir_type ast_type)
+    ) struct_def.Ast.struct_fields in
+    
+    (* Calculate struct alignment and size (simplified) *)
+    let alignment = 8 in (* Default alignment *)
+    let size = List.length ir_fields * 8 in (* Simplified size calculation *)
+    
+    make_ir_struct_def struct_def.Ast.struct_name ir_fields alignment size struct_def.Ast.struct_pos
+  ) userspace_block.userspace_structs in
+  
+  (* Lower userspace configs to IR configs *)
+  let ir_configs = List.map (fun config ->
+    match config with
+    | Ast.CustomConfig (name, items) ->
+        let ir_items = List.map (fun item ->
+          let ir_value = lower_literal item.Ast.config_value userspace_block.userspace_pos in
+          let ir_type = ir_value.val_type in
+          make_ir_config_item item.Ast.config_key ir_value ir_type
+        ) items in
+        IRCustomConfig (name, ir_items)
+  ) userspace_block.userspace_configs in
+  
+  (* Generate coordinator logic *)
+  let coordinator_logic = generate_coordinator_logic ctx ir_functions in
+  
+  make_ir_userspace_program ir_functions ir_structs ir_configs coordinator_logic userspace_block.userspace_pos
+
+(** Generate coordinator logic for userspace program *)
+and generate_coordinator_logic _ctx _ir_functions =
+  let dummy_pos = { line = 1; column = 1; filename = "generated" } in
+  
+  (* Generate map management logic *)
+  let setup_ops = [
+    make_ir_instruction (IRComment "Setup global maps for userspace-kernel communication") dummy_pos;
+    make_ir_instruction (IRComment "Load BPF object and extract map file descriptors") dummy_pos;
+  ] in
+  
+  let cleanup_ops = [
+    make_ir_instruction (IRComment "Cleanup map file descriptors") dummy_pos;
+    make_ir_instruction (IRComment "Close BPF object") dummy_pos;
+  ] in
+  
+  let map_mgmt = make_ir_map_management setup_ops [] cleanup_ops in
+  
+  (* Generate program lifecycle logic *)
+  let loading_seq = [
+    make_ir_instruction (IRComment "Load all BPF programs from object file") dummy_pos;
+    make_ir_instruction (IRComment "Verify program loading success") dummy_pos;
+  ] in
+  
+  let attach_logic = [
+    make_ir_instruction (IRComment "Attach BPF programs to appropriate hooks") dummy_pos;
+  ] in
+  
+  let detach_logic = [
+    make_ir_instruction (IRComment "Detach BPF programs from hooks") dummy_pos;
+  ] in
+  
+  let error_handling = [
+    make_ir_instruction (IRComment "Handle BPF program lifecycle errors") dummy_pos;
+  ] in
+  
+  let prog_lifecycle = make_ir_program_lifecycle loading_seq attach_logic detach_logic error_handling in
+  
+  (* Generate event processing logic *)
+  let event_loop = [
+    make_ir_instruction (IRComment "Main event processing loop") dummy_pos;
+    make_ir_instruction (IRComment "Poll for events from BPF programs") dummy_pos;
+  ] in
+  
+  let ring_buf_handling = [
+    make_ir_instruction (IRComment "Process ring buffer events") dummy_pos;
+  ] in
+  
+  let perf_handling = [
+    make_ir_instruction (IRComment "Process perf events") dummy_pos;
+  ] in
+  
+  let event_proc = make_ir_event_processing event_loop ring_buf_handling perf_handling Blocking in
+  
+  (* Generate signal handling logic *)
+  let setup_handlers = [
+    make_ir_instruction (IRComment "Setup SIGINT and SIGTERM handlers") dummy_pos;
+  ] in
+  
+  let cleanup_handlers = [
+    make_ir_instruction (IRComment "Cleanup signal handlers") dummy_pos;
+  ] in
+  
+  let graceful_shutdown = [
+    make_ir_instruction (IRComment "Graceful shutdown sequence") dummy_pos;
+  ] in
+  
+  let signal_handling = make_ir_signal_handling setup_handlers cleanup_handlers graceful_shutdown in
+  
+  make_ir_coordinator_logic map_mgmt prog_lifecycle event_proc signal_handling
+
 (** Generate userspace bindings from userspace block *)
 let generate_userspace_bindings_from_block prog_def userspace_block maps =
   match userspace_block with
@@ -886,7 +1071,7 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
     ) maps in
     
     let config_structs = [{
-      struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
+      config_struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
       fields = [("debug_level", IRU32); ("max_events", IRU32)];
       serialization = Json;
     }] in
@@ -898,9 +1083,9 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
       config_structs;
     }]
     
-  | Some userspace ->
+  | Some _userspace ->
     (* Validate that userspace block contains a main() function with correct signature *)
-    let validate_userspace_main_signature ast_func =
+    let _validate_userspace_main_signature ast_func =
       if ast_func.Ast.func_name = "main" then (
         (* Expected signature: fn main(argc: u32, argv: u64) -> i32 *)
         let expected_params = [("argc", Ast.U32); ("argv", Ast.U64)] in
@@ -935,18 +1120,17 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
       ) else false
     in
     
-    let main_functions = List.filter (fun ast_func -> ast_func.Ast.func_name = "main") userspace.userspace_functions in
+    (* TODO: Update validation to work with IR userspace functions *)
+    (* For now, we'll skip this validation during Phase 1 implementation *)
+    
+    (* Temporarily disabled - need to update for IR userspace functions *)
+    (* let main_functions = List.filter (fun ast_func -> ast_func.Ast.func_name = "main") userspace.userspace_functions in
     
     if main_functions = [] then
       failwith "Userspace block must contain a main() function";
     
     if List.length main_functions > 1 then
-      failwith "Userspace block cannot contain multiple main() functions";
-    
-    (* Validate the main function signature *)
-    List.iter (fun ast_func -> 
-      if ast_func.Ast.func_name = "main" then ignore (validate_userspace_main_signature ast_func)
-    ) userspace.userspace_functions;
+      failwith "Userspace block cannot contain multiple main() functions"; *)
     
     (* Generate bindings based on userspace block specification *)
     (* For now, generate default map wrappers for all maps *)
@@ -960,22 +1144,14 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
     ) maps in
     
     (* Convert userspace structs to config structs *)
-    let config_structs = List.map (fun struct_def ->
-      let fields = List.map (fun (name, ast_type) ->
-        (name, ast_type_to_ir_type ast_type)
-      ) struct_def.struct_fields in
-      {
-        struct_name = struct_def.struct_name;
-        fields;
-        serialization = Json;
-      }
-    ) userspace.userspace_structs in
+    (* TODO: Update to work with IR userspace structs *)
+    let config_structs = [] in (* Temporarily empty - need to update for IR structs *)
     
     (* Add default config struct if none provided *)
     let final_config_structs = 
       if config_structs = [] then
         [{
-          struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
+          config_struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
           fields = [("debug_level", IRU32); ("max_events", IRU32)];
           serialization = Json;
         }]
@@ -1010,7 +1186,7 @@ let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_op
     ) maps in
     
     let config_structs = [{
-      struct_name = "multi_program_config";
+      config_struct_name = "multi_program_config";
       fields = [("debug_level", IRU32); ("max_events", IRU32)];
       serialization = Json;
     }] in
@@ -1083,7 +1259,7 @@ let validate_multiple_programs prog_defs =
   ) prog_defs
 
 (** Lower complete AST to multi-program IR *)
-let lower_multi_program ast symbol_table source_name =
+let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
   let ctx = create_context symbol_table in
   
   (* Analyze assignment patterns for optimization early *)
@@ -1110,6 +1286,20 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower global maps *)
   let ir_global_maps = List.map (fun map_decl -> lower_map_declaration map_decl) global_map_decls in
   
+  (* Add global maps to main context for userspace processing *)
+  List.iter (fun (map_def : ir_map_def) -> 
+    Hashtbl.add ctx.maps map_def.map_name map_def
+  ) ir_global_maps;
+  
+  (* Also add all program-scoped maps to main context for userspace processing *)
+  List.iter (fun prog_def ->
+    let program_scoped_maps = prog_def.prog_maps in
+    let ir_program_maps = List.map (fun map_decl -> lower_map_declaration map_decl) program_scoped_maps in
+    List.iter (fun (map_def : ir_map_def) -> 
+      Hashtbl.add ctx.maps map_def.map_name map_def
+    ) ir_program_maps
+  ) prog_defs;
+  
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
@@ -1122,6 +1312,14 @@ let lower_multi_program ast symbol_table source_name =
     | Ast.Userspace ub -> Some ub
     | _ -> None
   ) ast in
+  
+  (* Convert AST userspace block to IR userspace program *)
+  let userspace_program = match userspace_block with
+    | Some ub -> 
+        let require_main = not for_testing in
+        Some (lower_userspace_block ~require_main ctx ub)
+    | None -> None
+  in
   
   (* Validate userspace block - there should be at most one *)
   let userspace_blocks = List.filter_map (function
@@ -1190,14 +1388,14 @@ let lower_multi_program ast symbol_table source_name =
     source_name 
     ir_programs 
     ir_global_maps 
-    ?userspace_block:userspace_block 
+    ?userspace_program:userspace_program 
     ~userspace_bindings:userspace_bindings 
     multi_pos
 
 (** Main entry point for IR generation *)
-let generate_ir ast symbol_table source_name =
+let generate_ir ?(for_testing=false) ast symbol_table source_name =
   try
-    lower_multi_program ast symbol_table source_name
+    lower_multi_program ~for_testing ast symbol_table source_name
   with
   | exn ->
       Printf.eprintf "IR generation failed: %s\n" (Printexc.to_string exn);

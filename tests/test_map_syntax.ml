@@ -5,7 +5,7 @@ open Alcotest
 
 (** Test suite for Map Syntax and Operations *)
 
-let test_position = make_position 1 1 "test.ks"
+let _test_position = make_position 1 1 "test.ks"
 
 (** Helper function to check if string contains substring *)
 let contains_substr str substr =
@@ -193,7 +193,7 @@ program test : xdp {
     let ast = parse_string program in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
-    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs [] ast in
     let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     check bool "test passed" true true
   with
@@ -221,7 +221,7 @@ program counter : xdp {
     let ast = parse_string program in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
-    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs [] ast in
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
@@ -252,14 +252,15 @@ let test_new_syntax_error_cases () =
     "map<u32, u64> invalid : HashMap(512) { read_only: \"true\" };";
   ] in
   
-  List.for_all (fun invalid_code ->
+  let all_failed_as_expected = List.for_all (fun invalid_code ->
     try
       let program = Printf.sprintf "%s\nprogram test : xdp { fn main() -> u32 { return 0; } }" invalid_code in
       let _ = parse_string program in
       false  (* Should have failed *)
     with
     | _ -> true  (* Expected to fail *)
-  ) invalid_cases
+  ) invalid_cases in
+  check bool "all invalid cases failed as expected" true all_failed_as_expected
 
 (** Test map operations parsing *)
 let test_map_operations_parsing () =
@@ -274,14 +275,15 @@ let test_map_operations_parsing () =
     ("let value = my_map.lookup(key);", false);
   ] in
   
-  List.for_all (fun (code, should_succeed) ->
+  let all_cases_passed = List.for_all (fun (code, should_succeed) ->
     try
       let program = Printf.sprintf "map<u32, u64> my_map : HashMap(1024) { };\nprogram test : xdp { fn main() -> u32 { %s return 0; } }" code in
       let _ = parse_string program in
       should_succeed
     with
     | _ -> not should_succeed
-  ) test_cases
+  ) test_cases in
+  check bool "all map operations parsing cases passed" true all_cases_passed
 
 (** Test complete map program parsing *)
 let test_complete_map_program_parsing () =
@@ -362,14 +364,15 @@ program test : xdp {
 |}, false);
   ] in
   
-  List.for_all (fun (code, should_succeed) ->
+  let all_validation_passed = List.for_all (fun (code, should_succeed) ->
     try
       let ast = parse_string code in
       let _ = type_check_ast ast in
       should_succeed
     with
     | _ -> not should_succeed
-  ) test_cases
+  ) test_cases in
+  check bool "all map type validation cases passed" true all_validation_passed
 
 (** Test map identifier resolution *)
 let test_map_identifier_resolution () =
@@ -425,7 +428,7 @@ program test : xdp {
     let ast = parse_string program in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
-    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs [] ast in
     
     (* Test that IR generation completes without errors *)
     let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
@@ -454,7 +457,7 @@ program test : xdp {
     let ast = parse_string program in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let typed_programs = type_check_ast ast in
-    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+    let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs [] ast in
     
     (* Test that C code generation completes and produces expected output *)
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
@@ -480,7 +483,7 @@ let test_different_map_types () =
     ("LruHash", "BPF_MAP_TYPE_LRU_HASH");
   ] in
   
-  List.for_all (fun (ks_type, c_type) ->
+  let all_map_types_work = List.for_all (fun (ks_type, c_type) ->
     let program = Printf.sprintf {|
 map<u32, u64> test_map : %s(1024) {
 };
@@ -498,7 +501,7 @@ program test : xdp {
       let ast = parse_string program in
       let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
       let typed_programs = type_check_ast ast in
-      let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs ast in
+      let annotated_ast = Kernelscript.Type_checker.typed_ast_to_annotated_ast typed_programs [] ast in
       
       (* Test compilation and C code generation *)
       let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
@@ -506,13 +509,26 @@ program test : xdp {
       contains_substr c_code c_type
     with
     | _ -> false
-  ) map_types
+  ) map_types in
+  check bool "all different map types work correctly" true all_map_types_work
 
 let map_syntax_tests = [
   "map_declaration_parsing", `Quick, test_map_declaration_parsing;
   "blockless_map_declaration", `Quick, test_blockless_map_declaration;
   "map_attributes_syntax", `Quick, test_map_attributes_syntax;
   "comprehensive_map_syntax", `Quick, test_comprehensive_map_syntax;
+  "new_syntax_type_checking", `Quick, test_new_syntax_type_checking;
+  "new_syntax_ir_generation", `Quick, test_new_syntax_ir_generation;
+  "new_syntax_c_generation", `Quick, test_new_syntax_c_generation;
+  "new_syntax_error_cases", `Quick, test_new_syntax_error_cases;
+  "map_operations_parsing", `Quick, test_map_operations_parsing;
+  "complete_map_program_parsing", `Quick, test_complete_map_program_parsing;
+  "map_type_checking", `Quick, test_map_type_checking;
+  "map_type_validation", `Quick, test_map_type_validation;
+  "map_identifier_resolution", `Quick, test_map_identifier_resolution;
+  "map_ir_generation", `Quick, test_map_ir_generation;
+  "map_c_generation", `Quick, test_map_c_generation;
+  "different_map_types", `Quick, test_different_map_types;
 ]
 
 let () =
