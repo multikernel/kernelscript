@@ -215,10 +215,18 @@ let rec generate_c_instruction_from_ir ctx instruction =
        | None -> sprintf "%s(%s);" func_name args_str)
   
   | IRReturn (Some value) ->
-      sprintf "return %s;" (generate_c_value_from_ir ctx value)
+      (* In main function, use __return_value instead of immediate return to allow cleanup *)
+      if ctx.function_name = "main" then
+        sprintf "__return_value = %s; goto cleanup;" (generate_c_value_from_ir ctx value)
+      else
+        sprintf "return %s;" (generate_c_value_from_ir ctx value)
   
   | IRReturn None ->
-      "return;"
+      (* In main function, use goto cleanup instead of immediate return *)
+      if ctx.function_name = "main" then
+        "goto cleanup;"
+      else
+        "return;"
   
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
       generate_map_load_from_ir ctx map_val key_val dest_val load_type
@@ -359,6 +367,7 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     // User-defined logic from IR
     %s
     
+    cleanup:
     // Cleanup
     cleanup_bpf_environment();
     printf("Userspace coordinator shutting down\n");
