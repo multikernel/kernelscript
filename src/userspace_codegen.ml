@@ -209,10 +209,28 @@ let rec generate_c_instruction_from_ir ctx instruction =
       sprintf "%s = %s;" (generate_c_value_from_ir ctx dest) (generate_c_expression_from_ir ctx src)
   
   | IRCall (func_name, args, result_opt) ->
-      let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
+      (* Check if this is a built-in function that needs context-specific translation *)
+      let (actual_name, translated_args) = match Stdlib.get_userspace_implementation func_name with
+        | Some userspace_impl ->
+            (* This is a built-in function - translate for userspace context *)
+            let c_args = List.map (generate_c_value_from_ir ctx) args in
+            (match func_name with
+             | "print" -> 
+                 (* Special handling for print: convert to printf format *)
+                 (match c_args with
+                  | [] -> (userspace_impl, ["\"\\n\""])
+                  | [first] -> (userspace_impl, [sprintf "%s \"\\n\"" first])
+                  | args -> (userspace_impl, args @ ["\"\\n\""]))
+             | _ -> (userspace_impl, c_args))
+        | None ->
+            (* Regular function call *)
+            let c_args = List.map (generate_c_value_from_ir ctx) args in
+            (func_name, c_args)
+      in
+      let args_str = String.concat ", " translated_args in
       (match result_opt with
-       | Some result -> sprintf "%s = %s(%s);" (generate_c_value_from_ir ctx result) func_name args_str
-       | None -> sprintf "%s(%s);" func_name args_str)
+       | Some result -> sprintf "%s = %s(%s);" (generate_c_value_from_ir ctx result) actual_name args_str
+       | None -> sprintf "%s(%s);" actual_name args_str)
   
   | IRReturn (Some value) ->
       (* In main function, use __return_value instead of immediate return to allow cleanup *)

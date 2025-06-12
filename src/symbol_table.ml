@@ -543,11 +543,17 @@ and process_expression table expr =
            symbol_error ("Undefined symbol: " ^ name) expr.expr_pos)
            
   | FunctionCall (name, args) ->
-      (* Validate function exists *)
-      (match lookup_symbol table name with
-       | Some { kind = Function _; _ } -> ()
-       | Some _ -> symbol_error (name ^ " is not a function") expr.expr_pos
-       | None -> symbol_error ("Undefined function: " ^ name) expr.expr_pos);
+      (* Validate function exists - check built-ins first, then user-defined *)
+      (match Stdlib.is_builtin_function name with
+       | true -> 
+           (* This is a built-in function - it's always valid *)
+           ()
+       | false ->
+           (* Check for user-defined function *)
+           (match lookup_symbol table name with
+            | Some { kind = Function _; _ } -> ()
+            | Some _ -> symbol_error (name ^ " is not a function") expr.expr_pos
+            | None -> symbol_error ("Undefined function: " ^ name) expr.expr_pos));
       List.iter (process_expression table) args
       
   | ArrayAccess (arr, idx) ->

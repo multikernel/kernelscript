@@ -190,6 +190,113 @@ program test : xdp {
   with
   | _ -> fail "Error occurred"
 
+(** Test built-in function type checking *)
+let test_builtin_function_type_checking () =
+  let program_text = {|
+program test : xdp {
+  fn main() -> u32 {
+    print("Hello from eBPF");
+    print("Message with value: ", 42);
+    print();
+    return 0;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_ast ast in
+    check bool "built-in function type checking" true true
+  with
+  | _ -> fail "Built-in function type checking failed"
+
+(** Test variadic function argument handling *)
+let test_variadic_function_arguments () =
+  let test_cases = [
+    ("print();", true, "no arguments");
+    ("print(\"hello\");", true, "single string argument");
+    ("print(\"value: \", 42);", true, "string and number");
+    ("print(\"a\", \"b\", \"c\");", true, "multiple arguments");
+    ("print(1, 2, 3, 4, 5);", true, "many arguments");
+  ] in
+  
+  List.iter (fun (call, should_succeed, desc) ->
+    let program_text = Printf.sprintf {|
+program test : xdp {
+  fn main() -> u32 {
+    %s
+    return 0;
+  }
+}
+|} call in
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("variadic function: " ^ desc) should_succeed true
+    with
+    | _ -> check bool ("variadic function: " ^ desc) should_succeed false
+  ) test_cases
+
+(** Test built-in function return types *)
+let test_builtin_function_return_types () =
+  let program_text = {|
+program test : xdp {
+  fn main() -> u32 {
+    let result: u32 = print("test message");
+    return result;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_ast ast in
+    check bool "built-in function return type" true true
+  with
+  | _ -> fail "Built-in function return type checking failed"
+
+(** Test built-in vs user-defined function precedence *)
+let test_builtin_vs_user_function_precedence () =
+  let program_text = {|
+program test : xdp {
+  fn my_function(x: u32) -> u32 {
+    return x + 1;
+  }
+  
+  fn main() -> u32 {
+    let user_result = my_function(10);
+    print("User function result: ", user_result);
+    return user_result;
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_ast ast in
+    check bool "built-in vs user function precedence" true true
+  with
+  | _ -> fail "Built-in vs user function precedence test failed"
+
+(** Test stdlib integration *)
+let test_stdlib_integration () =
+  (* Test that stdlib functions are properly recognized *)
+  check bool "print is builtin" true (Kernelscript.Stdlib.is_builtin_function "print");
+  check bool "non_existent is not builtin" false (Kernelscript.Stdlib.is_builtin_function "non_existent_function");
+  
+  (* Test getting function signature *)
+  (match Kernelscript.Stdlib.get_builtin_function_signature "print" with
+  | Some (params, return_type) ->
+      check int "print parameter count" 0 (List.length params);
+      check bool "print return type is U32" true (return_type = Kernelscript.Ast.U32)
+  | None -> check bool "print function signature should exist" false true);
+  
+  (* Test context-specific implementations *)
+  (match Kernelscript.Stdlib.get_ebpf_implementation "print" with
+  | Some impl -> check string "eBPF implementation" "bpf_printk" impl
+  | None -> check bool "eBPF implementation should exist" false true);
+  
+  (match Kernelscript.Stdlib.get_userspace_implementation "print" with
+  | Some impl -> check string "userspace implementation" "printf" impl
+  | None -> check bool "userspace implementation should exist" false true)
+
 (** Test error handling *)
 let test_error_handling () =
   let invalid_programs = [
@@ -341,6 +448,11 @@ let type_checker_tests = [
   "variable_type_checking", `Quick, test_variable_type_checking;
   "binary_operations", `Quick, test_binary_operations;
   "function_calls", `Quick, test_function_calls;
+  "builtin_function_type_checking", `Quick, test_builtin_function_type_checking;
+  "variadic_function_arguments", `Quick, test_variadic_function_arguments;
+  "builtin_function_return_types", `Quick, test_builtin_function_return_types;
+  "builtin_vs_user_function_precedence", `Quick, test_builtin_vs_user_function_precedence;
+  "stdlib_integration", `Quick, test_stdlib_integration;
   "context_types", `Quick, test_context_types;
   "struct_field_access", `Quick, test_struct_field_access;
   "statement_type_checking", `Quick, test_statement_type_checking;

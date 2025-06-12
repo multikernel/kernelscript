@@ -4,7 +4,7 @@
  (modules ast lexer parser parse ir type_checker evaluator symbol_table 
           ir_generator ir_analysis ir_function_system ebpf_c_codegen userspace_codegen 
           loop_analysis multi_program_analyzer multi_program_ir_optimizer
-          maps safety_checker map_operations map_assignment)
+          maps safety_checker map_operations map_assignment stdlib)
  (libraries unix str))
 
 (executable

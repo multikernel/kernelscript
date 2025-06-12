@@ -32,6 +32,14 @@ type comprehensive_analysis_result = {
 (** Helper functions for testing *)
 let dummy_pos = { line = 1; column = 1; filename = "test.ks" }
 
+(** Check if a string starts with a given prefix *)
+let starts_with prefix str =
+  String.length str >= String.length prefix && 
+  String.sub str 0 (String.length prefix) = prefix
+
+(** Check if an error message indicates an undefined function *)
+let is_undefined_function_error msg = starts_with "Undefined function" msg
+
 let create_test_map_decl name is_global =
   let config = {
     max_entries = 256;
@@ -195,7 +203,120 @@ let test_symbol_table_creation () =
   check (option string) "no current program" None table.current_program;
   check (option string) "no current function" None table.current_function
 
-(** Test 2: Global map handling *)
+(** Test 2: Built-in function recognition *)
+let test_builtin_function_recognition () =
+  let table = create_symbol_table () in
+  
+  (* Create an expression with a built-in function call *)
+  let print_expr = {
+    expr_desc = FunctionCall ("print", [
+      { expr_desc = Literal (StringLit "Hello"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }
+    ]);
+    expr_pos = dummy_pos;
+    expr_type = None;
+    type_checked = false;
+    program_context = None;
+    map_scope = None;
+  } in
+  
+  (* Test that process_expression handles built-in functions without error *)
+  try
+    process_expression table print_expr;
+    check bool "built-in function recognized" true true
+  with
+  | Symbol_error (msg, _) -> 
+      check string "should not error on built-in function" "" msg;
+      check bool "built-in function recognized" true false
+  | _ -> 
+      check bool "built-in function recognized" true false;
+  
+  (* Test that non-existent functions still raise errors *)
+  let invalid_expr = {
+    expr_desc = FunctionCall ("non_existent_function", []);
+    expr_pos = dummy_pos;
+    expr_type = None;
+    type_checked = false;
+    program_context = None;
+    map_scope = None;
+  } in
+  
+  try
+    process_expression table invalid_expr;
+    check bool "non-existent function should error" false true
+  with
+  | Symbol_error _ -> 
+      check bool "non-existent function should error" true true
+  | _ -> 
+      check bool "non-existent function should error" false true
+
+(** Test 3: Built-in function calls in different contexts *)
+let test_builtin_function_contexts () =
+  let table = create_symbol_table () in
+  
+  (* Add a test program context *)
+  let table_with_prog = enter_scope table (ProgramScope "test_program") in
+  
+  (* Test built-in function call within program context *)
+  let print_expr = {
+    expr_desc = FunctionCall ("print", [
+      { expr_desc = Literal (StringLit "eBPF message"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }
+    ]);
+    expr_pos = dummy_pos;
+    expr_type = None;
+    type_checked = false;
+    program_context = None;
+    map_scope = None;
+  } in
+  
+  try
+    process_expression table_with_prog print_expr;
+    check bool "built-in function in program context" true true
+  with
+  | Symbol_error (msg, _) -> 
+      check string "should not error in program context" "" msg;
+      check bool "built-in function in program context" true false
+  | _ -> 
+      check bool "built-in function in program context" true false
+
+(** Test 4: Multiple built-in function types *)
+let test_multiple_builtin_functions () =
+  let table = create_symbol_table () in
+  
+  (* Test different built-in functions *)
+  let test_functions = [
+    ("print", "string literal");
+    (* Add more built-in functions as they are implemented *)
+  ] in
+  
+  List.iter (fun (func_name, test_desc) ->
+    let func_expr = {
+      expr_desc = FunctionCall (func_name, [
+        { expr_desc = Literal (StringLit "test"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }
+      ]);
+      expr_pos = dummy_pos;
+      expr_type = None;
+      type_checked = false;
+      program_context = None;
+      map_scope = None;
+    } in
+    
+    try
+      process_expression table func_expr;
+      check bool (func_name ^ " function recognized with " ^ test_desc) true true
+    with
+    | Symbol_error (msg, _) -> 
+        (* Only fail if it's an undefined function error and we expect the function to exist *)
+        if is_undefined_function_error msg && Kernelscript.Stdlib.is_builtin_function func_name then (
+          check string ("should not error on built-in " ^ func_name) "" msg;
+          check bool (func_name ^ " function recognized") true false
+        ) else (
+          check bool (func_name ^ " function recognized") true true
+        )
+    | _ -> 
+        check bool (func_name ^ " function recognized") true false
+  ) test_functions
+
+(** Test 5: Global map handling *)
 let test_global_map_handling () =
   let table = create_symbol_table () in
   let global_map = create_test_map_decl "global_counter" true in
@@ -794,6 +915,9 @@ program comprehensive : xdp {
 
 let symbol_table_tests = [
   "symbol_table_creation", `Quick, test_symbol_table_creation;
+  "builtin_function_recognition", `Quick, test_builtin_function_recognition;
+  "builtin_function_contexts", `Quick, test_builtin_function_contexts;
+  "multiple_builtin_functions", `Quick, test_multiple_builtin_functions;
   "global_map_handling", `Quick, test_global_map_handling;
   "local_map_handling", `Quick, test_local_map_handling;
   "scope_management", `Quick, test_scope_management;

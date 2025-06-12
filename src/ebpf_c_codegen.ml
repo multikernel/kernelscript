@@ -423,13 +423,44 @@ let rec generate_c_instruction ctx ir_instr =
       emit_line ctx (sprintf "%s = %s;" dest_str expr_str)
 
   | IRCall (name, args, ret_opt) ->
-      let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+      (* Check if this is a built-in function that needs context-specific translation *)
+      let (actual_name, translated_args) = match Stdlib.get_ebpf_implementation name with
+        | Some ebpf_impl ->
+            (* This is a built-in function - translate for eBPF context *)
+            let c_args = List.map (generate_c_value ctx) args in
+            (match name with
+             | "print" -> 
+                 (* Special handling for print: convert to bpf_printk format *)
+                 (match c_args with
+                  | [] -> (ebpf_impl, ["\"\""])
+                  | [first] -> (ebpf_impl, [sprintf "\"%s\"" "%s"; first])
+                                   | first :: rest ->
+                     (* bpf_printk limits: format string + up to 3 args *)
+                     let limited_args = 
+                       let rec take n lst =
+                         if n <= 0 then []
+                         else match lst with
+                         | [] -> []
+                         | h :: t -> h :: take (n - 1) t
+                       in
+                       take (min 3 (List.length rest)) rest
+                     in
+                     let format_specifiers = List.map (fun _ -> "%d") limited_args in
+                     let format_str = sprintf "\"%s%s\"" "%s" (String.concat " " format_specifiers) in
+                     (ebpf_impl, format_str :: first :: limited_args))
+             | _ -> (ebpf_impl, c_args))
+        | None ->
+            (* Regular function call *)
+            let c_args = List.map (generate_c_value ctx) args in
+            (name, c_args)
+      in
+      let args_str = String.concat ", " translated_args in
       (match ret_opt with
        | Some ret_val ->
            let ret_str = generate_c_value ctx ret_val in
-           emit_line ctx (sprintf "%s = %s(%s);" ret_str name args_str)
+           emit_line ctx (sprintf "%s = %s(%s);" ret_str actual_name args_str)
        | None ->
-           emit_line ctx (sprintf "%s(%s);" name args_str))
+           emit_line ctx (sprintf "%s(%s);" actual_name args_str))
 
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
       generate_map_load ctx map_val key_val dest_val load_type

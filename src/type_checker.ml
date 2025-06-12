@@ -162,32 +162,37 @@ let rec unify_types t1 t2 =
 
 (** Get built-in function signatures *)
 let get_builtin_function_signature name =
-  match name with
-  (* XDP context methods *)
-  | "ctx.packet" -> Some ([], Pointer U8)
-  | "ctx.data_end" -> Some ([], Pointer U8)
-  | "ctx.get_packet_id" -> Some ([], U32)
-  | "ctx.log_packet" -> Some ([Struct "PacketInfo"], U32)
-  
-  (* Map operations *)
-  | name when String.contains name '.' ->
-      let parts = String.split_on_char '.' name in
-      (match parts with
-       | [_map_name; "lookup"] -> Some ([Pointer U8], Option (Pointer U8))
-       | [_map_name; "insert"] -> Some ([Pointer U8; Pointer U8], U32)
-       | [_map_name; "update"] -> Some ([Pointer U8; Pointer U8], U32)
-       | [_map_name; "delete"] -> Some ([Pointer U8], U32)
-       | _ -> None)
-  
-  (* Utility functions *)
-  | "bpf_trace_printk" -> Some ([Pointer U8; U32], U32)
-  | "bpf_get_current_pid_tgid" -> Some ([], U64)
-  | "bpf_ktime_get_ns" -> Some ([], U64)
-  
-  (* Type conversion functions *)
-  | "Protocol.from_u8" -> Some ([U8], Option (Enum "Protocol"))
-  
-  | _ -> None
+  (* First check stdlib for built-in functions *)
+  match Stdlib.get_builtin_function_signature name with
+  | Some signature -> Some signature
+  | None ->
+      (* Fallback to existing hardcoded built-ins for compatibility *)
+      match name with
+      (* XDP context methods *)
+      | "ctx.packet" -> Some ([], Pointer U8)
+      | "ctx.data_end" -> Some ([], Pointer U8)
+      | "ctx.get_packet_id" -> Some ([], U32)
+      | "ctx.log_packet" -> Some ([Struct "PacketInfo"], U32)
+      
+      (* Map operations *)
+      | name when String.contains name '.' ->
+          let parts = String.split_on_char '.' name in
+          (match parts with
+           | [_map_name; "lookup"] -> Some ([Pointer U8], Option (Pointer U8))
+           | [_map_name; "insert"] -> Some ([Pointer U8; Pointer U8], U32)
+           | [_map_name; "update"] -> Some ([Pointer U8; Pointer U8], U32)
+           | [_map_name; "delete"] -> Some ([Pointer U8], U32)
+           | _ -> None)
+      
+      (* Utility functions *)
+      | "bpf_trace_printk" -> Some ([Pointer U8; U32], U32)
+      | "bpf_get_current_pid_tgid" -> Some ([], U64)
+      | "bpf_ktime_get_ns" -> Some ([], U64)
+      
+      (* Type conversion functions *)
+      | "Protocol.from_u8" -> Some ([U8], Option (Enum "Protocol"))
+      
+      | _ -> None
 
 (** Type check literals *)
 let type_check_literal lit pos =
@@ -273,14 +278,21 @@ let rec type_check_function_call ctx name args pos =
   (* Check if it's a built-in function *)
   match get_builtin_function_signature name with
   | Some (expected_params, return_type) ->
-      if List.length expected_params = List.length arg_types then
-        let unified = List.map2 unify_types expected_params arg_types in
-        if List.for_all (function Some _ -> true | None -> false) unified then
-          { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = pos }
-        else
-          type_error ("Type mismatch in function call: " ^ name) pos
-      else
-        type_error ("Wrong number of arguments for function: " ^ name) pos
+      (* Check if this is a variadic function (indicated by empty parameter list) *)
+      (match Stdlib.get_builtin_function name with
+       | Some builtin_func when builtin_func.is_variadic ->
+           (* Variadic function - accept any number of arguments *)
+           { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = pos }
+       | _ ->
+           (* Regular built-in function - check argument count and types *)
+           if List.length expected_params = List.length arg_types then
+             let unified = List.map2 unify_types expected_params arg_types in
+             if List.for_all (function Some _ -> true | None -> false) unified then
+               { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = pos }
+             else
+               type_error ("Type mismatch in function call: " ^ name) pos
+           else
+             type_error ("Wrong number of arguments for function: " ^ name) pos)
   
   (* Check user-defined functions *)
   | None ->

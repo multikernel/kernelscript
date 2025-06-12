@@ -1,0 +1,26 @@
+// Simple demonstration of the print() built-in function
+// This shows the same print() function working in both eBPF and userspace contexts
+
+config demo {
+    enable_logging: bool = true,
+    message_count: u32 = 0,
+}
+
+// eBPF program that uses print()
+program simple_logger : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if demo.enable_logging {
+            print("eBPF: Processing packet");
+        }
+        return 2; // XDP_PASS
+    }
+}
+
+// Userspace coordinator that also uses print()
+userspace {
+    fn main(argc: u32, argv: u64) -> i32 {
+        print("Userspace: Starting packet logger");
+        print("Userspace: Logger initialized successfully");
+        return 0;
+    }
+} 

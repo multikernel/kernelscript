@@ -132,6 +132,11 @@
  (modules test_return_value_propagation)
  (libraries kernelscript alcotest str unix))
 
+(executable
+ (name test_stdlib)
+ (modules test_stdlib)
+ (libraries kernelscript))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -174,7 +179,8 @@
   test_comment_positions.exe
   test_for_statements.exe
   test_break_continue.exe
-  test_config.exe)
+  test_config.exe
+  test_stdlib.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -185,7 +191,8 @@
    (run ./test_comment_positions.exe)
    (run ./test_for_statements.exe)
    (run ./test_break_continue.exe)
-   (run ./test_config.exe))))
+   (run ./test_config.exe)
+   (run ./test_stdlib.exe))))
 
 (rule
  (alias ir-tests)
