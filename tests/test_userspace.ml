@@ -476,6 +476,41 @@ userspace {
   
     (* Verify basic functionality *)
     check bool "contains test function" true (String.length result > 0);
+    
+    (* CRITICAL: Verify the problematic &(literal) pattern is NOT generated *)
+    let has_invalid_literal_ref = 
+      try ignore (Str.search_forward (Str.regexp "&(42)\\|&(100)") result 0); true 
+      with Not_found -> false in
+    check bool "no invalid &(literal) references" false has_invalid_literal_ref;
+    
+    (* Verify proper C code patterns for literal map assignment *)
+    let has_map_update = 
+      try ignore (Str.search_forward (Str.regexp "bpf_map_update_elem\\|test_map_update") result 0); true 
+      with Not_found -> false in
+    check bool "has map update operation" true has_map_update;
+    
+    (* Verify that literals 42 and 100 are present but not in &(literal) form *)
+    let has_literal_42 = 
+      try ignore (Str.search_forward (Str.regexp "42") result 0); true 
+      with Not_found -> false in
+    let has_literal_100 = 
+      try ignore (Str.search_forward (Str.regexp "100") result 0); true 
+      with Not_found -> false in
+    check bool "contains literal 42" true has_literal_42;
+    check bool "contains literal 100" true has_literal_100;
+    
+    (* Verify no malformed parentheses around literals in address-of operations *)
+    let has_malformed_address = 
+      try ignore (Str.search_forward (Str.regexp "&([0-9]+)") result 0); true 
+      with Not_found -> false in
+    check bool "no malformed &(number) patterns" false has_malformed_address;
+    
+    (* Verify that proper C variable handling is used instead *)
+    let has_proper_variable_usage = 
+      try ignore (Str.search_forward (Str.regexp "uint32_t\\|&[a-zA-Z_][a-zA-Z0-9_]*") result 0); true 
+      with Not_found -> false in
+    check bool "uses proper variable references" true has_proper_variable_usage;
+    
     check bool "test completed successfully" true true
   with
   | _ -> 
@@ -528,6 +563,41 @@ userspace {
   
     (* Verify basic functionality *)
     check bool "contains test function" true (String.length result > 0);
+    
+    (* Verify that variables work correctly (IR generates var_N names) *)
+    let has_variable_declarations = 
+      try ignore (Str.search_forward (Str.regexp "uint32_t.*var_[0-9]+") result 0); true 
+      with Not_found -> false in
+    check bool "has variable declarations" true has_variable_declarations;
+    
+    (* Verify proper C code patterns for variable map assignment *)
+    let has_map_update = 
+      try ignore (Str.search_forward (Str.regexp "bpf_map_update_elem\\|test_map_update") result 0); true 
+      with Not_found -> false in
+    check bool "has map update operation" true has_map_update;
+    
+    (* Verify that variable references are used properly (var_0, var_1, etc.) *)
+    let has_variable_references = 
+      try ignore (Str.search_forward (Str.regexp "&var_[0-9]+") result 0); true 
+      with Not_found -> false in
+    check bool "uses proper variable references" true has_variable_references;
+    
+    (* Ensure no &(literal) patterns exist (should be clean since we use variables) *)
+    let has_malformed_address = 
+      try ignore (Str.search_forward (Str.regexp "&([0-9]+)") result 0); true 
+      with Not_found -> false in
+    check bool "no malformed &(number) patterns" false has_malformed_address;
+    
+    (* Verify the original literal values 42 and 100 are assigned to variables *)
+    let has_literal_42 = 
+      try ignore (Str.search_forward (Str.regexp "var_[0-9]+.*=.*42") result 0); true 
+      with Not_found -> false in
+    let has_literal_100 = 
+      try ignore (Str.search_forward (Str.regexp "var_[0-9]+.*=.*100") result 0); true 
+      with Not_found -> false in
+    check bool "assigns literal 42 to variable" true has_literal_42;
+    check bool "assigns literal 100 to variable" true has_literal_100;
+    
     check bool "test completed successfully" true true
   with
   | _ -> 
