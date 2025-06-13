@@ -498,7 +498,7 @@ let generate_map_setup_code maps =
   ) maps |> String.concat "\n"
 
 (** Generate coordinator logic from IR *)
-let generate_coordinator_logic_c coordinator _setup_code base_name =
+let generate_coordinator_logic_c coordinator setup_code base_name =
   (* Generate setup operations from simplified coordinator *)
   let setup_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.setup_logic) in
   
@@ -533,6 +533,8 @@ int setup_bpf_environment(void) {
     
     %s
     
+%s
+    
     return 0;
 }
 
@@ -549,7 +551,7 @@ void cleanup_bpf_environment(void) {
 void process_events(void) {
     %s
 }
-|} base_name setup_c cleanup_c event_processing_c
+|} base_name setup_c setup_code cleanup_c event_processing_c
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
 let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
