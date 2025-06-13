@@ -137,6 +137,11 @@
  (modules test_stdlib)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_config_struct_generation)
+ (modules test_config_struct_generation)
+ (libraries kernelscript alcotest str unix))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -180,6 +185,7 @@
   test_for_statements.exe
   test_break_continue.exe
   test_config.exe
+  test_config_struct_generation.exe
   test_stdlib.exe)
  (action
   (progn
@@ -192,6 +198,7 @@
    (run ./test_for_statements.exe)
    (run ./test_break_continue.exe)
    (run ./test_config.exe)
+   (run ./test_config_struct_generation.exe)
    (run ./test_stdlib.exe))))
 
 (rule
