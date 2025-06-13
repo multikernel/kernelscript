@@ -706,6 +706,116 @@ let test_no_direct_literal_addressing () =
     Printf.printf "Error: %s\n" (Printexc.to_string e);
     check bool "test failed with exception" false true
 
+(** Test that map loading code is properly generated in userspace coordinator *)
+let test_map_loading_code_generation () =
+  let code = {|
+    map<u32, u64> packet_stats : HashMap(1024);
+    
+    config network {
+        max_packet_size: u32 = 1500,
+        enable_logging: bool = true,
+    }
+    
+    config security {
+        threat_level: u32 = 1,
+    }
+    
+    program test : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        return 2;
+      }
+    }
+    
+    userspace {
+      fn main(argc: u32, argv: u64) -> i32 {
+        network.enable_logging = true;
+        return 0;
+      }
+    }
+  |} in
+  let test_fn () =
+    let ast = parse_string code in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let ir_multi_prog = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    
+    (* Extract config declarations for generation *)
+    let extract_config_declarations ast =
+      List.filter_map (function
+        | Kernelscript.Ast.ConfigDecl config -> Some config
+        | _ -> None
+      ) ast
+    in
+    let config_declarations = extract_config_declarations ast in
+    
+    (* Generate userspace C code *)
+    let temp_dir = Filename.temp_file "test_map_loading" "" in
+    Unix.unlink temp_dir;
+    Unix.mkdir temp_dir 0o755;
+    
+    try
+      Kernelscript.Userspace_codegen.generate_userspace_code_from_ir ~config_declarations ir_multi_prog ~output_dir:temp_dir "test";
+      let generated_file = Filename.concat temp_dir "test.c" in
+      
+      if Sys.file_exists generated_file then (
+        let ic = open_in generated_file in
+        let content = really_input_string ic (in_channel_length ic) in
+        close_in ic;
+        
+        (* Cleanup *)
+        Unix.unlink generated_file;
+        Unix.rmdir temp_dir;
+        
+        (* Verify map loading code is present *)
+        check bool "setup_bpf_environment function exists" true 
+          (try ignore (Str.search_forward (Str.regexp "int setup_bpf_environment") content 0); true with Not_found -> false);
+        
+        (* Verify packet_stats map loading *)
+        check bool "packet_stats map loading present" true 
+          (try ignore (Str.search_forward (Str.regexp "packet_stats_fd = bpf_object__find_map_fd_by_name.*packet_stats") content 0); true with Not_found -> false);
+        
+        (* Verify network config map loading *)
+        check bool "network config map loading present" true 
+          (try ignore (Str.search_forward (Str.regexp "network_config_map_fd = bpf_object__find_map_fd_by_name.*network_config_map") content 0); true with Not_found -> false);
+        
+        (* Verify security config map loading *)
+        check bool "security config map loading present" true 
+          (try ignore (Str.search_forward (Str.regexp "security_config_map_fd = bpf_object__find_map_fd_by_name.*security_config_map") content 0); true with Not_found -> false);
+        
+        (* Verify error handling for maps *)
+        check bool "map loading error handling present" true 
+          (try ignore (Str.search_forward (Str.regexp "Failed to find.*map in eBPF object") content 0); true with Not_found -> false);
+        
+        (* Verify BPF object filename is correct *)
+        check bool "correct eBPF object filename" true 
+          (try ignore (Str.search_forward (Str.regexp "test\\.ebpf\\.o") content 0); true with Not_found -> false);
+        
+        (* Verify map file descriptor declarations *)
+        check bool "packet_stats_fd declaration" true 
+          (try ignore (Str.search_forward (Str.regexp "int packet_stats_fd = -1") content 0); true with Not_found -> false);
+        check bool "network_config_map_fd declaration" true 
+          (try ignore (Str.search_forward (Str.regexp "int network_config_map_fd = -1") content 0); true with Not_found -> false);
+        check bool "security_config_map_fd declaration" true 
+          (try ignore (Str.search_forward (Str.regexp "int security_config_map_fd = -1") content 0); true with Not_found -> false);
+        
+      ) else (
+        Unix.rmdir temp_dir;
+        check bool "userspace code file generated" false true
+      )
+    with
+    | exn ->
+      (* Cleanup on error *)
+      (try Unix.rmdir temp_dir with _ -> ());
+      raise exn
+  in
+  try
+    test_fn ();
+    check bool "map loading code generation test passed" true true
+  with
+  | e -> 
+    Printf.printf "Error: %s\n" (Printexc.to_string e);
+    check bool "test failed with exception" false true
+
 (** Test suite *)
 let suite = [
   "userspace_top_level", `Quick, test_userspace_top_level;
@@ -732,6 +842,7 @@ let suite = [
   "mixed_literal_variable_expressions", `Quick, test_mixed_literal_variable_expressions;
   "unique_temp_var_names", `Quick, test_unique_temp_var_names;
   "no_direct_literal_addressing", `Quick, test_no_direct_literal_addressing;
+  "map_loading_code_generation", `Quick, test_map_loading_code_generation;
 ]
 
 let () =
