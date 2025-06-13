@@ -107,9 +107,24 @@ let lower_literal lit pos =
     | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
-    | ArrayLit _ -> 
-        (* TODO: Implement proper array literal lowering *)
-        IRArray (IRU32, 0, make_bounds_info ())
+    | ArrayLit literals -> 
+        (* Implement proper array literal lowering *)
+        let element_count = List.length literals in
+        if element_count = 0 then
+          (* Empty array defaults to u32 *)
+          IRArray (IRU32, 0, make_bounds_info ())
+        else
+          (* Determine element type from first literal *)
+          let first_lit = List.hd literals in
+          let element_ir_type = match first_lit with
+            | IntLit _ -> IRU32
+            | BoolLit _ -> IRBool
+            | CharLit _ -> IRChar
+            | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+            | ArrayLit _ -> IRU32  (* Nested arrays default to u32 for now *)
+          in
+          let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
+          IRArray (element_ir_type, element_count, bounds_info)
   in
   make_ir_value ir_lit ir_type pos
 
@@ -1069,8 +1084,8 @@ and generate_coordinator_logic _ctx _ir_functions =
   let signal_handling = make_ir_signal_handling setup_handlers cleanup_handlers graceful_shutdown in
   
   make_ir_coordinator_logic map_mgmt prog_lifecycle event_proc signal_handling
+  
 
-(** Convert AST config declarations to IR config structs *)
 let convert_config_declarations_to_ir config_declarations =
   List.map (fun config_decl ->
     let ir_fields = List.map (fun field ->
@@ -1173,15 +1188,6 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
     
     (* TODO: Update validation to work with IR userspace functions *)
     (* For now, we'll skip this validation during Phase 1 implementation *)
-    
-    (* Temporarily disabled - need to update for IR userspace functions *)
-    (* let main_functions = List.filter (fun ast_func -> ast_func.Ast.func_name = "main") userspace.userspace_functions in
-    
-    if main_functions = [] then
-      failwith "Userspace block must contain a main() function";
-    
-    if List.length main_functions > 1 then
-      failwith "Userspace block cannot contain multiple main() functions"; *)
     
     (* Generate bindings based on userspace block specification *)
     (* For now, generate default map wrappers for all maps *)
@@ -1386,14 +1392,28 @@ let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
-            | ArrayLit _ -> "[]" (* TODO: Implement array literal string conversion *)
+            | ArrayLit literals -> 
+                "[" ^ (String.concat ", " (List.map (function
+                  | IntLit i -> string_of_int i
+                  | StringLit s -> "\"" ^ s ^ "\""
+                  | CharLit c -> "'" ^ String.make 1 c ^ "'"
+                  | BoolLit b -> string_of_bool b
+                  | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
+                ) literals)) ^ "]"
           in
                       let value_str = match value_lit with
             | IntLit i -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
-            | ArrayLit _ -> "[]" (* TODO: Implement array literal string conversion *)
+            | ArrayLit literals -> 
+                "[" ^ (String.concat ", " (List.map (function
+                  | IntLit i -> string_of_int i
+                  | StringLit s -> "\"" ^ s ^ "\""
+                  | CharLit c -> "'" ^ String.make 1 c ^ "'"
+                  | BoolLit b -> string_of_bool b
+                  | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
+                ) literals)) ^ "]"
           in
           Some (key_str ^ ":" ^ value_str)
       | _ -> None

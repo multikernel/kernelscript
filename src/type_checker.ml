@@ -203,18 +203,32 @@ let type_check_literal lit pos =
     | CharLit _ -> Char
     | BoolLit _ -> Bool
     | ArrayLit literals ->
-        (* TODO: Implement proper array literal type checking *)
+        (* Implement proper array literal type checking *)
         (match literals with
          | [] -> Array (U32, 0)  (* Empty array defaults to u32 *)
-         | first_lit :: _ ->
+         | first_lit :: rest_lits ->
              let first_type = match first_lit with
                | IntLit _ -> U32
                | BoolLit _ -> Bool
                | CharLit _ -> Char
                | StringLit _ -> Pointer U8
-               | ArrayLit _ -> U32  (* Nested arrays not supported yet *)
+               | ArrayLit _ -> U32  (* Nested arrays default to u32 for now *)
              in
-             Array (first_type, List.length literals))
+             (* Verify all elements have the same type *)
+             let all_same_type = List.for_all (fun lit ->
+               let lit_type = match lit with
+                 | IntLit _ -> U32
+                 | BoolLit _ -> Bool
+                 | CharLit _ -> Char
+                 | StringLit _ -> Pointer U8
+                 | ArrayLit _ -> U32
+               in
+               lit_type = first_type
+             ) rest_lits in
+             if not all_same_type then
+               type_error "All elements in array literal must have the same type" pos
+             else
+               Array (first_type, List.length literals))
   in
   { texpr_desc = TLiteral lit; texpr_type = typ; texpr_pos = pos }
 
@@ -479,15 +493,18 @@ and type_check_expression ctx expr =
   | Literal lit -> type_check_literal lit expr.expr_pos
   | Identifier name -> type_check_identifier ctx name expr.expr_pos
   | ConfigAccess (config_name, field_name) ->
-      (* TODO: Add proper config validation *)
-      (* For now, assume config access returns reasonable types based on field name *)
-      let result_type = match field_name with
-        | "enable_logging" | "enable_strict_mode" -> Bool
-        | "max_packet_size" | "threat_level" -> U32  
-        | "max_connections" -> U64
-        | _ -> U32  (* Default to u32 *)
-      in
-      { texpr_desc = TConfigAccess (config_name, field_name); texpr_type = result_type; texpr_pos = expr.expr_pos }
+      (* Implement proper config validation *)
+      (try
+        let config_decl = Hashtbl.find ctx.configs config_name in
+        (* Find the field in the config declaration *)
+        (try
+          let config_field = List.find (fun f -> f.field_name = field_name) config_decl.config_fields in
+          let field_type = config_field.field_type in
+          { texpr_desc = TConfigAccess (config_name, field_name); texpr_type = field_type; texpr_pos = expr.expr_pos }
+        with Not_found ->
+          type_error (Printf.sprintf "Config '%s' has no field '%s'" config_name field_name) expr.expr_pos)
+      with Not_found ->
+        type_error (Printf.sprintf "Undefined config: '%s'" config_name) expr.expr_pos)
   | FunctionCall (name, args) -> type_check_function_call ctx name args expr.expr_pos
   | ArrayAccess (arr, idx) -> type_check_array_access ctx arr idx expr.expr_pos
   | FieldAccess (obj, field) -> type_check_field_access ctx obj field expr.expr_pos
@@ -954,7 +971,11 @@ let rec type_check_and_annotate_ast ast =
   let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system ast in
   
   (* Print analysis results for debugging *)
-  if true then (* TODO: make this configurable *)
+  let debug_enabled = try 
+    Sys.getenv "KERNELSCRIPT_DEBUG" = "1" 
+  with Not_found -> false 
+  in
+  if debug_enabled then
     Multi_program_analyzer.print_analysis_results multi_prog_analysis;
   
   (* STEP 2: Type checking with multi-program context *)
