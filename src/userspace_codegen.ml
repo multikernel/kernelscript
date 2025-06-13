@@ -43,6 +43,9 @@ let rec c_type_from_ir_type = function
   | IRU16 -> "uint16_t"
   | IRU32 -> "uint32_t"
   | IRU64 -> "uint64_t"
+  | IRI8 -> "int8_t"
+  | IRF32 -> "float"
+  | IRF64 -> "double"
   | IRBool -> "bool"
   | IRChar -> "char"
   | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
@@ -51,6 +54,8 @@ let rec c_type_from_ir_type = function
   | IREnum (name, _) -> sprintf "enum %s" name
   | IROption inner_type -> sprintf "%s*" (c_type_from_ir_type inner_type) (* nullable pointer *)
   | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
+  | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
+  | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
   | IRContext _ -> "void*" (* context pointers *)
   | IRAction _ -> "int" (* action return values *)
 
@@ -295,6 +300,24 @@ let rec generate_c_instruction_from_ir ctx instruction =
   | IRConfigFieldUpdate (map_val, key_val, field, value_val) ->
       generate_config_field_update_from_ir ctx map_val key_val field value_val
   
+  | IRConfigAccess (config_name, field_name, result_val) ->
+      (* Generate config access for userspace - direct struct field access *)
+      let result_str = generate_c_value_from_ir ctx result_val in
+      sprintf "%s = get_%s_config()->%s;" result_str config_name field_name
+  
+  | IRContextAccess (dest, access_type) ->
+      let access_str = match access_type with
+        | PacketData -> "ctx->data"
+        | PacketEnd -> "ctx->data_end" 
+        | DataMeta -> "ctx->data_meta"
+        | IngressIfindex -> "ctx->ingress_ifindex"
+        | DataLen -> "ctx->len"
+        | MarkField -> "ctx->mark"
+        | Priority -> "ctx->priority"
+        | CbField -> "ctx->cb"
+      in
+      sprintf "%s = %s;" (generate_c_value_from_ir ctx dest) access_str
+  
   | IRJump label ->
       sprintf "goto %s;" label
   
@@ -318,19 +341,6 @@ let rec generate_c_instruction_from_ir ctx instruction =
   
   | IRComment comment ->
       sprintf "/* %s */" comment
-  
-  | IRContextAccess (dest, access_type) ->
-      let access_str = match access_type with
-        | PacketData -> "ctx->data"
-        | PacketEnd -> "ctx->data_end" 
-        | DataMeta -> "ctx->data_meta"
-        | IngressIfindex -> "ctx->ingress_ifindex"
-        | DataLen -> "ctx->len"
-        | MarkField -> "ctx->mark"
-        | Priority -> "ctx->priority"
-        | CbField -> "ctx->cb"
-      in
-      sprintf "%s = %s;" (generate_c_value_from_ir ctx dest) access_str
   
   | IRBpfLoop (start, end_val, counter, _ctx_val, body_instrs) ->
       let start_str = generate_c_value_from_ir ctx start in
@@ -487,62 +497,59 @@ let generate_map_setup_code maps =
       map.map_name map.map_name
   ) maps |> String.concat "\n"
 
-(** Generate coordinator logic from IR coordinator *)
-let generate_coordinator_logic_c (coordinator : ir_coordinator_logic) map_setup_code base_name =
-  let map_mgmt_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.map_management.setup_operations) in
-  let prog_lifecycle_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.program_lifecycle.loading_sequence) in
-  let event_proc_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.event_processing.event_loop) in
-  let signal_handling_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.signal_handling.setup_handlers) in
-    
-    sprintf {|
-/* Generated Coordinator Logic */
+(** Generate coordinator logic from IR *)
+let generate_coordinator_logic_c coordinator _setup_code base_name =
+  (* Generate setup operations from simplified coordinator *)
+  let setup_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.setup_logic) in
+  
+  let event_processing_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.event_processing) in
+  
+  let cleanup_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.cleanup_logic) in
 
+  sprintf {|
+/* Generated coordinator logic */
 struct bpf_object *bpf_obj = NULL;
+static volatile bool keep_running = true;
 
-int setup_bpf_environment() {
-    /* Load BPF object file */
-    bpf_obj = bpf_object__open("%s.ebpf.o");
+void signal_handler(int sig) {
+    keep_running = false;
+}
+
+int setup_bpf_environment(void) {
+    printf("Setting up BPF environment...\n");
+    
+    /* Load BPF object */
+    bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
     if (libbpf_get_error(bpf_obj)) {
-        fprintf(stderr, "Failed to open BPF object file\n");
+        fprintf(stderr, "Failed to open BPF object\n");
         return -1;
     }
     
-    /* Load BPF program */
+    /* Load BPF programs */
     if (bpf_object__load(bpf_obj)) {
         fprintf(stderr, "Failed to load BPF object\n");
-        bpf_object__close(bpf_obj);
         return -1;
     }
     
-    /* Extract map file descriptors from loaded eBPF object */
-%s
-    /* Load all BPF programs from object file */
-%s
-/* Verify program loading success */
     %s
+    
     return 0;
 }
 
-void cleanup_bpf_environment() {
-    // Cleanup resources
+void cleanup_bpf_environment(void) {
+    printf("Cleaning up BPF environment...\n");
+    %s
+    
     if (bpf_obj) {
         bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
     }
 }
 
-void handle_events() {
-    /* Main event processing loop */
-%s
-/* Poll for events from BPF programs */
+void process_events(void) {
+    %s
 }
-
-void setup_signal_handlers() {
-    /* Setup SIGINT and SIGTERM handlers */
-    signal(SIGINT, SIG_DFL);
-    signal(SIGTERM, SIG_DFL);
-%s
-}
-|} base_name map_setup_code prog_lifecycle_c map_mgmt_c event_proc_c signal_handling_c
+|} base_name setup_c cleanup_c event_processing_c
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
 let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =

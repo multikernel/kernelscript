@@ -13,6 +13,7 @@ type ir_multi_program = {
   source_name: string; (* Base name of source file *)
   programs: ir_program list; (* List of eBPF programs *)
   global_maps: ir_map_def list; (* Maps shared across programs *)
+  global_configs: ir_global_config list; (* Named configuration blocks *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
   userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
   multi_pos: ir_position;
@@ -37,12 +38,18 @@ and ir_userspace_program = {
   userspace_pos: ir_position;
 }
 
-(** Coordinator logic for BPF program management *)
+(** Simplified coordinator logic for BPF program management *)
 and ir_coordinator_logic = {
-  map_management: ir_map_management; (* Map setup and access logic *)
-  program_lifecycle: ir_program_lifecycle; (* BPF program loading/unloading *)
-  event_processing: ir_event_processing; (* Event loop and processing *)
-  signal_handling: ir_signal_handling; (* Signal handling for graceful shutdown *)
+  setup_logic: ir_instruction list; (* Combined setup: maps + programs *)
+  event_processing: ir_instruction list; (* Simplified event loop *)
+  cleanup_logic: ir_instruction list; (* Combined cleanup *)
+  config_management: ir_config_management; (* Handle named configs *)
+}
+
+and ir_config_management = {
+  config_loads: (string * ir_instruction list) list; (* config_name -> load instructions *)
+  config_updates: (string * ir_instruction list) list; (* config_name -> update instructions *)
+  runtime_config_sync: ir_instruction list; (* Sync configs between userspace/kernel *)
 }
 
 and ir_map_management = {
@@ -103,6 +110,7 @@ and ir_config_item = {
 (** Enhanced type system for IR with bounds and safety information *)
 and ir_type = 
   | IRU8 | IRU16 | IRU32 | IRU64 | IRBool | IRChar
+  | IRI8 | IRF32 | IRF64 (* Add signed integers and floating point *)
   | IRPointer of ir_type * bounds_info
   | IRArray of ir_type * int * bounds_info
   | IRStruct of string * (string * ir_type) list
@@ -111,6 +119,8 @@ and ir_type =
   | IRResult of ir_type * ir_type
   | IRContext of context_type
   | IRAction of action_type
+  | IRTypeAlias of string * ir_type (* Simple type aliases *)
+  | IRStructOps of string * ir_struct_ops_def (* Future: struct_ops support *)
 
 and context_type = 
   | XdpCtx | TcCtx | KprobeCtx | UprobeCtx | TracepointCtx | LsmCtx | CgroupSkbCtx
@@ -125,6 +135,12 @@ and bounds_info = {
   nullable: bool;
 }
 
+and ir_struct_ops_def = {
+  ops_name: string;
+  ops_methods: (string * ir_type list * ir_type option) list; (* method_name, params, return *)
+  target_kernel_struct: string; (* Which kernel struct this implements *)
+}
+
 (** Enhanced map representation with full eBPF map configuration *)
 and ir_map_def = {
   map_name: string;
@@ -135,6 +151,7 @@ and ir_map_def = {
   attributes: ir_map_attr list;
   flags: int;
   is_global: bool;
+  namespace: string option; (* Optional namespace like "network", "security" *)
   pin_path: string option;
   map_pos: ir_position;
 }
@@ -200,6 +217,7 @@ and ir_instr_desc =
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
   | IRMapDelete of ir_value * ir_value
   | IRConfigFieldUpdate of ir_value * ir_value * string * ir_value (* map, key, field, value *)
+  | IRConfigAccess of string * string * ir_value (* config_name, field_name, result_val *)
   | IRContextAccess of ir_value * context_access_type
   | IRBoundsCheck of ir_value * int * int (* value, min, max *)
   | IRJump of string
@@ -297,6 +315,21 @@ and ir_config_struct = {
 
 and serialization_type = Json | Binary | Custom of string
 
+(** Global named configuration block *)
+and ir_global_config = {
+  config_name: string; (* e.g., "network", "security" *)
+  config_fields: ir_config_field list;
+  config_pos: ir_position;
+}
+
+and ir_config_field = {
+  field_name: string;
+  field_type: ir_type;
+  field_default: ir_value option;
+  is_mutable: bool; (* Support for 'mut' fields *)
+  field_pos: ir_position;
+}
+
 (** Utility functions for creating IR nodes *)
 
 let make_bounds_info ?min_size ?max_size ?(alignment = 1) ?(nullable = false) () = {
@@ -356,7 +389,7 @@ let make_ir_function name params return_type blocks ?(total_stack_usage = 0)
 }
 
 let make_ir_map_def name key_type value_type map_type max_entries 
-                    ?(attributes = []) ?(flags = 0) ?(is_global = false) ?pin_path pos = {
+                    ?(attributes = []) ?(flags = 0) ?(is_global = false) ?namespace ?pin_path pos = {
   map_name = name;
   map_key_type = key_type;
   map_value_type = value_type;
@@ -365,6 +398,7 @@ let make_ir_map_def name key_type value_type map_type max_entries
   attributes;
   flags;
   is_global;
+  namespace;
   pin_path;
   map_pos = pos;
 }
@@ -379,10 +413,11 @@ let make_ir_program name prog_type local_maps functions main_function pos = {
 }
 
 let make_ir_multi_program source_name programs global_maps 
-                          ?userspace_program ?(userspace_bindings = []) pos = {
+                          ?(global_configs = []) ?userspace_program ?(userspace_bindings = []) pos = {
   source_name;
   programs;
   global_maps;
+  global_configs;
   userspace_program;
   userspace_bindings;
   multi_pos = pos;
@@ -410,37 +445,31 @@ let make_ir_config_item key value config_type = {
   config_type;
 }
 
-let make_ir_coordinator_logic map_mgmt prog_lifecycle event_proc signal_handling = {
-  map_management = map_mgmt;
-  program_lifecycle = prog_lifecycle;
-  event_processing = event_proc;
-  signal_handling = signal_handling;
+let make_ir_coordinator_logic setup_logic event_processing cleanup_logic config_management = {
+  setup_logic;
+  event_processing;
+  cleanup_logic;
+  config_management;
 }
 
-let make_ir_map_management setup_ops access_patterns cleanup_ops = {
-  setup_operations = setup_ops;
-  access_patterns = access_patterns;
-  cleanup_operations = cleanup_ops;
+let make_ir_global_config name fields pos = {
+  config_name = name;
+  config_fields = fields;
+  config_pos = pos;
 }
 
-let make_ir_program_lifecycle loading_seq attach_logic detach_logic error_handling = {
-  loading_sequence = loading_seq;
-  attachment_logic = attach_logic;
-  detachment_logic = detach_logic;
-  error_handling = error_handling;
+let make_ir_config_field name field_type default is_mutable pos = {
+  field_name = name;
+  field_type = field_type;
+  field_default = default;
+  is_mutable = is_mutable;
+  field_pos = pos;
 }
 
-let make_ir_event_processing event_loop ring_buf_handling perf_handling polling_strategy = {
-  event_loop = event_loop;
-  ring_buffer_handling = ring_buf_handling;
-  perf_event_handling = perf_handling;
-  polling_strategy = polling_strategy;
-}
-
-let make_ir_signal_handling setup_handlers cleanup_handlers graceful_shutdown = {
-  setup_handlers = setup_handlers;
-  cleanup_handlers = cleanup_handlers;
-  graceful_shutdown = graceful_shutdown;
+let make_ir_config_management loads updates sync = {
+  config_loads = loads;
+  config_updates = updates;
+  runtime_config_sync = sync;
 }
 
 (** Type conversion utilities *)
@@ -452,8 +481,8 @@ let rec ast_type_to_ir_type = function
   | U64 -> IRU64
   | Bool -> IRBool
   | Char -> IRChar
-  | I8 -> IRU8  (* Simplified - eBPF treats signed as unsigned *)  
-  | I16 -> IRU16
+  | I8 -> IRI8  (* Use proper signed type *)
+  | I16 -> IRU16 (* For now, map to unsigned for eBPF compatibility *)
   | I32 -> IRU32
   | I64 -> IRU64
   | Array (t, size) -> 
@@ -501,12 +530,17 @@ let rec string_of_ir_type = function
   | IRU64 -> "u64"
   | IRBool -> "bool"
   | IRChar -> "char"
+  | IRI8 -> "i8"
+  | IRF32 -> "f32"
+  | IRF64 -> "f64"
   | IRPointer (t, _) -> Printf.sprintf "*%s" (string_of_ir_type t)
   | IRArray (t, size, _) -> Printf.sprintf "[%s; %d]" (string_of_ir_type t) size
   | IRStruct (name, _) -> Printf.sprintf "struct %s" name
   | IREnum (name, _) -> Printf.sprintf "enum %s" name
   | IROption t -> Printf.sprintf "option %s" (string_of_ir_type t)
   | IRResult (t1, t2) -> Printf.sprintf "result (%s, %s)" (string_of_ir_type t1) (string_of_ir_type t2)
+  | IRTypeAlias (name, _) -> Printf.sprintf "type %s" name
+  | IRStructOps (name, _) -> Printf.sprintf "struct_ops %s" name
   | IRContext ctx -> Printf.sprintf "context %s" (match ctx with
     | XdpCtx -> "xdp" | TcCtx -> "tc" | KprobeCtx -> "kprobe"
     | UprobeCtx -> "uprobe" | TracepointCtx -> "tracepoint"
@@ -576,6 +610,8 @@ let rec string_of_ir_instruction instr =
   | IRConfigFieldUpdate (map, key, field, value) ->
       Printf.sprintf "config_update(%s, %s, %s, %s)" 
         (string_of_ir_value map) (string_of_ir_value key) field (string_of_ir_value value)
+  | IRConfigAccess (config_name, field_name, result_val) ->
+      Printf.sprintf "config_access(%s, %s, %s)" config_name field_name (string_of_ir_value result_val)
   | IRContextAccess (dest, access_type) ->
       let access_str = match access_type with
         | PacketData -> "packet_data" | PacketEnd -> "packet_end"

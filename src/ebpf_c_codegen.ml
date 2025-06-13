@@ -72,19 +72,24 @@ let fresh_label ctx prefix =
 
 (** Type conversion from IR types to C types *)
 
-let rec ir_type_to_c_type = function
+let rec ebpf_type_from_ir_type = function
   | IRU8 -> "__u8"
   | IRU16 -> "__u16" 
   | IRU32 -> "__u32"
   | IRU64 -> "__u64"
-  | IRBool -> "bool"
+  | IRI8 -> "__s8"
+  | IRF32 -> "__u32" (* Fixed point representation in kernel *)
+  | IRF64 -> "__u64" (* Fixed point representation in kernel *)
+  | IRBool -> "__u8"
   | IRChar -> "char"
-  | IRPointer (inner_type, _) -> sprintf "%s*" (ir_type_to_c_type inner_type)
-  | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ir_type_to_c_type inner_type) size
+  | IRPointer (inner_type, _) -> sprintf "%s*" (ebpf_type_from_ir_type inner_type)
+  | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ebpf_type_from_ir_type inner_type) size
   | IRStruct (name, _) -> sprintf "struct %s" name
   | IREnum (name, _) -> sprintf "enum %s" name
-  | IROption _ -> "void*" (* Options represented as nullable pointers *)
-  | IRResult _ -> "int" (* Results represented as error codes *)
+  | IROption inner_type -> sprintf "%s*" (ebpf_type_from_ir_type inner_type) (* nullable pointer *)
+  | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
+  | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
+  | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
   | IRContext XdpCtx -> "struct xdp_md*"
   | IRContext TcCtx -> "struct __sk_buff*"
   | IRContext KprobeCtx -> "struct pt_regs*"
@@ -128,8 +133,8 @@ let generate_includes ctx =
 
 let generate_map_definition ctx map_def =
   let map_type_str = ir_map_type_to_c_type map_def.map_type in
-  let key_type_str = ir_type_to_c_type map_def.map_key_type in
-  let value_type_str = ir_type_to_c_type map_def.map_value_type in
+  let key_type_str = ebpf_type_from_ir_type map_def.map_key_type in
+  let value_type_str = ebpf_type_from_ir_type map_def.map_value_type in
   
   emit_line ctx "struct {";
   increase_indent ctx;
@@ -271,7 +276,7 @@ let generate_c_expression ctx ir_expr =
       sprintf "(%s%s)" op_str val_str
   | IRCast (ir_val, target_type) ->
       let val_str = generate_c_value ctx ir_val in
-      let type_str = ir_type_to_c_type target_type in
+      let type_str = ebpf_type_from_ir_type target_type in
       sprintf "((%s)%s)" type_str val_str
 
 (** Generate helper function calls *)
@@ -321,7 +326,7 @@ let generate_map_load ctx map_val key_val dest_val load_type =
       let key_var = match key_val.value_desc with
         | IRLiteral _ -> 
             let temp_key = fresh_var ctx "key" in
-            let key_type = ir_type_to_c_type key_val.val_type in
+            let key_type = ebpf_type_from_ir_type key_val.val_type in
             let key_str = generate_c_value ctx key_val in
             emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
             temp_key
@@ -329,7 +334,7 @@ let generate_map_load ctx map_val key_val dest_val load_type =
       in
       (* bpf_map_lookup_elem returns a pointer, so we need to dereference it *)
       emit_line ctx (sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);" map_str key_var);
-      emit_line ctx (sprintf "  if (__tmp_ptr) %s = *(%s*)__tmp_ptr;" dest_str (ir_type_to_c_type dest_val.val_type));
+      emit_line ctx (sprintf "  if (__tmp_ptr) %s = *(%s*)__tmp_ptr;" dest_str (ebpf_type_from_ir_type dest_val.val_type));
       emit_line ctx (sprintf "  else %s = 0; }" dest_str)
   | MapPeek ->
       emit_line ctx (sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str)
@@ -346,7 +351,7 @@ let generate_map_store ctx map_val key_val value_val store_type =
       let key_var = match key_val.value_desc with
         | IRLiteral _ -> 
             let temp_key = fresh_var ctx "key" in
-            let key_type = ir_type_to_c_type key_val.val_type in
+            let key_type = ebpf_type_from_ir_type key_val.val_type in
             let key_str = generate_c_value ctx key_val in
             emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
             temp_key
@@ -357,7 +362,7 @@ let generate_map_store ctx map_val key_val value_val store_type =
       let value_var = match value_val.value_desc with
         | IRLiteral _ ->
             let temp_value = fresh_var ctx "value" in
-            let value_type = ir_type_to_c_type value_val.val_type in
+            let value_type = ebpf_type_from_ir_type value_val.val_type in
             let value_str = generate_c_value ctx value_val in
             emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
             temp_value
@@ -376,7 +381,7 @@ let generate_map_delete ctx map_val key_val =
   let key_var = match key_val.value_desc with
     | IRLiteral _ -> 
         let temp_key = fresh_var ctx "key" in
-        let key_type = ir_type_to_c_type key_val.val_type in
+        let key_type = ebpf_type_from_ir_type key_val.val_type in
         let key_str = generate_c_value ctx key_val in
         emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
         temp_key
@@ -472,9 +477,20 @@ let rec generate_c_instruction ctx ir_instr =
       generate_map_delete ctx map_val key_val
 
   | IRConfigFieldUpdate (_map_val, _key_val, _field, _value_val) ->
-      (* This should never be reached since config field updates in eBPF are caught during type checking *)
-      failwith "Internal error: Config field updates in eBPF programs should have been caught during type checking"
-
+      (* Config field updates should never occur in eBPF programs - they are read-only *)
+      failwith "Internal error: Config field updates in eBPF programs should have been caught during type checking - configs are read-only in kernel space"
+      
+  | IRConfigAccess (config_name, field_name, result_val) ->
+      (* For eBPF, config access goes through global maps *)
+      let result_str = generate_c_value ctx result_val in
+      let config_map_name = sprintf "%s_config_map" config_name in
+      emit_line ctx (sprintf "{ __u32 config_key = 0; /* global config key */");
+      emit_line ctx (sprintf "  void* config_ptr = bpf_map_lookup_elem(&%s, &config_key);" config_map_name);
+      emit_line ctx (sprintf "  if (config_ptr) {");
+      emit_line ctx (sprintf "    %s = ((struct %s_config*)config_ptr)->%s;" result_str config_name field_name);
+      emit_line ctx (sprintf "  } else { %s = 0; }" result_str);
+      emit_line ctx (sprintf "}")
+      
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
       let access_str = match access_type with
@@ -604,12 +620,12 @@ let rec generate_c_instruction ctx ir_instr =
       List.iter collect_callback_registers body_instructions;
       
       (* Declare the loop counter variable in callback scope *)
-      let counter_type = ir_type_to_c_type counter_val.val_type in
+      let counter_type = ebpf_type_from_ir_type counter_val.val_type in
       emit_line callback_ctx (sprintf "%s %s = index;" counter_type counter_var_name);
       
       (* Declare all other registers used in the callback *)
       List.iter (fun (reg, reg_type) ->
-        let c_type = ir_type_to_c_type reg_type in
+        let c_type = ebpf_type_from_ir_type reg_type in
         let reg_name = sprintf "tmp_%d" reg in
         if reg_name <> counter_var_name then
           emit_line callback_ctx (sprintf "%s %s;" c_type reg_name)
@@ -737,9 +753,11 @@ let collect_registers_in_function ir_func =
         collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
     | IRMapDelete (map_val, key_val) ->
         collect_in_value map_val; collect_in_value key_val
-    | IRConfigFieldUpdate (map_val, key_val, _, value_val) ->
+    | IRConfigFieldUpdate (map_val, key_val, _field, value_val) ->
         collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
-    | IRContextAccess (dest_val, _) -> collect_in_value dest_val
+    | IRConfigAccess (_config_name, _field_name, result_val) ->
+        collect_in_value result_val
+    | IRContextAccess (dest_val, _access_type) -> collect_in_value dest_val
     | IRBoundsCheck (ir_val, _, _) -> collect_in_value ir_val
     | IRCondJump (cond_val, _, _) -> collect_in_value cond_val
     | IRIf (cond_val, then_body, else_body) ->
@@ -772,13 +790,13 @@ let collect_registers_in_function ir_func =
 
 let generate_c_function ctx ir_func =
   let return_type_str = match ir_func.return_type with
-    | Some ret_type -> ir_type_to_c_type ret_type
+    | Some ret_type -> ebpf_type_from_ir_type ret_type
     | None -> "void"
   in
   
   let params_str = String.concat ", " 
     (List.map (fun (name, param_type) ->
-       sprintf "%s %s" (ir_type_to_c_type param_type) name
+       sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
      ) ir_func.parameters)
   in
   
@@ -799,7 +817,7 @@ let generate_c_function ctx ir_func =
   (* Declare temporary variables for all registers used *)
   let registers = collect_registers_in_function ir_func in
   List.iter (fun (reg, reg_type) ->
-    let c_type = ir_type_to_c_type reg_type in
+    let c_type = ebpf_type_from_ir_type reg_type in
     emit_line ctx (sprintf "%s tmp_%d;" c_type reg)
   ) registers;
   if registers <> [] then emit_blank_line ctx;

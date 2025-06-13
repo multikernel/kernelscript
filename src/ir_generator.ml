@@ -252,18 +252,15 @@ let rec lower_expression ctx (expr : Ast.expr) =
         | Some ast_type -> ast_type_to_ir_type ast_type
         | None -> IRU32 (* Default type for config fields *)
       in
-      let _result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
-      (* Generate a config access - this will be handled specially in codegen *)
+      (* Generate new IRConfigAccess instruction *)
       let config_access_instr = make_ir_instruction
-        (IRComment (Printf.sprintf "CONFIG_ACCESS: %s.%s" config_name field_name))
+        (IRConfigAccess (config_name, field_name, result_val))
         expr.expr_pos
       in
       emit_instruction ctx config_access_instr;
-      
-      (* For now, store config name and field name in the value for later codegen *)
-      (* We'll handle this in the C codegen by generating get_config_name()->field_name *)
-      make_ir_value (IRVariable (Printf.sprintf "%s.%s" config_name field_name)) result_type expr.expr_pos
+      result_val
       
   | Ast.FunctionCall (name, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
@@ -800,19 +797,39 @@ let rec lower_statement ctx stmt =
       emit_instruction ctx instr
   
   | Ast.FieldAssignment (object_expr, field_name, value_expr) ->
-      (* Generate config field update instruction *)
+      (* Check if we're trying to assign to a config field *)
       let map_name = match object_expr.expr_desc with
         | Ast.Identifier var_name -> var_name
         | _ -> failwith "Config field assignment must reference a config variable"
       in
-      let key_val = make_ir_value (IRLiteral (IntLit 0)) (IRU32) stmt.stmt_pos in
-      let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
-      let value_val = lower_expression ctx value_expr in
-      let instr = make_ir_instruction 
-        (IRConfigFieldUpdate (map_val, key_val, field_name, value_val)) 
-        stmt.stmt_pos 
+      
+      (* Check if this is a config assignment by looking up in symbol table *)
+      let is_config = match Symbol_table.lookup_symbol ctx.symbol_table map_name with
+        | Some { kind = Config _; _ } -> true
+        | _ -> false
       in
-      emit_instruction ctx instr
+      if is_config then (
+        (* This is a config field assignment *)
+        if not ctx.is_userspace then
+          (* We're in eBPF kernel space - config fields are read-only *)
+          failwith (Printf.sprintf 
+            "Config field assignment not allowed in eBPF programs at %s. Config fields are read-only in kernel space and can only be modified from userspace."
+            (string_of_position stmt.stmt_pos))
+        else (
+          (* We're in userspace - config field assignment is allowed *)
+          let key_val = make_ir_value (IRLiteral (IntLit 0)) (IRU32) stmt.stmt_pos in
+          let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
+          let value_val = lower_expression ctx value_expr in
+          let instr = make_ir_instruction 
+            (IRConfigFieldUpdate (map_val, key_val, field_name, value_val)) 
+            stmt.stmt_pos 
+          in
+          emit_instruction ctx instr
+        )
+      ) else (
+        (* This is regular field assignment (not config) - not implemented yet *)
+        failwith "Regular field assignment not implemented yet"
+      )
       
   | Ast.Continue ->
       (* Generate continue instruction for IR *)
@@ -1015,75 +1032,35 @@ let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.us
   
   make_ir_userspace_program ir_functions ir_structs ir_configs coordinator_logic userspace_block.userspace_pos
 
-(** Generate coordinator logic for userspace program *)
+(** Generate coordinator logic *)
 and generate_coordinator_logic _ctx _ir_functions =
   let dummy_pos = { line = 1; column = 1; filename = "generated" } in
   
-  (* Generate map management logic *)
-  let setup_ops = [
-    make_ir_instruction (IRComment "Setup global maps for userspace-kernel communication") dummy_pos;
-    make_ir_instruction (IRComment "Load BPF object and extract map file descriptors") dummy_pos;
+  (* Generate simplified setup logic *)
+  let setup_logic = [
+    make_ir_instruction (IRComment "Setup global maps and BPF programs") dummy_pos;
+    make_ir_instruction (IRComment "Load BPF object and extract file descriptors") dummy_pos;
+    make_ir_instruction (IRComment "Attach programs to appropriate hooks") dummy_pos;
   ] in
   
-  let cleanup_ops = [
-    make_ir_instruction (IRComment "Cleanup map file descriptors") dummy_pos;
-    make_ir_instruction (IRComment "Close BPF object") dummy_pos;
-  ] in
-  
-  let map_mgmt = make_ir_map_management setup_ops [] cleanup_ops in
-  
-  (* Generate program lifecycle logic *)
-  let loading_seq = [
-    make_ir_instruction (IRComment "Load all BPF programs from object file") dummy_pos;
-    make_ir_instruction (IRComment "Verify program loading success") dummy_pos;
-  ] in
-  
-  let attach_logic = [
-    make_ir_instruction (IRComment "Attach BPF programs to appropriate hooks") dummy_pos;
-  ] in
-  
-  let detach_logic = [
-    make_ir_instruction (IRComment "Detach BPF programs from hooks") dummy_pos;
-  ] in
-  
-  let error_handling = [
-    make_ir_instruction (IRComment "Handle BPF program lifecycle errors") dummy_pos;
-  ] in
-  
-  let prog_lifecycle = make_ir_program_lifecycle loading_seq attach_logic detach_logic error_handling in
-  
-  (* Generate event processing logic *)
-  let event_loop = [
+  (* Generate simplified event processing *)
+  let event_processing = [
     make_ir_instruction (IRComment "Main event processing loop") dummy_pos;
     make_ir_instruction (IRComment "Poll for events from BPF programs") dummy_pos;
+    make_ir_instruction (IRComment "Process ring buffer and perf events") dummy_pos;
   ] in
   
-  let ring_buf_handling = [
-    make_ir_instruction (IRComment "Process ring buffer events") dummy_pos;
+  (* Generate simplified cleanup logic *)
+  let cleanup_logic = [
+    make_ir_instruction (IRComment "Detach BPF programs") dummy_pos;
+    make_ir_instruction (IRComment "Close map file descriptors") dummy_pos;
+    make_ir_instruction (IRComment "Cleanup BPF object") dummy_pos;
   ] in
   
-  let perf_handling = [
-    make_ir_instruction (IRComment "Process perf events") dummy_pos;
-  ] in
+  (* Generate config management *)
+  let config_management = make_ir_config_management [] [] [] in
   
-  let event_proc = make_ir_event_processing event_loop ring_buf_handling perf_handling Blocking in
-  
-  (* Generate signal handling logic *)
-  let setup_handlers = [
-    make_ir_instruction (IRComment "Setup SIGINT and SIGTERM handlers") dummy_pos;
-  ] in
-  
-  let cleanup_handlers = [
-    make_ir_instruction (IRComment "Cleanup signal handlers") dummy_pos;
-  ] in
-  
-  let graceful_shutdown = [
-    make_ir_instruction (IRComment "Graceful shutdown sequence") dummy_pos;
-  ] in
-  
-  let signal_handling = make_ir_signal_handling setup_handlers cleanup_handlers graceful_shutdown in
-  
-  make_ir_coordinator_logic map_mgmt prog_lifecycle event_proc signal_handling
+  make_ir_coordinator_logic setup_logic event_processing cleanup_logic config_management
   
 
 let convert_config_declarations_to_ir config_declarations =

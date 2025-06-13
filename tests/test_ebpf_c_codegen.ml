@@ -16,11 +16,11 @@ let contains_substr str substr =
 
 (** Test basic C type conversion *)
 let test_type_conversion () =
-  Alcotest.(check string) "IRU32 conversion" "__u32" (ir_type_to_c_type IRU32);
-  Alcotest.(check string) "IRBool conversion" "bool" (ir_type_to_c_type IRBool);
-  Alcotest.(check string) "IRPointer conversion" "__u8*" (ir_type_to_c_type (IRPointer (IRU8, make_bounds_info ())));
-  Alcotest.(check string) "IRArray conversion" "__u32[10]" (ir_type_to_c_type (IRArray (IRU32, 10, make_bounds_info ())));
-  Alcotest.(check string) "IRContext conversion" "struct xdp_md*" (ir_type_to_c_type (IRContext XdpCtx))
+  Alcotest.(check string) "IRU32 conversion" "__u32" (ebpf_type_from_ir_type IRU32);
+  Alcotest.(check string) "IRBool conversion" "__u8" (ebpf_type_from_ir_type IRBool);
+  Alcotest.(check string) "IRPointer conversion" "__u8*" (ebpf_type_from_ir_type (IRPointer (IRU8, make_bounds_info ())));
+  Alcotest.(check string) "IRArray conversion" "__u32[10]" (ebpf_type_from_ir_type (IRArray (IRU32, 10, make_bounds_info ())));
+  Alcotest.(check string) "IRContext conversion" "struct xdp_md*" (ebpf_type_from_ir_type (IRContext XdpCtx))
 
 (** Test map definition generation *)
 let test_map_definition () =
