@@ -769,6 +769,12 @@ let type_check_program ctx prog =
     Hashtbl.replace ctx.maps map_decl.name map_decl
   ) prog.prog_maps;
   
+  (* Add program-scoped structs to context *)
+  List.iter (fun struct_def ->
+    let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields) in
+    Hashtbl.replace ctx.types struct_def.struct_name type_def
+  ) prog.prog_structs;
+  
   (* Type check all functions *)
   let typed_functions = List.map (type_check_function ctx) prog.prog_functions in
   
@@ -776,6 +782,11 @@ let type_check_program ctx prog =
   List.iter (fun map_decl ->
     Hashtbl.remove ctx.maps map_decl.name
   ) prog.prog_maps;
+  
+  (* Remove program-scoped structs from context (restore scope) *)
+  List.iter (fun struct_def ->
+    Hashtbl.remove ctx.types struct_def.struct_name
+  ) prog.prog_structs;
   
   ctx.current_program <- old_program;
   
@@ -916,6 +927,7 @@ let typed_program_to_program tprog original_prog =
     prog_type = tprog.tprog_type;
     prog_functions = List.map typed_function_to_function tprog.tprog_functions;
     prog_maps = original_prog.prog_maps;  (* Preserve original map declarations *)
+    prog_structs = original_prog.prog_structs;  (* Preserve original struct declarations *)
     prog_pos = tprog.tprog_pos }
 
 (** Convert typed AST back to annotated AST declarations *)
@@ -988,6 +1000,9 @@ let rec type_check_and_annotate_ast ast =
         (match type_def with
          | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
              Hashtbl.replace ctx.types name type_def)
+    | StructDecl struct_def ->
+        let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields) in
+        Hashtbl.replace ctx.types struct_def.struct_name type_def
     | MapDecl map_decl ->
         Hashtbl.replace ctx.maps map_decl.name map_decl
     | ConfigDecl config_decl ->

@@ -73,6 +73,7 @@ let create_test_program name functions =
     prog_type = Xdp;
     prog_functions = functions;
     prog_maps = [];
+    prog_structs = [];
     prog_pos = dummy_pos;
   }
 

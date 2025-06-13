@@ -113,6 +113,7 @@ let validate_ast ast =
     | TypeDef _ -> true (* Type definitions are always valid once parsed *)
     | MapDecl _ -> true (* Map declarations are always valid once parsed *)
     | ConfigDecl _ -> true (* Config declarations are always valid once parsed *)
+    | StructDecl _ -> true (* Struct declarations are always valid once parsed *)
     | Userspace userspace_block -> List.for_all validate_function userspace_block.userspace_functions
   in
   

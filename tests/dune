@@ -157,6 +157,11 @@
  (modules test_userspace_struct_flexibility)
  (libraries kernelscript alcotest str unix))
 
+(executable
+ (name test_struct_field_access)
+ (modules test_struct_field_access)
+ (libraries kernelscript alcotest))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -205,7 +210,8 @@
   test_config_struct_generation.exe
   test_array_literals.exe
   test_config_validation.exe
-  test_stdlib.exe)
+  test_stdlib.exe
+  test_struct_parameter_field_access.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -220,7 +226,8 @@
    (run ./test_config_struct_generation.exe)
    (run ./test_array_literals.exe)
    (run ./test_config_validation.exe)
-   (run ./test_stdlib.exe))))
+   (run ./test_stdlib.exe)
+   (run ./test_struct_parameter_field_access.exe))))
 
 (rule
  (alias ir-tests)

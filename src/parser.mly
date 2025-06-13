@@ -53,8 +53,8 @@
 %type <Ast.program_type> program_type
 %type <Ast.map_declaration> map_declaration
 %type <Ast.map_declaration> local_map_declaration
-%type <Ast.function_def list * Ast.map_declaration list> program_items
-%type <[`Function of Ast.function_def | `Map of Ast.map_declaration]> program_item
+%type <Ast.function_def list * Ast.map_declaration list * Ast.struct_def list> program_items
+%type <[`Function of Ast.function_def | `Map of Ast.map_declaration | `Struct of Ast.struct_def]> program_item
 %type <Ast.userspace_block> userspace_declaration
 %type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_body
 %type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_item
@@ -120,6 +120,7 @@ declaration:
   | program_declaration { Program $1 }
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
+  | struct_declaration { StructDecl $1 }
   | userspace_declaration { Userspace $1 }
 
 /* Config declaration: config name { config_fields } */
@@ -140,8 +141,8 @@ config_field:
 /* Program declaration: program name : type { program_items } */
 program_declaration:
   | PROGRAM IDENTIFIER COLON program_type LBRACE program_items RBRACE
-    { let functions, maps = $6 in
-      make_program_with_maps $2 $4 functions maps (make_pos ()) }
+    { let functions, maps, structs = $6 in
+      make_program_with_all $2 $4 functions maps structs (make_pos ()) }
 
 program_type:
   | IDENTIFIER { 
@@ -156,17 +157,19 @@ program_type:
     }
 
 program_items:
-  | /* empty */ { ([], []) }
+  | /* empty */ { ([], [], []) }
   | program_item program_items { 
-      let functions, maps = $2 in
+      let functions, maps, structs = $2 in
       match $1 with
-      | `Function func -> (func :: functions, maps)
-      | `Map map -> (functions, map :: maps)
+      | `Function func -> (func :: functions, maps, structs)
+      | `Map map -> (functions, map :: maps, structs)
+      | `Struct struct_def -> (functions, maps, struct_def :: structs)
     }
 
 program_item:
   | function_declaration { `Function $1 }
   | local_map_declaration { `Map $1 }
+  | struct_declaration { `Struct $1 }
 
 /* Top-level userspace declaration: userspace { userspace_body } */
 userspace_declaration:

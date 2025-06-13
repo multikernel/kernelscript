@@ -355,6 +355,12 @@ and process_declaration_accumulate table declaration =
       add_config_decl table config_decl;
       table
       
+  | Ast.StructDecl struct_def ->
+      let pos = { line = 1; column = 1; filename = "" } in
+      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+      add_type_def table type_def pos;
+      table
+      
   | Ast.Userspace userspace_block ->
       (* Process userspace functions as global functions *)
       List.iter (fun func ->
@@ -407,6 +413,13 @@ and process_declaration table = function
         add_map_decl table_with_prog map_decl
       ) prog.prog_maps;
       
+      (* Process program structs *)
+      List.iter (fun struct_def ->
+        let pos = { line = 1; column = 1; filename = "" } in
+        let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+        add_type_def table_with_prog type_def pos
+      ) prog.prog_structs;
+      
       (* Process program functions *)
       List.iter (fun func ->
         add_function table_with_prog func Private;
@@ -434,6 +447,11 @@ and process_declaration table = function
       
   | Ast.ConfigDecl config_decl ->
       add_config_decl table config_decl
+      
+  | Ast.StructDecl struct_def ->
+      let pos = { line = 1; column = 1; filename = "" } in
+      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+      add_type_def table type_def pos
       
   | Ast.Userspace userspace_block ->
       (* Process userspace functions as global functions *)

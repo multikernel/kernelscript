@@ -187,6 +187,7 @@ type program_def = {
   prog_type: program_type;
   prog_functions: function_def list;
   prog_maps: map_declaration list; (* Maps local to this program *)
+  prog_structs: struct_def list; (* Structs local to this program *)
   prog_pos: position;
 }
 
@@ -212,6 +213,7 @@ type declaration =
   | TypeDef of type_def
   | MapDecl of map_declaration
   | ConfigDecl of config_declaration
+  | StructDecl of struct_def
   | Userspace of userspace_block  (* New: top-level userspace *)
 
 (** Complete AST *)
@@ -245,6 +247,7 @@ let make_program name prog_type functions pos = {
   prog_type = prog_type;
   prog_functions = functions;
   prog_maps = [];
+  prog_structs = [];
   prog_pos = pos;
 }
 
@@ -253,6 +256,16 @@ let make_program_with_maps name prog_type functions maps pos = {
   prog_type = prog_type;
   prog_functions = functions;
   prog_maps = maps;
+  prog_structs = [];
+  prog_pos = pos;
+}
+
+let make_program_with_all name prog_type functions maps structs pos = {
+  prog_name = name;
+  prog_type = prog_type;
+  prog_functions = functions;
+  prog_maps = maps;
+  prog_structs = structs;
   prog_pos = pos;
 }
 
@@ -535,6 +548,11 @@ let string_of_declaration = function
         Printf.sprintf "%s: %s%s" field.field_name (string_of_bpf_type field.field_type) default_str
       ) config_decl.config_fields) in
       Printf.sprintf "config %s {\n    %s\n}" config_decl.config_name fields_str
+  | StructDecl struct_def ->
+      let fields_str = String.concat ",\n    " (List.map (fun (name, typ) ->
+        Printf.sprintf "%s: %s" name (string_of_bpf_type typ)
+      ) struct_def.struct_fields) in
+      Printf.sprintf "struct %s {\n    %s\n}" struct_def.struct_name fields_str
   | Userspace ub ->
       let functions_str = String.concat "\n\n  " 
         (List.map string_of_function ub.userspace_functions) in

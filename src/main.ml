@@ -98,7 +98,20 @@ let compile opts source_file =
     close_in ic;
     
     let lexbuf = Lexing.from_string content in
-    let ast = Parser.program Lexer.token lexbuf in
+    let ast = 
+      try
+        Parser.program Lexer.token lexbuf
+      with
+      | exn ->
+          let lexbuf_pos = Lexing.lexeme_start_p lexbuf in
+          Printf.eprintf "❌ Parse error at line %d, column %d\n" 
+            lexbuf_pos.pos_lnum 
+            (lexbuf_pos.pos_cnum - lexbuf_pos.pos_bol);
+          Printf.eprintf "   Last token read: '%s'\n" (Lexing.lexeme lexbuf);
+          Printf.eprintf "   Exception: %s\n" (Printexc.to_string exn);
+          Printf.eprintf "   Context: Failed to parse the input around this location\n";
+          failwith "Parse error"
+    in
     Printf.printf "✅ Successfully parsed %d declarations\n\n" (List.length ast);
     
     (* Phase 2: Symbol table analysis *)
@@ -263,7 +276,7 @@ run: $(USERSPACE_BIN)
     Printf.printf "🔨 To compile: cd %s && make\n" output_dir;
     
   with
-  | Parsing.Parse_error ->
+  | Failure msg when msg = "Parse error" ->
       Printf.eprintf "❌ Parse error in phase: %s\n" (string_of_phase !current_phase);
       exit 1
   | Type_checker.Type_error (msg, pos) ->
