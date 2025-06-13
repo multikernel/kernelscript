@@ -17,7 +17,7 @@ userspace {
         debug_enabled: u32,
     }
     
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         // Load and attach the packet monitor program
         print("Loading packet monitor program");
         

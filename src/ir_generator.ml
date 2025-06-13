@@ -354,9 +354,10 @@ let rec lower_expression ctx (expr : Ast.expr) =
       in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
-      (* Handle context field access *)
+      (* Handle field access for different types *)
       (match obj_val.val_type with
        | IRContext _ctx_type ->
+           (* Handle context field access *)
            let access_type = match field with
              | "packet" | "data" -> PacketData
              | "packet_end" | "data_end" -> PacketEnd
@@ -374,8 +375,21 @@ let rec lower_expression ctx (expr : Ast.expr) =
            in
            emit_instruction ctx instr;
            result_val
+       | IRStruct (_, _) ->
+           (* Handle struct field access *)
+           let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
+           let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
+           emit_instruction ctx instr;
+           result_val
        | _ ->
-           failwith "Field access on non-context type not implemented yet")
+           (* For userspace code, allow field access on other types (assuming it will be handled by C compilation) *)
+           if ctx.is_userspace then
+             let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
+             let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
+             emit_instruction ctx instr;
+             result_val
+           else
+             failwith ("Field access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
            
   | Ast.BinaryOp (left_expr, op, right_expr) ->
       let left_val = lower_expression ctx left_expr in
@@ -961,16 +975,20 @@ let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.us
   if List.length main_functions > 0 then (
     let main_func = List.hd main_functions in
     
-    (* Validate main function signature: fn main(argc: u32, argv: u64) -> i32 *)
-    let expected_params = [("argc", Ast.U32); ("argv", Ast.U64)] in
+    (* Validate main function signature: fn main() -> i32 or fn main(args: CustomStruct) -> i32 *)
     let expected_return = Some Ast.I32 in
     
     (* Check parameter count and types *)
     let params_valid = 
-      List.length main_func.Ast.func_params = List.length expected_params &&
-      List.for_all2 (fun (_actual_name, actual_type) (_expected_name, expected_type) ->
-        actual_type = expected_type
-      ) main_func.Ast.func_params expected_params
+      (* Allow no parameters: fn main() -> i32 *)
+      List.length main_func.Ast.func_params = 0 ||
+      (* Allow single struct parameter: fn main(args: CustomStruct) -> i32 *)
+      (List.length main_func.Ast.func_params = 1 &&
+       match main_func.Ast.func_params with
+       | [(_, Ast.Struct _)] -> true  (* Accept struct types *)
+       | [(_, Ast.UserType _)] -> true  (* Accept user-defined types (structs) *)
+       | [(_, _)] -> false (* Reject non-struct single parameters *)
+       | _ -> false)
     in
     
     (* Check return type *)
@@ -978,7 +996,7 @@ let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.us
     
     if not params_valid then
       failwith (Printf.sprintf 
-        "Userspace main() function must have parameters (argc: u32, argv: u64), got: %s"
+        "Userspace main() function must have no parameters or one struct parameter, got: %s"
         (String.concat ", " (List.map (fun (name, typ) -> 
           Printf.sprintf "%s: %s" name (Ast.string_of_bpf_type typ)
         ) main_func.Ast.func_params)));
@@ -1130,16 +1148,20 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
     (* Validate that userspace block contains a main() function with correct signature *)
     let _validate_userspace_main_signature ast_func =
       if ast_func.Ast.func_name = "main" then (
-        (* Expected signature: fn main(argc: u32, argv: u64) -> i32 *)
-        let expected_params = [("argc", Ast.U32); ("argv", Ast.U64)] in
+        (* Expected signature: fn main() -> i32 or fn main(args: CustomStruct) -> i32 *)
         let expected_return = Some Ast.I32 in
         
         (* Check parameter count and types *)
         let params_valid = 
-          List.length ast_func.Ast.func_params = List.length expected_params &&
-          List.for_all2 (fun (_actual_name, actual_type) (_expected_name, expected_type) ->
-            actual_type = expected_type
-          ) ast_func.Ast.func_params expected_params
+          (* Allow no parameters: fn main() -> i32 *)
+          List.length ast_func.Ast.func_params = 0 ||
+          (* Allow single struct parameter: fn main(args: CustomStruct) -> i32 *)
+          (List.length ast_func.Ast.func_params = 1 &&
+           match ast_func.Ast.func_params with
+           | [(_, Ast.Struct _)] -> true  (* Accept struct types *)
+           | [(_, Ast.UserType _)] -> true  (* Accept user-defined types (structs) *)
+           | [(_, _)] -> false (* Reject non-struct single parameters *)
+           | _ -> false)
         in
         
         (* Check return type *)
@@ -1147,7 +1169,7 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
         
         if not params_valid then
           failwith (Printf.sprintf 
-            "Userspace main() function must have parameters (argc: u32, argv: u64), got: %s"
+            "Userspace main() function must have no parameters or one struct parameter, got: %s"
             (String.concat ", " (List.map (fun (name, typ) -> 
               Printf.sprintf "%s: %s" name (Ast.string_of_bpf_type typ)
             ) ast_func.Ast.func_params)));

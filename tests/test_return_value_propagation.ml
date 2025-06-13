@@ -50,7 +50,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 0;
   }
 }
@@ -84,7 +84,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     let x = 10;
     if x > 5 {
       return 1;
@@ -120,7 +120,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     for i in 0..10 {
       if i == 5 {
         return 42;
@@ -159,7 +159,7 @@ userspace {
     return 123;
   }
   
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     let result = helper();
     return 0;
   }
@@ -188,7 +188,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 1;
   }
 }

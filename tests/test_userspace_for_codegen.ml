@@ -84,7 +84,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     let start = 1;
     let end_val = 5;
     for i in start..end_val {
@@ -273,7 +273,7 @@ userspace {
     return 42;
   }
   
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     let result = helper();
     return 0;
   }

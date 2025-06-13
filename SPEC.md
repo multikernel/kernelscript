@@ -164,23 +164,27 @@ userspace {
         drops: u64,
     }
     
-    fn main(argc: u32, argv: &[&str]) -> i32 {
-        // Parse command line arguments
-        if argc < 2 {
-            print("Usage: ", argv[0], " <interface>");
-            return 1;
-        }
+    struct Args {
+        interface_id: u32,
+        enable_verbose: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+        // Command line arguments automatically parsed
+        // Usage: program --interface-id=1 --enable-verbose=1
         
-        let interface = argv[1];
+        let interface_index = args.interface_id;
         
         // Load and coordinate multiple programs
         let analyzer = BpfProgram::load("packet_analyzer");
         let tracker = BpfProgram::load("flow_tracker");
         
-        analyzer.attach_xdp(interface);
-        tracker.attach_tc(interface, TcDirection::Ingress);
+        analyzer.attach_xdp_by_index(interface_index);
+        tracker.attach_tc_by_index(interface_index, TcDirection::Ingress);
         
-        print("Multi-program system started on interface: ", interface);
+        if args.enable_verbose == 1 {
+            print("Multi-program system started on interface: ", interface_index);
+        }
         
         while true {
             let stats = get_combined_stats();
@@ -756,7 +760,53 @@ fn validate_state() {
 
 ## 8. User-Space Integration
 
-### 8.1 Top-Level Userspace Coordination with Global Maps
+### 8.1 Command Line Argument Handling
+
+KernelScript provides automatic command line argument parsing for userspace programs. Users can define a custom struct to describe their command line options, and the compiler generates the parsing code using `getopt_long()`.
+
+```kernelscript
+userspace {
+    // Define command line arguments structure
+    struct Args {
+        interface_id: u32,          // --interface_id=<value>
+        enable_debug: u32,          // --enable_debug=<0|1>  
+        packet_limit: u64,          // --packet_limit=<value>
+        timeout_ms: u32,            // --timeout_ms=<value>
+    }
+    
+    fn main(args: Args) -> i32 {
+        // Arguments automatically parsed from command line
+        // Usage: program --interface_id=1 --enable_debug=1 --packet_limit=1000 --timeout_ms=5000
+        
+        if args.enable_debug == 1 {
+            print("Debug mode enabled for interface: ", args.interface_id);
+            print("Packet limit: ", args.packet_limit);
+            print("Timeout: ", args.timeout_ms, " ms");
+        }
+        
+        // Use the parsed arguments
+        configure_system(args.interface_id, args.packet_limit, args.timeout_ms);
+        
+        return 0;
+    }
+}
+
+// For programs that don't need command line arguments
+userspace {
+    fn main() -> i32 {
+        print("Simple program with no arguments");
+        return 0;
+    }
+}
+```
+
+**Automatic Code Generation:**
+- Field names are used exactly as command line options: `interface_id` → `--interface_id`
+- The compiler generates `getopt_long()` calls with appropriate option parsing
+- Type validation ensures only supported primitive types (u8, u16, u32, u64, i8, i16, i32, i64) are used
+- Help text is automatically generated based on struct field names
+
+### 8.2 Top-Level Userspace Coordination with Global Maps
 ```kernelscript
 // Global maps (accessible from all programs and userspace)
 map<FlowKey, FlowStats> global_flows : hash_map(10000) {
@@ -866,14 +916,21 @@ userspace {
         }
     }
     
-    fn main(argc: u32, argv: &[&str]) -> i32 {
-        // Parse command line arguments for interface configuration
-        let interface = if argc > 1 { argv[1] } else { "eth0" };
+    struct Args {
+        interface_id: u32,
+        monitoring_enabled: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+        // Command line arguments automatically parsed
+        // Usage: program --interface-id=0 --monitoring-enabled=1
         
         let mut coordinator = SystemCoordinator::new().unwrap();
-        coordinator.start_on_interface(interface).unwrap();
+        coordinator.start_on_interface_by_id(args.interface_id).unwrap();
         
-        println!("Multi-program eBPF system started on interface: ", interface);
+        if args.monitoring_enabled == 1 {
+            println!("Multi-program eBPF system started on interface: ", args.interface_id);
+        }
         
         loop {
             coordinator.process_events();
@@ -885,7 +942,7 @@ userspace {
 }
 ```
 
-### 8.2 Cross-Language Bindings
+### 8.3 Cross-Language Bindings
 ```kernelscript
 // Runtime configuration for system behavior
 config runtime {
@@ -911,27 +968,32 @@ program flow_analyzer : tc {
 // Top-level userspace with cross-language binding generation
 userspace {
     // Default: KernelScript userspace code
-    fn main(argc: u32, argv: &[&str]) -> i32 {
-        // Parse command line arguments
-        let interface = if argc > 1 { argv[1] } else { "eth0" };
-        let verbose = argc > 2 && argv[2] == "--verbose";
+    struct Args {
+        interface_id: u32,
+        verbose_mode: u32,
+        enable_monitoring: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+        // Command line arguments automatically parsed
+        // Usage: program --interface-id=0 --verbose-mode=1 --enable-monitoring=1
         
         let network_monitor = BpfProgram::load("network_monitor");
         let flow_analyzer = BpfProgram::load("flow_analyzer");
         
-        network_monitor.attach_xdp(interface);
-        flow_analyzer.attach_tc(interface, TcDirection::Ingress);
+        network_monitor.attach_xdp_by_index(args.interface_id);
+        flow_analyzer.attach_tc_by_index(args.interface_id, TcDirection::Ingress);
         
         // Update runtime config based on command line
-        runtime.verbose_mode = verbose;
+        runtime.verbose_mode = (args.verbose_mode == 1);
         
         if runtime.verbose_mode {
-            print("Multi-program system loaded on interface: ", interface);
+            print("Multi-program system loaded on interface: ", args.interface_id);
             print("Verbose mode enabled");
         }
         
         // Coordinate both programs
-        handle_system_events(verbose);
+        handle_system_events(args.verbose_mode == 1);
         
         return 0;
     }
@@ -1147,31 +1209,30 @@ program simple_filter : xdp {
 
 // Top-level userspace coordinator
 userspace {
-    fn main(argc: u32, argv: &[&str]) -> i32 {
-        // Parse command line arguments
-        if argc < 2 {
-            print("Usage: ", argv[0], " <interface> [--quiet]");
-            return 1;
-        }
-        
-        let interface = argv[1];
-        let quiet = argc > 2 && argv[2] == "--quiet";
+    struct Args {
+        interface_id: u32,
+        quiet_mode: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+        // Command line arguments automatically parsed
+        // Usage: program --interface-id=0 --quiet-mode=1
         
         // Program loaded and attached
         let filter = BpfProgram::load("simple_filter");
-        filter.attach_xdp(interface);
+        filter.attach_xdp_by_index(args.interface_id);
         
         // Update config based on command line
-        filtering.enable_logging = !quiet;
+        filtering.enable_logging = (args.quiet_mode == 0);
         
-        if !quiet {
-            print("Packet filter started on interface: ", interface);
+        if args.quiet_mode == 0 {
+            print("Packet filter started on interface: ", args.interface_id);
             print("Blocking ports: 22, 23, 135, 445");
         }
         
         while true {
             // Monitor system health using config stats
-            if system.packets_dropped > 1000 && !quiet {
+            if system.packets_dropped > 1000 && args.quiet_mode == 0 {
                 print("High drop rate detected: ", system.packets_dropped);
             }
             sleep(10000);
@@ -1231,21 +1292,24 @@ program write_monitor : kprobe("sys_write") {
 
 // Top-level userspace coordinator for all monitoring programs
 userspace {
-    fn main(argc: u32, argv: &[&str]) -> i32 {
-        // Parse command line arguments
-        let mut interval = 5000;  // Default 5 second interval
-        let mut show_details = true;
+    struct Args {
+        interval_ms: u32,
+        show_details: u32,
+        help_mode: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+        // Command line arguments automatically parsed
+        // Usage: program --interval-ms=5000 --show-details=1 --help-mode=0
         
-        for i in 1..argc {
-            if argv[i] == "--interval" && i + 1 < argc {
-                interval = parse_u32(argv[i + 1]);
-            } else if argv[i] == "--summary-only" {
-                show_details = false;
-            } else if argv[i] == "--help" {
-                print("Usage: ", argv[0], " [--interval <ms>] [--summary-only] [--help]");
-                return 0;
-            }
+        if args.help_mode == 1 {
+            print("Performance monitoring system");
+            print("Options: --interval-ms=<ms> --show-details=0/1 --help-mode=0/1");
+            return 0;
         }
+        
+        let interval = if args.interval_ms == 0 { 5000 } else { args.interval_ms };
+        let show_details = (args.show_details == 1);
         
         // Both programs loaded and attached manually
         let read_monitor = BpfProgram::load("perf_monitor");
@@ -1347,6 +1411,12 @@ userspace_item = function_declaration | struct_declaration | userspace_config ;
 
 userspace_config = identifier "{" { userspace_config_item } "}" ;
 userspace_config_item = identifier ":" literal "," ;
+
+(* Special notes for userspace main function *)
+(* Userspace main can have two forms:
+   1. fn main() -> i32 { ... }                    // No command line arguments
+   2. fn main(args: CustomStruct) -> i32 { ... }  // Custom argument struct, automatically parsed from command line
+*)
 
 (* Namespace declarations *)
 namespace_declaration = "namespace" identifier "{" { namespace_item } "}" ;

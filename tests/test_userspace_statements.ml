@@ -312,7 +312,7 @@ program test_prog : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         let total: u32 = 0;
         let count: u32 = 0;
         

@@ -18,7 +18,7 @@ program simple_logger : xdp {
 
 // Userspace coordinator that also uses print()
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         print("Userspace: Starting packet logger");
         print("Userspace: Logger initialized successfully");
         return 0;

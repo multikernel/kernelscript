@@ -104,7 +104,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 0;
   }
 }
@@ -163,7 +163,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 0;
   }
 }
@@ -213,7 +213,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 0;
   }
 }
@@ -267,7 +267,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 0;
   }
 }
@@ -322,7 +322,7 @@ program test : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     return 0;
   }
 }
@@ -339,7 +339,7 @@ userspace {
         let has_bpf_includes = contains_pattern generated_content "#include.*bpf" in
         
         (* Check for main function with correct signature *)
-        let has_main_function = contains_pattern generated_content "int main.*argc.*argv" in
+        let has_main_function = contains_pattern generated_content "int main" in
         
         (* Check for BPF object management *)
         let has_bpf_object = contains_pattern generated_content "bpf_object\\|struct bpf_object" in

@@ -131,6 +131,9 @@ let generate_c_expression_from_ir ctx ir_expr =
       let value_str = generate_c_value_from_ir ctx value in
       let type_str = c_type_from_ir_type target_type in
       sprintf "((%s)%s)" type_str value_str
+  | IRFieldAccess (obj_val, field) ->
+      let obj_str = generate_c_value_from_ir ctx obj_val in
+      sprintf "%s.%s" obj_str field
 
 (** Generate map operations from IR *)
 let generate_map_load_from_ir ctx map_val key_val dest_val load_type =
@@ -415,15 +418,31 @@ let generate_c_function_from_ir (ir_func : ir_function) =
   (* Generate variable declarations *)
   let var_decls = generate_variable_declarations ctx in
   
-  let adjusted_params = if ir_func.func_name = "main" then "int argc, char **argv" else
+  let adjusted_params = if ir_func.func_name = "main" then 
+    (* Main function can be either main() or main(args) - generate appropriate C signature *)
+    (if List.length ir_func.parameters = 0 then "void" else "int argc, char **argv")
+  else
     (if params_str = "" then "void" else params_str) in
   
   let adjusted_return_type = if ir_func.func_name = "main" then "int" else return_type_str in
   
   if ir_func.func_name = "main" then
+    let args_parsing_code = 
+      if List.length ir_func.parameters > 0 then
+        (* Generate argument parsing for struct parameter *)
+        let (param_name, param_type) = List.hd ir_func.parameters in
+        (match param_type with
+         | IRStruct (struct_name, _) ->
+           sprintf "    // Parse command line arguments\n    struct %s %s = parse_arguments(argc, argv);" struct_name param_name
+         | _ -> "    // No argument parsing needed")
+      else
+        "    // No arguments to parse"
+    in
     sprintf {|%s %s(%s) {
     int __return_value = 0;
 %s    
+%s
+    
     printf("Starting userspace coordinator for eBPF programs\n");
     
     // Initialize BPF programs and maps
@@ -440,13 +459,87 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     cleanup_bpf_environment();
     printf("Userspace coordinator shutting down\n");
     return __return_value;
-}|} adjusted_return_type ir_func.func_name adjusted_params var_decls body_c
+}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code body_c
   else
     sprintf {|%s %s(%s) {
 %s    %s
     %s
 }|} adjusted_return_type ir_func.func_name adjusted_params var_decls body_c 
       (if return_type_str = "void" then "" else "return 0;")
+
+(** Generate command line argument parsing for struct parameter *)
+let generate_getopt_parsing (struct_name : string) (param_name : string) (struct_fields : (string * ir_type) list) =
+  (* Generate option struct array for getopt_long *)
+  let options = List.mapi (fun i (field_name, _) ->
+    sprintf "        {\"%s\", required_argument, 0, %d}," field_name (i + 1)
+  ) struct_fields in
+  
+  let options_array = String.concat "\n" options in
+  
+  (* Generate case statements for option parsing *)
+  let case_statements = List.mapi (fun i (field_name, field_type) ->
+         let parse_code = match field_type with
+       | IRU8 | IRU16 | IRU32 -> sprintf "%s.%s = (uint32_t)atoi(optarg);" param_name field_name
+       | IRU64 -> sprintf "%s.%s = (uint64_t)atoll(optarg);" param_name field_name
+       | IRI8 -> sprintf "%s.%s = (int8_t)atoi(optarg);" param_name field_name
+       | IRBool -> sprintf "%s.%s = (atoi(optarg) != 0);" param_name field_name
+       | _ -> sprintf "%s.%s = (uint32_t)atoi(optarg); // fallback" param_name field_name
+    in
+    sprintf "        case %d:\n            %s\n            break;" (i + 1) parse_code
+  ) struct_fields in
+  
+  let case_code = String.concat "\n" case_statements in
+  
+  (* Generate help text *)
+     let help_options = List.map (fun (field_name, field_type) ->
+     let type_hint = match field_type with
+       | IRU8 | IRU16 | IRU32 | IRU64 -> "<number>"
+       | IRI8 -> "<number>" 
+       | IRBool -> "<0|1>"
+       | _ -> "<value>"
+    in
+    sprintf "    printf(\"  --%s=%s\\n\");" field_name type_hint
+  ) struct_fields in
+  
+  let help_text = String.concat "\n" help_options in
+  
+  sprintf {|
+/* Parse command line arguments into %s */
+struct %s parse_arguments(int argc, char **argv) {
+    struct %s %s = {0}; // Initialize all fields to 0
+    
+    static struct option long_options[] = {
+%s
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
+    
+    int option_index = 0;
+    int c;
+    
+    while ((c = getopt_long(argc, argv, "h", long_options, &option_index)) != -1) {
+        switch (c) {
+%s
+        case 'h':
+            printf("Usage: %%s [options]\\n", argv[0]);
+            printf("Options:\\n");
+%s
+            printf("  --help           Show this help message\\n");
+            exit(0);
+            break;
+        case '?':
+            fprintf(stderr, "Unknown option. Use --help for usage information.\\n");
+            exit(1);
+            break;
+        default:
+            fprintf(stderr, "Error parsing arguments\\n");
+            exit(1);
+        }
+    }
+    
+    return %s;
+}
+|} struct_name struct_name struct_name param_name options_array case_code help_text param_name
 
 (** Generate map file descriptor declarations *)
 let generate_map_fd_declarations maps =
@@ -591,6 +684,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 #include <signal.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <getopt.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/bpf.h>
@@ -601,6 +695,21 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 
   (* Reset and use the global config names collector *)
   global_config_names := [];
+  
+  (* Check if main function has struct parameters and generate getopt parsing *)
+  let main_function = List.find_opt (fun f -> f.func_name = "main") userspace_prog.userspace_functions in
+  let getopt_parsing_code = match main_function with
+    | Some main_func when List.length main_func.parameters > 0 ->
+        let (param_name, param_type) = List.hd main_func.parameters in
+        (match param_type with
+         | IRStruct (struct_name, _) ->
+           (* Look up the actual struct definition to get the fields *)
+           (match List.find_opt (fun s -> s.struct_name = struct_name) userspace_prog.userspace_structs with
+            | Some struct_def -> generate_getopt_parsing struct_name param_name struct_def.struct_fields
+            | None -> "")
+         | _ -> "")
+    | _ -> ""
+  in
   
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
@@ -661,9 +770,10 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 %s
 
 %s
+%s
 
 %s
-|} includes structs all_fd_declarations map_operation_functions coordinator_with_maps functions
+|} includes structs all_fd_declarations map_operation_functions getopt_parsing_code coordinator_with_maps functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
@@ -673,7 +783,7 @@ let generate_userspace_code_from_ir ?(config_declarations = []) (ir_multi_prog :
     | None -> 
         sprintf {|#include <stdio.h>
 
-int main(int argc, char **argv) {
+int main(void) {
     printf("No userspace program defined in IR\n");
     return 0;
 }

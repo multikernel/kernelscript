@@ -152,6 +152,11 @@
  (modules test_config_validation)
  (libraries kernelscript alcotest str))
 
+(executable
+ (name test_userspace_struct_flexibility)
+ (modules test_userspace_struct_flexibility)
+ (libraries kernelscript alcotest str unix))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -174,14 +179,16 @@
   test_userspace_maps.exe
   test_userspace_for_codegen.exe
   test_userspace_statements.exe
-  test_return_value_propagation.exe)
+  test_return_value_propagation.exe
+  test_userspace_struct_flexibility.exe)
  (action
   (progn
    (run ./test_userspace.exe)
    (run ./test_userspace_maps.exe)
    (run ./test_userspace_for_codegen.exe)
    (run ./test_userspace_statements.exe)
-   (run ./test_return_value_propagation.exe))))
+   (run ./test_return_value_propagation.exe)
+   (run ./test_userspace_struct_flexibility.exe))))
 
 (rule
  (alias core-tests)

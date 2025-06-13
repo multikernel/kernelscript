@@ -8,10 +8,10 @@
    - Nested userspace block rejection (enforces architectural design)
    
    === Main Function Signature Tests ===
-   - Correct signature validation: fn main(argc: u32, argv: u64) -> i32
+   - Correct signature validation: fn main() -> i32 or fn main(args: CustomStruct) -> i32
    - Wrong parameter types rejection
    - Wrong return type rejection
-   - Parameter count validation (too few/too many)
+   - Parameter count validation (too many parameters)
    
    === Main Function Existence Tests ===
    - Missing main function detection
@@ -23,7 +23,7 @@
    - Multiple eBPF programs with single userspace coordinator
    
    === Code Generation Tests ===
-   - Generated C main signature: int main(int argc, char **argv)
+   - Generated C main signature: int main(void) or int main(int argc, char **argv) with command line parsing
    - File naming scheme: FOO.c from FOO.ks
    - Struct definitions in generated code
    - Multiple function generation
@@ -53,7 +53,7 @@ let test_userspace_top_level () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
     }
@@ -75,7 +75,7 @@ let test_nested_userspace_disallowed () =
       }
       
       userspace {
-        fn main(argc: u32, argv: u64) -> i32 {
+        fn main() -> i32 {
           return 0;
         }
       }
@@ -88,7 +88,7 @@ let test_nested_userspace_disallowed () =
   with
   | _ -> check bool "nested userspace correctly rejected" true true
 
-(** Test userspace main function with correct signature *)
+(** Test userspace main function with correct signature - no parameters *)
 let test_userspace_main_correct_signature () =
   let code = {|
     program test : xdp {
@@ -98,7 +98,7 @@ let test_userspace_main_correct_signature () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
     }
@@ -108,6 +108,32 @@ let test_userspace_main_correct_signature () =
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
   check bool "correct userspace main signature accepted" true true
+
+(** Test userspace main function with struct parameter *)
+let test_userspace_main_with_struct_param () =
+  let code = {|
+    program test : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        return 2;
+      }
+    }
+    
+    userspace {
+      struct Args {
+        interface_id: u32,
+        debug_mode: u32,
+      }
+      
+      fn main(args: Args) -> i32 {
+        return 0;
+      }
+    }
+  |} in
+  let ast = parse_string code in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+  let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  check bool "correct userspace main signature with struct accepted" true true
 
 (** Test userspace main function with wrong parameter types *)
 let test_userspace_main_wrong_param_types () =
@@ -146,7 +172,7 @@ let test_userspace_main_wrong_return_type () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> u32 {
+      fn main() -> u32 {
         return 0;
       }
     }
@@ -163,8 +189,8 @@ let test_userspace_main_wrong_return_type () =
   with
   | _ -> check bool "wrong return type correctly rejected" true true
 
-(** Test userspace main function with too few parameters *)
-let test_userspace_main_too_few_params () =
+(** Test userspace main function with non-struct single parameter *)
+let test_userspace_main_non_struct_param () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -173,7 +199,7 @@ let test_userspace_main_too_few_params () =
     }
     
     userspace {
-      fn main(argc: u32) -> i32 {
+      fn main(bad_param: u32) -> i32 {
         return 0;
       }
     }
@@ -186,9 +212,9 @@ let test_userspace_main_too_few_params () =
   in
   try
     test_fn ();
-    check bool "too few parameters should fail" false true
+    check bool "non-struct single parameter should fail" false true
   with
-  | _ -> check bool "too few parameters correctly rejected" true true
+  | _ -> check bool "non-struct single parameter correctly rejected" true true
 
 (** Test userspace main function with too many parameters *)
 let test_userspace_main_too_many_params () =
@@ -200,7 +226,7 @@ let test_userspace_main_too_many_params () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64, extra: u32) -> i32 {
+      fn main(param1: u32, param2: u64, extra: u32) -> i32 {
         return 0;
       }
     }
@@ -254,7 +280,7 @@ let test_userspace_multiple_main () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
       
@@ -289,7 +315,7 @@ let test_userspace_with_other_functions () =
         return x + y;
       }
       
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
       
@@ -324,7 +350,7 @@ let test_userspace_with_structs () =
         packet_count: u32,
       }
       
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
     }
@@ -351,7 +377,7 @@ let test_multiple_programs_single_userspace () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
     }
@@ -372,7 +398,7 @@ let test_basic_userspace () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
     }
@@ -408,7 +434,7 @@ let test_userspace_codegen () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         return 0;
       }
     }
@@ -446,7 +472,7 @@ let test_literal_map_assignment () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         let x = test_map[1];
         return 0;
@@ -479,7 +505,7 @@ let test_map_lookup_with_literal_key () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         let x = test_map[1];
         return 0;
@@ -512,7 +538,7 @@ let test_map_update_with_literal_key_value () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         test_map[1] = 43;
         let x = test_map[1];
@@ -546,7 +572,7 @@ let test_map_delete_with_literal_key () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         delete test_map[1];
         let x = test_map[1];
@@ -580,7 +606,7 @@ let test_map_iterate_with_literal_key () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         test_map[2] = 43;
         let sum = test_map[1] + test_map[2];
@@ -614,7 +640,7 @@ let test_mixed_literal_variable_expressions () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         let key = 1;
         let value = 42;
         test_map[key] = value;
@@ -650,7 +676,7 @@ let test_unique_temp_var_names () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         test_map[2] = 43;
         test_map[3] = 44;
@@ -685,7 +711,7 @@ let test_no_direct_literal_addressing () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         test_map[1] = 42;
         let x = test_map[1];
         return 0;
@@ -727,7 +753,7 @@ let test_map_loading_code_generation () =
     }
     
     userspace {
-      fn main(argc: u32, argv: u64) -> i32 {
+      fn main() -> i32 {
         network.enable_logging = true;
         return 0;
       }
@@ -821,9 +847,10 @@ let suite = [
   "userspace_top_level", `Quick, test_userspace_top_level;
   "nested_userspace_disallowed", `Quick, test_nested_userspace_disallowed;
   "userspace_main_correct_signature", `Quick, test_userspace_main_correct_signature;
+  "userspace_main_with_struct_param", `Quick, test_userspace_main_with_struct_param;
   "userspace_main_wrong_param_types", `Quick, test_userspace_main_wrong_param_types;
   "userspace_main_wrong_return_type", `Quick, test_userspace_main_wrong_return_type;
-  "userspace_main_too_few_params", `Quick, test_userspace_main_too_few_params;
+  "userspace_main_non_struct_param", `Quick, test_userspace_main_non_struct_param;
   "userspace_main_too_many_params", `Quick, test_userspace_main_too_many_params;
   "userspace_missing_main", `Quick, test_userspace_missing_main;
   "userspace_multiple_main", `Quick, test_userspace_multiple_main;

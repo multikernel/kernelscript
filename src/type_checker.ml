@@ -381,7 +381,7 @@ and type_check_field_access ctx obj field pos =
        let typed_obj = type_check_expression ctx obj in
        
        match typed_obj.texpr_type with
-  | Struct struct_name ->
+  | Struct struct_name | UserType struct_name ->
       (* Look up struct definition and field type *)
       (try
          let type_def = Hashtbl.find ctx.types struct_name in
@@ -992,6 +992,12 @@ let rec type_check_and_annotate_ast ast =
         Hashtbl.replace ctx.maps map_decl.name map_decl
     | ConfigDecl config_decl ->
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
+    | Userspace userspace_block ->
+        (* Collect userspace struct definitions *)
+        List.iter (fun struct_def ->
+          let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields) in
+          Hashtbl.replace ctx.types struct_def.struct_name type_def
+        ) userspace_block.userspace_structs
     | _ -> ()
   ) ast;
   

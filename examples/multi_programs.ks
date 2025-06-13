@@ -18,7 +18,7 @@ program packet_filter : tc {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     shared_counter[1] = 0;
     shared_counter[2] = 0;
     return 0;

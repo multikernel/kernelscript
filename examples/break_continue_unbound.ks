@@ -30,7 +30,7 @@ program packet_filter : xdp {
 }
 
 userspace {
-  fn main(argc: u32, argv: u64) -> i32 {
+  fn main() -> i32 {
     let limit = 1000; // Runtime-determined limit
     let count = 0;
     

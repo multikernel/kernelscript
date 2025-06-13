@@ -300,7 +300,7 @@ userspace {
         threads: u32 = 4,
     }
     
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         return 0;
     }
 }

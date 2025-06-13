@@ -191,6 +191,7 @@ and ir_expr_desc =
   | IRBinOp of ir_value * ir_binary_op * ir_value
   | IRUnOp of ir_unary_op * ir_value
   | IRCast of ir_value * ir_type
+  | IRFieldAccess of ir_value * string
 
 and ir_binary_op =
   | IRAdd | IRSub | IRMul | IRDiv | IRMod
@@ -581,6 +582,8 @@ let string_of_ir_expr expr =
       Printf.sprintf "(%s%s)" (string_of_ir_unary_op op) (string_of_ir_value value)
   | IRCast (value, typ) ->
       Printf.sprintf "(%s as %s)" (string_of_ir_value value) (string_of_ir_type typ)
+  | IRFieldAccess (obj, field) ->
+      Printf.sprintf "(%s.%s)" (string_of_ir_value obj) field
 
 let rec string_of_ir_instruction instr =
   match instr.instr_desc with

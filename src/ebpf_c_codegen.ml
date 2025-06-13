@@ -278,6 +278,9 @@ let generate_c_expression ctx ir_expr =
       let val_str = generate_c_value ctx ir_val in
       let type_str = ebpf_type_from_ir_type target_type in
       sprintf "((%s)%s)" type_str val_str
+  | IRFieldAccess (obj_val, field) ->
+      let obj_str = generate_c_value ctx obj_val in
+      sprintf "%s.%s" obj_str field
 
 (** Generate helper function calls *)
 
@@ -605,6 +608,7 @@ let rec generate_c_instruction ctx ir_instr =
           | IRBinOp (left, _, right) -> collect_in_value left; collect_in_value right
           | IRUnOp (_, ir_val) -> collect_in_value ir_val
           | IRCast (ir_val, _) -> collect_in_value ir_val
+          | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
         in
                  let collect_in_instr ir_instr =
            match ir_instr.instr_desc with
@@ -740,6 +744,7 @@ let collect_registers_in_function ir_func =
     | IRBinOp (left, _, right) -> collect_in_value left; collect_in_value right
     | IRUnOp (_, ir_val) -> collect_in_value ir_val
     | IRCast (ir_val, _) -> collect_in_value ir_val
+    | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
   in
   let rec collect_in_instr ir_instr =
     match ir_instr.instr_desc with

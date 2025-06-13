@@ -74,7 +74,7 @@ program test : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         return 0;
     }
 }
@@ -123,7 +123,7 @@ program test : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         return 0;
     }
 }
@@ -170,7 +170,7 @@ program test : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         return 0;
     }
 }
@@ -201,7 +201,7 @@ program test : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         return 0;
     }
 }
@@ -233,14 +233,18 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
-        if argc > 1 {
+  userspace {
+    struct Args {
+        enable_logging: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+        if args.enable_logging > 0 {
             network.enable_logging = true;
         }
         return 0;
     }
-}
+  }
 |} in
   try
     let ast = parse_string program_text in
@@ -271,7 +275,7 @@ program test : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         network.enable_logging = true;  // This should be allowed
         return 0;
     }
@@ -308,7 +312,7 @@ program test : xdp {
 }
 
 userspace {
-    fn main(argc: u32, argv: u64) -> i32 {
+    fn main() -> i32 {
         network.enable_logging = true;  // This should be allowed
         return 0;
     }
