@@ -520,27 +520,34 @@ let rec type_check_statement ctx stmt =
       (* Check if this is a config field assignment *)
       (match obj_expr.expr_desc with
        | Identifier config_name when Hashtbl.mem ctx.configs config_name ->
-           (* This is config field assignment *)
-           let config_decl = Hashtbl.find ctx.configs config_name in
-           (try
-             let config_field = List.find (fun f -> f.field_name = field) config_decl.config_fields in
-             let field_type = config_field.field_type in
-             (* Check if the value type is compatible with the field type *)
-             (match unify_types field_type typed_value.texpr_type with
-              | Some _ ->
-                  (* Create typed config access expression *)
-                  let typed_obj = { texpr_desc = TIdentifier config_name; texpr_type = UserType config_name; texpr_pos = obj_expr.expr_pos } in
-                  { tstmt_desc = TFieldAssignment (typed_obj, field, typed_value); tstmt_pos = stmt.stmt_pos }
-              | None ->
-                  type_error ("Cannot assign " ^ string_of_bpf_type typed_value.texpr_type ^ 
-                             " to config field of type " ^ string_of_bpf_type field_type) stmt.stmt_pos)
-           with Not_found ->
-             type_error ("Config '" ^ config_name ^ "' has no field '" ^ field ^ "'") stmt.stmt_pos)
-               | _ ->
-            (* Try to type check the object expression first *)
-            let _ = type_check_expression ctx obj_expr in
-            (* For now, only support config field assignments *)
-            type_error ("Field assignment is currently only supported for config objects") stmt.stmt_pos)
+           (* This is config field assignment - check if we're in an eBPF program *)
+           (match ctx.current_program_type with
+            | Some _ ->
+                (* We're in an eBPF program - config field assignments are not allowed *)
+                type_error ("Config field assignments are not allowed in eBPF programs. " ^
+                           "Config fields can only be modified from userspace code.") stmt.stmt_pos
+            | None ->
+                (* We're in userspace or global context - config field assignment is allowed *)
+                let config_decl = Hashtbl.find ctx.configs config_name in
+                (try
+                  let config_field = List.find (fun f -> f.field_name = field) config_decl.config_fields in
+                  let field_type = config_field.field_type in
+                  (* Check if the value type is compatible with the field type *)
+                  (match unify_types field_type typed_value.texpr_type with
+                   | Some _ ->
+                       (* Create typed config access expression *)
+                       let typed_obj = { texpr_desc = TIdentifier config_name; texpr_type = UserType config_name; texpr_pos = obj_expr.expr_pos } in
+                       { tstmt_desc = TFieldAssignment (typed_obj, field, typed_value); tstmt_pos = stmt.stmt_pos }
+                   | None ->
+                       type_error ("Cannot assign " ^ string_of_bpf_type typed_value.texpr_type ^ 
+                                  " to config field of type " ^ string_of_bpf_type field_type) stmt.stmt_pos)
+                with Not_found ->
+                  type_error ("Config '" ^ config_name ^ "' has no field '" ^ field ^ "'") stmt.stmt_pos))
+       | _ ->
+           (* Try to type check the object expression first *)
+           let _ = type_check_expression ctx obj_expr in
+           (* For now, only support config field assignments *)
+           type_error ("Field assignment is currently only supported for config objects") stmt.stmt_pos)
 
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       let typed_key = type_check_expression ctx key_expr in

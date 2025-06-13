@@ -472,8 +472,8 @@ let rec generate_c_instruction ctx ir_instr =
       generate_map_delete ctx map_val key_val
 
   | IRConfigFieldUpdate (_map_val, _key_val, _field, _value_val) ->
-      (* Config field updates in eBPF are not allowed - this should have been caught earlier *)
-      emit_line ctx "/* ERROR: Config field updates not allowed in eBPF programs */"
+      (* This should never be reached since config field updates in eBPF are caught during type checking *)
+      failwith "Internal error: Config field updates in eBPF programs should have been caught during type checking"
 
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in

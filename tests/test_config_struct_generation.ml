@@ -256,6 +256,72 @@ userspace {
   with
   | e -> fail ("Error in no debug comments test: " ^ Printexc.to_string e)
 
+(** Test that config field assignments are not allowed in eBPF programs *)
+let test_config_assignment_restriction () =
+  let program_text = {|
+config network {
+    enable_logging: bool = true,
+}
+
+program test : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        network.enable_logging = false;  // This should cause a type error
+        return 2;
+    }
+}
+
+userspace {
+    fn main(argc: u32, argv: u64) -> i32 {
+        network.enable_logging = true;  // This should be allowed
+        return 0;
+    }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = build_symbol_table ast in
+    let _ = type_check_and_annotate_ast ast in
+    fail "Expected type error for config field assignment in eBPF program"
+  with
+  | Type_error (msg, _) ->
+      check bool "config assignment error detected" true 
+        (String.contains msg 'C' && String.contains msg 'e');  (* Check for "Config" and "eBPF" *)
+      check bool "error mentions userspace" true 
+        (String.contains msg 'u')  (* Check for "userspace" *)
+  | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
+
+(** Test that config field reads are allowed in eBPF programs *)
+let test_config_read_allowed_in_ebpf () =
+  let program_text = {|
+config network {
+    enable_logging: bool = true,
+    max_packet_size: u32 = 1500,
+}
+
+program test : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if network.enable_logging {  // This should be allowed
+            return 2;
+        }
+        return 1;
+    }
+}
+
+userspace {
+    fn main(argc: u32, argv: u64) -> i32 {
+        network.enable_logging = true;  // This should be allowed
+        return 0;
+    }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = build_symbol_table ast in
+    let _ = type_check_and_annotate_ast ast in
+    check bool "config field reads allowed in eBPF" true true
+  with
+  | e -> fail ("Unexpected error in config read test: " ^ Printexc.to_string e)
+
 (** All config struct generation tests *)
 let config_struct_generation_tests = [
   "single_config_basic_types", `Quick, test_single_config_basic_types;
@@ -263,6 +329,8 @@ let config_struct_generation_tests = [
   "config_with_arrays", `Quick, test_config_with_arrays;
   "dynamic_filename_generation", `Quick, test_dynamic_filename_generation;
   "no_debug_comments", `Quick, test_no_debug_comments;
+  "config_assignment_restriction", `Quick, test_config_assignment_restriction;
+  "config_read_allowed_in_ebpf", `Quick, test_config_read_allowed_in_ebpf;
 ]
 
 let () =
