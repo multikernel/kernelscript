@@ -1194,16 +1194,10 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
       }
     ) maps in
     
-    (* Convert userspace structs to config structs *)
-    (* TODO: Update to work with IR userspace structs *)
-    let config_structs = [] in (* Temporarily empty - need to update for IR structs *)
-    
-    (* Add default config struct if none provided *)
-    let final_config_structs = 
-      if config_structs = [] then
-        convert_config_declarations_to_ir config_declarations
-      else config_structs
-    in
+    (* Config structs come from explicit config declarations, not userspace structs *)
+    (* Userspace structs are regular struct definitions used in userspace code *)
+    (* Config structs are for configuration data passed between userspace and kernel *)
+    let config_structs = convert_config_declarations_to_ir config_declarations in
     
     (* Default to C language for userspace bindings *)
     let target_languages = [C] in
@@ -1214,7 +1208,7 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
         language;
         map_wrappers;
         event_handlers = []; (* TODO: Extract from userspace functions *)
-        config_structs = final_config_structs;
+        config_structs;
       }
     ) target_languages
 
