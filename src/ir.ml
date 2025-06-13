@@ -199,6 +199,7 @@ and ir_instr_desc =
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
   | IRMapDelete of ir_value * ir_value
+  | IRConfigFieldUpdate of ir_value * ir_value * string * ir_value (* map, key, field, value *)
   | IRContextAccess of ir_value * context_access_type
   | IRBoundsCheck of ir_value * int * int (* value, min, max *)
   | IRJump of string
@@ -572,6 +573,9 @@ let rec string_of_ir_instruction instr =
         type_str (string_of_ir_value map) (string_of_ir_value key) (string_of_ir_value value)
   | IRMapDelete (map, key) ->
       Printf.sprintf "delete(%s, %s)" (string_of_ir_value map) (string_of_ir_value key)
+  | IRConfigFieldUpdate (map, key, field, value) ->
+      Printf.sprintf "config_update(%s, %s, %s, %s)" 
+        (string_of_ir_value map) (string_of_ir_value key) field (string_of_ir_value value)
   | IRContextAccess (dest, access_type) ->
       let access_str = match access_type with
         | PacketData -> "packet_data" | PacketEnd -> "packet_end"

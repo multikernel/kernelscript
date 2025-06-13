@@ -202,6 +202,43 @@ let generate_map_delete_from_ir ctx map_val key_val =
         let key_str = generate_c_value_from_ir ctx key_val in
         sprintf "bpf_map_delete_elem(%s, &(%s));" map_str key_str
 
+(** Global config names collector *)
+let global_config_names = ref []
+
+(** Generate config field update instruction from IR *)
+let generate_config_field_update_from_ir ctx map_val key_val field value_val =
+  let map_str = generate_c_value_from_ir ctx map_val in
+  let value_str = generate_c_value_from_ir ctx value_val in
+  let key_str = generate_c_value_from_ir ctx key_val in
+  
+  (* Extract config name from map name (e.g., "&network" -> "network") *)
+  let clean_map_str = if String.get map_str 0 = '&' then 
+    String.sub map_str 1 (String.length map_str - 1)
+  else map_str in
+  let config_name = if String.contains clean_map_str '_' then
+    let parts = String.split_on_char '_' clean_map_str in
+    List.hd parts
+  else clean_map_str in
+  
+  let temp_struct = fresh_temp_var ctx "config" in
+  let temp_key = fresh_temp_var ctx "key" in
+  
+  (* Add config name to global collection during processing *)
+  if not (List.mem config_name !global_config_names) then (
+    global_config_names := config_name :: !global_config_names
+  );
+  sprintf {|    struct %s_config %s;
+    uint32_t %s = %s;
+    // Load current config from map
+    if (bpf_map_lookup_elem(%s_config_map_fd, &%s, &%s) == 0) {
+        // Update the field
+        %s.%s = %s;
+        // Write back to map
+        bpf_map_update_elem(%s_config_map_fd, &%s, &%s, BPF_ANY);
+    }|} 
+    config_name temp_struct temp_key key_str config_name temp_key temp_struct
+    temp_struct field value_str config_name temp_key temp_struct
+
 (** Generate C instruction from IR instruction *)
 let rec generate_c_instruction_from_ir ctx instruction =
   match instruction.instr_desc with
@@ -254,6 +291,9 @@ let rec generate_c_instruction_from_ir ctx instruction =
   
   | IRMapDelete (map_val, key_val) ->
       generate_map_delete_from_ir ctx map_val key_val
+  
+  | IRConfigFieldUpdate (map_val, key_val, field, value_val) ->
+      generate_config_field_update_from_ir ctx map_val key_val field value_val
   
   | IRJump label ->
       sprintf "goto %s;" label
@@ -433,22 +473,22 @@ int %s_get_next_key(%s *key, %s *next_key) {
       map.map_name key_type key_type map.map_name
   ) maps |> String.concat "\n"
 
-(** Generate map setup code *)
+(** Generate map setup code - load from eBPF object *)
 let generate_map_setup_code maps =
   List.map (fun map ->
-    sprintf {|    /* Setup %s map */
-    %s_fd = bpf_map_create(BPF_MAP_TYPE_HASH, NULL, sizeof(%s), sizeof(%s), %d, NULL);
+    sprintf {|    /* Load %s map from eBPF object */
+    %s_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s");
     if (%s_fd < 0) {
-        fprintf(stderr, "Failed to create %s map: %%s\n", strerror(errno));
+        fprintf(stderr, "Failed to find %s map in eBPF object\n");
         return -1;
     }|}
       map.map_name
-      map.map_name (c_type_from_ir_type map.map_key_type) (c_type_from_ir_type map.map_value_type) map.max_entries
+      map.map_name map.map_name
       map.map_name map.map_name
   ) maps |> String.concat "\n"
 
 (** Generate coordinator logic from IR coordinator *)
-let generate_coordinator_logic_c (coordinator : ir_coordinator_logic) map_setup_code =
+let generate_coordinator_logic_c (coordinator : ir_coordinator_logic) map_setup_code base_name =
   let map_mgmt_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.map_management.setup_operations) in
   let prog_lifecycle_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.program_lifecycle.loading_sequence) in
   let event_proc_c = String.concat "\n" (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.event_processing.event_loop) in
@@ -460,13 +500,26 @@ let generate_coordinator_logic_c (coordinator : ir_coordinator_logic) map_setup_
 struct bpf_object *bpf_obj = NULL;
 
 int setup_bpf_environment() {
-    /* Setup global maps for userspace-kernel communication */
+    /* Load BPF object file */
+    bpf_obj = bpf_object__open("%s.ebpf.o");
+    if (libbpf_get_error(bpf_obj)) {
+        fprintf(stderr, "Failed to open BPF object file\n");
+        return -1;
+    }
+    
+    /* Load BPF program */
+    if (bpf_object__load(bpf_obj)) {
+        fprintf(stderr, "Failed to load BPF object\n");
+        bpf_object__close(bpf_obj);
+        return -1;
+    }
+    
+    /* Extract map file descriptors from loaded eBPF object */
 %s
-/* Load BPF object and extract map file descriptors */
-    %s
     /* Load all BPF programs from object file */
 %s
 /* Verify program loading success */
+    %s
     return 0;
 }
 
@@ -489,10 +542,39 @@ void setup_signal_handlers() {
     signal(SIGTERM, SIG_DFL);
 %s
 }
-|} map_setup_code prog_lifecycle_c map_mgmt_c event_proc_c signal_handling_c
+|} base_name map_setup_code prog_lifecycle_c map_mgmt_c event_proc_c signal_handling_c
+
+(** Generate config struct definition from config declaration - reusing eBPF logic *)
+let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
+  let config_name = config_decl.config_name in
+  let struct_name = sprintf "%s_config" config_name in
+  
+  (* Generate C struct for config - using same logic as eBPF but with standard C types *)
+  let field_declarations = List.map (fun field ->
+    let field_declaration = match field.Ast.field_type with
+      | Ast.U8 -> sprintf "    uint8_t %s;" field.Ast.field_name
+      | Ast.U16 -> sprintf "    uint16_t %s;" field.Ast.field_name
+      | Ast.U32 -> sprintf "    uint32_t %s;" field.Ast.field_name
+      | Ast.U64 -> sprintf "    uint64_t %s;" field.Ast.field_name
+      | Ast.I8 -> sprintf "    int8_t %s;" field.Ast.field_name
+      | Ast.I16 -> sprintf "    int16_t %s;" field.Ast.field_name
+      | Ast.I32 -> sprintf "    int32_t %s;" field.Ast.field_name
+      | Ast.I64 -> sprintf "    int64_t %s;" field.Ast.field_name
+      | Ast.Bool -> sprintf "    bool %s;" field.Ast.field_name
+      | Ast.Char -> sprintf "    char %s;" field.Ast.field_name
+      | Ast.Array (Ast.U16, size) -> sprintf "    uint16_t %s[%d];" field.Ast.field_name size
+      | Ast.Array (Ast.U32, size) -> sprintf "    uint32_t %s[%d];" field.Ast.field_name size
+      | Ast.Array (Ast.U64, size) -> sprintf "    uint64_t %s[%d];" field.Ast.field_name size
+      | Ast.Array (Ast.U8, size) -> sprintf "    uint8_t %s[%d];" field.Ast.field_name size
+      | _ -> sprintf "    uint32_t %s;" field.Ast.field_name  (* fallback *)
+    in
+    field_declaration
+  ) config_decl.Ast.config_fields in
+  
+  sprintf "struct %s {\n%s\n};" struct_name (String.concat "\n" field_declarations)
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) _source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
   let includes = {|#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -508,19 +590,58 @@ let generate_complete_userspace_program_from_ir (userspace_prog : ir_userspace_p
 /* Generated from KernelScript IR */
 |} in
 
+  (* Reset and use the global config names collector *)
+  global_config_names := [];
+  
+  (* Generate functions first so config names get collected *)
+  let functions = String.concat "\n\n" 
+    (List.map generate_c_function_from_ir userspace_prog.userspace_functions) in
+  
+  (* Generate config struct definitions using actual config declarations *)
+  let config_structs = List.map generate_config_struct_from_decl config_declarations in
+  
+
+  
+  (* Filter out config structs from IR structs since we generate them separately from config_declarations *)
+  let non_config_ir_structs = List.filter (fun ir_struct ->
+    not (String.contains ir_struct.struct_name '_' && 
+         String.ends_with ~suffix:"_config" ir_struct.struct_name)
+  ) userspace_prog.userspace_structs in
+  
   let structs = String.concat "\n\n" 
-    (List.map generate_c_struct_from_ir userspace_prog.userspace_structs) in
+    ((List.map generate_c_struct_from_ir non_config_ir_structs) @ config_structs) in
   
   (* Generate map-related code using global maps from multi-program *)
   let map_fd_declarations = generate_map_fd_declarations global_maps in
+  
+  (* Generate config map file descriptors *)
+  let config_fd_declarations = List.map (fun config_decl ->
+    sprintf "int %s_config_map_fd = -1;" config_decl.Ast.config_name
+  ) config_declarations in
+  
+  let all_fd_declarations = map_fd_declarations :: config_fd_declarations |> String.concat "\n" in
   let map_operation_functions = generate_map_operation_functions global_maps in
   let map_setup_code = generate_map_setup_code global_maps in
   
-  (* Generate coordinator logic with map setup *)
-  let coordinator_with_maps = generate_coordinator_logic_c userspace_prog.coordinator_logic map_setup_code in
+  (* Generate config map setup code - load from eBPF object *)
+  let config_setup_code = List.map (fun config_decl ->
+    let config_name = config_decl.Ast.config_name in
+    sprintf {|    /* Load %s config map from eBPF object */
+    %s_config_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s_config_map");
+    if (%s_config_map_fd < 0) {
+        fprintf(stderr, "Failed to find %s config map in eBPF object\n");
+        return -1;
+    }|}
+      config_name config_name config_name config_name config_name
+  ) config_declarations |> String.concat "\n" in
   
-  let functions = String.concat "\n\n" 
-    (List.map generate_c_function_from_ir userspace_prog.userspace_functions) in
+  let all_setup_code = map_setup_code ^ "\n" ^ config_setup_code in
+  
+  (* Extract base name from source filename *)
+  let base_name = Filename.remove_extension (Filename.basename source_filename) in
+  
+  (* Generate coordinator logic with map setup *)
+  let coordinator_with_maps = generate_coordinator_logic_c userspace_prog.coordinator_logic all_setup_code base_name in
   
   sprintf {|%s
 
@@ -533,13 +654,13 @@ let generate_complete_userspace_program_from_ir (userspace_prog : ir_userspace_p
 %s
 
 %s
-|} includes structs map_fd_declarations map_operation_functions coordinator_with_maps functions
+|} includes structs all_fd_declarations map_operation_functions coordinator_with_maps functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir userspace_prog ir_multi_prog.global_maps source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations userspace_prog ir_multi_prog.global_maps source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 

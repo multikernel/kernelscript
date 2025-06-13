@@ -471,6 +471,10 @@ let rec generate_c_instruction ctx ir_instr =
   | IRMapDelete (map_val, key_val) ->
       generate_map_delete ctx map_val key_val
 
+  | IRConfigFieldUpdate (_map_val, _key_val, _field, _value_val) ->
+      (* Config field updates in eBPF are not allowed - this should have been caught earlier *)
+      emit_line ctx "/* ERROR: Config field updates not allowed in eBPF programs */"
+
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
       let access_str = match access_type with
@@ -733,6 +737,8 @@ let collect_registers_in_function ir_func =
         collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
     | IRMapDelete (map_val, key_val) ->
         collect_in_value map_val; collect_in_value key_val
+    | IRConfigFieldUpdate (map_val, key_val, _, value_val) ->
+        collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
     | IRContextAccess (dest_val, _) -> collect_in_value dest_val
     | IRBoundsCheck (ir_val, _, _) -> collect_in_value ir_val
     | IRCondJump (cond_val, _, _) -> collect_in_value cond_val

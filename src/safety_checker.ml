@@ -177,6 +177,9 @@ let analyze_statement_bounds stmt =
         errors := check_array_bounds expr @ !errors
     | Assignment (_, expr) ->
         errors := check_array_bounds expr @ !errors
+    | FieldAssignment (obj_expr, _, value_expr) ->
+        errors := check_array_bounds obj_expr @ !errors;
+        errors := check_array_bounds value_expr @ !errors
     | ExprStmt expr ->
         errors := check_array_bounds expr @ !errors
     | If (cond, then_stmts, else_opt) ->
@@ -332,6 +335,11 @@ let analyze_pointer_safety program =
             let (valid, invalid) = check_pointer_safety expr in
             all_valid := valid @ !all_valid;
             all_invalid := invalid @ !all_invalid
+        | FieldAssignment (obj_expr, _, value_expr) ->
+            let (v1, i1) = check_pointer_safety obj_expr in
+            let (v2, i2) = check_pointer_safety value_expr in
+            all_valid := v1 @ v2 @ !all_valid;
+            all_invalid := i1 @ i2 @ !all_invalid
         | If (cond, then_stmts, else_opt) ->
             let (valid, invalid) = check_pointer_safety cond in
             all_valid := valid @ !all_valid;

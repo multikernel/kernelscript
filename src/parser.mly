@@ -82,6 +82,7 @@
 %type <Ast.statement> expression_statement
 %type <Ast.statement> variable_declaration
 %type <Ast.statement> assignment_statement
+%type <Ast.statement> field_assignment_statement
 %type <Ast.statement> index_assignment_statement
 %type <Ast.statement> return_statement
 %type <Ast.statement> if_statement
@@ -216,6 +217,7 @@ statement:
   | expression_statement { $1 }
   | variable_declaration { $1 }
   | assignment_statement { $1 }
+  | field_assignment_statement { $1 }
   | index_assignment_statement { $1 }
   | return_statement { $1 }
   | if_statement { $1 }
@@ -237,6 +239,10 @@ variable_declaration:
 assignment_statement:
   | IDENTIFIER ASSIGN expression SEMICOLON
     { make_stmt (Assignment ($1, $3)) (make_pos ()) }
+
+field_assignment_statement:
+  | expression DOT IDENTIFIER ASSIGN expression SEMICOLON
+    { make_stmt (FieldAssignment ($1, $3, $5)) (make_pos ()) }
 
 index_assignment_statement:
   | expression LBRACKET expression RBRACKET ASSIGN expression SEMICOLON

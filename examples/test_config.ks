@@ -37,6 +37,10 @@ program packet_filter : xdp {
 
 userspace {
     fn main(argc: u32, argv: u64) -> i32 {
+        // Enable logging if argc > 1 (simple argument detection)
+        if argc > 1 {
+            network.enable_logging = true;
+        }
         return 0;
     }
 } 

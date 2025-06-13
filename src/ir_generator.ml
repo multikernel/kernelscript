@@ -784,6 +784,21 @@ let rec lower_statement ctx stmt =
       let instr = make_ir_instruction IRBreak stmt.stmt_pos in
       emit_instruction ctx instr
   
+  | Ast.FieldAssignment (object_expr, field_name, value_expr) ->
+      (* Generate config field update instruction *)
+      let map_name = match object_expr.expr_desc with
+        | Ast.Identifier var_name -> var_name
+        | _ -> failwith "Config field assignment must reference a config variable"
+      in
+      let key_val = make_ir_value (IRLiteral (IntLit 0)) (IRU32) stmt.stmt_pos in
+      let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
+      let value_val = lower_expression ctx value_expr in
+      let instr = make_ir_instruction 
+        (IRConfigFieldUpdate (map_val, key_val, field_name, value_val)) 
+        stmt.stmt_pos 
+      in
+      emit_instruction ctx instr
+      
   | Ast.Continue ->
       (* Generate continue instruction for IR *)
       let instr = make_ir_instruction IRContinue stmt.stmt_pos in
@@ -1055,8 +1070,49 @@ and generate_coordinator_logic _ctx _ir_functions =
   
   make_ir_coordinator_logic map_mgmt prog_lifecycle event_proc signal_handling
 
-(** Generate userspace bindings from userspace block *)
-let generate_userspace_bindings_from_block prog_def userspace_block maps =
+(** Convert AST config declarations to IR config structs *)
+let convert_config_declarations_to_ir config_declarations =
+  List.map (fun config_decl ->
+    let ir_fields = List.map (fun field ->
+      let ir_type = match field.Ast.field_type with
+        | Ast.U8 -> IRU8
+        | Ast.U16 -> IRU16
+        | Ast.U32 -> IRU32
+        | Ast.U64 -> IRU64
+        | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
+        | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
+        | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
+        | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
+        | Ast.Bool -> IRBool
+        | Ast.Char -> IRChar
+        | Ast.Array (elem_type, size) ->
+            let ir_elem_type = match elem_type with
+              | Ast.U8 -> IRU8
+              | Ast.U16 -> IRU16
+              | Ast.U32 -> IRU32
+              | Ast.U64 -> IRU64
+              | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
+              | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
+              | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
+              | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
+              | Ast.Bool -> IRBool
+              | Ast.Char -> IRChar
+              | _ -> failwith ("Unsupported array element type: " ^ (Ast.string_of_bpf_type elem_type))
+            in
+            let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
+            IRArray (ir_elem_type, size, bounds_info)
+        | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field.Ast.field_type))
+      in
+      (field.Ast.field_name, ir_type)
+    ) config_decl.Ast.config_fields in
+    {
+      config_struct_name = config_decl.Ast.config_name;
+      fields = ir_fields;
+      serialization = Json;
+    }
+  ) config_declarations
+
+let generate_userspace_bindings_from_block _prog_def userspace_block maps config_declarations =
   match userspace_block with
   | None -> 
     (* Default bindings when no userspace block is specified *)
@@ -1069,11 +1125,7 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
       }
     ) maps in
     
-    let config_structs = [{
-      config_struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
-      fields = [("debug_level", IRU32); ("max_events", IRU32)];
-      serialization = Json;
-    }] in
+    let config_structs = convert_config_declarations_to_ir config_declarations in
     
     [{
       language = C;
@@ -1149,11 +1201,7 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
     (* Add default config struct if none provided *)
     let final_config_structs = 
       if config_structs = [] then
-        [{
-          config_struct_name = Printf.sprintf "%s_config" prog_def.prog_name;
-          fields = [("debug_level", IRU32); ("max_events", IRU32)];
-          serialization = Json;
-        }]
+        convert_config_declarations_to_ir config_declarations
       else config_structs
     in
     
@@ -1171,7 +1219,7 @@ let generate_userspace_bindings_from_block prog_def userspace_block maps =
     ) target_languages
 
 (** Generate userspace bindings for multiple programs *)
-let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_opt maps =
+let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_opt maps config_declarations =
   match userspace_block_opt with
   | None -> 
     (* Generate default bindings for all programs *)
@@ -1184,11 +1232,7 @@ let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_op
       }
     ) maps in
     
-    let config_structs = [{
-      config_struct_name = "multi_program_config";
-      fields = [("debug_level", IRU32); ("max_events", IRU32)];
-      serialization = Json;
-    }] in
+    let config_structs = convert_config_declarations_to_ir config_declarations in
     
     [{
       language = C;
@@ -1200,7 +1244,7 @@ let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_op
   | Some userspace ->
     (* Use the existing single-program logic for now, but pass the first program *)
     let first_prog = List.hd prog_defs in
-    generate_userspace_bindings_from_block first_prog (Some userspace) maps
+    generate_userspace_bindings_from_block first_prog (Some userspace) maps config_declarations
 
 (** Lower a single program from AST to IR *)
 let lower_single_program ctx prog_def _global_ir_maps =
@@ -1372,9 +1416,15 @@ let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
   
   let map_flag_infos = List.map ir_map_def_to_map_flag_info ir_global_maps in
   
+  (* Extract config declarations from AST *)
+  let config_declarations = List.filter_map (function
+    | Ast.ConfigDecl config -> Some config
+    | _ -> None
+  ) ast in
+  
   (* Generate userspace bindings *)
   let userspace_bindings = 
-    generate_userspace_bindings_from_multi_programs prog_defs userspace_block map_flag_infos
+    generate_userspace_bindings_from_multi_programs prog_defs userspace_block map_flag_infos config_declarations
   in
   
   (* Create multi-program IR *)

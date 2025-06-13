@@ -44,6 +44,7 @@ type typed_statement = {
 and typed_stmt_desc =
   | TExprStmt of typed_expr
   | TAssignment of string * typed_expr
+  | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
   | TDeclaration of string * bpf_type * typed_expr
   | TReturn of typed_expr option
@@ -500,7 +501,7 @@ let rec type_check_statement ctx stmt =
       let typed_expr = type_check_expression ctx expr in
       { tstmt_desc = TExprStmt typed_expr; tstmt_pos = stmt.stmt_pos }
   
-  | Assignment (name, expr) ->
+    | Assignment (name, expr) ->
       let typed_expr = type_check_expression ctx expr in
       (try
          let var_type = Hashtbl.find ctx.variables name in
@@ -512,7 +513,35 @@ let rec type_check_statement ctx stmt =
                          " to variable of type " ^ string_of_bpf_type var_type) stmt.stmt_pos)
        with Not_found ->
          type_error ("Undefined variable: " ^ name) stmt.stmt_pos)
-  
+
+  | FieldAssignment (obj_expr, field, value_expr) ->
+      let typed_value = type_check_expression ctx value_expr in
+      
+      (* Check if this is a config field assignment *)
+      (match obj_expr.expr_desc with
+       | Identifier config_name when Hashtbl.mem ctx.configs config_name ->
+           (* This is config field assignment *)
+           let config_decl = Hashtbl.find ctx.configs config_name in
+           (try
+             let config_field = List.find (fun f -> f.field_name = field) config_decl.config_fields in
+             let field_type = config_field.field_type in
+             (* Check if the value type is compatible with the field type *)
+             (match unify_types field_type typed_value.texpr_type with
+              | Some _ ->
+                  (* Create typed config access expression *)
+                  let typed_obj = { texpr_desc = TIdentifier config_name; texpr_type = UserType config_name; texpr_pos = obj_expr.expr_pos } in
+                  { tstmt_desc = TFieldAssignment (typed_obj, field, typed_value); tstmt_pos = stmt.stmt_pos }
+              | None ->
+                  type_error ("Cannot assign " ^ string_of_bpf_type typed_value.texpr_type ^ 
+                             " to config field of type " ^ string_of_bpf_type field_type) stmt.stmt_pos)
+           with Not_found ->
+             type_error ("Config '" ^ config_name ^ "' has no field '" ^ field ^ "'") stmt.stmt_pos)
+               | _ ->
+            (* Try to type check the object expression first *)
+            let _ = type_check_expression ctx obj_expr in
+            (* For now, only support config field assignments *)
+            type_error ("Field assignment is currently only supported for config objects") stmt.stmt_pos)
+
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       let typed_key = type_check_expression ctx key_expr in
       let typed_value = type_check_expression ctx value_expr in
@@ -828,6 +857,8 @@ let rec typed_stmt_to_stmt tstmt =
   let stmt_desc = match tstmt.tstmt_desc with
     | TExprStmt expr -> ExprStmt (typed_expr_to_expr expr)
     | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)
+    | TFieldAssignment (obj_expr, field, value_expr) ->
+        FieldAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TIndexAssignment (map_expr, key_expr, value_expr) -> 
         IndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, typed_expr_to_expr value_expr)
     | TDeclaration (name, typ, expr) -> Declaration (name, Some typ, typed_expr_to_expr expr)
@@ -1011,6 +1042,9 @@ and populate_multi_program_context ast multi_prog_analysis =
         enhance_expr prog_type expr
     | Assignment (_, expr) ->
         enhance_expr prog_type expr
+    | FieldAssignment (obj_expr, _, value_expr) ->
+        enhance_expr prog_type obj_expr;
+        enhance_expr prog_type value_expr
     | IndexAssignment (map_expr, key_expr, value_expr) ->
         (* This is a write operation *)
         enhance_expr prog_type map_expr;

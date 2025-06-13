@@ -426,6 +426,15 @@ and eval_statement ctx stmt =
       let value = eval_expression ctx expr in
       Hashtbl.replace ctx.variables name value
   
+  | FieldAssignment (obj_expr, field, value_expr) ->
+      (* For evaluation purposes, treat config field assignment as no-op with debug output *)
+      let value = eval_expression ctx value_expr in
+      (match obj_expr.expr_desc with
+       | Identifier config_name ->
+           Printf.printf "[CONFIG ASSIGN]: %s.%s = %s\n" 
+             config_name field (string_of_runtime_value value)
+       | _ -> eval_error ("Field assignment only supported for config objects") stmt.stmt_pos)
+  
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       (* Handle map assignment: map[key] = value *)
       let map_name = match map_expr.expr_desc with

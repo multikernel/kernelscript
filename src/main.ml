@@ -119,6 +119,8 @@ let compile opts source_file =
     ) ast in
     Printf.printf "📋 Found %d config declarations\n" (List.length config_declarations);
     
+
+    
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := TypeChecking;
     Printf.printf "Phase 4: %s\n" (string_of_phase !current_phase);
@@ -144,22 +146,24 @@ let compile opts source_file =
         Ebpf_c_codegen.compile_multi_to_c_with_analysis 
           optimized_ir multi_prog_analysis resource_plan optimization_strategies in
       
-    (* Generate userspace coordinator using new IR-based generator *)
-    let temp_output_dir = "temp_userspace" in
-    Userspace_codegen.generate_userspace_code_from_ir 
-      optimized_ir ~output_dir:temp_output_dir source_file;
-    
-    (* Read the generated userspace code *)
+    (* Determine output directory *)
     let base_name = Filename.remove_extension (Filename.basename source_file) in
-    let userspace_file = temp_output_dir ^ "/" ^ base_name ^ ".c" in
+    let output_dir = match opts.output_dir with
+      | Some dir -> dir
+      | None -> base_name
+    in
+    
+    (* Generate userspace coordinator directly to output directory *)
+    Userspace_codegen.generate_userspace_code_from_ir 
+      ~config_declarations optimized_ir ~output_dir source_file;
+    
+    (* Read the generated userspace code for preview *)
+    let userspace_file = output_dir ^ "/" ^ base_name ^ ".c" in
     let userspace_c_code = 
       try
         let ic = open_in userspace_file in
         let content = really_input_string ic (in_channel_length ic) in
         close_in ic;
-        (* Clean up temp directory *)
-        Sys.remove userspace_file;
-        (try Unix.rmdir temp_output_dir with _ -> ());
         content
       with _ -> "/* Failed to read generated userspace code */"
     in
@@ -171,14 +175,7 @@ let compile opts source_file =
     
     Printf.printf "🎉 Compilation completed successfully!\n\n";
     
-    (* Output results to files *)
-    let base_name = Filename.remove_extension (Filename.basename source_file) in
-    let output_dir = match opts.output_dir with
-      | Some dir -> dir
-      | None -> base_name
-    in
-    
-    (* Create output directory *)
+    (* Create output directory if it doesn't exist *)
     (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
     
     Printf.printf "📤 Generated Code Outputs:\n";
@@ -189,10 +186,16 @@ let compile opts source_file =
         | UserspaceCoordinator -> ("Userspace Coordinator", output_dir ^ "/" ^ base_name ^ ".c")
       in
       
-      (* Write file *)
-      let oc = open_out filename in
-      output_string oc code;
-      close_out oc;
+      (* Write eBPF file, userspace file is already written by userspace codegen *)
+      (match target with
+        | EbpfC -> 
+          let oc = open_out filename in
+          output_string oc code;
+          close_out oc
+        | UserspaceCoordinator -> 
+          (* File already written by userspace codegen, just show preview *)
+          ()
+      );
       
       Printf.printf "\n--- %s → %s ---\n" target_name filename;
       let lines = String.split_on_char '\n' code in
