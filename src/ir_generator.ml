@@ -964,33 +964,20 @@ let lower_map_declaration (map_decl : Ast.map_declaration) =
     ?pin_path:pin_path
     map_decl.Ast.map_pos
 
-(** Convert AST userspace block to IR userspace program *)
-let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.userspace_block) =
-  (* Validate main function if present or required *)
-  let main_functions = List.filter (fun func_def -> func_def.Ast.func_name = "main") userspace_block.userspace_functions in
-  
-  (* Check for multiple main functions *)
-  if List.length main_functions > 1 then
-    failwith "Userspace block can only contain one main() function";
-  
-  (* Require main function if explicitly requested *)
-  if require_main && List.length main_functions = 0 then
-    failwith "Userspace block must contain a main() function";
-  
-  (* Validate main function signature if present *)
-  if List.length main_functions > 0 then (
-    let main_func = List.hd main_functions in
-    
+(** Convert AST function to IR function for userspace context *)
+let lower_userspace_function ctx func_def =
+  (* Validate main function signature if it's the main function *)
+  if func_def.Ast.func_name = "main" then (
     (* Validate main function signature: fn main() -> i32 or fn main(args: CustomStruct) -> i32 *)
     let expected_return = Some Ast.I32 in
     
     (* Check parameter count and types *)
     let params_valid = 
       (* Allow no parameters: fn main() -> i32 *)
-      List.length main_func.Ast.func_params = 0 ||
+      List.length func_def.Ast.func_params = 0 ||
       (* Allow single struct parameter: fn main(args: CustomStruct) -> i32 *)
-      (List.length main_func.Ast.func_params = 1 &&
-       match main_func.Ast.func_params with
+      (List.length func_def.Ast.func_params = 1 &&
+       match func_def.Ast.func_params with
        | [(_, Ast.Struct _)] -> true  (* Accept struct types *)
        | [(_, Ast.UserType _)] -> true  (* Accept user-defined types (structs) *)
        | [(_, _)] -> false (* Reject non-struct single parameters *)
@@ -998,63 +985,27 @@ let rec lower_userspace_block ?(require_main=true) ctx (userspace_block : Ast.us
     in
     
     (* Check return type *)
-    let return_valid = main_func.Ast.func_return_type = expected_return in
+    let return_valid = func_def.Ast.func_return_type = expected_return in
     
     if not params_valid then
       failwith (Printf.sprintf 
-        "Userspace main() function must have no parameters or one struct parameter, got: %s"
+        "main() function must have no parameters or one struct parameter, got: %s"
         (String.concat ", " (List.map (fun (name, typ) -> 
           Printf.sprintf "%s: %s" name (Ast.string_of_bpf_type typ)
-        ) main_func.Ast.func_params)));
+        ) func_def.Ast.func_params)));
     
     if not return_valid then
       failwith (Printf.sprintf
-        "Userspace main() function must return i32, got: %s"
-        (match main_func.Ast.func_return_type with 
+        "main() function must return i32, got: %s"
+        (match func_def.Ast.func_return_type with 
          | Some t -> Ast.string_of_bpf_type t 
          | None -> "void"));
   );
   
   ctx.is_userspace <- true;
-  
-  (* Lower userspace functions to IR functions *)
-  (* For userspace functions, preserve the original function names (especially "main") *)
-  let ir_functions = List.map (fun func_def ->
-    lower_function ctx func_def.Ast.func_name func_def
-  ) userspace_block.userspace_functions in
-  
-  (* Reset userspace flag *)
+  let ir_function = lower_function ctx func_def.Ast.func_name func_def in
   ctx.is_userspace <- false;
-  
-  (* Lower userspace structs to IR struct definitions *)
-  let ir_structs = List.map (fun struct_def ->
-    let ir_fields = List.map (fun (name, ast_type) ->
-      (name, ast_type_to_ir_type ast_type)
-    ) struct_def.Ast.struct_fields in
-    
-    (* Calculate struct alignment and size (simplified) *)
-    let alignment = 8 in (* Default alignment *)
-    let size = List.length ir_fields * 8 in (* Simplified size calculation *)
-    
-    make_ir_struct_def struct_def.Ast.struct_name ir_fields alignment size struct_def.Ast.struct_pos
-  ) userspace_block.userspace_structs in
-  
-  (* Lower userspace configs to IR configs *)
-  let ir_configs = List.map (fun config ->
-    match config with
-    | Ast.CustomConfig (name, items) ->
-        let ir_items = List.map (fun item ->
-          let ir_value = lower_literal item.Ast.config_value userspace_block.userspace_pos in
-          let ir_type = ir_value.val_type in
-          make_ir_config_item item.Ast.config_key ir_value ir_type
-        ) items in
-        IRCustomConfig (name, ir_items)
-  ) userspace_block.userspace_configs in
-  
-  (* Generate coordinator logic *)
-  let coordinator_logic = generate_coordinator_logic ctx ir_functions in
-  
-  make_ir_userspace_program ir_functions ir_structs ir_configs coordinator_logic userspace_block.userspace_pos
+  ir_function
 
 (** Generate coordinator logic *)
 and generate_coordinator_logic _ctx _ir_functions =
@@ -1128,12 +1079,12 @@ let convert_config_declarations_to_ir config_declarations =
     }
   ) config_declarations
 
-let generate_userspace_bindings_from_block _prog_def userspace_block maps config_declarations =
-  match userspace_block with
-  | None -> 
-    (* Default bindings when no userspace block is specified *)
+let generate_userspace_bindings_from_functions _prog_def userspace_functions maps config_declarations =
+  (* Generate bindings based on userspace functions *)
+  if List.length userspace_functions = 0 then (
+    (* Default bindings when no userspace functions are specified *)
     let map_wrappers = List.map (fun map_def ->
-      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in (* Generic operations for all maps for now *)
+      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in
       {
         wrapper_map_name = map_def.map_name;
         operations;
@@ -1149,55 +1100,10 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
       event_handlers = [];
       config_structs;
     }]
-    
-  | Some _userspace ->
-    (* Validate that userspace block contains a main() function with correct signature *)
-    let _validate_userspace_main_signature ast_func =
-      if ast_func.Ast.func_name = "main" then (
-        (* Expected signature: fn main() -> i32 or fn main(args: CustomStruct) -> i32 *)
-        let expected_return = Some Ast.I32 in
-        
-        (* Check parameter count and types *)
-        let params_valid = 
-          (* Allow no parameters: fn main() -> i32 *)
-          List.length ast_func.Ast.func_params = 0 ||
-          (* Allow single struct parameter: fn main(args: CustomStruct) -> i32 *)
-          (List.length ast_func.Ast.func_params = 1 &&
-           match ast_func.Ast.func_params with
-           | [(_, Ast.Struct _)] -> true  (* Accept struct types *)
-           | [(_, Ast.UserType _)] -> true  (* Accept user-defined types (structs) *)
-           | [(_, _)] -> false (* Reject non-struct single parameters *)
-           | _ -> false)
-        in
-        
-        (* Check return type *)
-        let return_valid = ast_func.Ast.func_return_type = expected_return in
-        
-        if not params_valid then
-          failwith (Printf.sprintf 
-            "Userspace main() function must have no parameters or one struct parameter, got: %s"
-            (String.concat ", " (List.map (fun (name, typ) -> 
-              Printf.sprintf "%s: %s" name (Ast.string_of_bpf_type typ)
-            ) ast_func.Ast.func_params)));
-        
-        if not return_valid then
-          failwith (Printf.sprintf
-            "Userspace main() function must return i32, got: %s"
-            (match ast_func.Ast.func_return_type with 
-             | Some t -> Ast.string_of_bpf_type t 
-             | None -> "void"));
-        
-        true
-      ) else false
-    in
-    
-    (* TODO: Update validation to work with IR userspace functions *)
-    (* For now, we'll skip this validation during Phase 1 implementation *)
-    
-    (* Generate bindings based on userspace block specification *)
-    (* For now, generate default map wrappers for all maps *)
+  ) else (
+    (* Generate bindings based on userspace functions *)
     let map_wrappers = List.map (fun map_def ->
-      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in (* Generic operations for all maps for now *)
+      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in
       {
         wrapper_map_name = map_def.map_name;
         operations;
@@ -1205,51 +1111,40 @@ let generate_userspace_bindings_from_block _prog_def userspace_block maps config
       }
     ) maps in
     
-    (* Config structs come from explicit config declarations, not userspace structs *)
-    (* Userspace structs are regular struct definitions used in userspace code *)
-    (* Config structs are for configuration data passed between userspace and kernel *)
     let config_structs = convert_config_declarations_to_ir config_declarations in
     
-    (* Default to C language for userspace bindings *)
     let target_languages = [C] in
     
-    (* Generate bindings for each target language *)
     List.map (fun language ->
       {
         language;
         map_wrappers;
-        event_handlers = []; (* TODO: Extract from userspace functions *)
+        event_handlers = [];
         config_structs;
       }
     ) target_languages
+  )
 
 (** Generate userspace bindings for multiple programs *)
-let generate_userspace_bindings_from_multi_programs prog_defs userspace_block_opt maps config_declarations =
-  match userspace_block_opt with
-  | None -> 
-    (* Generate default bindings for all programs *)
-    let map_wrappers = List.map (fun map_def ->
-      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in (* Generic operations for all maps for now *)
-      {
-        wrapper_map_name = map_def.map_name;
-        operations;
-        safety_checks = true;
-      }
-    ) maps in
-    
-    let config_structs = convert_config_declarations_to_ir config_declarations in
-    
-    [{
-      language = C;
-      map_wrappers;
-      event_handlers = [];
-      config_structs;
-    }]
-    
-  | Some userspace ->
-    (* Use the existing single-program logic for now, but pass the first program *)
-    let first_prog = List.hd prog_defs in
-    generate_userspace_bindings_from_block first_prog (Some userspace) maps config_declarations
+let generate_userspace_bindings_from_multi_programs _prog_defs _userspace_functions maps config_declarations =
+  (* Generate bindings for all programs with userspace functions *)
+  let map_wrappers = List.map (fun map_def ->
+    let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in
+    {
+      wrapper_map_name = map_def.map_name;
+      operations;
+      safety_checks = true;
+    }
+  ) maps in
+  
+  let config_structs = convert_config_declarations_to_ir config_declarations in
+  
+  [{
+    language = C;
+    map_wrappers;
+    event_handlers = [];
+    config_structs;
+  }]
 
 (** Lower a single program from AST to IR *)
 let lower_single_program ctx prog_def _global_ir_maps =
@@ -1307,7 +1202,7 @@ let validate_multiple_programs prog_defs =
   ) prog_defs
 
 (** Lower complete AST to multi-program IR *)
-let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
+let lower_multi_program ast symbol_table source_name =
   let ctx = create_context symbol_table in
   
   (* Analyze assignment patterns for optimization early *)
@@ -1355,28 +1250,46 @@ let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
     lower_single_program prog_ctx prog_def ir_global_maps
   ) prog_defs in
   
-  (* Find top-level userspace block *)
-  let userspace_block = List.find_map (function
-    | Ast.Userspace ub -> Some ub
+  (* Find top-level userspace functions *)
+  let userspace_functions = List.filter_map (function
+    | Ast.GlobalFunction func -> Some func
     | _ -> None
   ) ast in
   
-  (* Convert AST userspace block to IR userspace program *)
-  let userspace_program = match userspace_block with
-    | Some ub -> 
-        let require_main = not for_testing in
-        Some (lower_userspace_block ~require_main ctx ub)
-    | None -> None
+  (* Convert AST userspace functions to IR userspace program *)
+  let userspace_program = 
+    if List.length userspace_functions = 0 then
+      None
+    else
+      (* Main function is now mandatory for all userspace code *)
+      let main_functions = List.filter (fun f -> f.Ast.func_name = "main") userspace_functions in
+      if List.length main_functions = 0 then
+        failwith "Userspace code must contain a main() function (no longer optional)";
+      if List.length main_functions > 1 then
+        failwith "Only one main() function is allowed";
+      
+      (* Collect struct declarations from AST *)
+      let userspace_struct_decls = List.filter_map (function
+        | Ast.StructDecl struct_def -> Some struct_def
+        | _ -> None
+      ) ast in
+      
+      (* Convert AST struct declarations to IR struct definitions *)
+      let ir_userspace_structs = List.map (fun struct_decl ->
+        let ir_fields = List.map (fun (field_name, field_type) ->
+          (field_name, ast_type_to_ir_type field_type)
+        ) struct_decl.Ast.struct_fields in
+        make_ir_struct_def 
+          struct_decl.Ast.struct_name 
+          ir_fields 
+          8 (* default alignment *)
+          (List.length ir_fields * 8) (* estimated size *)
+          struct_decl.Ast.struct_pos
+      ) userspace_struct_decls in
+      
+      let ir_functions = List.map (fun func -> lower_userspace_function ctx func) userspace_functions in
+      Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
-  
-  (* Validate userspace block - there should be at most one *)
-  let userspace_blocks = List.filter_map (function
-    | Ast.Userspace ub -> Some ub
-    | _ -> None
-  ) ast in
-  
-  if List.length userspace_blocks > 1 then
-    failwith "Only one userspace block is allowed per source file";
   
   (* Extract all map assignments from the AST to analyze initial values *)
   let all_map_assignments = Map_assignment.extract_map_assignments_from_ast ast in
@@ -1443,7 +1356,7 @@ let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
   
   (* Generate userspace bindings *)
   let userspace_bindings = 
-    generate_userspace_bindings_from_multi_programs prog_defs userspace_block map_flag_infos config_declarations
+    generate_userspace_bindings_from_multi_programs prog_defs userspace_functions map_flag_infos config_declarations
   in
   
   (* Create multi-program IR *)
@@ -1461,9 +1374,9 @@ let lower_multi_program ?(for_testing=false) ast symbol_table source_name =
     multi_pos
 
 (** Main entry point for IR generation *)
-let generate_ir ?(for_testing=false) ast symbol_table source_name =
+let generate_ir ast symbol_table source_name =
   try
-    lower_multi_program ~for_testing ast symbol_table source_name
+    lower_multi_program ast symbol_table source_name
   with
   | exn ->
       Printf.eprintf "IR generation failed: %s\n" (Printexc.to_string exn);

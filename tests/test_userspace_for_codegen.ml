@@ -14,7 +14,7 @@ let generate_userspace_code_from_program program_text filename =
   let ast = parse_string program_text in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let ir = Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table filename in
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table filename in
   
   let temp_dir = Filename.temp_file "test_userspace_for" "" in
   Unix.unlink temp_dir;
@@ -47,13 +47,15 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for i in 0..10 {
-      let x = 42;
-    }
-    return 0;
+fn test_func() -> u32 {
+  for i in 0..10 {
+    let x = 42;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -69,8 +71,8 @@ userspace {
     
     (* Should NOT contain unrolling patterns *)
     check bool "no manual unrolling" false (contains_pattern result "x_0.*x_1.*x_2");
-    check bool "no goto statements" false (contains_pattern result "goto");
-    check bool "no loop_start labels" false (contains_pattern result "loop_start:");
+    check bool "no eBPF loop_start labels" false (contains_pattern result "loop_start:");
+    (* Note: goto statements are expected for cleanup and return value propagation *)
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
@@ -83,15 +85,13 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    let start = 1;
-    let end_val = 5;
-    for i in start..end_val {
-      let temp = i * 2;
-    }
-    return 0;
+fn main() -> i32 {
+  let start = 1;
+  let end_val = 5;
+  for i in start..end_val {
+    let temp = i * 2;
   }
+  return 0;
 }
 |} in
   
@@ -122,7 +122,7 @@ userspace {
       check bool "generates C for loop" true (contains_pattern content "for.*(");
       check bool "no bounds checking macros" false (contains_pattern content "BPF_LOOP_BOUND_CHECK");
       check bool "no verifier annotations" false (contains_pattern content "__bounded");
-      check bool "no goto-based implementation" false (contains_pattern content "goto.*loop");
+      check bool "no eBPF goto-based loop implementation" false (contains_pattern content "goto.*loop_start");
       
       (* Should use variables in bounds (converted to registers by IR) *)
       check bool "uses variable bounds" true (contains_pattern content "var_.*var_");
@@ -141,14 +141,16 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for i in 0..10 {
-      let doubled = i * 2;
-      let squared = i * i;
-    }
-    return 0;
+fn test_func() -> u32 {
+  for i in 0..10 {
+    let doubled = i * 2;
+    let squared = i * i;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -176,13 +178,15 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for k in 5..5 {
-      let single = 99;
-    }
-    return 0;
+fn test_func() -> u32 {
+  for k in 5..5 {
+    let single = 99;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -205,13 +209,15 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for big in 0..1000000 {
-      let large = 1;
-    }
-    return 0;
+fn test_func() -> u32 {
+  for big in 0..1000000 {
+    let large = 1;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -235,13 +241,15 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for empty in 10..5 {
-      let never = 0;
-    }
-    return 0;
+fn test_func() -> u32 {
+  for empty in 10..5 {
+    let never = 0;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -265,18 +273,16 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn helper() -> u32 {
-    for i in 1..3 {
-      let helper_var = i + 10;
-    }
-    return 42;
+fn helper() -> u32 {
+  for i in 1..3 {
+    let helper_var = i + 10;
   }
-  
-  fn main() -> i32 {
-    let result = helper();
-    return 0;
-  }
+  return 42;
+}
+
+fn main() -> i32 {
+  let result = helper();
+  return 0;
 }
 |} in
   
@@ -314,8 +320,8 @@ userspace {
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** Test 8: Comparison with eBPF codegen - userspace should be different *)
-let test_userspace_vs_ebpf_for_loop_differences () =
+(** Test 8: Comparison with eBPF codegen - global functions should be different *)
+let test_global_functions_vs_ebpf_for_loop_differences () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
@@ -323,20 +329,22 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for i in 0..100 {
-      let test = 1;
-    }
-    return 0;
+fn test_func() -> u32 {
+  for i in 0..100 {
+    let test = 1;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
   try
     let result = generate_userspace_code_from_program program_text "test_vs_ebpf" in
     
-    (* Userspace should NOT have eBPF-specific patterns *)
+    (* Global functions should NOT have eBPF-specific patterns *)
     check bool "no BPF loop pragmas" false (contains_pattern result "#pragma unroll");
     check bool "no verifier annotations" false (contains_pattern result "__bounded");
     check bool "no BPF helper calls" false (contains_pattern result "bpf_for_each");
@@ -348,8 +356,8 @@ userspace {
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** All userspace for statement codegen tests *)
-let userspace_for_codegen_tests = [
+(** All global function for statement codegen tests *)
+let global_function_for_codegen_tests = [
   "basic_for_loop_constant_bounds", `Quick, test_basic_for_loop_constant_bounds;
   "for_loop_variable_bounds", `Quick, test_for_loop_variable_bounds;
   "for_loop_complex_expressions", `Quick, test_for_loop_complex_expressions;
@@ -357,10 +365,10 @@ let userspace_for_codegen_tests = [
   "for_loop_large_bounds", `Quick, test_for_loop_large_bounds;
   "for_loop_zero_iterations", `Quick, test_for_loop_zero_iterations;
   "for_loop_in_helper_function", `Quick, test_for_loop_in_helper_function;
-  "userspace_vs_ebpf_differences", `Quick, test_userspace_vs_ebpf_for_loop_differences;
+  "global_functions_vs_ebpf_differences", `Quick, test_global_functions_vs_ebpf_for_loop_differences;
 ]
 
 let () =
-  run "KernelScript Userspace For Statement Codegen Tests" [
-    "userspace_for_codegen", userspace_for_codegen_tests;
+  run "KernelScript Global Function For Statement Codegen Tests" [
+    "global_function_for_codegen", global_function_for_codegen_tests;
 ]

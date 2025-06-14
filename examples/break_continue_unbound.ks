@@ -29,24 +29,23 @@ program packet_filter : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    let limit = 1000; // Runtime-determined limit
-    let count = 0;
-    
-    // This should also be unbound
-    for i in 0..limit {
-      if i % 2 == 0 {
-        continue;
-      }
-      
-      if i > 50 {
-        break;
-      }
-      
-      count = count + 1;
+// Userspace coordination (no wrapper)
+fn main() -> i32 {
+  let limit = 1000; // Runtime-determined limit
+  let count = 0;
+  
+  // This should also be unbound
+  for i in 0..limit {
+    if i % 2 == 0 {
+      continue;
     }
     
-    return 0;
+    if i > 50 {
+      break;
+    }
+    
+    count = count + 1;
   }
+  
+  return 0;
 } 

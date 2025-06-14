@@ -1,10 +1,10 @@
 (** 
-   Comprehensive unit tests for userspace map-related functionality in KernelScript.
+   Comprehensive unit tests for global function map-related functionality in KernelScript.
    
    This test suite covers:
    
    === Map Scope Tests ===
-   - Global maps accessible from userspace
+   - Global maps accessible from global functions
    - Local maps isolated to BPF programs
    - Map visibility and access control
    
@@ -12,16 +12,16 @@
    - Map file descriptor generation
    - Map operation function generation (lookup, update, delete, get_next_key)
    - Map setup and cleanup code generation
-   - Pinned map handling in userspace
+   - Pinned map handling in global functions
    
    === Map Integration Tests ===
-   - Multiple map types in userspace
-   - Maps with flags in userspace code
+   - Multiple map types in global functions
+   - Maps with flags in global function code
    - Complex map configurations
    - Map access patterns and error handling
    
    === Map Communication Tests ===
-   - Userspace-kernel map sharing
+   - Global function-kernel map sharing
    - BPF object integration
    - Map-based event processing
 *)
@@ -50,13 +50,13 @@ let extract_maps_from_ast ast =
     | _ -> None
   ) ast
 
-(** Helper function to extract userspace block from AST *)
-let extract_userspace_from_ast ast =
+(** Helper function to extract global functions from AST *)
+let extract_global_functions_from_ast ast =
   List.fold_left (fun acc decl ->
     match decl with
-    | Userspace ub -> Some ub
+    | GlobalFunction func -> func :: acc
     | _ -> acc
-  ) None ast
+  ) [] ast
 
 (** Helper function to generate userspace code and return content *)
 let get_generated_userspace_code ast source_filename =
@@ -91,7 +91,7 @@ let get_generated_userspace_code ast source_filename =
     (try Unix.rmdir temp_dir with _ -> ());
     raise exn
 
-(** Test 1: Global maps are accessible from userspace *)
+(** Test 1: Global maps are accessible from global functions *)
 let test_global_map_accessibility () =
   let code = {|
 map<u32, u64> global_counter : HashMap(1024);
@@ -103,30 +103,28 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    return 0;
-  }
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
   try
     let ast = parse_string code in
     let maps = extract_maps_from_ast ast in
-    let userspace_block = extract_userspace_from_ast ast in
+    let global_functions = extract_global_functions_from_ast ast in
     
     (* Verify we parsed the expected structure *)
     check int "two global maps parsed" 2 (List.length maps);
-    check bool "userspace block present" true (userspace_block <> None);
+    check bool "global functions present" true (List.length global_functions > 0);
     
     (* Verify map types and names *)
     let global_counter = List.find (fun m -> m.name = "global_counter") maps in
     let global_config = List.find (fun m -> m.name = "global_config") maps in
     
-    check string "global_counter key type" "u32" (string_of_bpf_type global_counter.key_type);
-    check string "global_counter value type" "u64" (string_of_bpf_type global_counter.value_type);
-    check string "global_config key type" "u32" (string_of_bpf_type global_config.key_type);
-    check string "global_config value type" "u32" (string_of_bpf_type global_config.value_type);
+    check string "global_counter key type" "u32" (Kernelscript.Ast.string_of_bpf_type global_counter.key_type);
+    check string "global_counter value type" "u64" (Kernelscript.Ast.string_of_bpf_type global_counter.value_type);
+    check string "global_config key type" "u32" (Kernelscript.Ast.string_of_bpf_type global_config.key_type);
+    check string "global_config value type" "u32" (Kernelscript.Ast.string_of_bpf_type global_config.value_type);
     
     (* Generate userspace code and check for global map accessibility *)
     match get_generated_userspace_code ast "test_global_maps.ks" with
@@ -148,7 +146,7 @@ userspace {
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
-(** Test 2: Local maps are not accessible from userspace *)
+(** Test 2: Local maps are not accessible from global functions *)
 let test_local_map_isolation () =
   let code = {|
 map<u32, u64> global_shared : HashMap(1024);
@@ -162,10 +160,8 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    return 0;
-  }
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -212,10 +208,8 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    return 0;
-  }
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -252,8 +246,8 @@ userspace {
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
-(** Test 4: Multiple map types in userspace *)
-let test_multiple_map_types_userspace () =
+(** Test 4: Multiple map types in global functions *)
+let test_multiple_map_types_global_functions () =
   let code = {|
 map<u32, u64> hash_map : HashMap(1024);
 map<u32, u32> array_map : Array(256);
@@ -266,10 +260,8 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    return 0;
-  }
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -310,8 +302,8 @@ userspace {
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
-(** Test 5: Userspace code structure and includes *)
-let test_userspace_code_structure () =
+(** Test 5: Global function code structure and includes *)
+let test_global_function_code_structure () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024);
 
@@ -321,10 +313,8 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    return 0;
-  }
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -357,8 +347,8 @@ userspace {
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
-(** Test 6: Error handling for invalid userspace programs *)
-let test_userspace_error_handling () =
+(** Test 6: Error handling for invalid global function programs *)
+let test_global_function_error_handling () =
   let invalid_programs = [
     (* Missing main function *)
     ({|
@@ -370,10 +360,8 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn helper() -> i32 {
-    return 0;
-  }
+fn helper() -> i32 {
+  return 0;
 }
 |}, "missing main function");
     
@@ -387,10 +375,8 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn main(wrong_param: u32) -> i32 {
-    return 0;
-  }
+fn main(wrong_param: u32) -> i32 {
+  return 0;
 }
 |}, "invalid main signature");
   ] in
@@ -398,7 +384,7 @@ userspace {
   List.iter (fun (program, description) ->
     try
       let ast = parse_string program in
-      (* Trigger validation by generating IR first, which validates userspace main *)
+      (* Trigger validation by generating IR first, which validates global function main *)
       let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
       let _ = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
       (* If we get here, validation passed but it shouldn't have *)
@@ -407,27 +393,26 @@ userspace {
     | Parse_error _ ->
         check bool ("correctly rejected parse error: " ^ description) true true
     | Failure msg when String.length msg > 0 ->
-        (* Check that the error message is related to userspace validation *)
-        let is_userspace_error = 
+        (* Check that the error message is related to main function validation *)
+        let is_main_function_error = 
           contains_pattern msg "main" || 
-          contains_pattern msg "userspace" || 
           contains_pattern msg "argc" || 
           contains_pattern msg "argv" in
-        check bool ("correctly rejected with userspace error: " ^ description) true is_userspace_error
+        check bool ("correctly rejected with main function error: " ^ description) true is_main_function_error
     | _ ->
         check bool ("should have failed for: " ^ description) false true
   ) invalid_programs
 
-let userspace_maps_tests = [
+let global_function_maps_tests = [
   "global_map_accessibility", `Quick, test_global_map_accessibility;
   "local_map_isolation", `Quick, test_local_map_isolation;
   "map_operation_generation", `Quick, test_map_operation_generation;
-  "multiple_map_types_userspace", `Quick, test_multiple_map_types_userspace;
-  "userspace_code_structure", `Quick, test_userspace_code_structure;
-  "userspace_error_handling", `Quick, test_userspace_error_handling;
+  "multiple_map_types_global_functions", `Quick, test_multiple_map_types_global_functions;
+  "global_function_code_structure", `Quick, test_global_function_code_structure;
+  "global_function_error_handling", `Quick, test_global_function_error_handling;
 ]
 
 let () =
-  run "KernelScript Userspace Maps Tests" [
-    "userspace_maps", userspace_maps_tests;
+  run "KernelScript Global Function Maps Tests" [
+    "global_function_maps", global_function_maps_tests;
   ] 

@@ -14,7 +14,7 @@ let generate_userspace_code_from_program program_text filename =
   let ast = parse_string program_text in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let ir = Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table filename in
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table filename in
   
   let temp_dir = Filename.temp_file "test_userspace_struct" "" in
   Unix.unlink temp_dir;
@@ -38,8 +38,8 @@ let generate_userspace_code_from_program program_text filename =
     failwith "Failed to generate userspace code file"
   )
 
-(** Test 1: Ensure userspace main works with custom struct name "ServerConfig" *)
-let test_userspace_main_with_different_struct_name () =
+(** Test 1: Ensure global function main works with custom struct name "ServerConfig" *)
+let test_global_function_main_with_different_struct_name () =
   let program_text = {|
 map<u32, u64> server_stats : HashMap(32);
 
@@ -49,19 +49,17 @@ program server_monitor : xdp {
     }
 }
 
-userspace {
-    struct ServerConfig {
-        max_connections: u64,
-        enable_logging: u32,
-        port_number: u32,
+struct ServerConfig {
+    max_connections: u64,
+    enable_logging: u32,
+    port_number: u32,
+}
+
+fn main(settings: ServerConfig) -> i32 {
+    if settings.enable_logging > 0 {
+        return settings.port_number;
     }
-    
-    fn main(settings: ServerConfig) -> i32 {
-        if settings.enable_logging > 0 {
-            return settings.port_number;
-        }
-        return 0;
-    }
+    return 0;
 }
 |} in
   
@@ -107,8 +105,8 @@ userspace {
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** Test 2: Ensure userspace main works with single-letter struct name *)
-let test_userspace_main_with_minimal_struct_name () =
+(** Test 2: Ensure global function main works with single-letter struct name *)
+let test_global_function_main_with_minimal_struct_name () =
   let program_text = {|
 map<u32, u64> minimal_map : HashMap(8);
 
@@ -118,15 +116,13 @@ program minimal_prog : xdp {
     }
 }
 
-userspace {
-    struct X {
-        a: u32,
-        b: u32,
-    }
-    
-    fn main(x: X) -> i32 {
-        return x.a + x.b;
-    }
+struct X {
+    a: u32,
+    b: u32,
+}
+
+fn main(x: X) -> i32 {
+    return x.a + x.b;
 }
 |} in
   
@@ -161,7 +157,7 @@ userspace {
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
 (** Test 3: Ensure compilation and validation still works with custom struct names *)
-let test_userspace_main_validation_with_custom_struct () =
+let test_global_function_main_validation_with_custom_struct () =
   let program_text = {|
 map<u32, u64> validation_map : HashMap(16);
 
@@ -171,18 +167,16 @@ program validation_prog : xdp {
     }
 }
 
-userspace {
-    struct CustomArgs {
-        debug_level: u32,
-        output_file: u32,
+struct CustomArgs {
+    debug_level: u32,
+    output_file: u32,
+}
+
+fn main(custom_args: CustomArgs) -> i32 {
+    if custom_args.debug_level > 0 {
+        return 1;
     }
-    
-    fn main(custom_args: CustomArgs) -> i32 {
-        if custom_args.debug_level > 0 {
-            return 1;
-        }
-        return 0;
-    }
+    return 0;
 }
 |} in
   
@@ -198,14 +192,14 @@ userspace {
   with
   | exn -> fail ("Validation failed with custom struct: " ^ Printexc.to_string exn)
 
-(** Test suite *)
-let tests = [
-  "userspace_main_with_different_struct_name", `Quick, test_userspace_main_with_different_struct_name;
-  "userspace_main_with_minimal_struct_name", `Quick, test_userspace_main_with_minimal_struct_name;
-  "userspace_main_validation_with_custom_struct", `Quick, test_userspace_main_validation_with_custom_struct;
+(** All global function struct flexibility tests *)
+let global_function_struct_flexibility_tests = [
+  "global_function_main_with_different_struct_name", `Quick, test_global_function_main_with_different_struct_name;
+  "global_function_main_with_minimal_struct_name", `Quick, test_global_function_main_with_minimal_struct_name;
+  "global_function_main_validation_with_custom_struct", `Quick, test_global_function_main_validation_with_custom_struct;
 ]
 
 let () =
-  run "KernelScript Userspace Struct Flexibility Tests" [
-    "userspace_struct_flexibility", tests;
+  run "KernelScript Global Function Struct Flexibility Tests" [
+    "global_function_struct_flexibility", global_function_struct_flexibility_tests;
   ] 

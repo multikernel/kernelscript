@@ -16,7 +16,7 @@
 %token PROGRAM FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
-%token LET MUT PUB PRIV CONFIG USERSPACE
+%token LET MUT PUB PRIV CONFIG
 %token IN DELETE
 
 /* Operators */
@@ -55,16 +55,9 @@
 %type <Ast.map_declaration> local_map_declaration
 %type <Ast.function_def list * Ast.map_declaration list * Ast.struct_def list> program_items
 %type <[`Function of Ast.function_def | `Map of Ast.map_declaration | `Struct of Ast.struct_def]> program_item
-%type <Ast.userspace_block> userspace_declaration
-%type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_body
-%type <Ast.function_def list * Ast.struct_def list * Ast.userspace_config list> userspace_item
 %type <Ast.struct_def> struct_declaration
 %type <(string * Ast.bpf_type) list> struct_fields
 %type <string * Ast.bpf_type> struct_field
-%type <Ast.userspace_config> userspace_config
-
-%type <Ast.userspace_config_item list> userspace_config_items
-%type <Ast.userspace_config_item> userspace_config_item
 %type <Ast.map_type> map_type
 
 %type <Ast.map_attribute list> map_attributes
@@ -121,7 +114,6 @@ declaration:
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
   | struct_declaration { StructDecl $1 }
-  | userspace_declaration { Userspace $1 }
 
 /* Config declaration: config name { config_fields } */
 config_declaration:
@@ -171,11 +163,7 @@ program_item:
   | local_map_declaration { `Map $1 }
   | struct_declaration { `Struct $1 }
 
-/* Top-level userspace declaration: userspace { userspace_body } */
-userspace_declaration:
-  | USERSPACE LBRACE userspace_body RBRACE
-    { let functions, structs, configs = $3 in
-      make_userspace_block functions structs configs (make_pos ()) }
+
 
 /* Function declaration: fn name(params) -> return_type { body } */
 function_declaration:
@@ -426,19 +414,7 @@ flag_item:
       | unknown -> failwith ("Unknown parameterized map flag: " ^ unknown)
     }
 
-/* Userspace blocks */
 
-userspace_body:
-  | /* empty */ { ([], [], []) }
-  | userspace_item userspace_body
-    { let funcs1, structs1, configs1 = $1 in
-      let funcs2, structs2, configs2 = $2 in
-      (funcs1 @ funcs2, structs1 @ structs2, configs1 @ configs2) }
-
-userspace_item:
-  | function_declaration { ([$1], [], []) }
-  | struct_declaration { ([], [$1], []) }
-  | userspace_config { ([], [], [$1]) }
 
 struct_declaration:
   | STRUCT IDENTIFIER LBRACE struct_fields RBRACE
@@ -452,15 +428,6 @@ struct_fields:
 struct_field:
   | IDENTIFIER COLON bpf_type { ($1, $3) }
 
-userspace_config:
-  | IDENTIFIER LBRACE userspace_config_items RBRACE
-    { CustomConfig ($1, $3) }
 
-userspace_config_items:
-  | /* empty */ { [] }
-  | userspace_config_item userspace_config_items { $1 :: $2 }
-
-userspace_config_item:
-  | IDENTIFIER COLON literal COMMA { make_userspace_config_item $1 $3 }
 
 %% 

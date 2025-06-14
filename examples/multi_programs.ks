@@ -17,10 +17,9 @@ program packet_filter : tc {
   }
 }
 
-userspace {
-  fn main() -> i32 {
-    shared_counter[1] = 0;
-    shared_counter[2] = 0;
-    return 0;
-  }
+// Userspace coordination (outside program blocks)
+fn main() -> i32 {
+  shared_counter[1] = 0;
+  shared_counter[2] = 0;
+  return 0;
 } 

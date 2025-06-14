@@ -22,7 +22,6 @@ program test : xdp {
     let timeout = cfg.timeout_ms;
     if (max_size > 1500) {
       return 1;
-    }
     return 0;
   }
   
@@ -31,7 +30,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -60,7 +59,6 @@ program test : xdp {
     let m = settings.mode;
     if (val > 100 && m > 0) {
       return 1;
-    }
     return 0;
   }
   
@@ -69,7 +67,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -99,7 +97,6 @@ program monitor : xdp {
     
     if (max_conn > 1000 || bandwidth > 10000) {
       return 1; // Drop
-    }
     return 0; // Pass
   }
   
@@ -108,7 +105,7 @@ program monitor : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -132,7 +129,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   struct ServerConfig {
     max_connections: u32,
     port: u32,
@@ -144,7 +141,6 @@ userspace {
     let port_num = cfg.port;
     if (cfg.enable_debug > 0) {
       return 1;
-    }
     return 0;
   }
   
@@ -180,7 +176,6 @@ program test : xdp {
     
     if (val1 > val2) {
       return 1;
-    }
     return 0;
   }
   
@@ -189,7 +184,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -219,14 +214,12 @@ program test : xdp {
     
     if (packet_size > limits.max_size || packet_size < limits.min_size) {
       return 1;  // Invalid
-    }
     
     let total_range = limits.max_size - limits.min_size;
     let middle_point = limits.min_size + (total_range / 2);
     
     if (packet_size > middle_point && limits.strict_mode > 0) {
       return 2;  // Warning
-    }
     
     return 0;  // Valid
   }
@@ -236,7 +229,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -274,7 +267,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -303,7 +296,6 @@ program test : xdp {
     let proto = info.proto;
     if (size > 1500 || proto == 17) {
       return 1;
-    }
     return 0;
   }
   
@@ -313,7 +305,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -346,7 +338,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -375,7 +367,7 @@ program test : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     return 0;
   }
@@ -412,7 +404,6 @@ program monitor : xdp {
     
     if (packets > max_entries) {
       return drops + 1;
-    }
     return drops;
   }
   
@@ -421,7 +412,7 @@ program monitor : xdp {
   }
 }
 
-userspace {
+
   struct UserConfig {
     log_level: u32,
     output_file: u32
@@ -434,7 +425,6 @@ userspace {
     
     if (level > 0 && file > 0 && timeout > 0) {
       return 1;
-    }
     return 0;
   }
   

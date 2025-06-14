@@ -11,7 +11,7 @@ program packet_filter : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     let prog_fd = load_program(packet_filter);
     let result = attach_program(packet_filter, "eth0", 0);
@@ -45,7 +45,7 @@ program tc_filter : tc {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     let kprobe_fd = load_program(kprobe_tracer);
     let tc_fd = load_program(tc_filter);
@@ -75,7 +75,7 @@ userspace {
 (** Test invalid program reference *)
 let test_invalid_program_reference () =
   let program_text = {|
-userspace {
+
   fn main() -> i32 {
     let prog_fd = load_program(non_existent_program);
     return 0;
@@ -101,7 +101,7 @@ program my_xdp : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     let prog_ref = my_xdp;  // Should work - program reference as variable
     let prog_fd = load_program(prog_ref);
@@ -129,7 +129,7 @@ program my_xdp : xdp {
   }
 }
 
-userspace {
+
   fn main() -> i32 {
     let prog_fd = load_program("string_instead_of_program");  // Should fail
     return 0;

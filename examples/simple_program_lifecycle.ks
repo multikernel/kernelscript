@@ -5,10 +5,9 @@ program simple_xdp : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        let prog_fd = load_program(simple_xdp);
-        let result = attach_program(simple_xdp, "lo", 0);
-        return 0;
-    }
+// Userspace program lifecycle management
+fn main() -> i32 {
+    let prog_fd = load_program(simple_xdp);
+    let result = attach_program(simple_xdp, "lo", 0);
+    return 0;
 } 

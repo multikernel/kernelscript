@@ -298,18 +298,12 @@ let rec generate_c_instruction_from_ir ctx instruction =
        | None -> sprintf "%s(%s);" actual_name args_str)
   
   | IRReturn (Some value) ->
-      (* In main function, use __return_value instead of immediate return to allow cleanup *)
-      if ctx.function_name = "main" then
-        sprintf "__return_value = %s; goto cleanup;" (generate_c_value_from_ir ctx value)
-      else
-        sprintf "return %s;" (generate_c_value_from_ir ctx value)
+      (* Generate direct return - no more cleanup logic *)
+      sprintf "return %s;" (generate_c_value_from_ir ctx value)
   
   | IRReturn None ->
-      (* In main function, use goto cleanup instead of immediate return *)
-      if ctx.function_name = "main" then
-        "goto cleanup;"
-      else
-        "return;"
+      (* Generate direct return - no more cleanup logic *)
+      "return;"
   
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
       generate_map_load_from_ir ctx map_val key_val dest_val load_type
@@ -458,27 +452,14 @@ let generate_c_function_from_ir (ir_func : ir_function) =
       else
         "    // No arguments to parse"
     in
+    (* Generate ONLY what the user explicitly wrote - no implicit setup/cleanup *)
     sprintf {|%s %s(%s) {
-    int __return_value = 0;
 %s    
 %s
     
-    printf("Starting userspace coordinator for eBPF programs\n");
-    
-    // Initialize BPF programs and maps
-    if (setup_bpf_environment() != 0) {
-        fprintf(stderr, "Failed to setup BPF environment\n");
-        return 1;
-    }
-    
-    // User-defined logic from IR
     %s
     
-    cleanup:
-    // Cleanup
-    cleanup_bpf_environment();
-    printf("Userspace coordinator shutting down\n");
-    return __return_value;
+    return 0; /* Default return if no explicit return */
 }|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code body_c
   else
     sprintf {|%s %s(%s) {
@@ -610,170 +591,6 @@ let generate_map_setup_code maps =
       map.map_name map.map_name
   ) maps |> String.concat "\n"
 
-(** Generate coordinator logic from IR *)
-let generate_coordinator_logic_c coordinator setup_code base_name =
-  (* Generate setup operations from simplified coordinator *)
-  let setup_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.setup_logic) in
-  
-  let event_processing_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.event_processing) in
-  
-  let cleanup_c = String.concat "\n    " (List.map (generate_c_instruction_from_ir (create_userspace_context ())) coordinator.cleanup_logic) in
-
-  sprintf {|
-/* Generated coordinator logic */
-struct bpf_object *bpf_obj = NULL;
-static volatile bool keep_running = true;
-
-void signal_handler(int sig) {
-    keep_running = false;
-}
-
-int setup_bpf_environment(void) {
-    printf("Setting up BPF environment...\n");
-    
-    /* Load BPF object */
-    bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
-    if (libbpf_get_error(bpf_obj)) {
-        fprintf(stderr, "Failed to open BPF object\n");
-        return -1;
-    }
-    
-    /* Load BPF programs */
-    if (bpf_object__load(bpf_obj)) {
-        fprintf(stderr, "Failed to load BPF object\n");
-        return -1;
-    }
-    
-    %s
-    
-%s
-    
-    return 0;
-}
-
-void cleanup_bpf_environment(void) {
-    printf("Cleaning up BPF environment...\n");
-    %s
-    
-    if (bpf_obj) {
-        bpf_object__close(bpf_obj);
-        bpf_obj = NULL;
-    }
-}
-
-void process_events(void) {
-    %s
-}
-
-/* Program lifecycle helper functions */
-int load_bpf_program(const char *program_name) {
-    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
-    if (!prog) {
-        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
-        return -1;
-    }
-    
-    int prog_fd = bpf_program__fd(prog);
-    if (prog_fd < 0) {
-        fprintf(stderr, "Failed to get file descriptor for program '%%s'\\n", program_name);
-        return -1;
-    }
-    
-    printf("Loaded program '%%s' with FD %%d\\n", program_name, prog_fd);
-    return prog_fd;
-}
-
-int attach_bpf_program(const char *program_name, const char *target, int flags) {
-    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
-    if (!prog) {
-        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
-        return -1;
-    }
-    
-    /* Get program type to determine attachment method */
-    enum bpf_prog_type prog_type = bpf_program__type(prog);
-    int result = -1;
-    
-    switch (prog_type) {
-        case BPF_PROG_TYPE_XDP: {
-            /* XDP attachment - target is interface name */
-            int ifindex = if_nametoindex(target);
-            if (ifindex == 0) {
-                fprintf(stderr, "Failed to get interface index for '%%s'\\n", target);
-                return -1;
-            }
-            
-            struct bpf_link *link = bpf_program__attach_xdp(prog, ifindex);
-            if (libbpf_get_error(link)) {
-                fprintf(stderr, "Failed to attach XDP program to interface '%%s'\\n", target);
-                return -1;
-            }
-            
-            printf("Attached XDP program '%%s' to interface '%%s' (ifindex %%d)\\n", 
-                   program_name, target, ifindex);
-            result = 0;
-            break;
-        }
-        
-        case BPF_PROG_TYPE_SCHED_CLS: {
-            /* TC attachment - target is interface name, flags indicate direction */
-            int ifindex = if_nametoindex(target);
-            if (ifindex == 0) {
-                fprintf(stderr, "Failed to get interface index for '%%s'\\n", target);
-                return -1;
-            }
-            
-            /* For TC, we use netlink to attach - simplified version */
-            printf("TC attachment for program '%%s' to interface '%%s' (flags %%d) - implementation needed\\n", 
-                   program_name, target, flags);
-            result = 0; /* Placeholder - real implementation would use netlink */
-            break;
-        }
-        
-        case BPF_PROG_TYPE_KPROBE: {
-            /* Kprobe attachment - target is function name */
-            struct bpf_link *link = bpf_program__attach_kprobe(prog, false, target);
-            if (libbpf_get_error(link)) {
-                fprintf(stderr, "Failed to attach kprobe program to function '%%s'\\n", target);
-                return -1;
-            }
-            
-            printf("Attached kprobe program '%%s' to function '%%s'\\n", program_name, target);
-            result = 0;
-            break;
-        }
-        
-        case BPF_PROG_TYPE_CGROUP_SKB: {
-            /* Cgroup attachment - target is cgroup path */
-            int cgroup_fd = open(target, O_RDONLY);
-            if (cgroup_fd < 0) {
-                fprintf(stderr, "Failed to open cgroup '%%s': %%s\\n", target, strerror(errno));
-                return -1;
-            }
-            
-            struct bpf_link *link = bpf_program__attach_cgroup(prog, cgroup_fd);
-            close(cgroup_fd);
-            
-            if (libbpf_get_error(link)) {
-                fprintf(stderr, "Failed to attach cgroup program to '%%s'\\n", target);
-                return -1;
-            }
-            
-            printf("Attached cgroup program '%%s' to cgroup '%%s'\\n", program_name, target);
-            result = 0;
-            break;
-        }
-        
-        default:
-            fprintf(stderr, "Unsupported program type for attachment: %%d\\n", prog_type);
-            result = -1;
-            break;
-    }
-    
-    return result;
-}
-|} base_name setup_c setup_code cleanup_c event_processing_c
-
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
 let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
   let config_name = config_decl.config_name in
@@ -888,8 +705,70 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
   (* Extract base name from source filename *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
   
-  (* Generate coordinator logic with map setup *)
-  let coordinator_with_maps = generate_coordinator_logic_c userspace_prog.coordinator_logic all_setup_code base_name in
+  (* Only generate BPF helper functions - no automatic coordinator *)
+  let bpf_helper_functions = sprintf {|
+/* BPF Helper Functions (available if called by user) */
+struct bpf_object *bpf_obj = NULL;
+
+int load_bpf_program(const char *program_name) {
+    if (!bpf_obj) {
+        bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
+        if (libbpf_get_error(bpf_obj)) {
+            fprintf(stderr, "Failed to open BPF object\\n");
+            return -1;
+        }
+        if (bpf_object__load(bpf_obj)) {
+            fprintf(stderr, "Failed to load BPF object\\n");
+            return -1;
+        }
+        %s
+    }
+    
+    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
+    if (!prog) {
+        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
+        return -1;
+    }
+    
+    int prog_fd = bpf_program__fd(prog);
+    if (prog_fd < 0) {
+        fprintf(stderr, "Failed to get file descriptor for program '%%s'\\n", program_name);
+        return -1;
+    }
+    
+    return prog_fd;
+}
+
+int attach_bpf_program(const char *program_name, const char *target, int flags) {
+    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
+    if (!prog) {
+        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
+        return -1;
+    }
+    
+    enum bpf_prog_type prog_type = bpf_program__type(prog);
+    
+    switch (prog_type) {
+        case BPF_PROG_TYPE_XDP: {
+            int ifindex = if_nametoindex(target);
+            if (ifindex == 0) {
+                fprintf(stderr, "Failed to get interface index for '%%s'\\n", target);
+                return -1;
+            }
+            
+            struct bpf_link *link = bpf_program__attach_xdp(prog, ifindex);
+            if (libbpf_get_error(link)) {
+                fprintf(stderr, "Failed to attach XDP program to interface '%%s'\\n", target);
+                return -1;
+            }
+            
+            return 0;
+        }
+        default:
+            fprintf(stderr, "Unsupported program type for attachment: %%d\\n", prog_type);
+            return -1;
+    }
+}|} base_name all_setup_code in
   
   sprintf {|%s
 
@@ -903,7 +782,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 %s
 
 %s
-|} includes structs all_fd_declarations map_operation_functions getopt_parsing_code coordinator_with_maps functions
+|} includes structs all_fd_declarations map_operation_functions getopt_parsing_code bpf_helper_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =

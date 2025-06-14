@@ -14,7 +14,7 @@ let generate_userspace_code_from_program program_text filename =
   let ast = parse_string program_text in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let ir = Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table filename in
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table filename in
   
   let temp_dir = Filename.temp_file "test_userspace_statements" "" in
   Unix.unlink temp_dir;
@@ -47,14 +47,16 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let x = 5;
-    if x == 5 {
-      let result = 1;
-    }
-    return 0;
+fn test_func() -> u32 {
+  let x = 5;
+  if x == 5 {
+    let result = 1;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -79,16 +81,18 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let count = 15;
-    if count > 10 {
-      let status = 1;
-    } else {
-      let status = 0;
-    }
-    return 0;
+fn test_func() -> u32 {
+  let count = 15;
+  if count > 10 {
+    let status = 1;
+  } else {
+    let status = 0;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -113,15 +117,17 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for i in 0..10 {
-      if i == 5 {
-        break;
-      }
+fn test_func() -> u32 {
+  for i in 0..10 {
+    if i == 5 {
+      break;
     }
-    return 0;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -141,15 +147,17 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    for i in 0..10 {
-      if i % 2 == 0 {
-        continue;
-      }
+fn test_func() -> u32 {
+  for i in 0..10 {
+    if i % 2 == 0 {
+      continue;
     }
-    return 0;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -169,17 +177,19 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let count = 0;
-    for i in 0..10 {
-      if i == 5 {
-        break;
-      }
-      count = count + 1;
+fn test_func() -> u32 {
+  let count = 0;
+  for i in 0..10 {
+    if i == 5 {
+      break;
     }
-    return 0;
+    count = count + 1;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -201,17 +211,19 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let sum = 0;
-    for i in 1..10 {
-      if i % 2 == 0 {
-        continue;
-      }
-      sum = sum + i;
+fn test_func() -> u32 {
+  let sum = 0;
+  for i in 1..10 {
+    if i % 2 == 0 {
+      continue;
     }
-    return 0;
+    sum = sum + i;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -248,15 +260,17 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let a = 5;
-    let b = 10;
-    if %s {
-      let result = 1;
-    }
-    return 0;
+fn test_func() -> u32 {
+  let a = 5;
+  let b = 10;
+  if %s {
+    let result = 1;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} condition in
     
@@ -276,17 +290,19 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let x = 5;
-    let y = 3;
-    if x > 0 {
-      if y < 10 {
-        let result = 42;
-      }
+fn test_func() -> u32 {
+  let x = 5;
+  let y = 3;
+  if x > 0 {
+    if y < 10 {
+      let result = 42;
     }
-    return 0;
   }
+  return 0;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -302,8 +318,8 @@ userspace {
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** Test 9: Integration test with complete userspace program *)
-let test_complete_userspace_program_with_if_break_continue () =
+(** Test 9: Integration test with complete global function program *)
+let test_complete_global_function_program_with_if_break_continue () =
   let program_text = {|
 program test_prog : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
@@ -311,30 +327,28 @@ program test_prog : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        let total: u32 = 0;
-        let count: u32 = 0;
-        
-        for i in 0..20 {
-            if i < 3 {
-                continue;
-            }
-            
-            if i % 2 == 0 {
-                count = count + 1;
-                continue;
-            }
-            
-            if i > 15 {
-                break;
-            }
-            
-            total = total + i;
+fn main() -> i32 {
+    let total: u32 = 0;
+    let count: u32 = 0;
+    
+    for i in 0..20 {
+        if i < 3 {
+            continue;
         }
         
-        return 0;
+        if i % 2 == 0 {
+            count = count + 1;
+            continue;
+        }
+        
+        if i > 15 {
+            break;
+        }
+        
+        total = total + i;
     }
+    
+    return 0;
 }
 |} in
   
@@ -393,11 +407,13 @@ program test : xdp {
   }
 }
 
-userspace {
-  fn test_func() -> u32 {
-    let x = 5;
-    return x;
-  }
+fn test_func() -> u32 {
+  let x = 5;
+  return x;
+}
+
+fn main() -> i32 {
+  return 0;
 }
 |} in
   
@@ -411,8 +427,8 @@ userspace {
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** All userspace statement codegen tests *)
-let userspace_statements_tests = [
+(** All global function statement codegen tests *)
+let global_function_statements_tests = [
   "basic_if_statement", `Quick, test_basic_if_statement;
   "if_else_statement", `Quick, test_if_else_statement;
   "break_statement", `Quick, test_break_statement;
@@ -421,11 +437,11 @@ let userspace_statements_tests = [
   "if_with_continue_in_loop", `Quick, test_if_with_continue_in_loop;
   "complex_binary_operators", `Quick, test_complex_binary_operators;
   "nested_if_statements", `Quick, test_nested_if_statements;
-  "complete_userspace_program", `Quick, test_complete_userspace_program_with_if_break_continue;
+  "complete_global_function_program", `Quick, test_complete_global_function_program_with_if_break_continue;
   "unsupported_statement_fallback", `Quick, test_unsupported_statement_fallback;
 ]
 
 let () =
-  run "KernelScript Userspace Statement Codegen Tests" [
-    "userspace_statements", userspace_statements_tests;
+  run "KernelScript Global Function Statement Codegen Tests" [
+    "global_function_statements", global_function_statements_tests;
 ] 

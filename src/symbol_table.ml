@@ -369,30 +369,6 @@ and process_declaration_accumulate table declaration =
       let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
       add_type_def table type_def pos;
       table
-      
-  | Ast.Userspace userspace_block ->
-      (* Process userspace functions as global functions *)
-      List.iter (fun func ->
-        add_function table func Public;
-        (* Enter function scope to process function body *)
-        let table_with_func = enter_scope table (FunctionScope ("userspace", func.func_name)) in
-        (* Add function parameters to scope *)
-        List.iter (fun (param_name, param_type) ->
-          add_variable table_with_func param_name param_type func.func_pos
-        ) func.func_params;
-        (* Process function body statements *)
-        List.iter (process_statement table_with_func) func.func_body;
-        let _ = exit_scope table_with_func in ()
-      ) userspace_block.userspace_functions;
-      
-      (* Process userspace structs as type definitions *)
-      List.iter (fun struct_def ->
-        let pos = { line = 1; column = 1; filename = "" } in
-        let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
-        add_type_def table type_def pos
-      ) userspace_block.userspace_structs;
-      
-      table
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
@@ -464,28 +440,6 @@ and process_declaration table = function
       let pos = { line = 1; column = 1; filename = "" } in
       let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
       add_type_def table type_def pos
-      
-  | Ast.Userspace userspace_block ->
-      (* Process userspace functions as global functions *)
-      List.iter (fun func ->
-        add_function table func Public;
-        (* Enter function scope to process function body *)
-        let table_with_func = enter_scope table (FunctionScope ("userspace", func.func_name)) in
-        (* Add function parameters to scope *)
-        List.iter (fun (param_name, param_type) ->
-          add_variable table_with_func param_name param_type func.func_pos
-        ) func.func_params;
-        (* Process function body statements *)
-        List.iter (process_statement table_with_func) func.func_body;
-        let _ = exit_scope table_with_func in ()
-      ) userspace_block.userspace_functions;
-      
-      (* Process userspace structs as type definitions *)
-      List.iter (fun struct_def ->
-        let pos = { line = 1; column = 1; filename = "" } in
-        let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
-        add_type_def table type_def pos
-      ) userspace_block.userspace_structs
 
 and process_statement table stmt =
   match stmt.stmt_desc with

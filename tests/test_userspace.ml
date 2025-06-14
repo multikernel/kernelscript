@@ -1,11 +1,11 @@
 (** 
-   Comprehensive unit tests for userspace block functionality in KernelScript.
+   Comprehensive unit tests for global function functionality in KernelScript.
    
    This test suite covers:
    
    === Parser Tests ===
-   - Top-level userspace block parsing
-   - Nested userspace block rejection (enforces architectural design)
+   - Top-level global function parsing
+   - Function validation
    
    === Main Function Signature Tests ===
    - Correct signature validation: fn main() -> i32 or fn main(args: CustomStruct) -> i32
@@ -18,8 +18,8 @@
    - Multiple main function rejection
    
    === Integration Tests ===
-   - Userspace blocks with helper functions
-   - Userspace blocks with struct definitions
+   - Global functions with helper functions
+   - Global functions with struct definitions
    - Multiple eBPF programs with single userspace coordinator
    
    === Code Generation Tests ===
@@ -43,8 +43,8 @@ open Kernelscript.Parse
 open Alcotest
 module Ir = Kernelscript.Ir
 
-(** Test that userspace blocks must be top-level *)
-let test_userspace_top_level () =
+(** Test that global functions are parsed correctly *)
+let test_global_functions_top_level () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -52,44 +52,46 @@ let test_userspace_top_level () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        return 0;
-      }
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let ast = parse_string code in
-  (* Should contain a top-level userspace declaration *)
-  let has_userspace = List.exists (function
-    | Kernelscript.Ast.Userspace _ -> true
+  (* Should contain global functions *)
+  let has_global_functions = List.exists (function
+    | Kernelscript.Ast.GlobalFunction _ -> true
     | _ -> false
   ) ast in
-  check bool "top-level userspace block found" true has_userspace
+  check bool "global functions found" true has_global_functions
 
-(** Test that nested userspace blocks are disallowed *)
-let test_nested_userspace_disallowed () =
+(** Test that functions inside program blocks are not global *)
+let test_program_function_isolation () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
         return 2;
       }
       
-      userspace {
-        fn main() -> i32 {
-          return 0;
-        }
+      fn helper() -> u32 {
+        return 42;
       }
     }
+    
+    fn main() -> i32 {
+      return 0;
+    }
   |} in
-  let test_fn () = ignore (parse_string code) in
-  try
-    test_fn ();
-    check bool "nested userspace should fail" false true
-  with
-  | _ -> check bool "nested userspace correctly rejected" true true
+  let ast = parse_string code in
+  (* Should only have one global function (main), not the program's helper *)
+  let global_functions = List.filter_map (function
+    | Kernelscript.Ast.GlobalFunction f -> Some f
+    | _ -> None
+  ) ast in
+  check int "only one global function" 1 (List.length global_functions);
+  check string "global function is main" "main" (List.hd global_functions).func_name
 
-(** Test userspace main function with correct signature - no parameters *)
-let test_userspace_main_correct_signature () =
+(** Test main function with correct signature - no parameters *)
+let test_main_correct_signature () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -97,20 +99,18 @@ let test_userspace_main_correct_signature () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        return 0;
-      }
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "correct userspace main signature accepted" true true
+  check bool "correct main signature accepted" true true
 
-(** Test userspace main function with struct parameter *)
-let test_userspace_main_with_struct_param () =
+(** Test main function with struct parameter *)
+let test_main_with_struct_param () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -118,25 +118,23 @@ let test_userspace_main_with_struct_param () =
       }
     }
     
-    userspace {
-      struct Args {
-        interface_id: u32,
-        debug_mode: u32,
-      }
-      
-      fn main(args: Args) -> i32 {
-        return 0;
-      }
+    struct Args {
+      interface_id: u32,
+      debug_mode: u32,
+    }
+    
+    fn main(args: Args) -> i32 {
+      return 0;
     }
   |} in
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "correct userspace main signature with struct accepted" true true
+  check bool "correct main signature with struct accepted" true true
 
-(** Test userspace main function with wrong parameter types *)
-let test_userspace_main_wrong_param_types () =
+(** Test main function with wrong parameter types *)
+let test_main_wrong_param_types () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -144,10 +142,8 @@ let test_userspace_main_wrong_param_types () =
       }
     }
     
-    userspace {
-      fn main(wrong_param: u32, another_wrong: u32) -> i32 {
-        return 0;
-      }
+    fn main(wrong_param: u32, another_wrong: u32) -> i32 {
+      return 0;
     }
   |} in
   let test_fn () =
@@ -162,8 +158,8 @@ let test_userspace_main_wrong_param_types () =
   with
   | _ -> check bool "wrong parameter types correctly rejected" true true
 
-(** Test userspace main function with wrong return type *)
-let test_userspace_main_wrong_return_type () =
+(** Test main function with wrong return type *)
+let test_main_wrong_return_type () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -171,10 +167,8 @@ let test_userspace_main_wrong_return_type () =
       }
     }
     
-    userspace {
-      fn main() -> u32 {
-        return 0;
-      }
+    fn main() -> u32 {
+      return 0;
     }
   |} in
   let test_fn () =
@@ -189,8 +183,8 @@ let test_userspace_main_wrong_return_type () =
   with
   | _ -> check bool "wrong return type correctly rejected" true true
 
-(** Test userspace main function with non-struct single parameter *)
-let test_userspace_main_non_struct_param () =
+(** Test main function with non-struct single parameter *)
+let test_main_non_struct_param () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -198,10 +192,8 @@ let test_userspace_main_non_struct_param () =
       }
     }
     
-    userspace {
-      fn main(bad_param: u32) -> i32 {
-        return 0;
-      }
+    fn main(bad_param: u32) -> i32 {
+      return 0;
     }
   |} in
   let test_fn () =
@@ -216,8 +208,8 @@ let test_userspace_main_non_struct_param () =
   with
   | _ -> check bool "non-struct single parameter correctly rejected" true true
 
-(** Test userspace main function with too many parameters *)
-let test_userspace_main_too_many_params () =
+(** Test main function with too many parameters *)
+let test_main_too_many_params () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -225,10 +217,8 @@ let test_userspace_main_too_many_params () =
       }
     }
     
-    userspace {
-      fn main(param1: u32, param2: u64, extra: u32) -> i32 {
-        return 0;
-      }
+    fn main(param1: u32, param2: u64, extra: u32) -> i32 {
+      return 0;
     }
   |} in
   let test_fn () =
@@ -243,8 +233,8 @@ let test_userspace_main_too_many_params () =
   with
   | _ -> check bool "too many parameters correctly rejected" true true
 
-(** Test userspace block missing main function *)
-let test_userspace_missing_main () =
+(** Test missing main function *)
+let test_missing_main () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -252,10 +242,8 @@ let test_userspace_missing_main () =
       }
     }
     
-    userspace {
-      fn helper(x: u32) -> u32 {
-        return x + 1;
-      }
+    fn helper(x: u32) -> u32 {
+      return x + 1;
     }
   |} in
   let test_fn () =
@@ -270,8 +258,8 @@ let test_userspace_missing_main () =
   with
   | _ -> check bool "missing main function correctly rejected" true true
 
-(** Test userspace block with multiple main functions *)
-let test_userspace_multiple_main () =
+(** Test multiple main functions *)
+let test_multiple_main () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -279,14 +267,12 @@ let test_userspace_multiple_main () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        return 0;
-      }
-      
-      fn main(a: u32, b: u64) -> i32 {
-        return 1;
-      }
+    fn main() -> i32 {
+      return 0;
+    }
+    
+    fn main(a: u32, b: u64) -> i32 {
+      return 1;
     }
   |} in
   let test_fn () =
@@ -301,8 +287,8 @@ let test_userspace_multiple_main () =
   with
   | _ -> check bool "multiple main functions correctly rejected" true true
 
-(** Test userspace block with other functions (should be allowed) *)
-let test_userspace_with_other_functions () =
+(** Test global functions with other functions (should be allowed) *)
+let test_global_functions_with_other_functions () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -310,28 +296,18 @@ let test_userspace_with_other_functions () =
       }
     }
     
-    userspace {
-      fn helper(x: u32, y: u32) -> u32 {
-        return x + y;
-      }
-      
-      fn main() -> i32 {
-        return 0;
-      }
-      
-      fn cleanup() -> u32 {
-        return 1;
-      }
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "userspace with other functions accepted" true true
+  check bool "global functions with other functions accepted" true true
 
-(** Test userspace block with struct definitions *)
-let test_userspace_with_structs () =
+(** Test global functions with struct definitions *)
+let test_global_functions_with_structs () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -339,30 +315,28 @@ let test_userspace_with_structs () =
       }
     }
     
-    userspace {
-      struct Config {
-        max_packets: u64,
-        debug_level: u32,
-      }
-      
-      struct Stats {
-        total_bytes: u64,
-        packet_count: u32,
-      }
-      
-      fn main() -> i32 {
-        return 0;
-      }
+    struct Config {
+      max_packets: u64,
+      debug_level: u32,
+    }
+    
+    struct Stats {
+      total_bytes: u64,
+      packet_count: u32,
+    }
+    
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "userspace with structs accepted" true true
+  check bool "global functions with structs accepted" true true
 
-(** Test multiple programs with single userspace block *)
-let test_multiple_programs_single_userspace () =
+(** Test multiple programs with single global main *)
+let test_multiple_programs_single_main () =
   let code = {|
     program monitor : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -376,20 +350,18 @@ let test_multiple_programs_single_userspace () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        return 0;
-      }
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "multiple programs with single userspace accepted" true true
+  check bool "multiple programs with single main accepted" true true
 
-(** Test basic userspace functionality *)
-let test_basic_userspace () =
+(** Test basic global function functionality *)
+let test_basic_global_functions () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -397,35 +369,33 @@ let test_basic_userspace () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        return 0;
-      }
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test" in
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     match ir with
     | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; userspace_configs = configs; _ }; _ } ->
-      check bool "userspace block exists" true true;
+      check bool "global functions block exists" true true;
       check bool "main function exists" (List.exists (fun f -> f.Ir.func_name = "main") functions) true;
       check bool "structs list accessible" (List.length structs >= 0) true;
       check bool "configs list accessible" (List.length configs >= 0) true;
-    | _ -> check bool "userspace block not found" false true
+    | _ -> check bool "global functions block not found" false true
   in
   try
     test_fn ();
-    check bool "basic userspace test passed" true true
+    check bool "basic global functions test passed" true true
   with
   | e -> 
     Printf.printf "Error: %s\n" (Printexc.to_string e);
     check bool "test failed with exception" false true
 
-(** Test userspace code generation from AST *)
-let test_userspace_codegen () =
+(** Test global function code generation from AST *)
+let test_global_function_codegen () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
@@ -433,28 +403,26 @@ let test_userspace_codegen () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        return 0;
-      }
+    fn main() -> i32 {
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test" in
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     match ir with
     | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; userspace_configs = configs; _ }; _ } ->
-      check bool "userspace block exists" true true;
+      check bool "global functions block exists" true true;
       check bool "main function exists" (List.exists (fun f -> f.Ir.func_name = "main") functions) true;
       check bool "structs list accessible" (List.length structs >= 0) true;
       check bool "configs list accessible" (List.length configs >= 0) true;
-    | _ -> check bool "userspace block not found" false true
+    | _ -> check bool "global functions block not found" false true
   in
   try
     test_fn ();
-    check bool "userspace codegen test passed" true true
+    check bool "global function codegen test passed" true true
   with
   | e -> 
     Printf.printf "Error: %s\n" (Printexc.to_string e);
@@ -471,19 +439,17 @@ let test_literal_map_assignment () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        let x = test_map[1];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      let x = test_map[1];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -504,19 +470,17 @@ let test_map_lookup_with_literal_key () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        let x = test_map[1];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      let x = test_map[1];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -537,20 +501,18 @@ let test_map_update_with_literal_key_value () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        test_map[1] = 43;
-        let x = test_map[1];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      test_map[1] = 43;
+      let x = test_map[1];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -571,20 +533,18 @@ let test_map_delete_with_literal_key () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        delete test_map[1];
-        let x = test_map[1];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      delete test_map[1];
+      let x = test_map[1];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -605,20 +565,19 @@ let test_map_iterate_with_literal_key () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        test_map[2] = 43;
-        let sum = test_map[1] + test_map[2];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      test_map[2] = 43;
+      let x = test_map[1];
+      let y = test_map[2];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -639,22 +598,19 @@ let test_mixed_literal_variable_expressions () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        let key = 1;
-        let value = 42;
-        test_map[key] = value;
-        test_map[2] = value + 1;
-        let y = test_map[key] + test_map[2];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      test_map[2] = 43;
+      let x = test_map[1];
+      let y = test_map[2];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -675,21 +631,19 @@ let test_unique_temp_var_names () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        test_map[2] = 43;
-        test_map[3] = 44;
-        let z = test_map[1] + test_map[2] + test_map[3];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      test_map[2] = 43;
+      test_map[3] = 44;
+      let z = test_map[1] + test_map[2] + test_map[3];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -710,19 +664,17 @@ let test_no_direct_literal_addressing () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        test_map[1] = 42;
-        let x = test_map[1];
-        return 0;
-      }
+    fn main() -> i32 {
+      test_map[1] = 42;
+      let x = test_map[1];
+      return 0;
     }
   |} in
   let test_fn () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir ~for_testing:true annotated_ast symbol_table "test")
+    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
   in
   try
     test_fn ();
@@ -732,7 +684,7 @@ let test_no_direct_literal_addressing () =
     Printf.printf "Error: %s\n" (Printexc.to_string e);
     check bool "test failed with exception" false true
 
-(** Test that map loading code is properly generated in userspace coordinator *)
+(** Test that BPF functions are only generated when explicitly called *)
 let test_map_loading_code_generation () =
   let code = {|
     map<u32, u64> packet_stats : HashMap(1024);
@@ -752,11 +704,10 @@ let test_map_loading_code_generation () =
       }
     }
     
-    userspace {
-      fn main() -> i32 {
-        network.enable_logging = true;
-        return 0;
-      }
+    fn main() -> i32 {
+      network.enable_logging = true;
+      let prog_fd = load_program(test);
+      return 0;
     }
   |} in
   let test_fn () =
@@ -792,37 +743,33 @@ let test_map_loading_code_generation () =
         Unix.unlink generated_file;
         Unix.rmdir temp_dir;
         
-        (* Verify map loading code is present *)
-        check bool "setup_bpf_environment function exists" true 
-          (try ignore (Str.search_forward (Str.regexp "int setup_bpf_environment") content 0); true with Not_found -> false);
+        (* Verify BPF helper functions are generated (since load_program is called) *)
+        check bool "load_bpf_program function exists" true 
+          (try ignore (Str.search_forward (Str.regexp "int load_bpf_program") content 0); true with Not_found -> false);
         
-        (* Verify packet_stats map loading *)
-        check bool "packet_stats map loading present" true 
-          (try ignore (Str.search_forward (Str.regexp "packet_stats_fd = bpf_object__find_map_fd_by_name.*packet_stats") content 0); true with Not_found -> false);
+        (* Verify the user's explicit code is present *)
+        check bool "user main function exists" true 
+          (try ignore (Str.search_forward (Str.regexp "int main(void)") content 0); true with Not_found -> false);
         
-        (* Verify network config map loading *)
-        check bool "network config map loading present" true 
-          (try ignore (Str.search_forward (Str.regexp "network_config_map_fd = bpf_object__find_map_fd_by_name.*network_config_map") content 0); true with Not_found -> false);
-        
-        (* Verify security config map loading *)
-        check bool "security config map loading present" true 
-          (try ignore (Str.search_forward (Str.regexp "security_config_map_fd = bpf_object__find_map_fd_by_name.*security_config_map") content 0); true with Not_found -> false);
-        
-        (* Verify error handling for maps *)
-        check bool "map loading error handling present" true 
-          (try ignore (Str.search_forward (Str.regexp "Failed to find.*map in eBPF object") content 0); true with Not_found -> false);
+        (* Verify load_program call is present *)
+        check bool "load_program call present" true 
+          (try ignore (Str.search_forward (Str.regexp "load_bpf_program.*test") content 0); true with Not_found -> false);
         
         (* Verify BPF object filename is correct *)
         check bool "correct eBPF object filename" true 
           (try ignore (Str.search_forward (Str.regexp "test\\.ebpf\\.o") content 0); true with Not_found -> false);
         
-        (* Verify map file descriptor declarations *)
+        (* Verify map file descriptor declarations are present *)
         check bool "packet_stats_fd declaration" true 
           (try ignore (Str.search_forward (Str.regexp "int packet_stats_fd = -1") content 0); true with Not_found -> false);
         check bool "network_config_map_fd declaration" true 
           (try ignore (Str.search_forward (Str.regexp "int network_config_map_fd = -1") content 0); true with Not_found -> false);
         check bool "security_config_map_fd declaration" true 
           (try ignore (Str.search_forward (Str.regexp "int security_config_map_fd = -1") content 0); true with Not_found -> false);
+        
+        (* Verify NO automatic setup (only what user writes) *)
+        check bool "no automatic setup_bpf_environment call" false
+          (try ignore (Str.search_forward (Str.regexp "setup_bpf_environment()") content 0); true with Not_found -> false);
         
       ) else (
         Unix.rmdir temp_dir;
@@ -844,23 +791,23 @@ let test_map_loading_code_generation () =
 
 (** Test suite *)
 let suite = [
-  "userspace_top_level", `Quick, test_userspace_top_level;
-  "nested_userspace_disallowed", `Quick, test_nested_userspace_disallowed;
-  "userspace_main_correct_signature", `Quick, test_userspace_main_correct_signature;
-  "userspace_main_with_struct_param", `Quick, test_userspace_main_with_struct_param;
-  "userspace_main_wrong_param_types", `Quick, test_userspace_main_wrong_param_types;
-  "userspace_main_wrong_return_type", `Quick, test_userspace_main_wrong_return_type;
-  "userspace_main_non_struct_param", `Quick, test_userspace_main_non_struct_param;
-  "userspace_main_too_many_params", `Quick, test_userspace_main_too_many_params;
-  "userspace_missing_main", `Quick, test_userspace_missing_main;
-  "userspace_multiple_main", `Quick, test_userspace_multiple_main;
-  "userspace_with_other_functions", `Quick, test_userspace_with_other_functions;
-  "userspace_with_structs", `Quick, test_userspace_with_structs;
-  "multiple_programs_single_userspace", `Quick, test_multiple_programs_single_userspace;
-  "basic_userspace", `Quick, test_basic_userspace;
-  "userspace_code_generation", `Quick, test_userspace_codegen;
+  "global_functions_top_level", `Quick, test_global_functions_top_level;
+  "program_function_isolation", `Quick, test_program_function_isolation;
+  "main_correct_signature", `Quick, test_main_correct_signature;
+  "main_with_struct_param", `Quick, test_main_with_struct_param;
+  "main_wrong_param_types", `Quick, test_main_wrong_param_types;
+  "main_wrong_return_type", `Quick, test_main_wrong_return_type;
+  "main_non_struct_param", `Quick, test_main_non_struct_param;
+  "main_too_many_params", `Quick, test_main_too_many_params;
+  "missing_main", `Quick, test_missing_main;
+  "multiple_main", `Quick, test_multiple_main;
+  "global_functions_with_other_functions", `Quick, test_global_functions_with_other_functions;
+  "global_functions_with_structs", `Quick, test_global_functions_with_structs;
+  "multiple_programs_single_main", `Quick, test_multiple_programs_single_main;
+  "basic_global_functions", `Quick, test_basic_global_functions;
+  "global_function_code_generation", `Quick, test_global_function_codegen;
   
-  (* Test functionality tests - these use for_testing=true *)
+  (* Test functionality tests - main() is now always mandatory *)
   "literal_map_assignment", `Quick, test_literal_map_assignment;
   "map_lookup_with_literal_key", `Quick, test_map_lookup_with_literal_key;
   "map_update_with_literal_key_value", `Quick, test_map_update_with_literal_key_value;
@@ -873,6 +820,6 @@ let suite = [
 ]
 
 let () =
-  Alcotest.run "userspace tests" [
-    "userspace", suite
+  Alcotest.run "Global Function Tests" [
+    "global_functions", suite
   ]

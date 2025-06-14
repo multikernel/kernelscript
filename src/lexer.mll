@@ -84,7 +84,6 @@
     | "pub" -> PUB
     | "priv" -> PRIV
     | "config" -> CONFIG
-    | "userspace" -> USERSPACE
     | "in" -> IN
     | "delete" -> DELETE
     | "true" -> BOOL_LIT true

@@ -825,16 +825,9 @@ let type_check_program ctx prog =
   }
 
 (** Type check userspace block - validates and returns typed functions *)
-let type_check_userspace ctx userspace_block =
-  (* Userspace code should only have access to global maps, not program-scoped maps *)
-  (* The global maps are already in ctx.maps from the first pass *)
-  
-  (* Type check all userspace functions and return typed functions *)
-  let typed_functions = List.map (fun func ->
-    type_check_function ctx func
-  ) userspace_block.userspace_functions in
-  
-  typed_functions
+let type_check_userspace _ctx _userspace_block =
+  (* Userspace support has been removed - this function should not be called *)
+  failwith "Userspace blocks are no longer supported"
 
 (** Main type checking entry point *)
 let type_check_ast ast =
@@ -862,9 +855,7 @@ let type_check_ast ast =
     | GlobalFunction func ->
         let _ = type_check_function ctx func in
         acc
-    | Userspace userspace_block ->
-        let _ = type_check_userspace ctx userspace_block in
-        acc
+
     | _ -> acc
   ) [] ast |> List.rev
 
@@ -985,6 +976,11 @@ let typed_ast_to_annotated_ast typed_ast typed_userspace_functions original_ast 
   (* Convert typed userspace functions back to annotated functions *)
   let annotated_userspace_functions = List.map typed_function_to_function typed_userspace_functions in
   
+  (* Create a mapping of annotated userspace functions by name *)
+  let annotated_userspace_map = List.fold_left (fun acc func ->
+    (func.func_name, func) :: acc
+  ) [] annotated_userspace_functions in
+  
   (* Reconstruct the declarations list, preserving order and non-program declarations *)
   List.map (function
     | Program orig_prog -> 
@@ -995,13 +991,16 @@ let typed_ast_to_annotated_ast typed_ast typed_userspace_functions original_ast 
           failwith ("No annotated program found for " ^ orig_prog.prog_name)
         in
         Program annotated_prog
-    | Userspace orig_userspace_block ->
-        (* Create annotated userspace block with typed functions *)
-        let annotated_userspace_block = {
-          orig_userspace_block with
-          userspace_functions = annotated_userspace_functions
-        } in
-        Userspace annotated_userspace_block
+
+    | GlobalFunction orig_func ->
+        (* Find corresponding annotated userspace function *)
+        let annotated_func = try
+          List.assoc orig_func.func_name annotated_userspace_map
+        with Not_found ->
+          failwith ("No annotated userspace function found for " ^ orig_func.func_name)
+        in 
+        GlobalFunction annotated_func
+
     | other_decl -> other_decl  (* Keep maps, types, etc. unchanged *)
   ) original_ast 
 
@@ -1037,12 +1036,7 @@ let rec type_check_and_annotate_ast ast =
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
     | Program prog ->
         Hashtbl.replace ctx.programs prog.prog_name prog
-    | Userspace userspace_block ->
-        (* Collect userspace struct definitions *)
-        List.iter (fun struct_def ->
-          let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields) in
-          Hashtbl.replace ctx.types struct_def.struct_name type_def
-        ) userspace_block.userspace_structs
+
     | _ -> ()
   ) ast;
   
@@ -1056,11 +1050,9 @@ let rec type_check_and_annotate_ast ast =
         ctx.current_program_type <- None;
         (typed_prog :: prog_acc, userspace_acc)
     | GlobalFunction func ->
-        let _ = type_check_function ctx func in
-        (prog_acc, userspace_acc)
-    | Userspace userspace_block ->
-        let typed_functions = type_check_userspace ctx userspace_block in
-        (prog_acc, typed_functions @ userspace_acc)
+        let typed_func = type_check_function ctx func in
+        (prog_acc, typed_func :: userspace_acc)
+
     | _ -> (prog_acc, userspace_acc)
   ) ([], []) ast in
   let typed_programs = List.rev typed_programs in
@@ -1166,17 +1158,100 @@ and populate_multi_program_context ast multi_prog_analysis =
   in
   
   (* Enhance each program in the AST *)
+  let rec enhance_userspace_expr expr =
+    (* Set program context to None for userspace/global functions *)
+    expr.program_context <- None;
+    
+    (* Set map scope if this expression accesses a map *)
+    (match expr.expr_desc with
+     | Identifier name ->
+         if List.exists (fun (map_name, _) -> map_name = name) multi_prog_analysis.map_usage_patterns then
+           expr.map_scope <- Some Global
+     | ArrayAccess ({expr_desc = Identifier map_name; _}, _) ->
+         if List.exists (fun (name, _) -> name = map_name) multi_prog_analysis.map_usage_patterns then
+           expr.map_scope <- Some Global
+     | _ -> ());
+    
+    (* Mark as type checked *)
+    expr.type_checked <- true;
+    
+    (* Recursively enhance sub-expressions *)
+    (match expr.expr_desc with
+     | FunctionCall (_, args) ->
+         List.iter enhance_userspace_expr args
+     | ArrayAccess (arr_expr, idx_expr) ->
+         enhance_userspace_expr arr_expr;
+         enhance_userspace_expr idx_expr
+     | BinaryOp (left, _, right) ->
+         enhance_userspace_expr left;
+         enhance_userspace_expr right
+     | UnaryOp (_, sub_expr) ->
+         enhance_userspace_expr sub_expr
+     | FieldAccess (obj_expr, _) ->
+         enhance_userspace_expr obj_expr
+     | _ -> ())
+  in
+  
+  let rec enhance_userspace_stmt stmt =
+    match stmt.stmt_desc with
+    | ExprStmt expr ->
+        enhance_userspace_expr expr
+    | Assignment (_, expr) ->
+        enhance_userspace_expr expr
+    | FieldAssignment (obj_expr, _, value_expr) ->
+        enhance_userspace_expr obj_expr;
+        enhance_userspace_expr value_expr
+    | IndexAssignment (map_expr, key_expr, value_expr) ->
+        (* This is a write operation *)
+        enhance_userspace_expr map_expr;
+        enhance_userspace_expr key_expr;
+        enhance_userspace_expr value_expr;
+        (* Update the map expression to indicate write access *)
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
+    | Declaration (_, _, expr) ->
+        enhance_userspace_expr expr
+    | Return (Some expr) ->
+        enhance_userspace_expr expr
+    | If (cond_expr, then_stmts, else_stmts_opt) ->
+        enhance_userspace_expr cond_expr;
+        List.iter enhance_userspace_stmt then_stmts;
+        (match else_stmts_opt with
+         | Some else_stmts -> List.iter enhance_userspace_stmt else_stmts
+         | None -> ())
+    | For (_, start_expr, end_expr, body_stmts) ->
+        enhance_userspace_expr start_expr;
+        enhance_userspace_expr end_expr;
+        List.iter enhance_userspace_stmt body_stmts
+    | ForIter (_, _, iter_expr, body_stmts) ->
+        enhance_userspace_expr iter_expr;
+        List.iter enhance_userspace_stmt body_stmts
+    | While (cond_expr, body_stmts) ->
+        enhance_userspace_expr cond_expr;
+        List.iter enhance_userspace_stmt body_stmts
+    | Delete (map_expr, key_expr) ->
+        enhance_userspace_expr map_expr;
+        enhance_userspace_expr key_expr;
+        (* Delete is a write operation *)
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
+    | Return None -> ()
+    | Break -> ()
+    | Continue -> ()
+  in
+
   List.map (function
     | Program prog ->
         List.iter (fun func ->
           List.iter (enhance_stmt prog.prog_type) func.func_body
         ) prog.prog_functions;
         Program prog
-    | Userspace userspace_block ->
-        (* For userspace functions, use a generic program type or None *)
-        List.iter (fun func ->
-          List.iter (enhance_stmt Xdp) func.func_body  (* Use Xdp as default for userspace *)
-        ) userspace_block.userspace_functions;
-        Userspace userspace_block
+
+    | GlobalFunction func ->
+        List.iter enhance_userspace_stmt func.func_body;
+        GlobalFunction func
+
     | other_decl -> other_decl
   ) ast 

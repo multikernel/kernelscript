@@ -161,13 +161,7 @@ type function_def = {
   func_pos: position;
 }
 
-(** Top-level userspace block - contains userspace coordinator code *)
-type userspace_block = {
-  userspace_functions: function_def list;
-  userspace_structs: struct_def list;
-  userspace_configs: userspace_config list;
-  userspace_pos: position;
-}
+
 
 and struct_def = {
   struct_name: string;
@@ -175,13 +169,7 @@ and struct_def = {
   struct_pos: position;
 }
 
-and userspace_config = 
-  | CustomConfig of string * userspace_config_item list (* custom_name { key: value, ... } *)
 
-and userspace_config_item = {
-  config_key: string;
-  config_value: literal;
-}
 
 (** Program definition *)
 type program_def = {
@@ -216,7 +204,7 @@ type declaration =
   | MapDecl of map_declaration
   | ConfigDecl of config_declaration
   | StructDecl of struct_def
-  | Userspace of userspace_block  (* New: top-level userspace *)
+  
 
 (** Complete AST *)
 type ast = declaration list
@@ -302,12 +290,7 @@ let make_map_declaration name key_type value_type map_type config is_global pos 
   map_pos = pos;
 }
 
-let make_userspace_block functions structs configs pos = {
-  userspace_functions = functions;
-  userspace_structs = structs;
-  userspace_configs = configs;
-  userspace_pos = pos;
-}
+
 
 let make_struct_def name fields pos = {
   struct_name = name;
@@ -315,10 +298,7 @@ let make_struct_def name fields pos = {
   struct_pos = pos;
 }
 
-let make_userspace_config_item key value = {
-  config_key = key;
-  config_value = value;
-}
+
 
 let make_config_field name field_type default pos = {
   field_name = name;
@@ -556,10 +536,7 @@ let string_of_declaration = function
         Printf.sprintf "%s: %s" name (string_of_bpf_type typ)
       ) struct_def.struct_fields) in
       Printf.sprintf "struct %s {\n    %s\n}" struct_def.struct_name fields_str
-  | Userspace ub ->
-      let functions_str = String.concat "\n\n  " 
-        (List.map string_of_function ub.userspace_functions) in
-      Printf.sprintf "userspace {\n  %s\n}" functions_str
+
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

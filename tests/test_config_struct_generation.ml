@@ -23,7 +23,7 @@ let extract_config_declarations ast =
 let generate_ir_from_ast ast =
   let symbol_table = build_symbol_table ast in
   let (annotated_ast, _) = type_check_and_annotate_ast ast in
-  generate_ir ~for_testing:true annotated_ast symbol_table "test"
+  generate_ir annotated_ast symbol_table "test"
 
 (** Helper to generate userspace code with config declarations *)
 let generate_userspace_with_configs ast =
@@ -73,10 +73,8 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        return 0;
-    }
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -122,10 +120,8 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        return 0;
-    }
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -169,10 +165,8 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        return 0;
-    }
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -190,7 +184,7 @@ userspace {
 (** Test that BPF object filename is dynamic *)
 let test_dynamic_filename_generation () =
   let program_text = {|
-config test {
+config test_config {
     value: u32 = 42,
 }
 
@@ -200,10 +194,8 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        return 0;
-    }
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -233,18 +225,16 @@ program test : xdp {
     }
 }
 
-  userspace {
-    struct Args {
-        enable_logging: u32,
+struct Args {
+    enable_logging: u32,
+}
+
+fn main(args: Args) -> i32 {
+    if args.enable_logging > 0 {
+        network.enable_logging = true;
     }
-    
-    fn main(args: Args) -> i32 {
-        if args.enable_logging > 0 {
-            network.enable_logging = true;
-        }
-        return 0;
-    }
-  }
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -274,11 +264,9 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        network.enable_logging = true;  // This should be allowed
-        return 0;
-    }
+fn main() -> i32 {
+    network.enable_logging = true;  // This should be allowed
+    return 0;
 }
 |} in
   try
@@ -311,11 +299,9 @@ program test : xdp {
     }
 }
 
-userspace {
-    fn main() -> i32 {
-        network.enable_logging = true;  // This should be allowed
-        return 0;
-    }
+fn main() -> i32 {
+    network.enable_logging = true;  // This should be allowed
+    return 0;
 }
 |} in
   try

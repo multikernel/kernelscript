@@ -1,4 +1,3 @@
-// Simple demonstration of the print() built-in function
 // This shows the same print() function working in both eBPF and userspace contexts
 
 config demo {
@@ -16,11 +15,9 @@ program simple_logger : xdp {
     }
 }
 
-// Userspace coordinator that also uses print()
-userspace {
-    fn main() -> i32 {
-        print("Userspace: Starting packet logger");
-        print("Userspace: Logger initialized successfully");
-        return 0;
-    }
+// Userspace coordinator that also uses print() (no wrapper)
+fn main() -> i32 {
+    print("Userspace: Starting packet logger");
+    print("Userspace: Logger initialized successfully");
+    return 0;
 } 

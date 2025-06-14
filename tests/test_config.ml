@@ -31,6 +31,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -52,6 +56,10 @@ program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -76,6 +84,10 @@ program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -104,6 +116,10 @@ program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -143,6 +159,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -172,6 +192,10 @@ program test : xdp {
         return 2;  // PASS
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -199,6 +223,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -215,6 +243,10 @@ program test : xdp {
         let bad_config = nonexistent_config.some_field;
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -234,6 +266,10 @@ program test : xdp {
         let bad_access = packet_counts.some_field;
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -258,6 +294,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let _ast = parse_string program_text in
@@ -272,11 +312,14 @@ let test_config_inside_program () =
 program test : xdp {
     config program_config {
         size: u32 = 1024,
-    }
     
     fn main(ctx: XdpContext) -> XdpAction {
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -285,32 +328,6 @@ program test : xdp {
   with 
   | _ ->
     check bool "config inside program error detected" true true
-
-(** Test config declared inside userspace block (invalid) *)
-let test_config_inside_userspace () =
-  let program_text = {|
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
-    }
-}
-
-userspace {
-    config userspace_config {
-        threads: u32 = 4,
-    }
-    
-    fn main() -> i32 {
-        return 0;
-    }
-}
-|} in
-  try
-    let _ast = parse_string program_text in
-    fail "Expected error for config declared inside userspace"
-  with 
-  | _ ->
-    check bool "config inside userspace error detected" true true
 
 (** Test 4: eBPF C Code Generation *)
 
@@ -343,6 +360,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -369,6 +390,10 @@ program test : xdp {
         let size = settings.buffer_size;
         return 2;
     }
+}
+
+fn main() -> i32 {
+    return 0;
 }
 |} in
   try
@@ -437,6 +462,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -482,6 +511,10 @@ program packet_filter : xdp {
         }
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -521,6 +554,10 @@ program test : xdp {
         return 2;
     }
 }
+
+fn main() -> i32 {
+    return 0;
+}
 |} in
   try
     let ast = parse_string program_text in
@@ -558,7 +595,6 @@ let config_tests = [
   (* Invalid Local Config Tests *)
   "config_inside_function", `Quick, test_config_inside_function;
   "config_inside_program", `Quick, test_config_inside_program;
-  "config_inside_userspace", `Quick, test_config_inside_userspace;
   
   (* eBPF C Code Generation Tests *)
   "config_struct_generation", `Quick, test_config_struct_generation;

@@ -6,12 +6,6 @@ config network {
     blocked_ports: [u16; 4] = [22, 23, 135, 445],
 }
 
-config security {
-    threat_level: u32 = 1,
-    enable_strict_mode: bool = false,
-    max_connections: u64 = 1000,
-}
-
 map<u32, u64> packet_stats : HashMap(1024);
 
 program packet_filter : xdp {
@@ -23,11 +17,6 @@ program packet_filter : xdp {
             }
         }
         
-        // Use security config  
-        if security.threat_level > 2 {
-            return 1;  // XDP_DROP
-        }
-        
         // Update stats
         packet_stats[0] = 1;
         
@@ -35,16 +24,16 @@ program packet_filter : xdp {
     }
 }
 
-userspace {
-    struct Args {
-        enable_debug: u32,
+// Userspace coordination (no wrapper)
+struct Args {
+    enable_debug: u32,
+}
+
+fn main(args: Args) -> i32 {
+    // Enable logging if debug mode is enabled
+    if args.enable_debug > 0 {
+        network.enable_logging = true;
     }
-    
-    fn main(args: Args) -> i32 {
-        // Enable logging if debug mode is enabled
-        if args.enable_debug > 0 {
-            network.enable_logging = true;
-        }
-        return 0;
-    }
+    load_program(packet_filter);
+    return 0;
 } 
