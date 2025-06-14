@@ -216,7 +216,7 @@
   test_array_literals.exe
   test_config_validation.exe
   test_stdlib.exe
-  test_struct_parameter_field_access.exe)
+  test_struct_field_access.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -232,7 +232,7 @@
    (run ./test_array_literals.exe)
    (run ./test_config_validation.exe)
    (run ./test_stdlib.exe)
-   (run ./test_struct_parameter_field_access.exe))))
+   (run ./test_struct_field_access.exe))))
 
 (rule
  (alias ir-tests)
