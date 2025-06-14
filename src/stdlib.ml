@@ -37,6 +37,24 @@ let builtin_functions = [
     ebpf_impl = "bpf_printk";
     userspace_impl = "printf";
   };
+  {
+    name = "load_program";
+    param_types = [ProgramRef Xdp]; (* Will be matched against any ProgramRef *)
+    return_type = U32; (* Returns program file descriptor *)
+    description = "Load an eBPF program and return its file descriptor";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "bpf_prog_load";
+  };
+  {
+    name = "attach_program";
+    param_types = [ProgramRef Xdp; Pointer U8; U32]; (* program, target, flags *)
+    return_type = U32; (* Returns 0 on success *)
+    description = "Attach a loaded eBPF program to a target with flags";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "bpf_prog_attach";
+  };
 ]
 
 (** Get built-in function definition by name *)

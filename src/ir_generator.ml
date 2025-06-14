@@ -230,20 +230,26 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.Literal lit ->
       lower_literal lit expr.expr_pos
       
-        | Ast.Identifier name ->
+  | Ast.Identifier name ->
       (* Check if this is a map identifier *)
       if Hashtbl.mem ctx.maps name then
         (* For map identifiers, create a map reference *)
         let map_type = IRPointer (IRU8, make_bounds_info ()) in (* Maps are represented as pointers *)
         make_ir_value (IRMapRef name) map_type expr.expr_pos
       else
-        (* Regular variable *)
-        let reg = get_variable_register ctx name in
-        let ir_type = match expr.expr_type with
-          | Some ast_type -> ast_type_to_ir_type ast_type
-          | None -> failwith ("Untyped identifier: " ^ name)
-        in
-        make_ir_value (IRRegister reg) ir_type expr.expr_pos
+        (* Check if this is a program reference *)
+        (match expr.expr_type with
+         | Some (ProgramRef _) ->
+             (* Program references should be converted to string literals containing the program name *)
+             make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
+         | _ ->
+             (* Regular variable *)
+             let reg = get_variable_register ctx name in
+             let ir_type = match expr.expr_type with
+               | Some ast_type -> ast_type_to_ir_type ast_type
+               | None -> failwith ("Untyped identifier: " ^ name)
+             in
+             make_ir_value (IRRegister reg) ir_type expr.expr_pos)
       
   | Ast.ConfigAccess (config_name, field_name) ->
       (* Handle config access like config.field_name *)

@@ -162,6 +162,11 @@
  (modules test_struct_field_access)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_program_ref)
+ (modules test_program_ref)
+ (libraries kernelscript alcotest))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)

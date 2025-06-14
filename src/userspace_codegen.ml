@@ -266,6 +266,26 @@ let rec generate_c_instruction_from_ir ctx instruction =
                   | [] -> (userspace_impl, ["\"\\n\""])
                   | [first] -> (userspace_impl, [sprintf "%s \"\\n\"" first])
                   | args -> (userspace_impl, args @ ["\"\\n\""]))
+             | "load_program" ->
+                 (* Special handling for load_program: generate libbpf program loading code *)
+                 (match c_args with
+                  | [program_name] ->
+                      (* Extract program name from identifier - remove quotes if present *)
+                      let clean_name = if String.contains program_name '"' then
+                        String.sub program_name 1 (String.length program_name - 2)
+                      else program_name in
+                      ("load_bpf_program", [sprintf "\"%s\"" clean_name])
+                  | _ -> failwith "load_program expects exactly one argument")
+             | "attach_program" ->
+                 (* Special handling for attach_program: generate libbpf attachment code *)
+                 (match c_args with
+                  | [program_name; target; flags] ->
+                      (* Extract program name from identifier - remove quotes if present *)
+                      let clean_name = if String.contains program_name '"' then
+                        String.sub program_name 1 (String.length program_name - 2)
+                      else program_name in
+                      ("attach_bpf_program", [sprintf "\"%s\"" clean_name; target; flags])
+                  | _ -> failwith "attach_program expects exactly three arguments")
              | _ -> (userspace_impl, c_args))
         | None ->
             (* Regular function call *)
@@ -644,6 +664,114 @@ void cleanup_bpf_environment(void) {
 void process_events(void) {
     %s
 }
+
+/* Program lifecycle helper functions */
+int load_bpf_program(const char *program_name) {
+    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
+    if (!prog) {
+        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
+        return -1;
+    }
+    
+    int prog_fd = bpf_program__fd(prog);
+    if (prog_fd < 0) {
+        fprintf(stderr, "Failed to get file descriptor for program '%%s'\\n", program_name);
+        return -1;
+    }
+    
+    printf("Loaded program '%%s' with FD %%d\\n", program_name, prog_fd);
+    return prog_fd;
+}
+
+int attach_bpf_program(const char *program_name, const char *target, int flags) {
+    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
+    if (!prog) {
+        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
+        return -1;
+    }
+    
+    /* Get program type to determine attachment method */
+    enum bpf_prog_type prog_type = bpf_program__type(prog);
+    int result = -1;
+    
+    switch (prog_type) {
+        case BPF_PROG_TYPE_XDP: {
+            /* XDP attachment - target is interface name */
+            int ifindex = if_nametoindex(target);
+            if (ifindex == 0) {
+                fprintf(stderr, "Failed to get interface index for '%%s'\\n", target);
+                return -1;
+            }
+            
+            struct bpf_link *link = bpf_program__attach_xdp(prog, ifindex);
+            if (libbpf_get_error(link)) {
+                fprintf(stderr, "Failed to attach XDP program to interface '%%s'\\n", target);
+                return -1;
+            }
+            
+            printf("Attached XDP program '%%s' to interface '%%s' (ifindex %%d)\\n", 
+                   program_name, target, ifindex);
+            result = 0;
+            break;
+        }
+        
+        case BPF_PROG_TYPE_SCHED_CLS: {
+            /* TC attachment - target is interface name, flags indicate direction */
+            int ifindex = if_nametoindex(target);
+            if (ifindex == 0) {
+                fprintf(stderr, "Failed to get interface index for '%%s'\\n", target);
+                return -1;
+            }
+            
+            /* For TC, we use netlink to attach - simplified version */
+            printf("TC attachment for program '%%s' to interface '%%s' (flags %%d) - implementation needed\\n", 
+                   program_name, target, flags);
+            result = 0; /* Placeholder - real implementation would use netlink */
+            break;
+        }
+        
+        case BPF_PROG_TYPE_KPROBE: {
+            /* Kprobe attachment - target is function name */
+            struct bpf_link *link = bpf_program__attach_kprobe(prog, false, target);
+            if (libbpf_get_error(link)) {
+                fprintf(stderr, "Failed to attach kprobe program to function '%%s'\\n", target);
+                return -1;
+            }
+            
+            printf("Attached kprobe program '%%s' to function '%%s'\\n", program_name, target);
+            result = 0;
+            break;
+        }
+        
+        case BPF_PROG_TYPE_CGROUP_SKB: {
+            /* Cgroup attachment - target is cgroup path */
+            int cgroup_fd = open(target, O_RDONLY);
+            if (cgroup_fd < 0) {
+                fprintf(stderr, "Failed to open cgroup '%%s': %%s\\n", target, strerror(errno));
+                return -1;
+            }
+            
+            struct bpf_link *link = bpf_program__attach_cgroup(prog, cgroup_fd);
+            close(cgroup_fd);
+            
+            if (libbpf_get_error(link)) {
+                fprintf(stderr, "Failed to attach cgroup program to '%%s'\\n", target);
+                return -1;
+            }
+            
+            printf("Attached cgroup program '%%s' to cgroup '%%s'\\n", program_name, target);
+            result = 0;
+            break;
+        }
+        
+        default:
+            fprintf(stderr, "Unsupported program type for attachment: %%d\\n", prog_type);
+            result = -1;
+            break;
+    }
+    
+    return result;
+}
 |} base_name setup_c setup_code cleanup_c event_processing_c
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
@@ -685,6 +813,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 #include <errno.h>
 #include <stdbool.h>
 #include <getopt.h>
+#include <fcntl.h>
+#include <net/if.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/bpf.h>

@@ -141,6 +141,7 @@ let comprehensive_symbol_analysis symbol_table ast =
       | GlobalMap _ | LocalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count
       | Config _ -> incr type_count
+      | Program _ -> incr type_count
     ) symbols
   ) symbol_table.symbols;
   
@@ -151,7 +152,7 @@ let comprehensive_symbol_analysis symbol_table ast =
   (* Perform additional validation checks *)
   List.iter (fun declaration ->
     match declaration with
-    | Program prog ->
+    | Ast.Program prog ->
         (* Check that main function exists for programs *)
         (match lookup_symbol symbol_table "main" with
          | Some { kind = Function _; scope = [prog_name]; _ } when prog_name = prog.prog_name -> ()
@@ -166,13 +167,13 @@ let comprehensive_symbol_analysis symbol_table ast =
           | None -> errors := ("function " ^ func.func_name ^ " not found in symbol table") :: !errors
         ) prog.prog_functions;
         
-    | MapDecl map_decl ->
+    | Ast.MapDecl map_decl ->
         (* Check that map is properly registered *)
         (match get_map_declaration symbol_table map_decl.name with
          | Some _ -> ()
          | None -> errors := ("map " ^ map_decl.name ^ " not found in symbol table") :: !errors)
         
-    | GlobalFunction func ->
+    | Ast.GlobalFunction func ->
         (* Check that global function is properly registered *)
         (match lookup_symbol symbol_table func.func_name with
          | Some { kind = Function _; scope = []; _ } -> ()

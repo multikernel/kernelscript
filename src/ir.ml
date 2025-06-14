@@ -508,6 +508,7 @@ let rec ast_type_to_ir_type = function
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function _ -> failwith "Function types not supported in IR yet"
   | Map (_, _, _) -> failwith "Map types handled separately"
+  | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
 
 let ast_map_type_to_ir_map_type = function
   | HashMap -> IRHashMap

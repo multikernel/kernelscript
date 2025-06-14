@@ -7,6 +7,7 @@
 - **Explicit over implicit**: Clear, readable syntax with minimal magic
 - **Safety by construction**: Type system prevents common eBPF errors
 - **Seamless kernel-userspace integration**: First-class support for bidirectional communication
+- **Explicit program lifecycle control**: Programs are first-class values with explicit loading and attachment phases
 
 ### 1.2 Simplified Type System
 Instead of complex templates, KernelScript uses **simple type aliases** and **fixed-size types**:
@@ -198,22 +199,148 @@ userspace {
     
     // Helper functions for coordinating programs
     fn on_packet_event(event: PacketEvent) {
-        print("Received packet from ", event.src_ip);
+        // Handle events from eBPF programs
+    }
+}
+```
+
+### 3.4 Explicit Program Lifecycle Management
+
+KernelScript supports explicit control over eBPF program loading and attachment through program references and built-in lifecycle functions. This enables advanced use cases like parameter configuration between loading and attachment phases.
+
+#### 3.4.1 Program References
+
+Programs are first-class values that can be referenced by name and passed to lifecycle functions:
+
+```kernelscript
+program packet_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        return XdpAction::Pass;
+    }
+}
+
+program flow_monitor : tc {
+    fn main(ctx: TcContext) -> TcAction {
+        return TcAction::Pass;
+    }
+}
+
+userspace {
+    fn main() -> i32 {
+        // Programs can be referenced by name
+        let xdp_prog = packet_filter;  // Type: ProgramRef
+        let tc_prog = flow_monitor;    // Type: ProgramRef
+        
+        // Explicit loading and attachment
+        let prog_fd = load_program(xdp_prog);
+        let result = attach_program(xdp_prog, "eth0", 0);
+        
+        return 0;
+    }
+}
+```
+
+#### 3.4.2 Lifecycle Functions
+
+**`load_program(program_ref: ProgramRef) -> u32`**
+- Loads the specified eBPF program into the kernel
+- Returns the program file descriptor
+- Must be called before attachment
+- Enables configuration of program parameters before attachment
+
+**`attach_program(program_ref: ProgramRef, target: string, flags: u32) -> u32`**
+- Attaches the loaded program to the specified target
+- Target and flags interpretation depends on program type:
+  - **XDP**: target = interface name ("eth0"), flags = XDP attachment flags
+  - **TC**: target = interface name ("eth0"), flags = direction (ingress/egress)
+  - **Kprobe**: target = function name ("sys_read"), flags = unused (0)
+  - **Cgroup**: target = cgroup path ("/sys/fs/cgroup/test"), flags = unused (0)
+- Returns 0 on success, negative error code on failure
+
+#### 3.4.3 Advanced Usage Patterns
+
+**Configuration Between Load and Attach:**
+```kernelscript
+config network {
+    mut enable_filtering: bool = false,
+    mut max_packet_size: u32 = 1500,
+}
+
+program adaptive_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if network.enable_filtering && ctx.packet_size() > network.max_packet_size {
+            return XdpAction::Drop;
+        }
+        return XdpAction::Pass;
+    }
+}
+
+userspace {
+    struct Args {
+        interface: string,
+        strict_mode: bool,
     }
     
-    fn update_security_configs(threat_level: u32) {
-        // Update security configuration at runtime
-        security.current_threat_level = threat_level;
-        security.enable_strict_mode = threat_level > security.threat_threshold;
+    fn main(args: Args) -> i32 {
+        // Load program first
+        let prog_fd = load_program(adaptive_filter);
+        
+        // Configure parameters based on command line
+        network.enable_filtering = args.strict_mode;
+        if args.strict_mode {
+            network.max_packet_size = 1000;  // Stricter limit
+        }
+        
+        // Now attach with configured parameters
+        let result = attach_program(adaptive_filter, args.interface, 0);
+        
+        if result == 0 {
+            print("Filter attached successfully");
+        } else {
+            print("Failed to attach filter");
+            return 1;
+        }
+        
+        return 0;
     }
-    
-    fn get_combined_stats() -> PacketStats {
-        // Use monitoring config for stats
-        return PacketStats {
-            packets: monitoring.packets_processed,
-            bytes: packet_stats_map[1],
-            drops: packet_stats_map[2],
-        };
+}
+```
+
+**Multi-Program Coordination:**
+```kernelscript
+program ingress_monitor : xdp {
+    fn main(ctx: XdpContext) -> XdpAction { return XdpAction::Pass; }
+}
+
+program egress_monitor : tc {
+    fn main(ctx: TcContext) -> TcAction { return TcAction::Pass; }
+}
+
+program security_check : lsm {
+    fn main(ctx: LsmContext) -> i32 { return 0; }
+}
+
+userspace {
+    fn main() -> i32 {
+        // Load all programs
+        let ingress_fd = load_program(ingress_monitor);
+        let egress_fd = load_program(egress_monitor);
+        let security_fd = load_program(security_check);
+        
+        // Attach in specific order for coordinated monitoring
+        attach_program(security_check, "socket_connect", 0);
+        attach_program(ingress_monitor, "eth0", 0);
+        attach_program(egress_monitor, "eth0", 1);  // Egress direction
+        
+        print("Multi-program monitoring system active");
+        
+        // Event processing loop
+        while true {
+            process_events();
+            sleep(1000);
+        }
+        
+        return 0;
     }
 }
 ```
@@ -230,6 +357,9 @@ char                   // 8-bit character
 
 // Pointer types (restricted usage in kernel context)
 *u8, *u32, *void       // Pointers to specific types
+
+// Program reference types (for explicit program lifecycle control)
+ProgramRef             // Reference to an eBPF program for loading/attachment
 ```
 
 ### 4.2 Compound Types
@@ -1146,6 +1276,19 @@ mod math {
     pub fn max(a: u64, b: u64) -> u64;
     pub fn clamp(value: u64, min: u64, max: u64) -> u64;
 }
+
+// Program lifecycle management (userspace only)
+mod program {
+    // Load an eBPF program and return its file descriptor
+    pub fn load_program(program_ref: ProgramRef) -> u32;
+    
+    // Attach a program to a target with optional flags
+    // - For XDP: target is interface name (e.g., "eth0"), flags are XDP attachment flags
+    // - For TC: target is interface name, flags indicate direction (ingress/egress)
+    // - For Kprobe: target is function name (e.g., "sys_read"), flags are unused (0)
+    // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
+    pub fn attach_program(program_ref: ProgramRef, target: string, flags: u32) -> u32;
+}
 ```
 
 ### 11.2 Context Helpers
@@ -1207,32 +1350,48 @@ program simple_filter : xdp {
     }
 }
 
-// Top-level userspace coordinator
+// Top-level userspace coordinator with explicit program lifecycle
 userspace {
     struct Args {
-        interface_id: u32,
-        quiet_mode: u32,
+        interface: string,
+        quiet_mode: bool,
+        strict_mode: bool,
     }
     
     fn main(args: Args) -> i32 {
         // Command line arguments automatically parsed
-        // Usage: program --interface-id=0 --quiet-mode=1
+        // Usage: program --interface=eth0 --quiet-mode=false --strict-mode=true
         
-        // Program loaded and attached
-        let filter = BpfProgram::load("simple_filter");
-        filter.attach_xdp_by_index(args.interface_id);
-        
-        // Update config based on command line
-        filtering.enable_logging = (args.quiet_mode == 0);
-        
-        if args.quiet_mode == 0 {
-            print("Packet filter started on interface: ", args.interface_id);
-            print("Blocking ports: 22, 23, 135, 445");
+        // Configure system before loading program
+        filtering.enable_logging = !args.quiet_mode;
+        if args.strict_mode {
+            filtering.max_packet_size = 1000;  // Stricter filtering
         }
         
+        // Explicit program lifecycle management
+        let prog_fd = load_program(simple_filter);
+        if prog_fd < 0 {
+            print("Failed to load program");
+            return 1;
+        }
+        
+        let attach_result = attach_program(simple_filter, args.interface, 0);
+        if attach_result != 0 {
+            print("Failed to attach program to interface: ", args.interface);
+            return 1;
+        }
+        
+        if !args.quiet_mode {
+            print("Packet filter started on interface: ", args.interface);
+            print("Blocking ports: 22, 23, 135, 445");
+            if args.strict_mode {
+                print("Strict mode enabled - max packet size: 1000");
+            }
+        }
+        
+        // Monitor system health using config stats
         while true {
-            // Monitor system health using config stats
-            if system.packets_dropped > 1000 && args.quiet_mode == 0 {
+            if system.packets_dropped > 1000 && !args.quiet_mode {
                 print("High drop rate detected: ", system.packets_dropped);
             }
             sleep(10000);
@@ -1311,53 +1470,61 @@ userspace {
         let interval = if args.interval_ms == 0 { 5000 } else { args.interval_ms };
         let show_details = (args.show_details == 1);
         
-        // Both programs loaded and attached manually
-        let read_monitor = BpfProgram::load("perf_monitor");
-        let write_monitor = BpfProgram::load("write_monitor");
+        // Explicit program lifecycle management for multiple programs
+        let read_prog_fd = load_program(perf_monitor);
+        let write_prog_fd = load_program(write_monitor);
         
-        read_monitor.attach_kprobe("sys_read");
-        write_monitor.attach_kprobe("sys_write");
+        if read_prog_fd < 0 || write_prog_fd < 0 {
+            print("Failed to load monitoring programs");
+            return 1;
+        }
         
-        print("Performance monitoring system started (interval: ", interval, "ms)");
+        // Attach programs to different kprobe targets
+        let read_attach = attach_program(perf_monitor, "sys_read", 0);
+        let write_attach = attach_program(write_monitor, "sys_write", 0);
+        
+        if read_attach != 0 || write_attach != 0 {
+            print("Failed to attach monitoring programs");
+            return 1;
+        }
+        
+        print("Performance monitoring active - read and write syscalls");
         
         while true {
-            sleep(interval);
-            
-            print("=== System Performance Stats ===");
-            
             if show_details {
-                // Read statistics
-                print("Read Performance:");
-                for (pid_slot, total_duration) in read_stats.iter() {
-                    if total_duration > 0 {
-                        print("  Slot ", pid_slot, ": ", total_duration, " ns");
-                    }
-                }
-                
-                // Write statistics  
-                print("Write Performance:");
-                for (pid_slot, total_duration) in write_stats.iter() {
-                    if total_duration > 0 {
-                        print("  Slot ", pid_slot, ": ", total_duration, " ns");
-                    }
-                }
+                print_detailed_stats();
+            } else {
+                print_summary_stats();
             }
-            
-            // Cross-program analysis
-            analyze_system_performance();
+            sleep(interval);
         }
         
         return 0;
     }
     
-    fn analyze_system_performance() {
-        // Coordinated analysis across multiple programs
-        let total_read_time = read_stats.sum();
-        let total_write_time = write_stats.sum();
-        
-        if total_read_time > total_write_time * 2 {
-            print("WARNING: Read operations significantly slower than writes");
+    fn print_detailed_stats() {
+        // Access global maps to show detailed performance data
+        for i in 0..1024 {
+            if read_stats[i] > 0 {
+                print("PID bucket ", i, " read time: ", read_stats[i]);
+            }
+            if write_stats[i] > 0 {
+                print("PID bucket ", i, " write time: ", write_stats[i]);
+            }
         }
+    }
+    
+    fn print_summary_stats() {
+        let total_read_time = 0u64;
+        let total_write_time = 0u64;
+        
+        for i in 0..1024 {
+            total_read_time += read_stats[i];
+            total_write_time += write_stats[i];
+        }
+        
+        print("Total read time: ", total_read_time);
+        print("Total write time: ", total_write_time);
     }
 }
 ```
@@ -1374,7 +1541,7 @@ global_declaration = config_declaration | map_declaration | type_declaration | n
                     program_declaration | userspace_declaration | import_declaration ;
 
 (* Map declarations - global scope *)
-map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" identifier 
+map_declaration = "map" "<" key_type "," value_type ">" identifier 
                   ":" map_type "(" map_config ")" [ map_attributes ] ";" ;
 
 map_type = "hash_map" | "array" | "percpu_hash" | "percpu_array" | "lru_hash" | 
@@ -1508,7 +1675,7 @@ struct_literal_field = identifier ":" expression ;
 type_annotation = primitive_type | compound_type | identifier ;
 
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
-                 "bool" | "char" | "void" ;
+                 "bool" | "char" | "void" | "ProgramRef" ;
 
 compound_type = array_type | pointer_type | option_type | result_type ;
 

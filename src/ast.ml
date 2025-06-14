@@ -50,6 +50,8 @@ and bpf_type =
   | XdpContext | TcContext | KprobeContext | UprobeContext 
   | TracepointContext | LsmContext | CgroupSkbContext
   | XdpAction | TcAction
+  (* Program reference types *)
+  | ProgramRef of program_type
 
 (** Map configuration and attributes *)
 type map_attribute =
@@ -398,6 +400,7 @@ let rec string_of_bpf_type = function
   | CgroupSkbContext -> "CgroupSkbContext"
   | XdpAction -> "XdpAction"
   | TcAction -> "TcAction"
+  | ProgramRef pt -> string_of_program_type pt
 
 let rec string_of_literal = function
   | IntLit i -> string_of_int i

@@ -13,6 +13,7 @@ type type_context = {
   types: (string, type_def) Hashtbl.t;
   maps: (string, map_declaration) Hashtbl.t;
   configs: (string, config_declaration) Hashtbl.t;
+  programs: (string, program_def) Hashtbl.t; (* Track program definitions *)
   mutable current_function: string option;
   mutable current_program: string option;
   mutable current_program_type: program_type option;
@@ -79,6 +80,7 @@ let create_context () = {
   types = Hashtbl.create 16;
   maps = Hashtbl.create 16;
   configs = Hashtbl.create 16;
+  programs = Hashtbl.create 16;
   current_function = None;
   current_program = None;
   current_program_type = None;
@@ -157,6 +159,9 @@ let rec unify_types t1 t2 =
       (match unify_types k1 k2, unify_types v1 v2 with
        | Some unified_k, Some unified_v -> Some (Map (unified_k, unified_v, mt1))
        | _ -> None)
+  
+  (* Program reference types *)
+  | ProgramRef pt1, ProgramRef pt2 when pt1 = pt2 -> Some (ProgramRef pt1)
   
   (* No unification possible *)
   | _ -> None
@@ -278,8 +283,12 @@ let type_check_identifier ctx name pos =
       let typ = Hashtbl.find ctx.variables name in
       { texpr_desc = TIdentifier name; texpr_type = typ; texpr_pos = pos }
     with Not_found ->
+      (* Check if it's a program reference *)
+      if Hashtbl.mem ctx.programs name then
+        let prog_def = Hashtbl.find ctx.programs name in
+        { texpr_desc = TIdentifier name; texpr_type = ProgramRef prog_def.prog_type; texpr_pos = pos }
       (* Check if it's a map - but don't create a Map type for standalone identifiers *)
-      if Hashtbl.mem ctx.maps name then
+      else if Hashtbl.mem ctx.maps name then
         type_error ("Map '" ^ name ^ "' cannot be used as a standalone identifier. Use map[key] for map access.") pos
       else
         type_error ("Undefined variable: " ^ name) pos
@@ -301,8 +310,25 @@ let rec type_check_function_call ctx name args pos =
        | _ ->
            (* Regular built-in function - check argument count and types *)
            if List.length expected_params = List.length arg_types then
-             let unified = List.map2 unify_types expected_params arg_types in
-             if List.for_all (function Some _ -> true | None -> false) unified then
+             (* Special handling for program lifecycle functions *)
+             let types_match = match name with
+               | "load_program" | "attach_program" ->
+                   (* For program lifecycle functions, accept any ProgramRef *)
+                   (match expected_params, arg_types with
+                    | ProgramRef _ :: rest_expected, ProgramRef _ :: rest_actual ->
+                        (* First parameter is any ProgramRef, check remaining parameters *)
+                        let remaining_unified = List.map2 unify_types rest_expected rest_actual in
+                        List.for_all (function Some _ -> true | None -> false) remaining_unified
+                    | _ ->
+                        (* Standard type checking for other parameters *)
+                        let unified = List.map2 unify_types expected_params arg_types in
+                        List.for_all (function Some _ -> true | None -> false) unified)
+               | _ ->
+                   (* Standard type checking for other built-in functions *)
+                   let unified = List.map2 unify_types expected_params arg_types in
+                   List.for_all (function Some _ -> true | None -> false) unified
+             in
+             if types_match then
                { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = pos }
              else
                type_error ("Type mismatch in function call: " ^ name) pos
@@ -822,6 +848,8 @@ let type_check_ast ast =
              Hashtbl.replace ctx.types name type_def)
     | MapDecl map_decl ->
         Hashtbl.replace ctx.maps map_decl.name map_decl
+    | Program prog ->
+        Hashtbl.replace ctx.programs prog.prog_name prog
     | _ -> ()
   ) ast;
   
@@ -994,7 +1022,7 @@ let rec type_check_and_annotate_ast ast =
   let ctx = create_context () in
   ctx.multi_program_analysis <- Some multi_prog_analysis;
   
-  (* First pass: collect type definitions, map declarations, and config declarations *)
+  (* First pass: collect type definitions, map declarations, config declarations, and programs *)
   List.iter (function
     | TypeDef type_def ->
         (match type_def with
@@ -1007,6 +1035,8 @@ let rec type_check_and_annotate_ast ast =
         Hashtbl.replace ctx.maps map_decl.name map_decl
     | ConfigDecl config_decl ->
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
+    | Program prog ->
+        Hashtbl.replace ctx.programs prog.prog_name prog
     | Userspace userspace_block ->
         (* Collect userspace struct definitions *)
         List.iter (fun struct_def ->

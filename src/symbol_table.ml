@@ -12,6 +12,7 @@ type symbol_kind =
   | Parameter of bpf_type
   | EnumConstant of string * int option  (* enum_name, value *)
   | Config of config_declaration
+  | Program of program_def
 
 (** Symbol information *)
 type symbol = {
@@ -253,6 +254,11 @@ let add_config_decl table config_decl =
   let pos = config_decl.config_pos in
   add_symbol table config_decl.config_name (Config config_decl) Public pos
 
+(** Add program declaration to symbol table *)
+let add_program_decl table prog_decl =
+  let pos = prog_decl.prog_pos in
+  add_symbol table prog_decl.prog_name (Program prog_decl) Public pos
+
 (** Check if map is global *)
 let is_global_map table name =
   Hashtbl.mem table.global_maps name
@@ -328,6 +334,9 @@ and process_declaration_accumulate table declaration =
       table
       
   | Ast.Program prog ->
+      (* Add program as a symbol first *)
+      add_program_decl table prog;
+      
       let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
       
       (* Process program maps *)
@@ -406,6 +415,9 @@ and process_declaration table = function
       let _ = exit_scope table_with_func in ()
       
   | Ast.Program prog ->
+      (* Add program as a symbol first *)
+      add_program_decl table prog;
+      
       let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
       
       (* Process program maps *)
@@ -695,6 +707,7 @@ let string_of_symbol_kind = function
   | EnumConstant (enum_name, value) ->
       "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")
   | Config config_decl -> "config:" ^ config_decl.config_name
+  | Program prog_decl -> "program:" ^ prog_decl.prog_name ^ ":" ^ string_of_program_type prog_decl.prog_type
 
 let string_of_visibility = function
   | Public -> "pub"
