@@ -172,6 +172,11 @@
  (modules test_string_type)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_string_codegen)
+ (modules test_string_codegen)
+ (libraries kernelscript alcotest str unix))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -195,7 +200,8 @@
   test_userspace_for_codegen.exe
   test_userspace_statements.exe
   test_return_value_propagation.exe
-  test_userspace_struct_flexibility.exe)
+  test_userspace_struct_flexibility.exe
+  test_string_codegen.exe)
  (action
   (progn
    (run ./test_userspace.exe)
@@ -203,7 +209,8 @@
    (run ./test_userspace_for_codegen.exe)
    (run ./test_userspace_statements.exe)
    (run ./test_return_value_propagation.exe)
-   (run ./test_userspace_struct_flexibility.exe))))
+   (run ./test_userspace_struct_flexibility.exe)
+   (run ./test_string_codegen.exe))))
 
 (rule
  (alias core-tests)
