@@ -945,84 +945,221 @@ while condition && iterations < MAX_ITERATIONS {
 }
 ```
 
-## 7. Error Handling
+## 7. Error Handling and Resource Management
 
-### 7.1 Simple Result Types
+### 7.1 Throw and Catch Statements
+
+KernelScript provides modern error handling through `throw` and `catch` statements that compile to efficient C error checking code. Functions do not require annotations to declare what errors they can throw.
+
 ```kernelscript
-// Functions that can fail return simple result types
-fn parse_ip_header(packet: *u8, len: u32) -> Result_IpHeader_ParseError {
-    if len < 20 {
-        return Err_ParseError(ParseError::TooShort);
-    }
-    
-    let header = cast_to_ip_header(packet);
-    if header.version != 4 {
-        return Err_ParseError(ParseError::InvalidVersion);
-    }
-    
-    return Ok_IpHeader(header);
-}
-
-// Error propagation with simple syntax
-fn process_packet(ctx: *XdpContext) -> Result_XdpAction_ProcessError {
-    let packet = get_packet(ctx);
-    if packet == null {
-        return Err_ProcessError(ProcessError::InvalidContext);
-    }
-    
-    let ip_result = parse_ip_header(packet.data, packet.len);
-    if is_err(ip_result) {
-        return Err_ProcessError(ProcessError::ParseFailed);
-    }
-    
-    let ip_header = unwrap_ok(ip_result);
-    // Process the packet
-    return Ok_XdpAction(XdpAction::Pass);
-}
-```
-
-### 7.2 Simple Option Types
-```kernelscript
-// Functions that might not return a value
-fn find_tcp_header(packet: *u8, len: u32) -> Option_TcpHeader {
-    let ip_header = cast_to_ip_header(packet);
-    if ip_header.protocol != IPPROTO_TCP {
-        return None_TcpHeader();
-    }
-    
-    let tcp_offset = ip_header.header_length * 4;
-    if len < tcp_offset + 20 {
-        return None_TcpHeader();
-    }
-    
-    let tcp_header = cast_to_tcp_header(packet + tcp_offset);
-    return Some_TcpHeader(tcp_header);
-}
-
-// Using option values
-fn handle_packet(packet: *u8, len: u32) {
-    let tcp_opt = find_tcp_header(packet, len);
-    if is_some(tcp_opt) {
-        let tcp_header = unwrap_some(tcp_opt);
-        process_tcp_packet(tcp_header);
-    }
-}
-```
-
-### 7.3 Simple Error Types
-```kernelscript
+// Error types as simple enums
 enum ParseError {
     TooShort = 1,
     InvalidVersion = 2,
     BadChecksum = 3,
 }
 
-enum ProcessError {
-    InvalidContext = 1,
-    ParseFailed = 2,
-    OutOfMemory = 3,
+enum NetworkError {
+    AllocationFailed = 1,
+    MapUpdateFailed = 2,
+    RateLimitExceeded = 3,
 }
 
+// Functions can throw errors without annotations
+fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
+    if len < 20 {
+        throw ParseError::TooShort;
+    }
+    
+    let header = cast_to_ip_header(packet);
+    if header.version != 4 {
+        throw ParseError::InvalidVersion;
+    }
+    
+    return header;
+}
+
+// Error handling with try/catch blocks
+fn process_packet(ctx: XdpContext) -> XdpAction {
+    try {
+        let packet = get_packet(ctx);
+        if packet == null {
+            throw NetworkError::AllocationFailed;
+        }
+        
+        let header = parse_ip_header(packet.data, packet.len);
+        update_flow_stats(header);
+        
+        return XdpAction::Pass;
+        
+    } catch ParseError::TooShort {
+        return XdpAction::Drop;
+        
+    } catch ParseError::InvalidVersion {
+        return XdpAction::Drop;
+        
+    } catch NetworkError::AllocationFailed {
+        return XdpAction::Aborted;
+    }
+}
+```
+
+### 7.2 Resource Management with Defer
+
+The `defer` statement ensures cleanup code runs automatically at function exit, regardless of how the function returns (normal return, throw, or early exit).
+
+```kernelscript
+// Resource management with automatic cleanup
+fn update_shared_counter(index: u32) -> bool {
+    let data = shared_counters[index];
+    if data == null {
+        return false;
+    }
+    
+    // Acquire lock and ensure it's always released
+    bpf_spin_lock(&data.lock);
+    defer bpf_spin_unlock(&data.lock);  // Always executes at function exit
+    
+    // Critical section
+    data.counter += 1;
+    
+    if data.counter > 1000000 {
+        throw NetworkError::RateLimitExceeded;  // defer still executes
+    }
+    
+    return true;  // defer executes here too
+}
+
+// Multiple defer statements execute in reverse order (LIFO)
+fn complex_resource_management() -> bool {
+    let buffer = allocate_buffer();
+    defer free_buffer(buffer);          // Executes 3rd
+    
+    let lock = acquire_lock();
+    defer release_lock(lock);           // Executes 2nd
+    
+    let fd = open_file("config.txt");
+    defer close_file(fd);               // Executes 1st
+    
+    // Use resources safely
+    return process_data(buffer, lock, fd);
+    // All defer statements execute automatically in reverse order
+}
+```
+
+### 7.3 Defer with Try/Catch
+
+Defer statements work seamlessly with error handling - cleanup always occurs even when exceptions are thrown or caught.
+
+```kernelscript
+fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
+    let packet_buffer = allocate_packet_buffer();
+    defer free_packet_buffer(packet_buffer);  // Always executes
+    
+    try {
+        let lock = acquire_flow_lock();
+        defer release_flow_lock(lock);        // Always executes
+        
+        let flow_data = process_flow(packet_buffer);
+        if flow_data.is_suspicious() {
+            throw NetworkError::RateLimitExceeded;
+        }
+        
+        return XdpAction::Pass;
+        
+    } catch NetworkError::RateLimitExceeded {
+        increment_drop_counter();
+        return XdpAction::Drop;
+        // Both defer statements execute even in catch block
+    }
+}
+```
+
+### 7.4 Error Handling Rules and Compiler Behavior
+
+#### 7.4.1 eBPF Program Functions
+
+**All throws must be caught** in eBPF program functions. Uncaught throws result in **compilation errors**.
+
+```kernelscript
+program packet_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        try {
+            let result = process_packet(ctx);  // Might throw
+            return XdpAction::Pass;
+            
+        } catch ParseError::TooShort {
+            return XdpAction::Drop;
+            
+        } catch NetworkError::AllocationFailed {
+            return XdpAction::Aborted;
+        }
+        // ❌ Compiler ERROR if any possible throw is not caught
+    }
+}
+```
+
+#### 7.4.2 Helper Functions
+
+Helper functions can propagate errors without catching them - this enables natural error composition and reduces boilerplate.
+
+```kernelscript
+// Helper functions can throw without catching
+fn extract_flow_key(ctx: XdpContext) -> FlowKey {
+    let packet = get_packet(ctx);
+    if packet == null {
+        throw NetworkError::AllocationFailed;  // ✅ OK - propagates to caller
+    }
+    
+    return parse_flow_key(packet);  // May also throw - propagates up
+}
+
+fn validate_flow(key: FlowKey) -> FlowState {
+    let state = lookup_flow_state(key);  // May throw
+    if state.is_expired() {
+        throw NetworkError::RateLimitExceeded;  // ✅ OK - propagates to caller
+    }
+    
+    return state;
+}
+```
+
+#### 7.4.3 Userspace Functions
+
+Userspace functions generate **compiler warnings** for uncaught throws, but compilation succeeds. Uncaught throws at runtime terminate the program.
+
+```kernelscript
+fn main() -> i32 {
+    let prog = load_program(packet_filter);    // ⚠️ Warning: might throw
+    attach_program(prog, "eth0", 0);           // ⚠️ Warning: might throw
+    return 0;
+    // If any throw occurs, program terminates (like panic)
+}
+
+// Better - explicit error handling
+fn main() -> i32 {
+    try {
+        let prog = load_program(packet_filter);
+        attach_program(prog, "eth0", 0);
+        print("Program attached successfully");
+        return 0;
+        
+    } catch LoadError::ProgramNotFound {
+        print("Failed to load program");
+        return 1;
+        
+    } catch AttachError::PermissionDenied {
+        print("Permission denied - check privileges");
+        return 2;
+    }
+}
+```
+
+### 7.5 Panic and Assertions
+
+For unrecoverable errors, KernelScript provides panic and assert macros:
+
+```kernelscript
 // Panic for unrecoverable errors
 fn critical_operation() {
     if unsafe_condition() {
@@ -1752,7 +1889,8 @@ parameter = identifier ":" type_annotation ;
 statement_list = { statement } ;
 statement = expression_statement | assignment_statement | declaration_statement |
             if_statement | for_statement | while_statement | return_statement |
-            break_statement | continue_statement | block_statement | delete_statement ;
+            break_statement | continue_statement | block_statement | delete_statement |
+            try_statement | throw_statement | defer_statement ;
 
 expression_statement = expression ";" ;
 assignment_statement = identifier assignment_operator expression ";" ;
@@ -1774,6 +1912,15 @@ break_statement = "break" ";" ;
 continue_statement = "continue" ";" ;
 delete_statement = "delete" primary_expression "[" expression "]" ";" ;
 block_statement = "{" statement_list "}" ;
+
+(* Error handling and resource management statements *)
+try_statement = "try" "{" statement_list "}" { catch_clause } ;
+catch_clause = "catch" error_pattern "{" statement_list "}" ;
+error_pattern = identifier "::" identifier ;
+
+throw_statement = "throw" error_pattern ";" ;
+
+defer_statement = "defer" expression ";" ;
 
 (* Expressions *)
 expression = logical_or_expression ;
