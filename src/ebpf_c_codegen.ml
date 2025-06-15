@@ -82,6 +82,7 @@ let rec ebpf_type_from_ir_type = function
   | IRF64 -> "__u64" (* Fixed point representation in kernel *)
   | IRBool -> "__u8"
   | IRChar -> "char"
+  | IRStr size -> sprintf "str_%d_t" size
   | IRPointer (inner_type, _) -> sprintf "%s*" (ebpf_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ebpf_type_from_ir_type inner_type) size
   | IRStruct (name, _) -> sprintf "struct %s" name
@@ -112,6 +113,98 @@ let ir_map_type_to_c_type = function
   | IRRingBuffer -> "BPF_MAP_TYPE_RINGBUF"
   | IRPerfEvent -> "BPF_MAP_TYPE_PERF_EVENT_ARRAY"
   | IRDevMap -> "BPF_MAP_TYPE_DEVMAP"
+
+(** Collect all string sizes used in the program *)
+
+let rec collect_string_sizes_from_type = function
+  | IRStr size -> [size]
+  | IRPointer (inner_type, _) -> collect_string_sizes_from_type inner_type
+  | IRArray (inner_type, _, _) -> collect_string_sizes_from_type inner_type
+  | IROption inner_type -> collect_string_sizes_from_type inner_type
+  | IRResult (ok_type, err_type) -> 
+      (collect_string_sizes_from_type ok_type) @ (collect_string_sizes_from_type err_type)
+  | _ -> []
+
+let collect_string_sizes_from_value ir_val =
+  collect_string_sizes_from_type ir_val.val_type
+
+let collect_string_sizes_from_expr ir_expr =
+  match ir_expr.expr_desc with
+  | IRValue ir_val -> collect_string_sizes_from_value ir_val
+  | IRBinOp (left, _, right) -> 
+      (collect_string_sizes_from_value left) @ (collect_string_sizes_from_value right)
+  | IRUnOp (_, ir_val) -> collect_string_sizes_from_value ir_val
+  | IRCast (ir_val, target_type) -> 
+      (collect_string_sizes_from_value ir_val) @ (collect_string_sizes_from_type target_type)
+  | IRFieldAccess (obj_val, _) -> collect_string_sizes_from_value obj_val
+
+let rec collect_string_sizes_from_instr ir_instr =
+  match ir_instr.instr_desc with
+  | IRAssign (dest_val, expr) -> 
+      (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
+  | IRCall (_, args, ret_opt) ->
+      let args_sizes = List.fold_left (fun acc arg -> 
+        acc @ (collect_string_sizes_from_value arg)) [] args in
+      let ret_sizes = match ret_opt with
+        | Some ret_val -> collect_string_sizes_from_value ret_val
+        | None -> []
+      in
+      args_sizes @ ret_sizes
+  | IRMapLoad (map_val, key_val, dest_val, _) ->
+      (collect_string_sizes_from_value map_val) @ 
+      (collect_string_sizes_from_value key_val) @ 
+      (collect_string_sizes_from_value dest_val)
+  | IRMapStore (map_val, key_val, value_val, _) ->
+      (collect_string_sizes_from_value map_val) @ 
+      (collect_string_sizes_from_value key_val) @ 
+      (collect_string_sizes_from_value value_val)
+  | IRMapDelete (map_val, key_val) ->
+      (collect_string_sizes_from_value map_val) @ 
+      (collect_string_sizes_from_value key_val)
+  | IRReturn ret_opt ->
+      (match ret_opt with
+       | Some ret_val -> collect_string_sizes_from_value ret_val
+       | None -> [])
+  | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+      let cond_sizes = collect_string_sizes_from_value cond_val in
+      let then_sizes = List.fold_left (fun acc instr -> 
+        acc @ (collect_string_sizes_from_instr instr)) [] then_instrs in
+      let else_sizes = match else_instrs_opt with
+        | Some else_instrs -> List.fold_left (fun acc instr -> 
+            acc @ (collect_string_sizes_from_instr instr)) [] else_instrs
+        | None -> []
+      in
+      cond_sizes @ then_sizes @ else_sizes
+  | _ -> []
+
+let collect_string_sizes_from_function ir_func =
+  List.fold_left (fun acc block ->
+    List.fold_left (fun acc instr ->
+      acc @ (collect_string_sizes_from_instr instr)
+    ) acc block.instructions
+  ) [] ir_func.basic_blocks
+
+let collect_string_sizes_from_multi_program ir_multi_prog =
+  List.fold_left (fun acc ir_prog ->
+    let main_sizes = collect_string_sizes_from_function ir_prog.main_function in
+    let other_sizes = List.fold_left (fun acc func ->
+      acc @ (collect_string_sizes_from_function func)
+    ) [] ir_prog.functions in
+    acc @ main_sizes @ other_sizes
+  ) [] ir_multi_prog.programs
+
+(** Generate string type definitions *)
+
+let generate_string_typedefs ctx ir_multi_prog =
+  let all_sizes = collect_string_sizes_from_multi_program ir_multi_prog in
+  let unique_sizes = List.sort_uniq compare all_sizes in
+  if unique_sizes <> [] then (
+    emit_line ctx "/* String type definitions */";
+    List.iter (fun size ->
+      emit_line ctx (sprintf "typedef struct { char data[%d]; __u16 len; } str_%d_t;" size size)
+    ) unique_sizes;
+    emit_blank_line ctx
+  )
 
 (** Generate standard eBPF includes *)
 
@@ -220,12 +313,28 @@ let generate_config_map_definition ctx config_decl =
 
 (** Generate C expression from IR value *)
 
-let generate_c_value _ctx ir_val =
+let generate_c_value ctx ir_val =
   match ir_val.value_desc with
   | IRLiteral (IntLit i) -> string_of_int i
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
-  | IRLiteral (StringLit s) -> sprintf "\"%s\"" s
+  | IRLiteral (StringLit s) -> 
+      (* Generate string literal as struct initialization *)
+      (match ir_val.val_type with
+       | IRStr size ->
+           let temp_var = fresh_var ctx "str_lit" in
+           let len = String.length s in
+           let max_content_len = size - 1 in (* Reserve space for null terminator *)
+           let actual_len = min len max_content_len in
+           let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+           
+           (* Generate cleaner initialization with string literal + padding *)
+           emit_line ctx (sprintf "str_%d_t %s = {" size temp_var);
+           emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+           emit_line ctx (sprintf "    .len = %d" actual_len);
+           emit_line ctx "};";
+           temp_var
+       | _ -> sprintf "\"%s\"" s) (* Fallback for non-string types *)
   | IRLiteral (ArrayLit _) -> "/* Array literal not supported */"
   | IRVariable name -> 
       (* Check if this is a config access *)
@@ -252,22 +361,100 @@ let generate_c_value _ctx ir_val =
       | _, field -> sprintf "%s->%s" ctx_var field
       end
 
+(** Generate string operations for eBPF *)
+
+let generate_string_concat ctx left_val right_val =
+  (* For eBPF, we need to manually implement string concatenation *)
+  let temp_var = fresh_var ctx "str_concat" in
+  let left_str = generate_c_value ctx left_val in
+  let right_str = generate_c_value ctx right_val in
+  
+  (* Extract sizes from string types *)
+  let (left_size, right_size) = match left_val.val_type, right_val.val_type with
+    | IRStr ls, IRStr rs -> (ls, rs)
+    | _ -> failwith "String concat called on non-string types"
+  in
+  let result_size = left_size + right_size in
+  
+  (* Generate the concatenation code using typedef'd struct *)
+  emit_line ctx (sprintf "str_%d_t %s;" result_size temp_var);
+  emit_line ctx (sprintf "%s.len = 0;" temp_var);
+  let max_content_len = result_size - 1 in (* Reserve space for null terminator *)
+  
+  (* Copy first string with bounds checking and null terminator detection *)
+  emit_line ctx "#pragma unroll";
+  emit_line ctx (sprintf "for (int i = 0; i < %d; i++) {" (left_size - 1));
+  emit_line ctx (sprintf "    if (%s.len >= %d) break;" temp_var max_content_len);
+  emit_line ctx (sprintf "    if (%s.data[i] == 0) break;" left_str);
+  emit_line ctx (sprintf "    %s.data[%s.len++] = %s.data[i];" temp_var temp_var left_str);
+  emit_line ctx "}";
+  
+  (* Copy second string with bounds checking and null terminator detection *)
+  emit_line ctx "#pragma unroll";
+  emit_line ctx (sprintf "for (int i = 0; i < %d; i++) {" (right_size - 1));
+  emit_line ctx (sprintf "    if (%s.len >= %d) break;" temp_var max_content_len);
+  emit_line ctx (sprintf "    if (%s.data[i] == 0) break;" right_str);
+  emit_line ctx (sprintf "    %s.data[%s.len++] = %s.data[i];" temp_var temp_var right_str);
+  emit_line ctx "}";
+  
+  (* Add null terminator *)
+  emit_line ctx (sprintf "if (%s.len < %d) %s.data[%s.len] = 0;" temp_var max_content_len temp_var temp_var);
+  
+  temp_var
+
+let generate_string_compare ctx left_val right_val is_equal =
+  (* Use bpf_strncmp() helper for efficient string comparison *)
+  let left_str = generate_c_value ctx left_val in
+  let right_str = generate_c_value ctx right_val in
+  
+  (* Extract size from left string type for bpf_strncmp bounds *)
+  let left_size = match left_val.val_type with
+    | IRStr size -> size
+    | _ -> failwith "String compare called on non-string type"
+  in
+  
+  (* Generate bpf_strncmp() call - returns 0 if strings are equal *)
+  let cmp_result = sprintf "bpf_strncmp(%s.data, %d, %s.data)" left_str left_size right_str in
+  
+  if is_equal then
+    sprintf "(%s == 0)" cmp_result  (* Equal if bpf_strncmp returns 0 *)
+  else
+    sprintf "(%s != 0)" cmp_result  (* Not equal if bpf_strncmp returns non-zero *)
+
 (** Generate C expression from IR expression *)
 
 let generate_c_expression ctx ir_expr =
   match ir_expr.expr_desc with
   | IRValue ir_val -> generate_c_value ctx ir_val
   | IRBinOp (left, op, right) ->
-      let left_str = generate_c_value ctx left in
-      let right_str = generate_c_value ctx right in
-      let op_str = match op with
-        | IRAdd -> "+" | IRSub -> "-" | IRMul -> "*" | IRDiv -> "/" | IRMod -> "%"
-        | IREq -> "==" | IRNe -> "!=" | IRLt -> "<" | IRLe -> "<=" | IRGt -> ">" | IRGe -> ">="
-        | IRAnd -> "&&" | IROr -> "||"
-        | IRBitAnd -> "&" | IRBitOr -> "|" | IRBitXor -> "^"
-        | IRShiftL -> "<<" | IRShiftR -> ">>"
-      in
-      sprintf "(%s %s %s)" left_str op_str right_str
+      (* Check if this is a string operation *)
+      (match left.val_type, op, right.val_type with
+       | IRStr _, IRAdd, IRStr _ ->
+           (* String concatenation *)
+           generate_string_concat ctx left right
+       | IRStr _, IREq, IRStr _ ->
+           (* String equality *)
+           generate_string_compare ctx left right true
+       | IRStr _, IRNe, IRStr _ ->
+           (* String inequality *)
+           generate_string_compare ctx left right false
+       | IRStr _, IRAdd, _ ->
+           (* String indexing: str.data[index] *)
+           let array_str = generate_c_value ctx left in
+           let index_str = generate_c_value ctx right in
+           sprintf "%s.data[%s]" array_str index_str
+       | _ ->
+           (* Regular binary operation *)
+           let left_str = generate_c_value ctx left in
+           let right_str = generate_c_value ctx right in
+           let op_str = match op with
+             | IRAdd -> "+" | IRSub -> "-" | IRMul -> "*" | IRDiv -> "/" | IRMod -> "%"
+             | IREq -> "==" | IRNe -> "!=" | IRLt -> "<" | IRLe -> "<=" | IRGt -> ">" | IRGe -> ">="
+             | IRAnd -> "&&" | IROr -> "||"
+             | IRBitAnd -> "&" | IRBitOr -> "|" | IRBitXor -> "^"
+             | IRShiftL -> "<<" | IRShiftR -> ">>"
+           in
+           sprintf "(%s %s %s)" left_str op_str right_str)
   | IRUnOp (op, ir_val) ->
       let val_str = generate_c_value ctx ir_val in
       let op_str = match op with
@@ -426,9 +613,28 @@ let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
 let rec generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) ->
-      let dest_str = generate_c_value ctx dest_val in
-      let expr_str = generate_c_expression ctx expr in
-      emit_line ctx (sprintf "%s = %s;" dest_str expr_str)
+      (* Check if this is a string assignment *)
+      (match dest_val.val_type, expr.expr_desc with
+       | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
+           (* String to string assignment - need to copy struct *)
+           let dest_str = generate_c_value ctx dest_val in
+           let src_str = generate_c_value ctx src_val in
+           emit_line ctx (sprintf "%s = %s;" dest_str src_str)
+               | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
+           (* String literal to string assignment - already handled in generate_c_value *)
+           let dest_str = generate_c_value ctx dest_val in
+           let src_str = generate_c_value ctx src_val in
+           emit_line ctx (sprintf "%s = %s;" dest_str src_str)
+       | IRStr _, _ ->
+           (* Other string expressions (concatenation, etc.) *)
+           let dest_str = generate_c_value ctx dest_val in
+           let expr_str = generate_c_expression ctx expr in
+           emit_line ctx (sprintf "%s = %s;" dest_str expr_str)
+       | _ ->
+           (* Regular assignment *)
+           let dest_str = generate_c_value ctx dest_val in
+           let expr_str = generate_c_expression ctx expr in
+           emit_line ctx (sprintf "%s = %s;" dest_str expr_str))
 
   | IRCall (name, args, ret_opt) ->
       (* Check if this is a built-in function that needs context-specific translation *)
@@ -941,6 +1147,10 @@ let compile_multi_to_c_with_analysis ir_multi_program
   
   (* Add enhanced includes for multi-program systems *)
   generate_includes ctx;
+  
+  (* Generate string type definitions *)
+  generate_string_typedefs ctx ir_multi_program;
+  
   emit_line ctx "/* Enhanced Multi-Program eBPF System */";
   emit_line ctx (sprintf "/* Programs: %d, Global Maps: %d */" 
     (List.length ir_multi_program.programs) 

@@ -14,7 +14,7 @@
 
 /* Keywords */
 %token PROGRAM FN MAP TYPE STRUCT ENUM
-%token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR
+%token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET MUT PUB PRIV CONFIG
 %token IN DELETE
@@ -194,6 +194,7 @@ bpf_type:
   | I64 { I64 }
   | BOOL { Bool }
   | CHAR { Char }
+  | STR LT INT GT { Str $3 }
   | IDENTIFIER { UserType $1 }
   | LBRACKET bpf_type SEMICOLON INT RBRACKET { Array ($2, $4) }
   | MULTIPLY bpf_type { Pointer $2 }

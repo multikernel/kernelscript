@@ -409,6 +409,9 @@ i8, i16, i32, i64      // Signed integers
 bool                   // Boolean
 char                   // 8-bit character
 
+// Fixed-size string types (same syntax for both kernel and userspace)
+str<N>                 // Fixed-size string with capacity N characters (N can be any positive integer)
+
 // Pointer types (restricted usage in kernel context)
 *u8, *u32, *void       // Pointers to specific types
 
@@ -461,6 +464,88 @@ type EthBuffer = [u8; 14];      // Ethernet header buffer
 type IpBuffer = [u8; 20];       // IP header buffer
 type SmallBuffer = [u8; 256];   // Small general buffer
 type PacketBuffer = [u8; 1500]; // Maximum packet buffer
+
+// String type aliases for common patterns
+type ProcessName = str<16>;     // Process name string
+type IpAddressStr = str<16>;    // IP address string ("255.255.255.255")
+type FilePath = str<256>;       // File path string
+type LogMessage = str<128>;     // Log message string
+type ShortString = str<32>;     // Short general-purpose string
+type MediumString = str<128>;   // Medium general-purpose string
+```
+
+### 4.4 String Operations
+KernelScript supports fixed-size strings with `str<N>` syntax, where N can be any positive integer (e.g., `str<1>`, `str<10>`, `str<42>`, `str<1000>`). The following operations are supported:
+
+```kernelscript
+// String declaration and assignment (N can be any positive integer)
+let name: str<16> = "John";
+let surname: str<16> = "Doe";
+let mut buffer: str<32> = "Hello";
+let small_buffer: str<8> = "tiny";
+let custom_size: str<42> = "custom";
+let large_buffer: str<512> = "large text content";
+
+// Assignment
+buffer = name;                  // Assignment (size must be compatible)
+
+// Indexing (read-only character access)
+let first_char: char = name[0]; // Returns 'J'
+let last_char: char = name[3];  // Returns 'n'
+
+// String concatenation (explicit result size required)
+let full_name: str<32> = name + surname;  // "JohnDoe"
+let greeting: str<20> = "Hello " + name;  // "Hello John"
+let custom_msg: str<100> = small_buffer + " and " + custom_size;  // Arbitrary sizes work
+
+// String comparison
+if name == "John" {             // Equality comparison
+    print("Name matches");
+}
+
+if surname != "Smith" {         // Inequality comparison
+    print("Surname is not Smith");
+}
+
+// Examples with different contexts
+struct PersonInfo {
+    name: ProcessName,          // str<16>
+    address: FilePath,          // str<256>
+    status: ShortString,        // str<32>
+}
+
+// Kernel space usage
+program user_monitor : kprobe("sys_open") {
+    fn main(ctx: KprobeContext) -> i32 {
+        let process_name: ProcessName = get_current_process_name();
+        let file_path: FilePath = get_file_path(ctx);
+        
+        // String operations work the same in kernel space
+        if process_name == "malware" {
+            let log_msg: LogMessage = "Blocked process: " + process_name;
+            bpf_printk(log_msg);
+            return -1;
+        }
+        
+        return 0;
+    }
+}
+
+// Userspace usage
+struct Args {
+    interface: str<16>,
+    config_file: str<256>,
+}
+
+fn main(args: Args) -> i32 {
+    // Same string operations in userspace
+    if args.interface == "eth0" {
+        let status_msg: str<64> = "Using interface: " + args.interface;
+        print(status_msg);
+    }
+    
+    return 0;
+}
 ```
 
 ## 5. eBPF Maps and Global Sharing
@@ -1729,9 +1814,11 @@ struct_literal_field = identifier ":" expression ;
 type_annotation = primitive_type | compound_type | identifier ;
 
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
-                 "bool" | "char" | "void" | "ProgramRef" ;
+                 "bool" | "char" | "void" | "ProgramRef" | string_type ;
 
 compound_type = array_type | pointer_type | option_type | result_type ;
+
+string_type = "str" "<" integer_literal ">" ;
 
 array_type = "[" type_annotation ";" integer_literal "]" ;
 pointer_type = "*" [ "const" | "mut" ] type_annotation ;

@@ -104,7 +104,7 @@ let lower_literal lit pos =
   let ir_lit = IRLiteral lit in
   let ir_type = match lit with
     | IntLit _ -> IRU32  (* Default integer type *)
-    | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+    | StringLit s -> IRStr (max 1 (String.length s))  (* String literals get IRStr type *)
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
     | ArrayLit literals -> 
@@ -329,25 +329,33 @@ let rec lower_expression ctx (expr : Ast.expr) =
            let result_reg = allocate_register ctx in
            let element_type = match array_val.val_type with
              | IRArray (elem_type, _, _) -> elem_type
+             | IRStr _ -> IRChar  (* String indexing returns char *)
              | _ -> failwith "Array access on non-array type"
            in
            let result_val = make_ir_value (IRRegister result_reg) element_type expr.expr_pos in
            
-           (* Generate pointer arithmetic and load *)
-           let ptr_reg = allocate_register ctx in
-           let ptr_val = make_ir_value (IRRegister ptr_reg) 
-             (IRPointer (element_type, make_bounds_info ())) expr.expr_pos in
-           
-           (* ptr = &array[index] *)
-           let ptr_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) 
-             ptr_val.val_type expr.expr_pos in
-           let ptr_assign = make_ir_instruction (IRAssign (ptr_val, ptr_expr)) expr.expr_pos in
-           emit_instruction ctx ptr_assign;
-           
-           (* result = *ptr *)
-           let load_expr = make_ir_expr (IRValue ptr_val) element_type expr.expr_pos in
-           let load_assign = make_ir_instruction (IRAssign (result_val, load_expr)) expr.expr_pos in
-           emit_instruction ctx load_assign;
+           (match array_val.val_type with
+            | IRStr _ ->
+                (* For strings, generate direct indexing: str.data[index] *)
+                let index_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) element_type expr.expr_pos in
+                let index_assign = make_ir_instruction (IRAssign (result_val, index_expr)) expr.expr_pos in
+                emit_instruction ctx index_assign
+            | _ ->
+                (* For arrays, generate pointer arithmetic and load *)
+                let ptr_reg = allocate_register ctx in
+                let ptr_val = make_ir_value (IRRegister ptr_reg) 
+                  (IRPointer (element_type, make_bounds_info ())) expr.expr_pos in
+                
+                (* ptr = &array[index] *)
+                let ptr_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) 
+                  ptr_val.val_type expr.expr_pos in
+                let ptr_assign = make_ir_instruction (IRAssign (ptr_val, ptr_expr)) expr.expr_pos in
+                emit_instruction ctx ptr_assign;
+                
+                (* result = *ptr *)
+                let load_expr = make_ir_expr (IRValue ptr_val) element_type expr.expr_pos in
+                let load_assign = make_ir_instruction (IRAssign (result_val, load_expr)) expr.expr_pos in
+                emit_instruction ctx load_assign);
            
            result_val)
            
@@ -437,9 +445,23 @@ let rec lower_statement ctx stmt =
   | Ast.Assignment (name, expr) ->
       let value = lower_expression ctx expr in
       let reg = get_variable_register ctx name in
-      let target_type = value.val_type in
+      (* Get the target variable's actual type from the symbol table *)
+      let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
+        | Some symbol -> 
+            (match symbol.kind with
+             | Symbol_table.Variable var_type -> ast_type_to_ir_type var_type
+             | _ -> value.val_type)
+        | None -> value.val_type (* Fallback to value type if not found *)
+      in
       let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
-      let value_expr = make_ir_expr (IRValue value) target_type stmt.stmt_pos in
+      
+      (* If the target type is different from the value type, create a cast expression *)
+      let value_expr = 
+        if target_type <> value.val_type then
+          make_ir_expr (IRCast (value, target_type)) target_type stmt.stmt_pos
+        else
+          make_ir_expr (IRValue value) target_type stmt.stmt_pos
+      in
       let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
       emit_instruction ctx instr
       
@@ -492,12 +514,22 @@ let rec lower_statement ctx stmt =
         | IRU32 | IRBool -> 4
         | IRU64 -> 8
         | IRArray (_, count, _) -> count * 4 (* Simplified *)
+        | IRStr size -> size + 2 (* String data + length field *)
         | _ -> 8 (* Conservative estimate *)
       in
       ctx.stack_usage <- ctx.stack_usage + size;
       
       let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
-      let value_expr = make_ir_expr (IRValue value) target_type stmt.stmt_pos in
+      
+      (* If the target type is different from the value type, create a new value with the target type *)
+      let coerced_value = 
+        if target_type <> value.val_type then
+          make_ir_value value.value_desc target_type value.val_pos
+        else
+          value
+      in
+      
+      let value_expr = make_ir_expr (IRValue coerced_value) target_type stmt.stmt_pos in
       let instr = make_ir_instruction 
         (IRAssign (target_val, value_expr)) 
         ~stack_usage:size

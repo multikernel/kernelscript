@@ -167,6 +167,11 @@
  (modules test_program_ref)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_string_type)
+ (modules test_string_type)
+ (libraries kernelscript alcotest))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)

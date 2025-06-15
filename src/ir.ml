@@ -111,6 +111,7 @@ and ir_config_item = {
 and ir_type = 
   | IRU8 | IRU16 | IRU32 | IRU64 | IRBool | IRChar
   | IRI8 | IRF32 | IRF64 (* Add signed integers and floating point *)
+  | IRStr of int (* Fixed-size string str<N> *)
   | IRPointer of ir_type * bounds_info
   | IRArray of ir_type * int * bounds_info
   | IRStruct of string * (string * ir_type) list
@@ -486,6 +487,7 @@ let rec ast_type_to_ir_type = function
   | I16 -> IRU16 (* For now, map to unsigned for eBPF compatibility *)
   | I32 -> IRU32
   | I64 -> IRU64
+  | Str size -> IRStr size
   | Array (t, size) -> 
       let bounds = make_bounds_info ~min_size:size ~max_size:size () in
       IRArray (ast_type_to_ir_type t, size, bounds)
@@ -535,6 +537,7 @@ let rec string_of_ir_type = function
   | IRI8 -> "i8"
   | IRF32 -> "f32"
   | IRF64 -> "f64"
+  | IRStr size -> Printf.sprintf "str<%d>" size
   | IRPointer (t, _) -> Printf.sprintf "*%s" (string_of_ir_type t)
   | IRArray (t, size, _) -> Printf.sprintf "[%s; %d]" (string_of_ir_type t) size
   | IRStruct (name, _) -> Printf.sprintf "struct %s" name

@@ -112,6 +112,10 @@ let rec unify_types t1 t2 =
   (* Identical types *)
   | t1, t2 when t1 = t2 -> Some t1
   
+  (* String types - allow smaller strings to fit into larger ones *)
+  | Str size1, Str size2 when size1 <= size2 -> Some (Str size2)
+  | Str size1, Str size2 when size2 <= size1 -> Some (Str size1)
+  
   (* Conservative numeric type promotions - only allow explicit cases that are safe *)
   | U8, U16 | U16, U8 -> Some U16
   | U8, U32 | U32, U8 | U16, U32 | U32, U16 -> Some U32
@@ -204,7 +208,11 @@ let get_builtin_function_signature name =
 let type_check_literal lit pos =
   let typ = match lit with
     | IntLit _ -> U32  (* Default integer type *)
-    | StringLit _ -> Pointer U8  (* String is pointer to u8 *)
+    | StringLit s -> 
+        (* String literals are polymorphic - they can unify with any string type *)
+        (* For now, we'll use a default size but this will be refined during unification *)
+        let len = String.length s in
+        Str (max 1 len)  (* At least size 1 to handle empty strings *)
     | CharLit _ -> Char
     | BoolLit _ -> Bool
     | ArrayLit literals ->
@@ -216,7 +224,7 @@ let type_check_literal lit pos =
                | IntLit _ -> U32
                | BoolLit _ -> Bool
                | CharLit _ -> Char
-               | StringLit _ -> Pointer U8
+               | StringLit s -> Str (max 1 (String.length s))
                | ArrayLit _ -> U32  (* Nested arrays default to u32 for now *)
              in
              (* Verify all elements have the same type *)
@@ -225,7 +233,7 @@ let type_check_literal lit pos =
                  | IntLit _ -> U32
                  | BoolLit _ -> Bool
                  | CharLit _ -> Char
-                 | StringLit _ -> Pointer U8
+                 | StringLit s -> Str (max 1 (String.length s))
                  | ArrayLit _ -> U32
                in
                lit_type = first_type
@@ -379,6 +387,9 @@ and type_check_array_access ctx arr idx pos =
             { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
         | Pointer element_type ->
             { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = element_type; texpr_pos = pos }
+        | Str _ ->
+            (* String indexing returns char *)
+            { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = Char; texpr_pos = pos }
         | Map (key_type, value_type, _) ->
             (* This shouldn't happen anymore, but handle it for safety *)
             (match unify_types key_type typed_idx.texpr_type with
@@ -440,15 +451,42 @@ and type_check_binary_op ctx left op right pos =
   
   let result_type = match op with
     (* Arithmetic operations *)
-    | Add | Sub | Mul | Div | Mod ->
-        (* Handle pointer arithmetic *)
+    | Add ->
+        (* Handle string concatenation *)
+        (match typed_left.texpr_type, typed_right.texpr_type with
+         | Str size1, Str size2 -> 
+             (* String concatenation - we'll allow it and require explicit result sizing *)
+             (* For now, return a placeholder size that will be refined by assignment context *)
+             Str (size1 + size2)
+         | _ ->
+             (* Continue with regular arithmetic/pointer handling *)
+             (match typed_left.texpr_type, typed_right.texpr_type with
+              (* Pointer + Integer = Pointer (pointer offset) *)
+              | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64) -> Pointer t
+              (* Integer + Pointer = Pointer (pointer offset) *)
+              | (U8|U16|U32|U64|I8|I16|I32|I64), Pointer t -> Pointer t
+              (* Regular numeric arithmetic *)
+              | _ ->
+                  (* Try standard unification first *)
+                  (match unify_types typed_left.texpr_type typed_right.texpr_type with
+                   | Some unified_type ->
+                       (match unified_type with
+                        | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
+                        | _ -> type_error "Arithmetic operations require numeric types" pos)
+                   | None ->
+                       (* Special case: allow U32 literals to be promoted to U64 in arithmetic *)
+                       (match typed_left.texpr_type, typed_right.texpr_type with
+                        | U64, U32 -> U64  (* Promote U32 to U64 *)
+                        | U32, U64 -> U64  (* Promote U32 to U64 *)
+                        | I64, I32 -> I64  (* Promote I32 to I64 *)
+                        | I32, I64 -> I64  (* Promote I32 to I64 *)
+                        | _ -> type_error "Cannot unify types for arithmetic operation" pos))))
+    
+    | Sub | Mul | Div | Mod ->
+        (* Handle pointer arithmetic for subtraction *)
         (match typed_left.texpr_type, typed_right.texpr_type, op with
          (* Pointer - Pointer = size (pointer subtraction) *)
          | Pointer _, Pointer _, Sub -> U64  (* Return size type for pointer difference *)
-         (* Pointer + Integer = Pointer (pointer offset) *)
-         | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64), Add -> Pointer t
-         (* Integer + Pointer = Pointer (pointer offset) *)
-         | (U8|U16|U32|U64|I8|I16|I32|I64), Pointer t, Add -> Pointer t
          (* Pointer - Integer = Pointer (pointer offset) *)
          | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64), Sub -> Pointer t
          (* Regular numeric arithmetic *)
@@ -469,17 +507,37 @@ and type_check_binary_op ctx left op right pos =
                    | _ -> type_error "Cannot unify types for arithmetic operation" pos)))
     
     (* Comparison operations *)
-    | Eq | Ne | Lt | Le | Gt | Ge ->
-        (match unify_types typed_left.texpr_type typed_right.texpr_type with
-         | Some _ -> Bool
-         | None ->
-             (* Special case: allow U32 literals to be compared with U64 *)
-             (match typed_left.texpr_type, typed_right.texpr_type with
-              | U64, U32 -> Bool  (* Allow U64 > U32 comparisons *)
-              | U32, U64 -> Bool  (* Allow U32 > U64 comparisons *)
-              | I64, I32 -> Bool  (* Allow I64 > I32 comparisons *)
-              | I32, I64 -> Bool  (* Allow I32 > I64 comparisons *)
-              | _ -> type_error "Cannot compare incompatible types" pos))
+    | Eq | Ne ->
+        (* String equality/inequality comparison *)
+        (match typed_left.texpr_type, typed_right.texpr_type with
+         | Str _, Str _ -> Bool  (* Allow string comparison regardless of size *)
+         | _ ->
+             (match unify_types typed_left.texpr_type typed_right.texpr_type with
+              | Some _ -> Bool
+              | None ->
+                  (* Special case: allow U32 literals to be compared with U64 *)
+                  (match typed_left.texpr_type, typed_right.texpr_type with
+                   | U64, U32 -> Bool  (* Allow U64 == U32 comparisons *)
+                   | U32, U64 -> Bool  (* Allow U32 == U64 comparisons *)
+                   | I64, I32 -> Bool  (* Allow I64 == I32 comparisons *)
+                   | I32, I64 -> Bool  (* Allow I32 == I64 comparisons *)
+                   | _ -> type_error "Cannot compare incompatible types" pos)))
+    
+    | Lt | Le | Gt | Ge ->
+        (* Ordering comparisons - not supported for strings *)
+        (match typed_left.texpr_type, typed_right.texpr_type with
+         | Str _, Str _ -> type_error "Ordering comparisons (<, <=, >, >=) are not supported for strings" pos
+         | _ ->
+             (match unify_types typed_left.texpr_type typed_right.texpr_type with
+              | Some _ -> Bool
+              | None ->
+                  (* Special case: allow U32 literals to be compared with U64 *)
+                  (match typed_left.texpr_type, typed_right.texpr_type with
+                   | U64, U32 -> Bool  (* Allow U64 > U32 comparisons *)
+                   | U32, U64 -> Bool  (* Allow U32 > U64 comparisons *)
+                   | I64, I32 -> Bool  (* Allow I64 > I32 comparisons *)
+                   | I32, I64 -> Bool  (* Allow I32 > I64 comparisons *)
+                   | _ -> type_error "Cannot compare incompatible types" pos)))
     
     (* Logical operations *)
     | And | Or ->
