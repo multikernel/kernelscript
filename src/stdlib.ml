@@ -48,7 +48,7 @@ let builtin_functions = [
   };
   {
     name = "attach_program";
-    param_types = [ProgramRef Xdp; Pointer U8; U32]; (* program, target, flags *)
+    param_types = [ProgramRef Xdp; Str 128; U32]; (* program, target interface (up to 16 chars), flags *)
     return_type = U32; (* Returns 0 on success *)
     description = "Attach a loaded eBPF program to a target with flags";
     is_variadic = false;

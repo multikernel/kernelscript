@@ -195,6 +195,7 @@ program test : xdp {
 }
 
 fn main() -> i32 {
+    let prog_fd = load_program(test);  // This will cause BPF functions to be generated
     return 0;
 }
 |} in

@@ -326,10 +326,10 @@ let generate_c_value ctx ir_val =
       (match ir_val.val_type with
        | IRStr size ->
            let temp_var = fresh_var ctx "str_lit" in
-           let len = String.length s in
-           let max_content_len = size - 1 in (* Reserve space for null terminator *)
-           let actual_len = min len max_content_len in
-           let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+                    let len = String.length s in
+         let max_content_len = size in (* Full size available for content *)
+         let actual_len = min len max_content_len in
+         let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
            
            (* Generate cleaner initialization with string literal + padding *)
            emit_line ctx (sprintf "str_%d_t %s = {" size temp_var);
@@ -650,8 +650,13 @@ let rec generate_c_instruction ctx ir_instr =
                  (* Special handling for print: convert to bpf_printk format *)
                  (match c_args with
                   | [] -> (ebpf_impl, ["\"\""])
-                  | [first] -> (ebpf_impl, [sprintf "\"%s\"" "%s"; first])
-                                   | first :: rest ->
+                  | [first] -> 
+                      (* For string struct arguments, use .data field *)
+                      let first_arg = if String.length first > 7 && String.sub first 0 7 = "str_lit" then
+                        first ^ ".data"
+                      else first in
+                      (ebpf_impl, [sprintf "\"%s\"" "%s"; first_arg])
+                  | first :: rest ->
                      (* bpf_printk limits: format string + up to 3 args *)
                      let limited_args = 
                        let rec take n lst =
@@ -664,7 +669,11 @@ let rec generate_c_instruction ctx ir_instr =
                      in
                      let format_specifiers = List.map (fun _ -> "%d") limited_args in
                      let format_str = sprintf "\"%s%s\"" "%s" (String.concat " " format_specifiers) in
-                     (ebpf_impl, format_str :: first :: limited_args))
+                     (* Fix first argument for string structs *)
+                     let first_arg = if String.length first > 7 && String.sub first 0 7 = "str_lit" then
+                       first ^ ".data"
+                     else first in
+                     (ebpf_impl, format_str :: first_arg :: limited_args))
              | _ -> (ebpf_impl, c_args))
         | None ->
             (* Regular function call *)

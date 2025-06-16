@@ -6,6 +6,21 @@
 open Ir
 open Printf
 
+(** Function usage tracking for optimization *)
+type function_usage = {
+  mutable uses_load_program: bool;
+  mutable uses_attach_program: bool;
+  mutable uses_map_operations: bool;
+  mutable used_maps: string list;
+}
+
+let create_function_usage () = {
+  uses_load_program = false;
+  uses_attach_program = false;
+  uses_map_operations = false;
+  used_maps = [];
+}
+
 (** Context for C code generation *)
 type userspace_context = {
   temp_counter: int ref;
@@ -15,6 +30,8 @@ type userspace_context = {
   register_vars: (int, string) Hashtbl.t;
   (* Track variable declarations needed *)
   var_declarations: (string, string) Hashtbl.t; (* var_name -> c_type *)
+  (* Track function usage for optimization *)
+  function_usage: function_usage;
 }
 
 let create_userspace_context () = {
@@ -23,6 +40,7 @@ let create_userspace_context () = {
   is_main = false;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
+  function_usage = create_function_usage ();
 }
 
 let create_main_context () = {
@@ -31,11 +49,58 @@ let create_main_context () = {
   is_main = true;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
+  function_usage = create_function_usage ();
 }
 
 let fresh_temp_var ctx prefix =
   incr ctx.temp_counter;
   sprintf "%s_%d" prefix !(ctx.temp_counter)
+
+(** Track function usage based on instruction *)
+let track_function_usage ctx instr =
+  match instr.instr_desc with
+  | IRCall (func_name, _, _) ->
+      (match func_name with
+       | "load_program" -> ctx.function_usage.uses_load_program <- true
+       | "attach_program" -> ctx.function_usage.uses_attach_program <- true
+       | _ -> ())
+  | IRMapLoad (map_val, _, _, _) 
+  | IRMapStore (map_val, _, _, _) 
+  | IRMapDelete (map_val, _) ->
+      ctx.function_usage.uses_map_operations <- true;
+      (match map_val.value_desc with
+       | IRMapRef map_name ->
+           if not (List.mem map_name ctx.function_usage.used_maps) then
+             ctx.function_usage.used_maps <- map_name :: ctx.function_usage.used_maps
+       | _ -> ())
+  | IRConfigFieldUpdate (map_val, _, _, _) ->
+      ctx.function_usage.uses_map_operations <- true;
+      (match map_val.value_desc with
+       | IRMapRef map_name ->
+           if not (List.mem map_name ctx.function_usage.used_maps) then
+             ctx.function_usage.used_maps <- map_name :: ctx.function_usage.used_maps
+       | _ -> ())
+  | _ -> ()
+
+(** Recursively track usage in all instructions *)
+let rec track_usage_in_instructions ctx instrs =
+  List.iter (fun instr ->
+    track_function_usage ctx instr;
+    match instr.instr_desc with
+    | IRIf (_, then_body, else_body) ->
+        track_usage_in_instructions ctx then_body;
+        (match else_body with
+         | Some else_instrs -> track_usage_in_instructions ctx else_instrs
+         | None -> ())
+    | IRBpfLoop (_, _, _, _, body_instrs) ->
+        track_usage_in_instructions ctx body_instrs
+    | IRTry (try_instrs, catch_clauses) ->
+        track_usage_in_instructions ctx try_instrs;
+        List.iter (fun clause ->
+          track_usage_in_instructions ctx clause.catch_body
+        ) catch_clauses
+    | _ -> ()
+  ) instrs
 
 (** Collect string sizes from IR *)
 let rec collect_string_sizes_from_ir_type = function
@@ -389,6 +454,9 @@ let rec generate_c_instruction_from_ir ctx instruction =
        | _ -> sprintf "%s = %s;" dest_str src_str)
   
   | IRCall (func_name, args, result_opt) ->
+      (* Track function usage for optimization *)
+      track_function_usage ctx instruction;
+      
       (* Check if this is a built-in function that needs context-specific translation *)
       let (actual_name, translated_args) = match Stdlib.get_userspace_implementation func_name with
         | Some userspace_impl ->
@@ -403,6 +471,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                   | args -> (userspace_impl, args @ ["\"\\n\""]))
              | "load_program" ->
                  (* Special handling for load_program: generate libbpf program loading code *)
+                 ctx.function_usage.uses_load_program <- true;
                  (match c_args with
                   | [program_name] ->
                       (* Extract program name from identifier - remove quotes if present *)
@@ -413,6 +482,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                   | _ -> failwith "load_program expects exactly one argument")
              | "attach_program" ->
                  (* Special handling for attach_program: generate libbpf attachment code *)
+                 ctx.function_usage.uses_attach_program <- true;
                  (match c_args with
                   | [program_name; target; flags] ->
                       (* Extract program name from identifier - remove quotes if present *)
@@ -441,15 +511,19 @@ let rec generate_c_instruction_from_ir ctx instruction =
       "return;"
   
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
+      track_function_usage ctx instruction;
       generate_map_load_from_ir ctx map_val key_val dest_val load_type
   
   | IRMapStore (map_val, key_val, value_val, store_type) ->
+      track_function_usage ctx instruction;
       generate_map_store_from_ir ctx map_val key_val value_val store_type
   
   | IRMapDelete (map_val, key_val) ->
+      track_function_usage ctx instruction;
       generate_map_delete_from_ir ctx map_val key_val
   
   | IRConfigFieldUpdate (map_val, key_val, field, value_val) ->
+      track_function_usage ctx instruction;
       generate_config_field_update_from_ir ctx map_val key_val field value_val
   
   | IRConfigAccess (config_name, field_name, result_val) ->
@@ -585,6 +659,14 @@ let generate_variable_declarations ctx =
   ) ctx.var_declarations [] in
   if declarations = [] then ""
   else "    " ^ String.concat "\n    " (List.rev declarations) ^ "\n"
+
+(** Collect function usage information from IR function *)
+let collect_function_usage_from_ir_function ir_func =
+  let ctx = create_userspace_context () in
+  List.iter (fun block ->
+    track_usage_in_instructions ctx block.instructions
+  ) ir_func.basic_blocks;
+  ctx.function_usage
 
 (** Generate C function from IR function *)
 let generate_c_function_from_ir (ir_func : ir_function) =
@@ -814,6 +896,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 #include <getopt.h>
 #include <fcntl.h>
 #include <net/if.h>
+#include <setjmp.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/bpf.h>
@@ -847,6 +930,19 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
   let string_typedefs = generate_string_typedefs string_sizes in
   let string_helpers = generate_string_helpers string_sizes in
   
+  (* Collect function usage information from all functions *)
+  let all_usage = List.fold_left (fun acc_usage func ->
+    let func_usage = collect_function_usage_from_ir_function func in
+    {
+      uses_load_program = acc_usage.uses_load_program || func_usage.uses_load_program;
+      uses_attach_program = acc_usage.uses_attach_program || func_usage.uses_attach_program;
+      uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
+      used_maps = List.fold_left (fun acc map_name ->
+        if List.mem map_name acc then acc else map_name :: acc
+      ) acc_usage.used_maps func_usage.used_maps;
+    }
+  ) (create_function_usage ()) userspace_prog.userspace_functions in
+
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
     (List.map generate_c_function_from_ir userspace_prog.userspace_functions) in
@@ -865,41 +961,59 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
   let structs = String.concat "\n\n" 
     ((List.map generate_c_struct_from_ir non_config_ir_structs) @ config_structs) in
   
-  (* Generate map-related code using global maps from multi-program *)
-  let map_fd_declarations = generate_map_fd_declarations global_maps in
+  (* Generate map-related code only if maps are actually used *)
+  let used_global_maps = List.filter (fun map ->
+    List.mem map.map_name all_usage.used_maps
+  ) global_maps in
   
-  (* Generate config map file descriptors *)
-  let config_fd_declarations = List.map (fun config_decl ->
-    sprintf "int %s_config_map_fd = -1;" config_decl.Ast.config_name
-  ) config_declarations in
+  let map_fd_declarations = if all_usage.uses_map_operations then
+    generate_map_fd_declarations used_global_maps
+  else "" in
   
-  let all_fd_declarations = map_fd_declarations :: config_fd_declarations |> String.concat "\n" in
-  let map_operation_functions = generate_map_operation_functions global_maps in
-  let map_setup_code = generate_map_setup_code global_maps in
+  (* Generate config map file descriptors only if needed *)
+  let config_fd_declarations = if all_usage.uses_map_operations then
+    List.map (fun config_decl ->
+      sprintf "int %s_config_map_fd = -1;" config_decl.Ast.config_name
+    ) config_declarations
+  else [] in
+  
+  let all_fd_declarations = if all_usage.uses_map_operations then
+    map_fd_declarations :: config_fd_declarations |> String.concat "\n"
+  else "" in
+  
+  let map_operation_functions = if all_usage.uses_map_operations then
+    generate_map_operation_functions used_global_maps
+  else "" in
+  
+  let map_setup_code = if all_usage.uses_map_operations then
+    generate_map_setup_code used_global_maps
+  else "" in
   
   (* Generate config map setup code - load from eBPF object *)
-  let config_setup_code = List.map (fun config_decl ->
-    let config_name = config_decl.Ast.config_name in
-    sprintf {|    /* Load %s config map from eBPF object */
+  let config_setup_code = if all_usage.uses_map_operations then
+    List.map (fun config_decl ->
+      let config_name = config_decl.Ast.config_name in
+      sprintf {|    /* Load %s config map from eBPF object */
     %s_config_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s_config_map");
     if (%s_config_map_fd < 0) {
         fprintf(stderr, "Failed to find %s config map in eBPF object\n");
         return -1;
     }|}
-      config_name config_name config_name config_name config_name
-  ) config_declarations |> String.concat "\n" in
+        config_name config_name config_name config_name config_name
+    ) config_declarations |> String.concat "\n"
+  else "" in
   
-  let all_setup_code = map_setup_code ^ "\n" ^ config_setup_code in
+  let all_setup_code = map_setup_code ^ 
+    (if map_setup_code <> "" && config_setup_code <> "" then "\n" else "") ^ 
+    config_setup_code in
   
   (* Extract base name from source filename *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
   
-  (* Only generate BPF helper functions - no automatic coordinator *)
-  let bpf_helper_functions = sprintf {|
-/* BPF Helper Functions (available if called by user) */
-struct bpf_object *bpf_obj = NULL;
-
-int load_bpf_program(const char *program_name) {
+  (* Only generate BPF helper functions when they're actually used *)
+  let bpf_helper_functions = 
+    let load_function = if all_usage.uses_load_program then
+      sprintf {|int load_bpf_program(const char *program_name) {
     if (!bpf_obj) {
         bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
         if (libbpf_get_error(bpf_obj)) {
@@ -926,12 +1040,14 @@ int load_bpf_program(const char *program_name) {
     }
     
     return prog_fd;
-}
-
-int attach_bpf_program(const char *program_name, const char *target, int flags) {
+}|} base_name all_setup_code
+    else "" in
+    
+    let attach_function = if all_usage.uses_attach_program then
+      {|int attach_bpf_program(const char *program_name, const char *target, int flags) {
     struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
     if (!prog) {
-        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
+        fprintf(stderr, "Failed to find program '%s' in BPF object\n", program_name);
         return -1;
     }
     
@@ -941,23 +1057,34 @@ int attach_bpf_program(const char *program_name, const char *target, int flags) 
         case BPF_PROG_TYPE_XDP: {
             int ifindex = if_nametoindex(target);
             if (ifindex == 0) {
-                fprintf(stderr, "Failed to get interface index for '%%s'\\n", target);
+                fprintf(stderr, "Failed to get interface index for '%s'\n", target);
                 return -1;
             }
             
             struct bpf_link *link = bpf_program__attach_xdp(prog, ifindex);
             if (libbpf_get_error(link)) {
-                fprintf(stderr, "Failed to attach XDP program to interface '%%s'\\n", target);
+                fprintf(stderr, "Failed to attach XDP program to interface '%s'\n", target);
                 return -1;
             }
             
             return 0;
         }
         default:
-            fprintf(stderr, "Unsupported program type for attachment: %%d\\n", prog_type);
+            fprintf(stderr, "Unsupported program type for attachment: %d\n", prog_type);
             return -1;
     }
-}|} base_name all_setup_code in
+}|}
+    else "" in
+    
+    let bpf_obj_decl = if all_usage.uses_load_program || all_usage.uses_attach_program then
+      "struct bpf_object *bpf_obj = NULL;"
+    else "" in
+    
+    let functions_list = List.filter (fun s -> s <> "") [load_function; attach_function] in
+    if functions_list = [] && bpf_obj_decl = "" then ""
+    else
+      sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 
+        bpf_obj_decl (String.concat "\n\n" functions_list) in
   
   sprintf {|%s
 

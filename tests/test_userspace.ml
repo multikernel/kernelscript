@@ -759,9 +759,11 @@ let test_map_loading_code_generation () =
         check bool "correct eBPF object filename" true 
           (try ignore (Str.search_forward (Str.regexp "test\\.ebpf\\.o") content 0); true with Not_found -> false);
         
-        (* Verify map file descriptor declarations are present *)
-        check bool "packet_stats_fd declaration" true 
+        (* Verify map file descriptor declarations are NOT present (maps not used in userspace) *)
+        check bool "packet_stats_fd declaration not generated (not used)" false 
           (try ignore (Str.search_forward (Str.regexp "int packet_stats_fd = -1") content 0); true with Not_found -> false);
+        
+        (* Verify config map fd declarations are present (config field is updated) *)
         check bool "network_config_map_fd declaration" true 
           (try ignore (Str.search_forward (Str.regexp "int network_config_map_fd = -1") content 0); true with Not_found -> false);
         check bool "security_config_map_fd declaration" true 

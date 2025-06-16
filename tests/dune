@@ -182,6 +182,11 @@
  (modules test_error_handling)
  (libraries kernelscript alcotest str))
 
+(executable
+ (name test_string_literal_bugs)
+ (modules test_string_literal_bugs)
+ (libraries kernelscript alcotest str))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)

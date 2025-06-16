@@ -1,7 +1,7 @@
 program simple_xdp : xdp {
-    fn main(ctx: XdpContext) -> u32 {
+    fn main(ctx: XdpContext) -> XdpAction {
         print("Hello world");
-        return 0;
+        return 2;
     }
 }
 
