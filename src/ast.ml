@@ -58,6 +58,8 @@ and bpf_type =
   | XdpAction | TcAction
   (* Program reference types *)
   | ProgramRef of program_type
+  (* Program handle type - represents a loaded program *)
+  | ProgramHandle
 
 (** Map configuration and attributes *)
 type map_attribute =
@@ -398,6 +400,7 @@ let rec string_of_bpf_type = function
   | XdpAction -> "XdpAction"
   | TcAction -> "TcAction"
   | ProgramRef pt -> string_of_program_type pt
+  | ProgramHandle -> "ProgramHandle"
 
 let rec string_of_literal = function
   | IntLit i -> string_of_int i

@@ -323,11 +323,19 @@ let rec type_check_function_call ctx name args pos =
            if List.length expected_params = List.length arg_types then
              (* Special handling for program lifecycle functions *)
              let types_match = match name with
-               | "load_program" | "attach_program" ->
-                   (* For program lifecycle functions, accept any ProgramRef *)
+               | "load_program" ->
+                   (* For load_program, accept any ProgramRef *)
                    (match expected_params, arg_types with
-                    | ProgramRef _ :: rest_expected, ProgramRef _ :: rest_actual ->
-                        (* First parameter is any ProgramRef, check remaining parameters *)
+                    | [ProgramRef _], [ProgramRef _] -> true
+                    | _ ->
+                        (* Standard type checking for other parameters *)
+                        let unified = List.map2 unify_types expected_params arg_types in
+                        List.for_all (function Some _ -> true | None -> false) unified)
+               | "attach_program" ->
+                   (* For attach_program, first parameter must be ProgramHandle *)
+                   (match expected_params, arg_types with
+                    | ProgramHandle :: rest_expected, ProgramHandle :: rest_actual ->
+                        (* First parameter is ProgramHandle, check remaining parameters *)
                         let remaining_unified = List.map2 unify_types rest_expected rest_actual in
                         List.for_all (function Some _ -> true | None -> false) remaining_unified
                     | _ ->

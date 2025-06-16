@@ -706,7 +706,7 @@ let test_map_loading_code_generation () =
     
     fn main() -> i32 {
       network.enable_logging = true;
-      let prog_fd = load_program(test);
+      let prog_handle = load_program(test);
       return 0;
     }
   |} in

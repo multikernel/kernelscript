@@ -40,15 +40,15 @@ let builtin_functions = [
   {
     name = "load_program";
     param_types = [ProgramRef Xdp]; (* Will be matched against any ProgramRef *)
-    return_type = U32; (* Returns program file descriptor *)
-    description = "Load an eBPF program and return its file descriptor";
+    return_type = ProgramHandle; (* Returns program handle instead of fd *)
+    description = "Load an eBPF program and return its handle";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_load";
   };
   {
     name = "attach_program";
-    param_types = [ProgramRef Xdp; Str 128; U32]; (* program, target interface (up to 16 chars), flags *)
+    param_types = [ProgramHandle; Str 128; U32]; (* program handle, target interface, flags *)
     return_type = U32; (* Returns 0 on success *)
     description = "Attach a loaded eBPF program to a target with flags";
     is_variadic = false;

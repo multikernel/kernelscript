@@ -481,15 +481,12 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       ("load_bpf_program", [sprintf "\"%s\"" clean_name])
                   | _ -> failwith "load_program expects exactly one argument")
              | "attach_program" ->
-                 (* Special handling for attach_program: generate libbpf attachment code *)
+                 (* Special handling for attach_program: now takes program handle (not program name) *)
                  ctx.function_usage.uses_attach_program <- true;
                  (match c_args with
-                  | [program_name; target; flags] ->
-                      (* Extract program name from identifier - remove quotes if present *)
-                      let clean_name = if String.contains program_name '"' then
-                        String.sub program_name 1 (String.length program_name - 2)
-                      else program_name in
-                      ("attach_bpf_program", [sprintf "\"%s\"" clean_name; target; flags])
+                  | [program_handle; target; flags] ->
+                      (* Use the program handle variable directly instead of extracting program name *)
+                      ("attach_bpf_program_by_fd", [program_handle; target; flags])
                   | _ -> failwith "attach_program expects exactly three arguments")
              | _ -> (userspace_impl, c_args))
         | None ->
@@ -1049,16 +1046,22 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
     else "" in
     
     let attach_function = if all_usage.uses_attach_program then
-      {|int attach_bpf_program(const char *program_name, const char *target, int flags) {
-    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
-    if (!prog) {
-        fprintf(stderr, "Failed to find program '%s' in BPF object\n", program_name);
+      {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
+    if (prog_fd < 0) {
+        fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);
         return -1;
     }
     
-    enum bpf_prog_type prog_type = bpf_program__type(prog);
+    // Get program type from file descriptor  
+    struct bpf_prog_info info = {};
+    uint32_t info_len = sizeof(info);
+    int ret = bpf_obj_get_info_by_fd(prog_fd, &info, &info_len);
+    if (ret) {
+        fprintf(stderr, "Failed to get program info: %s\n", strerror(errno));
+        return -1;
+    }
     
-    switch (prog_type) {
+    switch (info.type) {
         case BPF_PROG_TYPE_XDP: {
             int ifindex = if_nametoindex(target);
             if (ifindex == 0) {
@@ -1066,16 +1069,17 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
                 return -1;
             }
             
-            struct bpf_link *link = bpf_program__attach_xdp(prog, ifindex);
-            if (libbpf_get_error(link)) {
-                fprintf(stderr, "Failed to attach XDP program to interface '%s'\n", target);
+            // Use modern libbpf API for XDP attachment
+            ret = bpf_xdp_attach(ifindex, prog_fd, flags, NULL);
+            if (ret) {
+                fprintf(stderr, "Failed to attach XDP program to interface '%s': %s\n", target, strerror(errno));
                 return -1;
             }
             
             return 0;
         }
         default:
-            fprintf(stderr, "Unsupported program type for attachment: %d\n", prog_type);
+            fprintf(stderr, "Unsupported program type for attachment: %d\n", info.type);
             return -1;
     }
 }|}

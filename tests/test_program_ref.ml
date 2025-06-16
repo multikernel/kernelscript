@@ -11,12 +11,10 @@ program packet_filter : xdp {
   }
 }
 
-
-  fn main() -> i32 {
-    let prog_fd = load_program(packet_filter);
-    let result = attach_program(packet_filter, "eth0", 0);
-    return 0;
-  }
+fn main() -> i32 {
+  let prog_handle = load_program(packet_filter);
+  let result = attach_program(prog_handle, "eth0", 0);
+  return 0;
 }
 |} in
   try
@@ -45,16 +43,14 @@ program tc_filter : tc {
   }
 }
 
-
-  fn main() -> i32 {
-    let kprobe_fd = load_program(kprobe_tracer);
-    let tc_fd = load_program(tc_filter);
-    
-    let kprobe_result = attach_program(kprobe_tracer, "sys_read", 0);
-    let tc_result = attach_program(tc_filter, "eth0", 1);
-    
-    return 0;
-  }
+fn main() -> i32 {
+  let kprobe_handle = load_program(kprobe_tracer);
+  let tc_handle = load_program(tc_filter);
+  
+  let kprobe_result = attach_program(kprobe_handle, "sys_read", 0);
+  let tc_result = attach_program(tc_handle, "eth0", 1);
+  
+  return 0;
 }
 |} in
   try
@@ -75,11 +71,9 @@ program tc_filter : tc {
 (** Test invalid program reference *)
 let test_invalid_program_reference () =
   let program_text = {|
-
-  fn main() -> i32 {
-    let prog_fd = load_program(non_existent_program);
-    return 0;
-  }
+fn main() -> i32 {
+  let prog_handle = load_program(non_existent_program);
+  return 0;
 }
 |} in
   try
@@ -101,12 +95,10 @@ program my_xdp : xdp {
   }
 }
 
-
-  fn main() -> i32 {
-    let prog_ref = my_xdp;  // Should work - program reference as variable
-    let prog_fd = load_program(prog_ref);
-    return 0;
-  }
+fn main() -> i32 {
+  let prog_ref = my_xdp;  // Should work - program reference as variable
+  let prog_handle = load_program(prog_ref);
+  return 0;
 }
 |} in
   try
@@ -129,11 +121,9 @@ program my_xdp : xdp {
   }
 }
 
-
-  fn main() -> i32 {
-    let prog_fd = load_program("string_instead_of_program");  // Should fail
-    return 0;
-  }
+fn main() -> i32 {
+  let prog_handle = load_program("string_instead_of_program");  // Should fail
+  return 0;
 }
 |} in
   try
@@ -148,7 +138,7 @@ program my_xdp : xdp {
 
 (** Test stdlib integration *)
 let test_stdlib_integration () =
-  (* Test that the new built-in functions are properly recognized *)
+  (* Test that the built-in functions are properly recognized *)
   check bool "load_program is builtin" true (Kernelscript.Stdlib.is_builtin_function "load_program");
   check bool "attach_program is builtin" true (Kernelscript.Stdlib.is_builtin_function "attach_program");
   
@@ -156,14 +146,109 @@ let test_stdlib_integration () =
   (match Kernelscript.Stdlib.get_builtin_function_signature "load_program" with
   | Some (params, return_type) ->
       check int "load_program parameter count" 1 (List.length params);
-      check bool "load_program return type is U32" true (return_type = Kernelscript.Ast.U32)
+      check bool "load_program return type is ProgramHandle" true (return_type = Kernelscript.Ast.ProgramHandle)
   | None -> check bool "load_program function signature should exist" false true);
   
   (match Kernelscript.Stdlib.get_builtin_function_signature "attach_program" with
   | Some (params, return_type) ->
       check int "attach_program parameter count" 3 (List.length params);
+      (match params with
+       | first_param :: _ ->
+           check bool "attach_program first parameter is ProgramHandle" true (first_param = Kernelscript.Ast.ProgramHandle)
+       | [] -> check bool "attach_program should have parameters" false true);
       check bool "attach_program return type is U32" true (return_type = Kernelscript.Ast.U32)
   | None -> check bool "attach_program function signature should exist" false true)
+
+(** Test that calling attach_program without load_program fails *)
+let test_attach_without_load_fails () =
+  let program_text = {|
+program simple_xdp : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return XdpAction::Pass;
+  }
+}
+
+fn main() -> i32 {
+  let result = attach_program(simple_xdp, "eth0", 0);  // Should fail - program ref instead of handle
+  return 0;
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_ast ast in
+    check bool "should fail when attach_program called with program reference" false true
+  with
+  | Type_error (msg, _) -> 
+      check bool "should fail with type error" true (String.length msg > 0);
+      check bool "error should mention type mismatch" true (String.contains msg 'm')
+  | _ -> 
+      check bool "should fail when attach_program called with program reference" false true
+
+(** Test multiple program handles with proper resource management *)
+let test_multiple_program_handles () =
+  let program_text = {|
+program xdp_filter : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return XdpAction::Pass;
+  }
+}
+
+program tc_shaper : tc {
+  fn main(ctx: TcContext) -> TcAction {
+    return TcAction::Pass;
+  }
+}
+
+fn main() -> i32 {
+  let xdp_handle = load_program(xdp_filter);
+  let tc_handle = load_program(tc_shaper);
+  
+  let xdp_result = attach_program(xdp_handle, "eth0", 0);
+  let tc_result = attach_program(tc_handle, "eth0", 1);
+  
+  return 0;
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_ast ast in
+    check bool "multiple program handles should work" true true
+  with
+  | Type_error (msg, _) -> 
+      Printf.printf "Type error: %s\n" msg;
+      check bool "multiple program handles should work" true false
+  | _ -> 
+      check bool "multiple program handles should work" true false
+
+(** Test that program handle variables can be named appropriately *)
+let test_program_handle_naming () =
+  let program_text = {|
+program simple_xdp : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return XdpAction::Pass;
+  }
+}
+
+fn main() -> i32 {
+  let program_handle = load_program(simple_xdp);  // Clear, non-fd naming
+  let network_prog = load_program(simple_xdp);    // Alternative naming
+  
+  let result1 = attach_program(program_handle, "eth0", 0);
+  let result2 = attach_program(network_prog, "lo", 0);
+  
+  return 0;
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_ast ast in
+    check bool "program handle naming should work" true true
+  with
+  | Type_error (msg, _) -> 
+      Printf.printf "Type error: %s\n" msg;
+      check bool "program handle naming should work" true false
+  | _ -> 
+      check bool "program handle naming should work" true false
 
 (** Test suite *)
 let program_ref_tests = [
@@ -173,6 +258,9 @@ let program_ref_tests = [
   "program_reference_as_variable", `Quick, test_program_reference_as_variable;
   "wrong_argument_types", `Quick, test_wrong_argument_types;
   "stdlib_integration", `Quick, test_stdlib_integration;
+  "attach_without_load_fails", `Quick, test_attach_without_load_fails;
+  "multiple_program_handles", `Quick, test_multiple_program_handles;
+  "program_handle_naming", `Quick, test_program_handle_naming;
 ]
 
 let () =

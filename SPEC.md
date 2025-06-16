@@ -225,11 +225,11 @@ fn main(args: Args) -> i32 {
     let interface_index = args.interface_id;
     
     // Load and coordinate multiple programs
-    let analyzer = load_program(packet_analyzer);
-    let tracker = load_program(flow_tracker);
+    let analyzer_handle = load_program(packet_analyzer);
+    let tracker_handle = load_program(flow_tracker);
     
-    attach_program(packet_analyzer, interface_index, 0);
-    attach_program(flow_tracker, interface_index, 1);
+    attach_program(analyzer_handle, interface_index, 0);
+    attach_program(tracker_handle, interface_index, 1);
     
     if args.enable_verbose == 1 {
         print("Multi-program system started on interface: ", interface_index);
@@ -265,9 +265,9 @@ fn on_packet_event(event: PacketEvent) {
 
 KernelScript supports explicit control over eBPF program loading and attachment through program references and built-in lifecycle functions. This enables advanced use cases like parameter configuration between loading and attachment phases.
 
-#### 3.4.1 Program References
+#### 3.4.1 Program References and Safety
 
-Programs are first-class values that can be referenced by name and passed to lifecycle functions:
+Programs are first-class values that can be referenced by name and passed to lifecycle functions. The interface enforces safety by requiring programs to be loaded before attachment:
 
 ```kernelscript
 program packet_filter : xdp {
@@ -289,8 +289,8 @@ fn main() -> i32 {
     let tc_prog = flow_monitor;    // Type: ProgramRef
     
     // Explicit loading and attachment
-    let prog_fd = load_program(xdp_prog);
-    let result = attach_program(xdp_prog, "eth0", 0);
+    let prog_handle = load_program(xdp_prog);
+    let result = attach_program(prog_handle, "eth0", 0);
     
     return 0;
 }
@@ -298,20 +298,26 @@ fn main() -> i32 {
 
 #### 3.4.2 Lifecycle Functions
 
-**`load_program(program_ref: ProgramRef) -> u32`**
+**`load_program(program_ref: ProgramRef) -> ProgramHandle`**
 - Loads the specified eBPF program into the kernel
-- Returns the program file descriptor
+- Returns a program handle that abstracts the underlying implementation
 - Must be called before attachment
 - Enables configuration of program parameters before attachment
 
-**`attach_program(program_ref: ProgramRef, target: string, flags: u32) -> u32`**
-- Attaches the loaded program to the specified target
+**`attach_program(handle: ProgramHandle, target: string, flags: u32) -> u32`**
+- Attaches the loaded program to the specified target using its handle
+- First parameter must be a ProgramHandle returned from load_program()
 - Target and flags interpretation depends on program type:
   - **XDP**: target = interface name ("eth0"), flags = XDP attachment flags
   - **TC**: target = interface name ("eth0"), flags = direction (ingress/egress)
   - **Kprobe**: target = function name ("sys_read"), flags = unused (0)
   - **Cgroup**: target = cgroup path ("/sys/fs/cgroup/test"), flags = unused (0)
 - Returns 0 on success, negative error code on failure
+
+**Safety Benefits:**
+- **Compile-time enforcement**: Cannot call `attach_program()` without first calling `load_program()` - the type system prevents this
+- **Implementation abstraction**: Users work with `ProgramHandle` instead of raw file descriptors
+- **Resource safety**: Program handles abstract away the underlying resource management
 
 #### 3.4.3 Advanced Usage Patterns
 
@@ -339,7 +345,7 @@ struct Args {
 
 fn main(args: Args) -> i32 {
     // Load program first
-    let prog_fd = load_program(adaptive_filter);
+    let prog_handle = load_program(adaptive_filter);
     
     // Configure parameters based on command line
     network.enable_filtering = args.strict_mode;
@@ -348,7 +354,7 @@ fn main(args: Args) -> i32 {
     }
     
     // Now attach with configured parameters
-    let result = attach_program(adaptive_filter, args.interface, 0);
+    let result = attach_program(prog_handle, args.interface, 0);
     
     if result == 0 {
         print("Filter attached successfully");
@@ -378,14 +384,14 @@ program security_check : lsm {
 // Multi-program userspace coordination
 fn main() -> i32 {
     // Load all programs
-    let ingress_fd = load_program(ingress_monitor);
-    let egress_fd = load_program(egress_monitor);
-    let security_fd = load_program(security_check);
+    let ingress_handle = load_program(ingress_monitor);
+    let egress_handle = load_program(egress_monitor);
+    let security_handle = load_program(security_check);
     
     // Attach in specific order for coordinated monitoring
-    attach_program(security_check, "socket_connect", 0);
-    attach_program(ingress_monitor, "eth0", 0);
-    attach_program(egress_monitor, "eth0", 1);  // Egress direction
+    attach_program(security_handle, "socket_connect", 0);
+    attach_program(ingress_handle, "eth0", 0);
+    attach_program(egress_handle, "eth0", 1);  // Egress direction
     
     print("Multi-program monitoring system active");
     
@@ -417,6 +423,7 @@ str<N>                 // Fixed-size string with capacity N characters (N can be
 
 // Program reference types (for explicit program lifecycle control)
 ProgramRef             // Reference to an eBPF program for loading/attachment
+ProgramHandle          // Handle returned by load_program() for safe attachment
 ```
 
 ### 4.2 Compound Types
@@ -787,12 +794,12 @@ program security_monitor : lsm("socket_connect") {
 // Userspace coordination for namespace-organized programs
 fn main() -> i32 {
     // Load and coordinate programs
-    let network_prog = load_program(network_monitor);
-    let security_prog = load_program(security_monitor);
+    let network_handle = load_program(network_monitor);
+    let security_handle = load_program(security_monitor);
     
     // Attach programs
-    attach_program(network_monitor, "eth0", 0);
-    attach_program(security_monitor, "socket_connect", 0);
+    attach_program(network_handle, "eth0", 0);
+    attach_program(security_handle, "socket_connect", 0);
     
     print("Network and security monitoring active");
     
@@ -1576,15 +1583,16 @@ mod math {
 
 // Program lifecycle management (userspace only)
 mod program {
-    // Load an eBPF program and return its file descriptor
-    pub fn load_program(program_ref: ProgramRef) -> u32;
+    // Load an eBPF program and return its handle
+    pub fn load_program(program_ref: ProgramRef) -> ProgramHandle;
     
-    // Attach a program to a target with optional flags
+    // Attach a program to a target with optional flags using its handle
+    // - First parameter must be a ProgramHandle returned from load_program()
     // - For XDP: target is interface name (e.g., "eth0"), flags are XDP attachment flags
     // - For TC: target is interface name, flags indicate direction (ingress/egress)
     // - For Kprobe: target is function name (e.g., "sys_read"), flags are unused (0)
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
-    pub fn attach_program(program_ref: ProgramRef, target: string, flags: u32) -> u32;
+    pub fn attach_program(handle: ProgramHandle, target: string, flags: u32) -> u32;
 }
 ```
 
@@ -1665,13 +1673,9 @@ fn main(args: Args) -> i32 {
     }
     
     // Explicit program lifecycle management
-    let prog_fd = load_program(simple_filter);
-    if prog_fd < 0 {
-        print("Failed to load program");
-        return 1;
-    }
+    let prog_handle = load_program(simple_filter);
     
-    let attach_result = attach_program(simple_filter, args.interface, 0);
+    let attach_result = attach_program(prog_handle, args.interface, 0);
     if attach_result != 0 {
         print("Failed to attach program to interface: ", args.interface);
         return 1;
@@ -1765,17 +1769,12 @@ fn main(args: Args) -> i32 {
     let show_details = (args.show_details == 1);
     
     // Explicit program lifecycle management for multiple programs
-    let read_prog_fd = load_program(perf_monitor);
-    let write_prog_fd = load_program(write_monitor);
-    
-    if read_prog_fd < 0 || write_prog_fd < 0 {
-        print("Failed to load monitoring programs");
-        return 1;
-    }
+    let read_handle = load_program(perf_monitor);
+    let write_handle = load_program(write_monitor);
     
     // Attach programs to different kprobe targets
-    let read_attach = attach_program(perf_monitor, "sys_read", 0);
-    let write_attach = attach_program(write_monitor, "sys_write", 0);
+    let read_attach = attach_program(read_handle, "sys_read", 0);
+    let write_attach = attach_program(write_handle, "sys_write", 0);
     
     if read_attach != 0 || write_attach != 0 {
         print("Failed to attach monitoring programs");
