@@ -140,6 +140,148 @@ let test_combined_bugs_integration () =
     false (contains_substr output "bpf_printk(\"%s\", str_lit_1);")
 
 (**
+ * Bug Fix Test 4: Null Terminator Buffer Size Bug
+ * 
+ * ISSUE: typedef allocated only content size, not content + null terminator
+ * ROOT CAUSE: char data[N] instead of char data[N+1] for N-character strings
+ * FIX: Allocate size + 1 in typedef generation to accommodate null terminator
+ *)
+let test_null_terminator_buffer_bug () =
+  (* Test that typedefs allocate enough space for null terminator *)
+  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let string_val = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
+  let assign_instr = make_ir_instruction (IRAssign (make_ir_value (IRVariable "test_str") (IRStr 5) test_pos, make_ir_expr (IRValue string_val) (IRStr 5) test_pos)) test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
+  let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
+  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  
+  let c_code = compile_to_c ir_prog in
+  
+  (* POSITIVE TEST: typedef should allocate 6 bytes for 5-character string *)
+  Alcotest.(check bool) "typedef allocates space for null terminator" 
+    true (contains_substr c_code "char data[6]");
+  
+  (* REGRESSION TEST: should NOT allocate only content size *)
+  Alcotest.(check bool) "typedef does NOT allocate only content size" 
+    false (contains_substr c_code "typedef struct { char data[5]; __u16 len; } str_5_t;");
+  
+  (* POSITIVE TEST: verify correct typedef structure *)
+  Alcotest.(check bool) "typedef has correct structure" 
+    true (contains_substr c_code "typedef struct { char data[6]; __u16 len; } str_5_t;")
+
+(**
+ * Bug Fix Test 5: String Concatenation Bounds Check Bug
+ * 
+ * ISSUE: String concatenation used result_size - 1 for bounds checking
+ * ROOT CAUSE: max_content_len = result_size - 1 incorrectly reduced capacity
+ * FIX: Use result_size directly since typedef allocates result_size + 1 bytes
+ *)
+let test_string_concat_bounds_bug () =
+  (* Create string concatenation that should use full 11-character capacity *)
+  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let left_str = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
+  let right_str = make_ir_value (IRLiteral (StringLit " world")) (IRStr 6) test_pos in
+  let concat_expr = make_ir_expr (IRBinOp (left_str, IRAdd, right_str)) (IRStr 11) test_pos in
+  let result_var = make_ir_value (IRVariable "result") (IRStr 11) test_pos in
+  let assign_instr = make_ir_instruction (IRAssign (result_var, concat_expr)) test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
+  let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
+  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  
+  let c_code = compile_to_c ir_prog in
+  
+  (* POSITIVE TEST: Should check against 11, not 10 *)
+  Alcotest.(check bool) "uses correct bounds check >= 11" 
+    true (contains_substr c_code ">= 11");
+  
+  (* POSITIVE TEST: Should use unconditional null termination (always safe) *)
+  Alcotest.(check bool) "uses unconditional null termination" 
+    true (contains_substr c_code ".data[str_concat_");
+  
+  (* REGRESSION TEST: Should NOT use old incorrect bounds *)
+  Alcotest.(check bool) "does NOT use incorrect bounds >= 10" 
+    false (contains_substr c_code ">= 10");
+  
+  (* REGRESSION TEST: Should NOT use conditional null termination anymore *)
+  Alcotest.(check bool) "does NOT use conditional null termination" 
+    false (contains_substr c_code "if (str_concat_1.len <")
+
+(**
+ * Bug Fix Test 6: Function Call String Argument Bug
+ * 
+ * ISSUE: bpf_printk("%s", tmp_1) passed struct instead of .data field for non-str_lit variables
+ * ROOT CAUSE: fix_string_arg only checked for "str_lit" prefix, not "tmp_" or "str_concat" prefixes
+ * FIX: Extended detection logic to cover all string variable patterns
+ *)
+let test_function_call_string_arg_bug () =
+  (* Create string concatenation result passed to function call *)
+  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let left_str = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
+  let right_str = make_ir_value (IRLiteral (StringLit " world")) (IRStr 6) test_pos in
+  let concat_expr = make_ir_expr (IRBinOp (left_str, IRAdd, right_str)) (IRStr 11) test_pos in
+  let result_var = make_ir_value (IRRegister 1) (IRStr 11) test_pos in
+  let assign_instr = make_ir_instruction (IRAssign (result_var, concat_expr)) test_pos in
+  let print_call = make_ir_instruction (IRCall ("print", [result_var], Some (make_ir_value (IRRegister 2) IRU32 test_pos))) test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
+  let main_block = make_ir_basic_block "entry" [assign_instr; print_call; return_instr] 0 in
+  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  
+  let c_code = compile_to_c ir_prog in
+  
+  (* POSITIVE TEST: Should use .data field for tmp_ variables *)
+  Alcotest.(check bool) "uses .data field for tmp_ variables" 
+    true (contains_substr c_code "tmp_1.data");
+  
+  (* REGRESSION TEST: Should NOT pass struct directly *)
+  Alcotest.(check bool) "does NOT pass struct directly to bpf_printk" 
+    false (contains_substr c_code "bpf_printk(\"%s\", tmp_1);");
+  
+  (* POSITIVE TEST: Generates proper bpf_printk call *)
+  Alcotest.(check bool) "generates bpf_printk call" 
+    true (contains_substr c_code "bpf_printk")
+
+(**
+ * Bug Fix Test 7: String Concatenation Loop Bounds Bug
+ * 
+ * ISSUE: Loop bounds used size-1 instead of size, causing character truncation
+ * ROOT CAUSE: for (int i = 0; i < left_size - 1; i++) cut off last character of each string
+ * FIX: Use full size since null termination check handles early exit
+ *)
+let test_string_concat_loop_bounds_bug () =
+  (* Create exact "Hello" + " world" test case that was failing *)
+  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let hello_str = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
+  let world_str = make_ir_value (IRLiteral (StringLit " world")) (IRStr 6) test_pos in
+  let concat_expr = make_ir_expr (IRBinOp (hello_str, IRAdd, world_str)) (IRStr 11) test_pos in
+  let result_var = make_ir_value (IRVariable "full_result") (IRStr 11) test_pos in
+  let assign_instr = make_ir_instruction (IRAssign (result_var, concat_expr)) test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
+  let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
+  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  
+  let c_code = compile_to_c ir_prog in
+  
+  (* POSITIVE TEST: Should use full loop bounds for 5-char string *)
+  Alcotest.(check bool) "uses correct loop bound < 5 for Hello" 
+    true (contains_substr c_code "< 5");
+  
+  (* POSITIVE TEST: Should use full loop bounds for 6-char string *)
+  Alcotest.(check bool) "uses correct loop bound < 6 for world" 
+    true (contains_substr c_code "< 6");
+  
+  (* REGRESSION TEST: Should NOT use truncated bounds *)
+  Alcotest.(check bool) "does NOT use truncated bound < 4" 
+    false (contains_substr c_code "< 4");
+  
+  (* The combination should now generate full concatenation capability *)
+  Alcotest.(check bool) "generates proper string concatenation" 
+    true (contains_substr c_code "str_concat_")
+
+(**
  * Edge Case Test: Boundary conditions that might trigger the bugs
  *)
 let test_edge_cases_for_bugs () =
@@ -184,6 +326,10 @@ let bug_fix_suite =
     ("Bug Fix: Hello world truncation", `Quick, test_hello_world_truncation_bug);
     ("Bug Fix: bpf_printk .data field", `Quick, test_bpf_printk_data_field_bug);
     ("Bug Fix: Multi-arg .data field", `Quick, test_multi_arg_printk_data_field_bug);
+    ("Bug Fix: Null terminator buffer size", `Quick, test_null_terminator_buffer_bug);
+    ("Bug Fix: String concat bounds check", `Quick, test_string_concat_bounds_bug);
+    ("Bug Fix: Function call string arg", `Quick, test_function_call_string_arg_bug);
+    ("Bug Fix: String concat loop bounds", `Quick, test_string_concat_loop_bounds_bug);
     ("Integration: Combined bugs", `Quick, test_combined_bugs_integration);
     ("Edge cases for bugs", `Quick, test_edge_cases_for_bugs);
   ]

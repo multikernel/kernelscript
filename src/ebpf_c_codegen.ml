@@ -204,7 +204,7 @@ let generate_string_typedefs ctx ir_multi_prog =
   if unique_sizes <> [] then (
     emit_line ctx "/* String type definitions */";
     List.iter (fun size ->
-      emit_line ctx (sprintf "typedef struct { char data[%d]; __u16 len; } str_%d_t;" size size)
+      emit_line ctx (sprintf "typedef struct { char data[%d]; __u16 len; } str_%d_t;" (size + 1) size)
     ) unique_sizes;
     emit_blank_line ctx
   )
@@ -382,11 +382,11 @@ let generate_string_concat ctx left_val right_val =
   (* Generate the concatenation code using typedef'd struct *)
   emit_line ctx (sprintf "str_%d_t %s;" result_size temp_var);
   emit_line ctx (sprintf "%s.len = 0;" temp_var);
-  let max_content_len = result_size - 1 in (* Reserve space for null terminator *)
+  let max_content_len = result_size in (* Full content capacity available *)
   
   (* Copy first string with bounds checking and null terminator detection *)
   emit_line ctx "#pragma unroll";
-  emit_line ctx (sprintf "for (int i = 0; i < %d; i++) {" (left_size - 1));
+  emit_line ctx (sprintf "for (int i = 0; i < %d; i++) {" left_size);
   emit_line ctx (sprintf "    if (%s.len >= %d) break;" temp_var max_content_len);
   emit_line ctx (sprintf "    if (%s.data[i] == 0) break;" left_str);
   emit_line ctx (sprintf "    %s.data[%s.len++] = %s.data[i];" temp_var temp_var left_str);
@@ -394,14 +394,14 @@ let generate_string_concat ctx left_val right_val =
   
   (* Copy second string with bounds checking and null terminator detection *)
   emit_line ctx "#pragma unroll";
-  emit_line ctx (sprintf "for (int i = 0; i < %d; i++) {" (right_size - 1));
+  emit_line ctx (sprintf "for (int i = 0; i < %d; i++) {" right_size);
   emit_line ctx (sprintf "    if (%s.len >= %d) break;" temp_var max_content_len);
   emit_line ctx (sprintf "    if (%s.data[i] == 0) break;" right_str);
   emit_line ctx (sprintf "    %s.data[%s.len++] = %s.data[i];" temp_var temp_var right_str);
   emit_line ctx "}";
   
-  (* Add null terminator *)
-  emit_line ctx (sprintf "if (%s.len < %d) %s.data[%s.len] = 0;" temp_var max_content_len temp_var temp_var);
+  (* Add null terminator - always safe since we have max_content_len + 1 total bytes *)
+  emit_line ctx (sprintf "%s.data[%s.len] = 0;" temp_var temp_var);
   
   temp_var
 
@@ -644,37 +644,44 @@ let rec generate_c_instruction ctx ir_instr =
       let (actual_name, translated_args) = match Stdlib.get_ebpf_implementation name with
         | Some ebpf_impl ->
             (* This is a built-in function - translate for eBPF context *)
-            let c_args = List.map (generate_c_value ctx) args in
             (match name with
              | "print" -> 
+                 (* Helper function to generate proper C arg based on IR type *)
+                 let generate_print_arg ir_val =
+                   let base_arg = generate_c_value ctx ir_val in
+                   match ir_val.val_type with
+                   | IRStr _ -> base_arg ^ ".data"  (* String types need .data field *)
+                   | _ -> base_arg  (* Other types use as-is *)
+                 in
                  (* Special handling for print: convert to bpf_printk format *)
-                 (match c_args with
+                 (match args with
                   | [] -> (ebpf_impl, ["\"\""])
-                  | [first] -> 
+                  | [first_ir] -> 
                       (* For string struct arguments, use .data field *)
-                      let first_arg = if String.length first > 7 && String.sub first 0 7 = "str_lit" then
-                        first ^ ".data"
-                      else first in
+                      let first_arg = generate_print_arg first_ir in
                       (ebpf_impl, [sprintf "\"%s\"" "%s"; first_arg])
-                  | first :: rest ->
+                  | first_ir :: rest_ir ->
                      (* bpf_printk limits: format string + up to 3 args *)
-                     let limited_args = 
+                     let limited_rest = 
                        let rec take n lst =
                          if n <= 0 then []
                          else match lst with
                          | [] -> []
                          | h :: t -> h :: take (n - 1) t
                        in
-                       take (min 3 (List.length rest)) rest
+                       take (min 3 (List.length rest_ir)) rest_ir
                      in
-                     let format_specifiers = List.map (fun _ -> "%d") limited_args in
+                     let format_specifiers = List.map (fun _ -> "%d") limited_rest in
                      let format_str = sprintf "\"%s%s\"" "%s" (String.concat " " format_specifiers) in
-                     (* Fix first argument for string structs *)
-                     let first_arg = if String.length first > 7 && String.sub first 0 7 = "str_lit" then
-                       first ^ ".data"
-                     else first in
-                     (ebpf_impl, format_str :: first_arg :: limited_args))
-             | _ -> (ebpf_impl, c_args))
+                     (* Generate first argument with proper type handling *)
+                     let first_arg = generate_print_arg first_ir in
+                     (* Generate remaining arguments *)
+                     let rest_args = List.map (generate_c_value ctx) limited_rest in
+                     (ebpf_impl, format_str :: first_arg :: rest_args))
+             | _ -> 
+                 (* For other built-in functions, use standard conversion *)
+                 let c_args = List.map (generate_c_value ctx) args in
+                 (ebpf_impl, c_args))
         | None ->
             (* Regular function call *)
             let c_args = List.map (generate_c_value ctx) args in
@@ -1128,6 +1135,18 @@ let generate_c_program ?config_declarations ir_prog =
   
   (* Add standard includes *)
   generate_includes ctx;
+  
+  (* Generate string type definitions *)
+  let temp_multi_prog = {
+    source_name = ir_prog.name;
+    programs = [ir_prog];
+    global_maps = [];
+    global_configs = [];
+    userspace_program = None;
+    userspace_bindings = [];
+    multi_pos = ir_prog.ir_pos;
+  } in
+  generate_string_typedefs ctx temp_multi_prog;
   
   (* Generate config maps if provided *)
   begin match config_declarations with

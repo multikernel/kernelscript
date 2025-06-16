@@ -1,6 +1,6 @@
 program simple_xdp : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        print("Hello world");
+        print("Hello" + " world");
         return 2;
     }
 }
