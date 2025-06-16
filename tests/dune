@@ -187,6 +187,11 @@
  (modules test_string_literal_bugs)
  (libraries kernelscript alcotest str))
 
+(executable
+ (name test_return_path_analysis)
+ (modules test_return_path_analysis)
+ (libraries kernelscript ounit2))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)

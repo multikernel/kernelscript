@@ -80,8 +80,11 @@ module ReturnAnalysis = struct
     return_type_consistent: bool;
   }
   
-  (** Analyze return paths in function *)
+  (** Analyze return paths in function using proper control flow analysis *)
   let analyze_returns (func : ir_function) : return_info =
+    let cfg = CFG.build_cfg func in
+    
+    (* Check if any block has a return statement *)
     let has_return = List.exists (fun block ->
       List.exists (fun instr ->
         match instr.instr_desc with
@@ -90,9 +93,41 @@ module ReturnAnalysis = struct
       ) block.instructions
     ) func.basic_blocks in
     
+    (* Check if all execution paths lead to a return statement *)
+    let all_paths_return = 
+      if not has_return then false
+      else
+        (* For each exit block (blocks with no successors), check if it ends with return *)
+        let exit_blocks_have_return = List.for_all (fun exit_label ->
+          match List.find_opt (fun block -> block.label = exit_label) func.basic_blocks with
+          | None -> false
+          | Some block ->
+              (* Check if the last instruction in this block is a return *)
+              (match List.rev block.instructions with
+               | last_instr :: _ ->
+                   (match last_instr.instr_desc with
+                    | IRReturn _ -> true
+                    | _ -> false)
+               | [] -> false)
+        ) cfg.exit_blocks in
+        
+        (* If there are no explicit exit blocks, check if entry block returns *)
+        if cfg.exit_blocks = [] then
+          match List.find_opt (fun block -> block.label = cfg.entry_block) func.basic_blocks with
+          | None -> false
+          | Some entry_block ->
+              List.exists (fun instr ->
+                match instr.instr_desc with
+                | IRReturn _ -> true
+                | _ -> false
+              ) entry_block.instructions
+        else
+          exit_blocks_have_return
+    in
+    
     {
       has_return;
-      all_paths_return = has_return;
+      all_paths_return;
       return_type_consistent = true;
     }
 end
