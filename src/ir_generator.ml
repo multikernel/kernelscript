@@ -38,6 +38,7 @@ type ir_context = {
   mutable const_env: Loop_analysis.const_env option;
   mutable in_bpf_loop_callback: bool; (* New field to track bpf_loop context *)
   mutable is_userspace: bool; (* New field to track if the program is userspace *)
+  mutable in_try_block: bool; (* New field to track if we're inside a try block *)
 }
 
 (** Create new IR generation context *)
@@ -55,6 +56,7 @@ let create_context symbol_table = {
   const_env = None;
   in_bpf_loop_callback = false;
   is_userspace = false;
+  in_try_block = false;
 }
 
 (** Register allocation *)
@@ -603,6 +605,33 @@ let rec lower_statement ctx stmt =
           (IRIf (cond_val, !then_instructions, else_instrs_opt))
           stmt.stmt_pos in
         emit_instruction ctx if_instr
+      else if ctx.in_try_block then
+        (* For try blocks, use structured IRIf to avoid disrupting statement ordering *)
+        let then_instructions = ref [] in
+        
+        (* Temporarily capture instructions for then block *)
+        let old_block = ctx.current_block in
+        ctx.current_block <- [];
+        List.iter (lower_statement ctx) then_stmts;
+        then_instructions := List.rev ctx.current_block;
+        ctx.current_block <- old_block;
+        
+        (* Temporarily capture instructions for else block *)
+        let else_instrs_opt = match else_opt with
+          | Some else_stmts ->
+              ctx.current_block <- [];
+              List.iter (lower_statement ctx) else_stmts;
+              let else_instrs = List.rev ctx.current_block in
+              ctx.current_block <- old_block;
+              Some else_instrs
+          | None -> None
+        in
+        
+        (* Generate IRIf instruction *)
+        let if_instr = make_ir_instruction 
+          (IRIf (cond_val, !then_instructions, else_instrs_opt))
+          stmt.stmt_pos in
+        emit_instruction ctx if_instr
       else
         (* Regular control flow for eBPF contexts *)
         (* Create labels for control flow *)
@@ -886,6 +915,83 @@ let rec lower_statement ctx stmt =
   | Ast.Continue ->
       (* Generate continue instruction for IR *)
       let instr = make_ir_instruction IRContinue stmt.stmt_pos in
+      emit_instruction ctx instr
+      
+  | Ast.Try (try_stmts, catch_clauses) ->
+      (* For try/catch blocks, we need to ensure proper statement ordering *)
+      (* The key insight is that we need to process try/catch as a single unit *)
+      (* while maintaining the sequential ordering of statements *)
+      
+      (* Convert AST catch clauses to IR catch clauses with proper bodies *)
+      let ir_catch_clauses = List.map (fun clause ->
+        let ir_pattern = match clause.Ast.catch_pattern with
+          | Ast.IntPattern code -> Ir.IntCatchPattern code
+          | Ast.WildcardPattern -> Ir.WildcardCatchPattern
+        in
+        
+        (* Process catch clause body statements to IR instructions *)
+        (* We need to maintain the same context for proper variable resolution *)
+        let catch_instructions = ref [] in
+        let old_current_block = ctx.current_block in
+        ctx.current_block <- [];
+        
+        List.iter (lower_statement ctx) clause.Ast.catch_body;
+        catch_instructions := List.rev ctx.current_block;
+        
+        ctx.current_block <- old_current_block;
+        
+        { Ir.catch_pattern = ir_pattern; Ir.catch_body = !catch_instructions }
+      ) catch_clauses in
+      
+      (* Process try block statements while maintaining proper ordering *)
+      (* The key is to process the try block in the current context but *)
+      (* capture the instructions separately *)
+      let try_instructions = ref [] in
+      let old_current_block = ctx.current_block in
+      let old_in_try_block = ctx.in_try_block in
+      ctx.current_block <- [];
+      ctx.in_try_block <- true;
+      
+      (* Process try statements in the current context to maintain variable scope *)
+      (* and proper control flow block creation *)
+      List.iter (lower_statement ctx) try_stmts;
+      try_instructions := List.rev ctx.current_block;
+      
+      (* Restore the original current_block and in_try_block flag *)
+      ctx.current_block <- old_current_block;
+      ctx.in_try_block <- old_in_try_block;
+      
+      let instr = make_ir_instruction (IRTry (!try_instructions, ir_catch_clauses)) stmt.stmt_pos in
+      emit_instruction ctx instr
+      
+  | Ast.Throw expr ->
+      (* Evaluate the expression to get the error code *)
+      let _error_value = lower_expression ctx expr in
+      (* For now, assume it's an integer literal - in a full implementation, 
+         we'd need to evaluate the expression at compile time *)
+      let error_code = match expr.expr_desc with
+        | Ast.Literal (Ast.IntLit code) -> Ir.IntErrorCode code
+        | Ast.Identifier _ -> 
+            (* For identifiers (like enum values), we'd need to resolve them *)
+            (* For now, use a default error code *)
+            Ir.IntErrorCode 1
+        | _ -> 
+            (* For complex expressions, we'd need constant folding *)
+            Ir.IntErrorCode 1
+      in
+      let instr = make_ir_instruction (IRThrow error_code) stmt.stmt_pos in
+      emit_instruction ctx instr
+      
+  | Ast.Defer expr ->
+      (* Convert defer expression to instruction list *)
+      let defer_instructions = ref [] in
+      let old_blocks = ctx.current_block in
+      ctx.current_block <- [];
+      let _ = lower_expression ctx expr in
+      defer_instructions := List.rev ctx.current_block;
+      ctx.current_block <- old_blocks;
+      
+      let instr = make_ir_instruction (IRDefer !defer_instructions) stmt.stmt_pos in
       emit_instruction ctx instr
 
 (** Helper function to take first n elements from a list *)

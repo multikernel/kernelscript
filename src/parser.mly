@@ -17,7 +17,7 @@
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET MUT PUB PRIV CONFIG
-%token IN DELETE
+%token IN DELETE TRY CATCH THROW DEFER
 
 /* Operators */
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
@@ -84,6 +84,12 @@
 %type <Ast.statement> delete_statement
 %type <Ast.statement> break_statement
 %type <Ast.statement> continue_statement
+%type <Ast.statement> try_statement
+%type <Ast.statement> throw_statement
+%type <Ast.statement> defer_statement
+%type <Ast.catch_clause list> catch_clauses
+%type <Ast.catch_clause> catch_clause
+%type <Ast.catch_pattern> catch_pattern
 %type <Ast.expr> expression
 %type <Ast.expr> primary_expression
 %type <Ast.literal> literal
@@ -218,6 +224,9 @@ statement:
   | delete_statement { $1 }
   | break_statement { $1 }
   | continue_statement { $1 }
+  | try_statement { $1 }
+  | throw_statement { $1 }
+  | defer_statement { $1 }
 
 expression_statement:
   | expression SEMICOLON { make_stmt (ExprStmt $1) (make_pos ()) }
@@ -273,6 +282,32 @@ break_statement:
 
 continue_statement:
   | CONTINUE SEMICOLON { make_stmt (Continue) (make_pos ()) }
+
+try_statement:
+  | TRY LBRACE statement_list RBRACE catch_clauses
+    { make_stmt (Try ($3, $5)) (make_pos ()) }
+
+catch_clauses:
+  | /* empty */ { [] }
+  | catch_clause catch_clauses { $1 :: $2 }
+
+catch_clause:
+  | CATCH catch_pattern LBRACE statement_list RBRACE
+    { { catch_pattern = $2; catch_body = $4; catch_pos = make_pos () } }
+
+catch_pattern:
+  | INT
+    { IntPattern $1 }
+  | IDENTIFIER
+    { if $1 = "_" then WildcardPattern else failwith ("Invalid catch pattern: " ^ $1) }
+
+throw_statement:
+  | THROW expression SEMICOLON
+    { make_stmt (Throw $2) (make_pos ()) }
+
+defer_statement:
+  | DEFER expression SEMICOLON
+    { make_stmt (Defer $2) (make_pos ()) }
 
 /* Expressions */
 expression:

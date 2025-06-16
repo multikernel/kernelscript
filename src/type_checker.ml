@@ -56,6 +56,9 @@ and typed_stmt_desc =
   | TDelete of typed_expr * typed_expr
   | TBreak
   | TContinue
+  | TTry of typed_statement list * catch_clause list  (* try statements, catch clauses *)
+  | TThrow of typed_expr  (* throw statements with expression *)
+  | TDefer of typed_expr  (* defer expression *)
 
 type typed_function = {
   tfunc_name: string;
@@ -800,6 +803,66 @@ let rec type_check_statement ctx stmt =
       if !loop_depth = 0 then
         type_error "Continue statement can only be used inside loops" stmt.stmt_pos;
       { tstmt_desc = TContinue; tstmt_pos = stmt.stmt_pos }
+      
+  | Try (try_stmts, catch_clauses) ->
+      (* Type check try block *)
+      let typed_try_stmts = List.map (type_check_statement ctx) try_stmts in
+      
+      (* Type check catch clause bodies to set expr_type on expressions *)
+      List.iter (fun clause ->
+
+        (* Manually set expr_type on expressions in catch clause bodies *)
+        let rec fix_expr_types expr =
+          match expr.expr_desc with
+          | Identifier name ->
+              (* Set expr_type based on variable context *)
+              (match Hashtbl.find_opt ctx.variables name with
+               | Some bpf_type -> 
+                   expr.expr_type <- Some bpf_type;
+                   expr.type_checked <- true
+               | None -> ())
+          | ArrayAccess (arr_expr, idx_expr) ->
+              fix_expr_types arr_expr;
+              fix_expr_types idx_expr
+          | BinaryOp (left, _, right) ->
+              fix_expr_types left;
+              fix_expr_types right
+          | _ -> ()
+        in
+        
+        let fix_stmt_types stmt =
+          match stmt.stmt_desc with
+          | IndexAssignment (map_expr, key_expr, value_expr) ->
+              fix_expr_types map_expr;
+              fix_expr_types key_expr;
+              fix_expr_types value_expr
+          | Return (Some expr) ->
+              fix_expr_types expr
+          | _ -> ()
+        in
+        
+        List.iter fix_stmt_types clause.catch_body;
+        
+        (* Also run the regular type checker (but ignore the result for now) *)
+        List.iter (fun stmt -> ignore (type_check_statement ctx stmt)) clause.catch_body
+      ) catch_clauses;
+      
+      { tstmt_desc = TTry (typed_try_stmts, catch_clauses); tstmt_pos = stmt.stmt_pos }
+      
+  | Throw expr ->
+      (* Type check the throw expression - must be integer type *)
+      let typed_expr = type_check_expression ctx expr in
+      (match typed_expr.texpr_type with
+       | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 -> 
+           { tstmt_desc = TThrow typed_expr; tstmt_pos = stmt.stmt_pos }
+       | other_type ->
+           failwith (Printf.sprintf "throw expression must be integer type, got %s at %s" 
+             (string_of_bpf_type other_type) (string_of_position stmt.stmt_pos)))
+      
+  | Defer expr ->
+      (* Type check the deferred expression *)
+      let typed_expr = type_check_expression ctx expr in
+      { tstmt_desc = TDefer typed_expr; tstmt_pos = stmt.stmt_pos }
 
 (** Type check function *)
 let type_check_function ctx func =
@@ -989,6 +1052,12 @@ let rec typed_stmt_to_stmt tstmt =
         Delete (typed_expr_to_expr cond, typed_expr_to_expr body)
     | TBreak -> Break
     | TContinue -> Continue
+    | TTry (try_stmts, catch_clauses) ->
+        Try (List.map typed_stmt_to_stmt try_stmts, catch_clauses)
+    | TThrow expr ->
+        Throw (typed_expr_to_expr expr)
+    | TDefer expr ->
+        Defer (typed_expr_to_expr expr)
   in
   { stmt_desc; stmt_pos = tstmt.tstmt_pos }
 
@@ -1213,9 +1282,18 @@ and populate_multi_program_context ast multi_prog_analysis =
     | Return None -> ()
     | Break -> ()
     | Continue -> ()
+    | Try (try_stmts, catch_clauses) ->
+        List.iter (enhance_stmt prog_type) try_stmts;
+        List.iter (fun clause ->
+          List.iter (enhance_stmt prog_type) clause.catch_body
+        ) catch_clauses
+    | Throw expr ->
+        enhance_expr prog_type expr
+    | Defer expr ->
+        enhance_expr prog_type expr
   in
-  
-  (* Enhance each program in the AST *)
+
+  (* Enhance userspace expressions and statements *)
   let rec enhance_userspace_expr expr =
     (* Set program context to None for userspace/global functions *)
     expr.program_context <- None;
@@ -1298,6 +1376,15 @@ and populate_multi_program_context ast multi_prog_analysis =
     | Return None -> ()
     | Break -> ()
     | Continue -> ()
+    | Try (try_stmts, catch_clauses) ->
+        List.iter enhance_userspace_stmt try_stmts;
+        List.iter (fun clause ->
+          List.iter enhance_userspace_stmt clause.catch_body
+        ) catch_clauses
+    | Throw expr ->
+        enhance_userspace_expr expr
+    | Defer expr ->
+        enhance_userspace_expr expr
   in
 
   List.map (function

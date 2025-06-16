@@ -31,6 +31,8 @@ type c_codegen_context = {
   mutable next_label_id: int;
   (* Pending callbacks to be emitted *)
   mutable pending_callbacks: string list;
+  (* Current error variable for try/catch blocks *)
+  mutable current_error_var: string option;
 }
 
 let create_c_context () = {
@@ -42,6 +44,7 @@ let create_c_context () = {
   map_definitions = [];
   next_label_id = 0;
   pending_callbacks = [];
+  current_error_var = None;
 }
 
 (** Helper functions for code generation *)
@@ -620,7 +623,7 @@ let rec generate_c_instruction ctx ir_instr =
            let dest_str = generate_c_value ctx dest_val in
            let src_str = generate_c_value ctx src_val in
            emit_line ctx (sprintf "%s = %s;" dest_str src_str)
-               | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
+       | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
            (* String literal to string assignment - already handled in generate_c_value *)
            let dest_str = generate_c_value ctx dest_val in
            let src_str = generate_c_value ctx src_val in
@@ -921,6 +924,69 @@ let rec generate_c_instruction ctx ir_instr =
        | None ->
            emit_line ctx "}")
 
+  | IRTry (try_instructions, catch_clauses) ->
+      (* For eBPF, generate structured try/catch with error status variable and if() checks *)
+      let error_var = sprintf "__error_status_%d" ctx.next_label_id in
+      ctx.next_label_id <- ctx.next_label_id + 1;
+      
+      emit_line ctx "/* try block start */";
+      emit_line ctx (sprintf "int %s = 0; /* error status */" error_var);
+      emit_line ctx "{";
+      increase_indent ctx;
+      
+      (* Generate try block instructions *)
+      (* We need to track the error variable in context for throw statements *)
+      let old_error_var = ctx.current_error_var in
+      ctx.current_error_var <- Some error_var;
+      List.iter (generate_c_instruction ctx) try_instructions;
+      ctx.current_error_var <- old_error_var;
+      
+      decrease_indent ctx;
+      emit_line ctx "}";
+      
+      (* Generate catch blocks as if-else chain *)
+      List.iteri (fun i catch_clause ->
+        let pattern_comment = match catch_clause.catch_pattern with
+          | IntCatchPattern code -> sprintf "catch %d" code
+          | WildcardCatchPattern -> "catch _"
+        in
+        let condition = match catch_clause.catch_pattern with
+          | IntCatchPattern code -> sprintf "%s == %d" error_var code
+          | WildcardCatchPattern -> sprintf "%s != 0" error_var
+        in
+        
+        let if_keyword = if i = 0 then "if" else "else if" in
+        emit_line ctx (sprintf "%s (%s) { /* %s */" if_keyword condition pattern_comment);
+        increase_indent ctx;
+        
+        (* Generate catch block instructions from IR *)
+        List.iter (generate_c_instruction ctx) catch_clause.catch_body;
+        
+        decrease_indent ctx;
+        emit_line ctx "}";
+      ) catch_clauses;
+      
+      emit_line ctx "/* try block end */"
+
+  | IRThrow error_code ->
+      (* Generate assignment to error status variable *)
+      let code_val = match error_code with
+        | IntErrorCode code -> code
+      in
+      (match ctx.current_error_var with
+       | Some error_var ->
+           emit_line ctx (sprintf "%s = %d; /* throw %d */" error_var code_val code_val)
+       | None ->
+           (* If not in a try block, this is an uncaught throw - could return error code *)
+           emit_line ctx (sprintf "return %d; /* uncaught throw %d */" code_val code_val))
+
+  | IRDefer defer_instructions ->
+      (* For eBPF, defer is not directly supported, so we'll generate comments *)
+      emit_line ctx "/* defer block - should be executed on function exit */";
+      List.iter (fun instr ->
+        emit_line ctx (sprintf "/* deferred: %s */" (string_of_ir_instruction instr))
+      ) defer_instructions
+
 (** Generate C code for basic block *)
 
 let generate_c_basic_block ctx ir_block =
@@ -991,6 +1057,12 @@ let collect_registers_in_function ir_func =
         collect_in_value cond_val;
         Option.iter collect_in_value ret_if_true;
         Option.iter collect_in_value ret_if_false
+    | IRTry (try_instructions, _catch_clauses) ->
+        List.iter collect_in_instr try_instructions
+    | IRThrow _error_code ->
+        ()  (* Throw statements don't contain values to collect *)
+    | IRDefer defer_instructions ->
+        List.iter collect_in_instr defer_instructions
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -1084,7 +1156,7 @@ let generate_c_program ?config_declarations ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ?config_declarations ir_multi_prog =
+let generate_c_multi_program ?config_declarations ir_multi_program =
   let ctx = create_c_context () in
   
   (* Add standard includes *)
@@ -1097,25 +1169,22 @@ let generate_c_multi_program ?config_declarations ir_multi_prog =
   end;
   
   (* Generate global map definitions *)
-  List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
+  List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
   
   (* Generate all local map definitions from all programs *)
   List.iter (fun ir_prog ->
     List.iter (generate_map_definition ctx) ir_prog.local_maps
-  ) ir_multi_prog.programs;
+  ) ir_multi_program.programs;
   
-  (* First pass: collect all callbacks by generating functions *)
+  (* First pass: collect all callbacks *)
   let temp_ctx = create_c_context () in
   List.iter (fun ir_prog ->
-    (* Generate main function *)
     generate_c_function temp_ctx ir_prog.main_function;
-    
-    (* Generate other functions (excluding main to avoid duplicates) *)
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
     List.iter (generate_c_function temp_ctx) other_functions
-  ) ir_multi_prog.programs;
+  ) ir_multi_program.programs;
   
-  (* Now emit the collected callbacks *)
+  (* Emit collected callbacks *)
   if temp_ctx.pending_callbacks <> [] then (
     List.iter (emit_line ctx) temp_ctx.pending_callbacks;
     emit_blank_line ctx;
@@ -1123,13 +1192,10 @@ let generate_c_multi_program ?config_declarations ir_multi_prog =
   
   (* Second pass: generate actual functions *)
   List.iter (fun ir_prog ->
-    (* Generate main function *)
     generate_c_function ctx ir_prog.main_function;
-    
-    (* Generate other functions (excluding main to avoid duplicates) *)
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
     List.iter (generate_c_function ctx) other_functions
-  ) ir_multi_prog.programs;
+  ) ir_multi_program.programs;
   
   (* Add license (required for eBPF) *)
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";

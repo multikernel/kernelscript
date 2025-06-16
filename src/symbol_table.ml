@@ -517,6 +517,22 @@ and process_statement table stmt =
   | Continue ->
       (* Continue statements don't need symbol processing *)
       ()
+      
+  | Try (try_stmts, catch_clauses) ->
+      (* Process try block statements *)
+      List.iter (process_statement table) try_stmts;
+      (* Process catch clause bodies *)
+      List.iter (fun clause ->
+        List.iter (process_statement table) clause.catch_body
+      ) catch_clauses
+      
+  | Throw _ ->
+      (* Throw statements don't introduce new symbols *)
+      ()
+      
+  | Defer expr ->
+      (* Process the deferred expression for symbols *)
+      process_expression table expr
 
 and process_expression table expr =
   match expr.expr_desc with

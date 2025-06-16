@@ -949,10 +949,10 @@ while condition && iterations < MAX_ITERATIONS {
 
 ### 7.1 Throw and Catch Statements
 
-KernelScript provides modern error handling through `throw` and `catch` statements that compile to efficient C error checking code. Functions do not require annotations to declare what errors they can throw.
+KernelScript provides modern error handling through `throw` and `catch` statements that compile to efficient C error checking code. Error handling uses integer values for maximum performance and compatibility with both eBPF and userspace environments.
 
 ```kernelscript
-// Error types as simple enums
+// Error codes as simple enums or constants
 enum ParseError {
     TooShort = 1,
     InvalidVersion = 2,
@@ -960,31 +960,35 @@ enum ParseError {
 }
 
 enum NetworkError {
-    AllocationFailed = 1,
-    MapUpdateFailed = 2,
-    RateLimitExceeded = 3,
+    AllocationFailed = 10,
+    MapUpdateFailed = 11,
+    RateLimitExceeded = 12,
 }
 
-// Functions can throw errors without annotations
+// Or use simple constants
+const ERROR_INVALID_PACKET = 100;
+const ERROR_RATE_LIMITED = 101;
+
+// Functions can throw integer error codes
 fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
     if len < 20 {
-        throw ParseError::TooShort;
+        throw ParseError::TooShort;  // Throws integer value 1
     }
     
     let header = cast_to_ip_header(packet);
     if header.version != 4 {
-        throw ParseError::InvalidVersion;
+        throw ParseError::InvalidVersion;  // Throws integer value 2
     }
     
     return header;
 }
 
-// Error handling with try/catch blocks
+// Error handling with try/catch blocks using integer matching
 fn process_packet(ctx: XdpContext) -> XdpAction {
     try {
         let packet = get_packet(ctx);
         if packet == null {
-            throw NetworkError::AllocationFailed;
+            throw NetworkError::AllocationFailed;  // Throws integer value 10
         }
         
         let header = parse_ip_header(packet.data, packet.len);
@@ -992,14 +996,29 @@ fn process_packet(ctx: XdpContext) -> XdpAction {
         
         return XdpAction::Pass;
         
-    } catch ParseError::TooShort {
+    } catch 1 {  // ParseError::TooShort
         return XdpAction::Drop;
         
-    } catch ParseError::InvalidVersion {
+    } catch 2 {  // ParseError::InvalidVersion
         return XdpAction::Drop;
         
-    } catch NetworkError::AllocationFailed {
+    } catch 10 {  // NetworkError::AllocationFailed
         return XdpAction::Aborted;
+        
+    } catch _ {  // Catch-all for any other error
+        return XdpAction::Aborted;
+    }
+}
+
+// You can also throw literal integers or variables
+fn validate_input(value: i32) {
+    if value < 0 {
+        throw 42;  // Direct integer throw
+    }
+    
+    let error_code = compute_error_code(value);
+    if error_code != 0 {
+        throw error_code;  // Variable throw
     }
 }
 ```
@@ -1024,7 +1043,7 @@ fn update_shared_counter(index: u32) -> bool {
     data.counter += 1;
     
     if data.counter > 1000000 {
-        throw NetworkError::RateLimitExceeded;  // defer still executes
+        throw NetworkError::RateLimitExceeded;  // defer still executes (throws 12)
     }
     
     return true;  // defer executes here too
@@ -1062,12 +1081,12 @@ fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
         
         let flow_data = process_flow(packet_buffer);
         if flow_data.is_suspicious() {
-            throw NetworkError::RateLimitExceeded;
+            throw NetworkError::RateLimitExceeded;  // Throws 12
         }
         
         return XdpAction::Pass;
         
-    } catch NetworkError::RateLimitExceeded {
+    } catch 12 {  // NetworkError::RateLimitExceeded
         increment_drop_counter();
         return XdpAction::Drop;
         // Both defer statements execute even in catch block
@@ -1088,10 +1107,10 @@ program packet_filter : xdp {
             let result = process_packet(ctx);  // Might throw
             return XdpAction::Pass;
             
-        } catch ParseError::TooShort {
+        } catch 1 {  // ParseError::TooShort
             return XdpAction::Drop;
             
-        } catch NetworkError::AllocationFailed {
+        } catch 10 {  // NetworkError::AllocationFailed
             return XdpAction::Aborted;
         }
         // ❌ Compiler ERROR if any possible throw is not caught
@@ -1108,7 +1127,7 @@ Helper functions can propagate errors without catching them - this enables natur
 fn extract_flow_key(ctx: XdpContext) -> FlowKey {
     let packet = get_packet(ctx);
     if packet == null {
-        throw NetworkError::AllocationFailed;  // ✅ OK - propagates to caller
+        throw NetworkError::AllocationFailed;  // ✅ OK - propagates to caller (throws 10)
     }
     
     return parse_flow_key(packet);  // May also throw - propagates up
@@ -1117,7 +1136,7 @@ fn extract_flow_key(ctx: XdpContext) -> FlowKey {
 fn validate_flow(key: FlowKey) -> FlowState {
     let state = lookup_flow_state(key);  // May throw
     if state.is_expired() {
-        throw NetworkError::RateLimitExceeded;  // ✅ OK - propagates to caller
+        throw NetworkError::RateLimitExceeded;  // ✅ OK - propagates to caller (throws 12)
     }
     
     return state;
@@ -1144,11 +1163,11 @@ fn main() -> i32 {
         print("Program attached successfully");
         return 0;
         
-    } catch LoadError::ProgramNotFound {
+    } catch 20 {  // LoadError::ProgramNotFound
         print("Failed to load program");
         return 1;
         
-    } catch AttachError::PermissionDenied {
+    } catch 30 {  // AttachError::PermissionDenied
         print("Permission denied - check privileges");
         return 2;
     }
@@ -1915,10 +1934,9 @@ block_statement = "{" statement_list "}" ;
 
 (* Error handling and resource management statements *)
 try_statement = "try" "{" statement_list "}" { catch_clause } ;
-catch_clause = "catch" error_pattern "{" statement_list "}" ;
-error_pattern = identifier "::" identifier ;
+catch_clause = "catch" ( integer_literal | "_" ) "{" statement_list "}" ;
 
-throw_statement = "throw" error_pattern ";" ;
+throw_statement = "throw" expression ";" ;
 
 defer_statement = "defer" expression ";" ;
 

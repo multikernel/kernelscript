@@ -177,6 +177,11 @@
  (modules test_string_codegen)
  (libraries kernelscript alcotest str unix))
 
+(executable
+ (name test_error_handling)
+ (modules test_error_handling)
+ (libraries kernelscript alcotest str))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -228,7 +233,8 @@
   test_array_literals.exe
   test_config_validation.exe
   test_stdlib.exe
-  test_struct_field_access.exe)
+  test_struct_field_access.exe
+  test_error_handling.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -244,7 +250,8 @@
    (run ./test_array_literals.exe)
    (run ./test_config_validation.exe)
    (run ./test_stdlib.exe)
-   (run ./test_struct_field_access.exe))))
+   (run ./test_struct_field_access.exe)
+   (run ./test_error_handling.exe))))
 
 (rule
  (alias ir-tests)

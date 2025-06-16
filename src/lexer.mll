@@ -87,6 +87,10 @@
     | "config" -> CONFIG
     | "in" -> IN
     | "delete" -> DELETE
+    | "try" -> TRY
+    | "catch" -> CATCH
+    | "throw" -> THROW
+    | "defer" -> DEFER
     | "true" -> BOOL_LIT true
     | "false" -> BOOL_LIT false
     | id -> IDENTIFIER id

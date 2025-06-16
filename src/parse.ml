@@ -101,6 +101,11 @@ let validate_ast ast =
         validate_expr map_expr && validate_expr key_expr
     | Break -> true
     | Continue -> true
+    | Try (try_stmts, catch_clauses) ->
+        List.for_all validate_stmt try_stmts &&
+        List.for_all (fun clause -> List.for_all validate_stmt clause.catch_body) catch_clauses
+    | Throw _ -> true  (* Throw statements are always valid syntactically *)
+    | Defer expr -> validate_expr expr
   in
   
   let validate_function func =

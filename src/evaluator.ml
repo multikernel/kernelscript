@@ -567,6 +567,22 @@ and eval_statement ctx stmt =
   
   | Continue ->
       raise Continue_loop
+      
+  | Try (try_stmts, _catch_clauses) ->
+      (* For evaluator, just execute try block - full error handling in codegen *)
+      eval_statements ctx try_stmts
+      
+  | Throw expr ->
+      (* For evaluator, evaluate the expression and print the error code *)
+      let error_value = eval_expression ctx expr in
+      let error_code = int_of_runtime_value error_value stmt.stmt_pos in
+      Printf.printf "[THROW]: Error code %d\n" error_code;
+      eval_error ("Unhandled error: " ^ string_of_int error_code) stmt.stmt_pos
+      
+  | Defer expr ->
+      (* For evaluator, just evaluate the expression immediately *)
+      let _ = eval_expression ctx expr in
+      Printf.printf "[DEFER]: Deferred expression executed\n"
 
 (** Evaluate a complete program *)
 let eval_program ctx prog =

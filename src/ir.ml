@@ -231,6 +231,22 @@ and ir_instr_desc =
   | IRBreak
   | IRContinue
   | IRCondReturn of ir_value * ir_value option * ir_value option (* condition, return_if_true, return_if_false *)
+  | IRTry of ir_instruction list * ir_catch_clause list  (* try_block, catch_clauses *)
+  | IRThrow of error_code  (* throw with error code *)
+  | IRDefer of ir_instruction list  (* deferred instructions *)
+
+(** Error handling types *)
+and error_code = 
+  | IntErrorCode of int  (* Integer error codes for bpf_throw() *)
+
+and ir_catch_clause = {
+  catch_pattern: ir_catch_pattern;
+  catch_body: ir_instruction list;
+}
+
+and ir_catch_pattern =
+  | IntCatchPattern of int     (* catch 42 { ... } *)
+  | WildcardCatchPattern       (* catch _ { ... } *)
 
 and map_load_type = DirectLoad | MapLookup | MapPeek
 and map_store_type = DirectStore | MapUpdate | MapPush
@@ -665,6 +681,21 @@ let rec string_of_ir_instruction instr =
       in
       Printf.sprintf "cond_return(%s, %s, %s)" 
         (string_of_ir_value cond) ret_if_true_str ret_if_false_str
+  | IRTry (try_body, catch_clauses) ->
+      let try_str = String.concat "\n  " 
+        (List.map string_of_ir_instruction try_body) in
+      let catch_str = String.concat "\n  " 
+        (List.map (fun _clause -> "catch {...}") catch_clauses) in
+      Printf.sprintf "try {\n%s\n} %s" try_str catch_str
+  | IRThrow error_code ->
+      let error_str = match error_code with
+        | IntErrorCode code -> Printf.sprintf "%d" code
+      in
+      Printf.sprintf "throw %s" error_str
+  | IRDefer instructions ->
+      let instr_str = String.concat "\n  " 
+        (List.map string_of_ir_instruction instructions) in
+      Printf.sprintf "defer {\n%s\n}" instr_str
 
 let string_of_ir_basic_block block =
   let instrs_str = String.concat "\n  " 

@@ -185,6 +185,14 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
     | Return None -> ()
     | Break -> ()
     | Continue -> ()
+    | Try (try_stmts, catch_clauses) ->
+        List.iter (analyze_stmt_for_maps prog_name) try_stmts;
+        List.iter (fun clause -> 
+          List.iter (analyze_stmt_for_maps prog_name) clause.catch_body
+        ) catch_clauses
+    | Throw _ -> ()  (* Throw statements don't contain map accesses *)
+    | Defer expr ->
+        analyze_expr_for_maps prog_name expr
   in
   
   (* Analyze all programs *)

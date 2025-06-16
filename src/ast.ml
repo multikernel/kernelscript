@@ -7,6 +7,11 @@ type position = {
   filename: string 
 }
 
+(** Catch pattern for integer-based error handling *)
+type catch_pattern =
+  | IntPattern of int     (* catch 42 { ... } *)
+  | WildcardPattern       (* catch _ { ... } *)
+
 (** Program types supported by KernelScript *)
 type program_type = 
   | Xdp | Tc | Kprobe | Uprobe | Tracepoint | Lsm | CgroupSkb
@@ -152,6 +157,16 @@ and stmt_desc =
   | Delete of expr * expr  (* delete map[key] *)
   | Break
   | Continue
+  | Try of statement list * catch_clause list  (* try { statements } catch clauses *)
+  | Throw of expr  (* throw integer_expression *)
+  | Defer of expr  (* defer function_call *)
+
+(** Catch clause definition *)
+and catch_clause = {
+  catch_pattern: catch_pattern;
+  catch_body: statement list;
+  catch_pos: position;
+}
 
 (** Function definitions *)
 type function_def = {
@@ -470,6 +485,14 @@ let rec string_of_stmt stmt =
       Printf.sprintf "delete %s[%s];" (string_of_expr map_expr) (string_of_expr key_expr)
   | Break -> "break;"
   | Continue -> "continue;"
+      | Try (statements, catch_clauses) ->
+        let statements_str = String.concat " " (List.map string_of_stmt statements) in
+        let catch_clauses_str = String.concat " " (List.map (fun _ -> "catch {...}") catch_clauses) in
+        Printf.sprintf "try { %s } %s" statements_str catch_clauses_str
+    | Throw expr ->
+        Printf.sprintf "throw %s;" (string_of_expr expr)
+    | Defer expr ->
+        Printf.sprintf "defer %s;" (string_of_expr expr)
 
 let string_of_function func =
   let params_str = String.concat ", " 
@@ -560,5 +583,5 @@ let print_function func =
 let print_program prog =
   print_endline (string_of_program prog)
 
-let print_ast ast =
-  print_endline (string_of_ast ast) 
+  let print_ast ast =
+    print_endline (string_of_ast ast) 

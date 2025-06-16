@@ -522,6 +522,46 @@ let rec generate_c_instruction_from_ir ctx instruction =
       else
         sprintf "if (!(%s)) return %s;" cond_str false_str
 
+  | IRTry (try_instructions, catch_clauses) ->
+      (* Generate setjmp/longjmp for userspace try/catch *)
+      let try_body = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) try_instructions) in
+      let catch_handlers = List.mapi (fun i catch_clause ->
+        let (pattern_str, case_code) = match catch_clause.catch_pattern with
+          | IntCatchPattern code -> (sprintf "error_%d" code, code)
+          | WildcardCatchPattern -> ("any_error", i + 1) (* Use index for wildcard *)
+        in
+        sprintf "    case %d: /* catch %s */\n        /* Handle error here */\n        break;" case_code pattern_str
+      ) catch_clauses in
+      let catch_code = String.concat "\n" catch_handlers in
+      sprintf {|{
+        jmp_buf exception_buffer;
+        int exception_code = setjmp(exception_buffer);
+        if (exception_code == 0) {
+            /* try block */
+            %s
+        } else {
+            /* catch handlers */
+            switch (exception_code) {
+%s
+            default:
+                fprintf(stderr, "Unhandled exception: %%d\\n", exception_code);
+                exit(1);
+            }
+        }
+    }|} try_body catch_code
+
+  | IRThrow error_code ->
+      (* Generate longjmp for userspace throw *)
+      let code_val = match error_code with
+        | IntErrorCode code -> code
+      in
+      sprintf "longjmp(exception_buffer, %d); /* throw error */" code_val
+
+  | IRDefer defer_instructions ->
+      (* For userspace, generate defer using function-scope cleanup *)
+      let defer_body = String.concat "\n    " (List.map (generate_c_instruction_from_ir ctx) defer_instructions) in
+      sprintf "/* defer block - executed at function exit */\n    {\n    %s\n    }" defer_body
+
 (** Generate C struct from IR struct definition *)
 let generate_c_struct_from_ir ir_struct =
   let fields_str = String.concat ";\n    " 
