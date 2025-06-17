@@ -420,7 +420,7 @@ let generate_ast_type_alias_definitions ctx type_aliases =
 
 (** Generate standard eBPF includes *)
 
-let generate_includes ctx =
+let generate_includes ctx ?(program_types=[]) () =
   let standard_includes = [
     "#include <linux/bpf.h>";
     "#include <bpf/bpf_helpers.h>";
@@ -431,7 +431,18 @@ let generate_includes ctx =
     "#include <stdint.h>";
     "#include <stdbool.h>";
   ] in
-  List.iter (fun inc -> ctx.output_lines <- inc :: ctx.output_lines) (List.rev standard_includes);
+  
+  (* Add builtin headers based on program types *)
+  let builtin_includes = List.fold_left (fun acc prog_type ->
+    match prog_type with
+    | Ast.Xdp -> "#include \"xdp.h\"" :: acc
+    | Ast.Tc -> "#include \"tc.h\"" :: acc
+    | Ast.Kprobe -> "#include \"kprobe.h\"" :: acc
+    | _ -> acc
+  ) [] program_types in
+  
+  let all_includes = standard_includes @ (List.rev builtin_includes) in
+  List.iter (fun inc -> ctx.output_lines <- inc :: ctx.output_lines) (List.rev all_includes);
   emit_blank_line ctx
 
 (** Generate map definitions *)
@@ -1385,7 +1396,8 @@ let generate_c_program ?config_declarations ir_prog =
   let ctx = create_c_context () in
   
   (* Add standard includes *)
-  generate_includes ctx;
+  let program_types = [ir_prog.program_type] in
+  generate_includes ctx ~program_types ();
   
   (* Generate string type definitions *)
   let temp_multi_prog = {
@@ -1449,7 +1461,8 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   ctx.variable_type_aliases <- variable_type_aliases;
   
   (* Add standard includes *)
-  generate_includes ctx;
+  let program_types = List.map (fun prog -> prog.program_type) ir_multi_program.programs in
+  generate_includes ctx ~program_types ();
   
   (* Generate type alias definitions from AST *)
   generate_ast_type_alias_definitions ctx type_aliases;
@@ -1504,7 +1517,8 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
   let ctx = create_c_context () in
   
   (* Add enhanced includes for multi-program systems *)
-  generate_includes ctx;
+  let program_types = List.map (fun prog -> prog.program_type) ir_multi_program.programs in
+  generate_includes ctx ~program_types ();
   
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_program;

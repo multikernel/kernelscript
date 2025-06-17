@@ -980,6 +980,73 @@ let type_check_userspace _ctx _userspace_block =
 let type_check_ast ast =
   let ctx = create_context () in
   
+  (* Load builtin definitions from KernelScript files *)
+  let builtin_dir = "builtin" in
+  let load_builtin_ast builtin_file =
+    if Sys.file_exists builtin_file then
+      try
+        let content = 
+          let ic = open_in builtin_file in
+          let content = really_input_string ic (in_channel_length ic) in
+          close_in ic;
+          content
+        in
+        Some (Parse.parse_string content)
+      with _ -> None
+    else None
+  in
+  
+  (* Load XDP builtins *)
+  (match load_builtin_ast (Filename.concat builtin_dir "xdp.ks") with
+   | Some builtin_ast ->
+       List.iter (function
+         | TypeDef type_def ->
+             (match type_def with
+              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+                  Hashtbl.replace ctx.types name type_def)
+         | _ -> ()
+       ) builtin_ast
+   | None -> ());
+  
+  (* Load TC builtins *)
+  (match load_builtin_ast (Filename.concat builtin_dir "tc.ks") with
+   | Some builtin_ast ->
+       List.iter (function
+         | TypeDef type_def ->
+             (match type_def with
+              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+                  Hashtbl.replace ctx.types name type_def)
+         | _ -> ()
+       ) builtin_ast
+   | None -> ());
+  
+  (* Load Kprobe builtins *)
+  (match load_builtin_ast (Filename.concat builtin_dir "kprobe.ks") with
+   | Some builtin_ast ->
+       List.iter (function
+         | TypeDef type_def ->
+             (match type_def with
+              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+                  Hashtbl.replace ctx.types name type_def)
+         | _ -> ()
+       ) builtin_ast
+   | None -> ());
+  
+  (* Add enum constants as variables for all loaded enums *)
+  Hashtbl.iter (fun _name type_def ->
+    match type_def with
+    | EnumDef (enum_name, enum_values) ->
+        let enum_type = match enum_name with
+          | "XdpAction" -> XdpAction
+          | "TcAction" -> TcAction
+          | _ -> UserType enum_name
+        in
+        List.iter (fun (const_name, _) ->
+          Hashtbl.replace ctx.variables const_name enum_type
+        ) enum_values
+    | _ -> ()
+  ) ctx.types;
+  
   (* First pass: collect type definitions and map declarations *)
   List.iter (function
     | TypeDef type_def ->
@@ -1172,6 +1239,73 @@ let rec type_check_and_annotate_ast ast =
   
   (* STEP 2: Type checking with multi-program context *)
   let ctx = create_context () in
+  
+  (* Load builtin definitions from KernelScript files *)
+  let builtin_dir = "builtin" in
+  let load_builtin_ast builtin_file =
+    if Sys.file_exists builtin_file then
+      try
+        let content = 
+          let ic = open_in builtin_file in
+          let content = really_input_string ic (in_channel_length ic) in
+          close_in ic;
+          content
+        in
+        Some (Parse.parse_string content)
+      with _ -> None
+    else None
+  in
+  
+  (* Load XDP builtins *)
+  (match load_builtin_ast (Filename.concat builtin_dir "xdp.ks") with
+   | Some builtin_ast ->
+       List.iter (function
+         | TypeDef type_def ->
+             (match type_def with
+              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+                  Hashtbl.replace ctx.types name type_def)
+         | _ -> ()
+       ) builtin_ast
+   | None -> ());
+  
+  (* Load TC builtins *)
+  (match load_builtin_ast (Filename.concat builtin_dir "tc.ks") with
+   | Some builtin_ast ->
+       List.iter (function
+         | TypeDef type_def ->
+             (match type_def with
+              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+                  Hashtbl.replace ctx.types name type_def)
+         | _ -> ()
+       ) builtin_ast
+   | None -> ());
+  
+  (* Load Kprobe builtins *)
+  (match load_builtin_ast (Filename.concat builtin_dir "kprobe.ks") with
+   | Some builtin_ast ->
+       List.iter (function
+         | TypeDef type_def ->
+             (match type_def with
+              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+                  Hashtbl.replace ctx.types name type_def)
+         | _ -> ()
+       ) builtin_ast
+   | None -> ());
+  
+  (* Add enum constants as variables for all loaded enums *)
+  Hashtbl.iter (fun _name type_def ->
+    match type_def with
+    | EnumDef (enum_name, enum_values) ->
+        let enum_type = match enum_name with
+          | "XdpAction" -> XdpAction
+          | "TcAction" -> TcAction
+          | _ -> UserType enum_name
+        in
+        List.iter (fun (const_name, _) ->
+          Hashtbl.replace ctx.variables const_name enum_type
+        ) enum_values
+    | _ -> ()
+  ) ctx.types;
   ctx.multi_program_analysis <- Some multi_prog_analysis;
   
   (* First pass: collect type definitions, map declarations, config declarations, and programs *)

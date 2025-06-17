@@ -1,0 +1,4 @@
+(install
+ (section share)
+ (package kernelscript)
+ (files xdp.ks tc.ks kprobe.ks)) 

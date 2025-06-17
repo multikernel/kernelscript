@@ -232,6 +232,33 @@ let compile opts source_file =
     (* Create output directory if it doesn't exist *)
     (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
     
+    (* Compile required builtin headers based on program types *)
+    let program_types = List.fold_left (fun acc decl ->
+      match decl with
+      | Ast.Program prog -> prog.Ast.prog_type :: acc
+      | _ -> acc
+    ) [] ast in
+    
+    let unique_program_types = List.sort_uniq compare program_types in
+    List.iter (fun prog_type ->
+      let (builtin_file, header_name) = match prog_type with
+        | Ast.Xdp -> ("builtin/xdp.ks", "xdp.h")
+        | Ast.Tc -> ("builtin/tc.ks", "tc.h")
+        | Ast.Kprobe -> ("builtin/kprobe.ks", "kprobe.h")
+        | _ -> ("", "")  (* Skip unsupported types *)
+      in
+      if builtin_file <> "" && Sys.file_exists builtin_file then (
+        let output_header = Filename.concat output_dir header_name in
+        try
+          Printf.printf "🔧 Compiling builtin: %s -> %s\n" builtin_file output_header;
+          Builtin_compiler.compile_builtin_file builtin_file output_header;
+          Printf.printf "✅ Builtin header generated: %s\n" header_name
+        with
+        | exn ->
+            Printf.eprintf "⚠️ Warning: Failed to compile builtin %s: %s\n" builtin_file (Printexc.to_string exn)
+      )
+    ) unique_program_types;
+    
     Printf.printf "📤 Generated Code Outputs:\n";
     Printf.printf "=========================\n";
     List.iter (fun (target, code) ->
