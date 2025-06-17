@@ -20,11 +20,11 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
       if i == 5 {
-        break;
+        break
       }
-      let x = i;
+      let x = i
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -39,11 +39,11 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
       if i == 5 {
-        continue;
+        continue
       }
-      let x = i;
+      let x = i
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -56,14 +56,14 @@ let test_break_in_while_loop () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let count = 0;
+    let count = 0
     while count < 100 {
-      count = count + 1;
+      count = count + 1
       if count == 50 {
-        break;
+        break
       }
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -76,15 +76,15 @@ let test_continue_in_while_loop () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let count = 0;
+    let count = 0
     while count < 10 {
-      count = count + 1;
+      count = count + 1
       if count == 5 {
-        continue;
+        continue
       }
-      let processed = count * 2;
+      let processed = count * 2
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -97,14 +97,14 @@ let test_break_in_for_iter () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let array = [1, 2, 3, 4, 5];
+    let array = [1, 2, 3, 4, 5]
     for (i, val) in array.iter() {
       if i == 3 {
-        break;
+        break
       }
-      let processed = val * 2;
+      let processed = val * 2
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -117,9 +117,9 @@ let test_break_outside_loop_error () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 5;
-    break;
-    return 2;
+    let x = 5
+    break
+    return 2
   }
 }
 |} in
@@ -134,9 +134,9 @@ let test_continue_outside_loop_error () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 5;
-    continue;
-    return 2;
+    let x = 5
+    continue
+    return 2
   }
 }
 |} in
@@ -153,15 +153,15 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..20 {
       if i < 5 {
-        continue;
+        continue
       } else {
         if i > 15 {
-          break;
+          break
         }
       }
-      let processed = i * 3;
+      let processed = i * 3
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -176,17 +176,17 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..100 {
       if i < 10 {
-        continue;
+        continue
       }
       if i == 50 {
-        break;
+        break
       }
       if i > 80 {
-        continue;
+        continue
       }
-      let x = i * 2;
+      let x = i * 2
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -201,10 +201,10 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 1..3 {
       if i == 2 {
-        break;
+        break
       }
     }
-    return 2;
+    return 2
   }
 }
 |} in

@@ -665,13 +665,13 @@ let test_function_symbol_management () =
   let program_text = {|
 program func_test : xdp {
   fn add(a: u32, b: u32) -> u32 {
-    let sum = a + b;
-    return sum;
+    let sum = a + b
+    return sum
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = add(10, 20);
-    return 2;
+    let result = add(10, 20)
+    return 2
   }
 }
 |} in
@@ -702,17 +702,17 @@ let test_variable_resolution () =
   let program_text = {|
 program var_test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x: u32 = 42;
-    let y: u64 = x + 10;
+    let x: u32 = 42
+    let y: u64 = x + 10
     if (x > 0) {
-      let z: bool = true;
+      let z: bool = true
       if (z) {
-        return 2;
+        return 2
       } else {
-        return 1;
+        return 1
       }
     }
-    return 1;
+    return 1
   }
 }
 |} in
@@ -767,14 +767,14 @@ let test_symbol_conflicts () =
 (** Test map symbol handling *)
 let test_map_symbol_handling () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024) { };
-map<u16, bool> flags : Array(256) { };
+map<u32, u64> counter : HashMap(1024) { }
+map<u16, bool> flags : Array(256) { }
 
 program map_test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    counter[1] = 100;
-    flags[80] = true;
-    return 2;
+    counter[1] = 100
+    flags[80] = true
+    return 2
   }
 }
 |} in
@@ -804,16 +804,16 @@ let test_type_checking_integration () =
   let program_text = {|
 program type_test : xdp {
   fn calculate(x: u32, y: u32) -> u64 {
-    let result: u64 = x + y;
-    return result;
+    let result: u64 = x + y
+    return result
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let value = calculate(100, 200);
+    let value = calculate(100, 200)
     if (value > 250) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -867,35 +867,35 @@ let test_symbol_table_serialization () =
 (** Test comprehensive symbol analysis *)
 let test_comprehensive_symbol_analysis () =
   let program_text = {|
-map<u32, u64> stats : HashMap(1024) { };
+map<u32, u64> stats : HashMap(1024) { }
 
 program comprehensive : xdp {
   fn update_counter(key: u32, increment: u64) -> u64 {
-    let current = stats[key];
-    let new_value = current + increment;
-    stats[key] = new_value;
-    return new_value;
+    let current = stats[key]
+    let new_value = current + increment
+    stats[key] = new_value
+    return new_value
   }
   
   fn validate_packet(size: u32) -> bool {
-    return size > 64 && size < 1500;
+    return size > 64 && size < 1500
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let data = ctx.data;
-    let data_end = ctx.data_end;
-    let packet_size = data_end - data;
+    let data = ctx.data
+    let data_end = ctx.data_end
+    let packet_size = data_end - data
     
     if (!validate_packet(packet_size)) {
-      return 1;
+      return 1
     }
     
-    let count = update_counter(6, 1);  // TCP protocol
+    let count = update_counter(6, 1)  // TCP protocol
     
     if (count > 1000) {
-      return 1;  // DROP - rate limit
+      return 1  // DROP - rate limit
     } else {
-      return 2;  // PASS
+      return 2  // PASS
     }
   }
 }

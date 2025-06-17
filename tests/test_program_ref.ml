@@ -7,14 +7,14 @@ let test_program_reference_type () =
   let program_text = {|
 program packet_filter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+    return XdpAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let prog_handle = load_program(packet_filter);
-  let result = attach_program(prog_handle, "eth0", 0);
-  return 0;
+  let prog_handle = load_program(packet_filter)
+  let result = attach_program(prog_handle, "eth0", 0)
+  return 0
 }
 |} in
   try
@@ -33,24 +33,24 @@ let test_different_program_types () =
   let program_text = {|
 program kprobe_tracer : kprobe {
   fn main(ctx: KprobeContext) -> u32 {
-    return 0;
+    return 0
   }
 }
 
 program tc_filter : tc {
   fn main(ctx: TcContext) -> TcAction {
-    return TcAction::Pass;
+    return TcAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let kprobe_handle = load_program(kprobe_tracer);
-  let tc_handle = load_program(tc_filter);
+  let kprobe_handle = load_program(kprobe_tracer)
+  let tc_handle = load_program(tc_filter)
   
-  let kprobe_result = attach_program(kprobe_handle, "sys_read", 0);
-  let tc_result = attach_program(tc_handle, "eth0", 1);
+  let kprobe_result = attach_program(kprobe_handle, "sys_read", 0)
+  let tc_result = attach_program(tc_handle, "eth0", 1)
   
-  return 0;
+  return 0
 }
 |} in
   try
@@ -72,8 +72,8 @@ fn main() -> i32 {
 let test_invalid_program_reference () =
   let program_text = {|
 fn main() -> i32 {
-  let prog_handle = load_program(non_existent_program);
-  return 0;
+  let prog_handle = load_program(non_existent_program)
+  return 0
 }
 |} in
   try
@@ -91,14 +91,14 @@ let test_program_reference_as_variable () =
   let program_text = {|
 program my_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+    return XdpAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let prog_ref = my_xdp;  // Should work - program reference as variable
-  let prog_handle = load_program(prog_ref);
-  return 0;
+  let prog_ref = my_xdp  // Should work - program reference as variable
+  let prog_handle = load_program(prog_ref)
+  return 0
 }
 |} in
   try
@@ -117,13 +117,13 @@ let test_wrong_argument_types () =
   let program_text = {|
 program my_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+    return XdpAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let prog_handle = load_program("string_instead_of_program");  // Should fail
-  return 0;
+  let prog_handle = load_program("string_instead_of_program")  // Should fail
+  return 0
 }
 |} in
   try
@@ -164,13 +164,13 @@ let test_attach_without_load_fails () =
   let program_text = {|
 program simple_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+    return XdpAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let result = attach_program(simple_xdp, "eth0", 0);  // Should fail - program ref instead of handle
-  return 0;
+  let result = attach_program(simple_xdp, "eth0", 0)  // Should fail - program ref instead of handle
+  return 0
 }
 |} in
   try
@@ -189,24 +189,24 @@ let test_multiple_program_handles () =
   let program_text = {|
 program xdp_filter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+    return XdpAction::Pass
   }
 }
 
 program tc_shaper : tc {
   fn main(ctx: TcContext) -> TcAction {
-    return TcAction::Pass;
+    return TcAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let xdp_handle = load_program(xdp_filter);
-  let tc_handle = load_program(tc_shaper);
+  let xdp_handle = load_program(xdp_filter)
+  let tc_handle = load_program(tc_shaper)
   
-  let xdp_result = attach_program(xdp_handle, "eth0", 0);
-  let tc_result = attach_program(tc_handle, "eth0", 1);
+  let xdp_result = attach_program(xdp_handle, "eth0", 0)
+  let tc_result = attach_program(tc_handle, "eth0", 1)
   
-  return 0;
+  return 0
 }
 |} in
   try
@@ -225,18 +225,18 @@ let test_program_handle_naming () =
   let program_text = {|
 program simple_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass;
+    return XdpAction::Pass
   }
 }
 
 fn main() -> i32 {
-  let program_handle = load_program(simple_xdp);  // Clear, non-fd naming
-  let network_prog = load_program(simple_xdp);    // Alternative naming
+  let program_handle = load_program(simple_xdp)  // Clear, non-fd naming
+  let network_prog = load_program(simple_xdp)    // Alternative naming
   
-  let result1 = attach_program(program_handle, "eth0", 0);
-  let result2 = attach_program(network_prog, "lo", 0);
+  let result1 = attach_program(program_handle, "eth0", 0)
+  let result2 = attach_program(network_prog, "lo", 0)
   
-  return 0;
+  return 0
 }
 |} in
   try

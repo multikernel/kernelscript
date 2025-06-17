@@ -7,7 +7,7 @@ let test_comment_at_start () =
   let program_text = {|// This is a comment at line 1, column 1
 program test : xdp {
   fn main() -> u32 {
-    return 0;
+    return 0
   }
 }|} in
   try
@@ -23,7 +23,7 @@ let test_comment_with_whitespace () =
   let program_text = {|   // Comment with whitespace before it
 program test : xdp {
   fn main() -> u32 {
-    return 0;
+    return 0
   }
 }|} in
   try
@@ -67,7 +67,7 @@ let test_multiple_line_comments () =
 program test : xdp {
   fn main() -> u32 {
     // Comment inside function
-    return 0;
+    return 0
   }
 }|} in
   try
@@ -82,7 +82,7 @@ program test : xdp {
 let test_inline_comments () =
   let program_text = {|program test : xdp { // Inline comment
   fn main() -> u32 { // Another inline comment
-    return 0; // Final comment
+    return 0 // Final comment
   }
 }|} in
   try
@@ -99,8 +99,10 @@ let test_error_position_multiline () =
 // Comment line 2
 program test : xdp {
   fn main() -> u32 {
-    syntax_error_here_at_line_5
-    return 0;
+    let x = if missing_condition {
+      return 1
+    }
+    return 0
   }
 }|} in
   try
@@ -108,8 +110,8 @@ program test : xdp {
     fail "Expected parse error but parsing succeeded"
   with
   | Parse_error (msg, pos) ->
-    check int "error line" 6 pos.line;
-    check bool "error column reasonable" true (pos.column > 0);
+    check int "error line" 5 pos.line;
+    check bool "error column reasonable" true (pos.column > 10);
     check string "error message" "Syntax error" msg
 
 let comment_position_tests = [

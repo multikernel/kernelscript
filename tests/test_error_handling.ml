@@ -18,17 +18,17 @@ let contains_substr str substr =
 
 (** Helper function to create a simple program with given body *)
 let make_simple_program_with_body body_text = {|
-map<u32, u32> test_map : HashMap(1024);
+map<u32, u32> test_map : HashMap(1024)
 
 program test_prog : xdp {
     fn main(ctx: XdpContext) -> i32 {
 |} ^ body_text ^ {|
-        return 2;  // XDP_PASS
+        return 2  // XDP_PASS
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |}
 
@@ -37,9 +37,9 @@ fn main() -> i32 {
 let test_try_catch_parsing () =
   let program_text = make_simple_program_with_body {|
     try {
-        throw 42;
+        throw 42
     } catch 42 {
-        return 1;
+        return 1
     }
   |} in
   
@@ -65,7 +65,7 @@ let test_try_catch_parsing () =
 
 let test_throw_parsing () =
   let program_text = make_simple_program_with_body {|
-    throw 123;
+    throw 123
   |} in
   
   try
@@ -87,7 +87,7 @@ let test_throw_parsing () =
 
 let test_defer_parsing () =
   let program_text = make_simple_program_with_body {|
-    defer cleanup_function();
+    defer cleanup_function()
   |} in
   
   try
@@ -109,17 +109,17 @@ let test_defer_parsing () =
 
 let test_complex_error_handling_parsing () =
   let program_text = make_simple_program_with_body {|
-    defer cleanup_resources();
+    defer cleanup_resources()
     
     try {
-        let value = test_map[42];
+        let value = test_map[42]
         if value == 0 {
-            throw 404;
+            throw 404
         }
-        defer cleanup_transaction();
+        defer cleanup_transaction()
     } catch 404 {
-        test_map[42] = 100;
-        return 2;
+        test_map[42] = 100
+        return 2
     }
   |} in
   
@@ -157,9 +157,9 @@ let test_complex_error_handling_parsing () =
 let test_try_catch_ir_generation () =
   let program_text = make_simple_program_with_body {|
     try {
-        throw 1;
+        throw 1
     } catch 1 {
-        return 1;
+        return 1
     }
   |} in
   
@@ -177,7 +177,7 @@ let test_try_catch_ir_generation () =
 
 let test_throw_ir_generation () =
   let program_text = make_simple_program_with_body {|
-    throw 99;
+    throw 99
   |} in
   
   try
@@ -194,7 +194,7 @@ let test_throw_ir_generation () =
 
 let test_defer_ir_generation () =
   let program_text = make_simple_program_with_body {|
-    defer cleanup();
+    defer cleanup()
   |} in
   
   try
@@ -214,9 +214,9 @@ let test_defer_ir_generation () =
 let test_ebpf_try_catch_codegen () =
   let program_text = make_simple_program_with_body {|
     try {
-        throw 1;
+        throw 1
     } catch 1 {
-        return 1;
+        return 1
     }
   |} in
   
@@ -235,7 +235,7 @@ let test_ebpf_try_catch_codegen () =
 
 let test_ebpf_throw_codegen () =
   let program_text = make_simple_program_with_body {|
-    throw 42;
+    throw 42
   |} in
   
   try
@@ -253,7 +253,7 @@ let test_ebpf_throw_codegen () =
 
 let test_ebpf_defer_codegen () =
   let program_text = make_simple_program_with_body {|
-    defer cleanup();
+    defer cleanup()
   |} in
   
   try
@@ -272,11 +272,11 @@ let test_ebpf_defer_codegen () =
 let test_multiple_catch_clauses_codegen () =
   let program_text = make_simple_program_with_body {|
     try {
-        throw 1;
+        throw 1
     } catch 1 {
-        return 1;
+        return 1
     } catch 2 {
-        return 2;
+        return 2
     }
   |} in
   
@@ -297,7 +297,7 @@ let test_multiple_catch_clauses_codegen () =
 
 let test_uncaught_throw_detection () =
   let program_text = make_simple_program_with_body {|
-    throw 500;
+    throw 500
   |} in
   
   try
@@ -316,12 +316,12 @@ let test_nested_try_catch_error () =
   let program_text = make_simple_program_with_body {|
     try {
         try {
-            throw 404;
+            throw 404
         } catch 500 {
-            return 1;
+            return 1
         }
     } catch 404 {
-        return 2;
+        return 2
     }
   |} in
   
@@ -339,13 +339,13 @@ let test_nested_try_catch_error () =
 
 let test_defer_resource_cleanup () =
   let program_text = make_simple_program_with_body {|
-    defer release_lock();
-    defer close_file();
+    defer release_lock()
+    defer close_file()
     
     try {
-        throw 1;
+        throw 1
     } catch 1 {
-        return 1;
+        return 1
     }
   |} in
   

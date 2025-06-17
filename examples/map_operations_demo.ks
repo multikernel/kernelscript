@@ -15,13 +15,13 @@ map<u32, Statistics> shared_stats : LruHash(500) {
 };
 
 // Per-CPU map for high-performance scenarios (using new block-less syntax)
-map<u32, PerCpuData> percpu_data : PercpuHash(256);
+map<u32, PerCpuData> percpu_data : PercpuHash(256)
 
 // Ring buffer for event streaming (using new block-less syntax)
-map<Event, ()> event_stream : RingBuffer(262144);  // 1MB buffer
+map<Event, ()> event_stream : RingBuffer(262144)  // 1MB buffer
 
 // Array map for sequential access patterns (using new block-less syntax)
-map<u32, ArrayElement> sequential_data : Array(128);
+map<u32, ArrayElement> sequential_data : Array(128)
 
 struct Statistics {
     packet_count: u64,
@@ -32,13 +32,13 @@ struct Statistics {
 
 struct PerCpuData {
     local_counter: u64,
-    temp_storage: [u8; 64],
+    temp_storage: u8[64],
 }
 
 struct Event {
     timestamp: u64,
     event_type: u32,
-    data: [u8; 32],
+    data: u8[32],
 }
 
 struct ArrayElement {
@@ -49,14 +49,14 @@ struct ArrayElement {
 // Program 1: Reader-heavy workload demonstrating safe concurrent access
 program traffic_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let key = ctx.ingress_ifindex();
+        let key = ctx.ingress_ifindex()
         
         // Safe concurrent read access - multiple programs can read simultaneously
-        let counter = global_counter[key];
+        let counter = global_counter[key]
         if counter != null {
             // High-frequency lookup pattern - will generate optimization suggestions
             for i in 0..100 {
-                let _ = global_counter[key + i];
+                let _ = global_counter[key + i]
             }
         } else {
             // Initialize counter for new interface
@@ -64,8 +64,8 @@ program traffic_monitor : xdp {
         }
         
         // Per-CPU access for maximum performance
-        let cpu_id = bpf_get_smp_processor_id();
-        let data = percpu_data[cpu_id];
+        let cpu_id = bpf_get_smp_processor_id()
+        let data = percpu_data[cpu_id]
         if data != null {
             data.local_counter += 1;
             percpu_data[cpu_id] = data;
@@ -77,17 +77,17 @@ program traffic_monitor : xdp {
             percpu_data[cpu_id] = new_data;
         }
         
-        return XDP_PASS;
+        return XDP_PASS
     }
 }
 
 // Program 2: Writer workload demonstrating conflict detection
 program stats_updater : tc {
     fn main(ctx: TcContext) -> TcAction {
-        let ifindex = ctx.ifindex();
+        let ifindex = ctx.ifindex()
         
         // Potential write conflict with other programs
-        let stats = shared_stats[ifindex];
+        let stats = shared_stats[ifindex]
         if stats == null {
             stats = Statistics {
                 packet_count: 0,
@@ -99,8 +99,8 @@ program stats_updater : tc {
         
         // Update statistics - this creates a write operation
         stats.packet_count += 1;
-        stats.byte_count += ctx.data_len();
-        stats.last_seen = bpf_ktime_get_ns();
+        stats.byte_count += ctx.data_len()
+        stats.last_seen = bpf_ktime_get_ns()
         
         // Calculate error rate (simplified)
         if ctx.protocol() == 0 {
@@ -111,15 +111,15 @@ program stats_updater : tc {
         
         // Batch operation pattern - will be detected as batch access
         for i in 0..20 {
-            let batch_key = ifindex + i;
-            let entry = shared_stats[batch_key];
+            let batch_key = ifindex + i
+            let entry = shared_stats[batch_key]
             if entry != null {
                 entry.packet_count += 1;
                 shared_stats[batch_key] = entry;
             }
         }
         
-        return TC_ACT_OK;
+        return TC_ACT_OK
     }
 }
 
@@ -137,11 +137,11 @@ program event_logger : tracepoint {
             Ok(_) => {},
             Err(_) => {
                 // Ring buffer full - this will generate performance warnings
-                return -1;
+                return -1
             }
         }
         
-        return 0;
+        return 0
     }
 }
 
@@ -150,11 +150,11 @@ program data_processor : kprobe {
     fn main(ctx: KprobeContext) -> i32 {
         // Sequential access pattern - will be detected and optimized
         for i in 0..32 {
-            let element = sequential_data[i];
+            let element = sequential_data[i]
             if element != null {
                 if !element.processed {
-                    element.value = element.value * 2;
-                    element.processed = true;
+                    element.value = element.value * 2
+                    element.processed = true
                     sequential_data[i] = element;
                 }
             } else {
@@ -166,7 +166,7 @@ program data_processor : kprobe {
             }
         }
         
-        return 0;
+        return 0
     }
 }
 

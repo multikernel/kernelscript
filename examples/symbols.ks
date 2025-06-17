@@ -26,17 +26,17 @@ map<u32, u64> global_stats : hash_map(1024) {
 // Global function (public visibility)
 pub fn log_packet(info: PacketInfo) -> u32 {
     global_stats[info.protocol] = global_stats[info.protocol] + 1;
-    return info.size;
+    return info.size
 }
 
 // First program with local scope
 program packet_filter : xdp {
     // Local map (only visible within this program)
-    map<u32, PacketInfo> local_cache : lru_hash(256);
+    map<u32, PacketInfo> local_cache : lru_hash(256)
     
     // Private function (only visible within this program)
     fn process_packet(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet();
+        let packet = ctx.packet()
         let info = PacketInfo {
             size: packet.len(),
             protocol: packet.protocol(),
@@ -51,52 +51,52 @@ program packet_filter : xdp {
         local_cache[info.src_ip] = info;
         
         // Call global function (visible from here)
-        let logged_size = log_packet(info);
+        let logged_size = log_packet(info)
         
         // Use global enum (visible from here)
         if info.protocol == 6 {
-                    return XDP_PASS;
+                    return XDP_PASS
     } else {
-        return XDP_DROP;
+        return XDP_DROP
         }
     }
     
     // Main function with parameter scope
     fn main(ctx: XdpContext) -> XdpAction {
         // Function parameter 'ctx' is in scope here
-        let result = process_packet(ctx);
+        let result = process_packet(ctx)
         
         // Local variable scope
-        let local_var: u32 = 42;
+        let local_var: u32 = 42
         
         // Block scope demonstration
         if result == XDP_PASS {
-            let block_var: u32 = local_var + 1;
+            let block_var: u32 = local_var + 1
             global_stats[1] = block_var;
         }
         // block_var is not accessible here
         
-        return result;
+        return result
     }
 }
 
 // Second program with separate local scope
 program traffic_monitor : tc {
     // Different local map with same name (no conflict due to scoping)
-    map<u32, u32> local_cache : array(128);
+    map<u32, u32> local_cache : array(128)
     
     fn analyze_traffic(ctx: TcContext) -> TcAction {
-        let packet = ctx.packet();
+        let packet = ctx.packet()
         
         // Access global map (visible from here)
         global_stats[packet.protocol()] = global_stats[packet.protocol()] + 1;
         
         // Access this program's local map
-        local_cache[0] = packet.len();
+        local_cache[0] = packet.len()
         
         // Cannot access packet_filter's local_cache (different scope)
         // This would cause a symbol resolution error:
-        // packet_filter::local_cache[0] = packet.len();  // ERROR
+        // packet_filter::local_cache[0] = packet.len()  // ERROR
         
         // Can call global function
         let info = PacketInfo {
@@ -105,13 +105,13 @@ program traffic_monitor : tc {
             src_ip: packet.src_ip(),
             dst_ip: packet.dst_ip(),
         };
-        log_packet(info);
+        log_packet(info)
         
-        return TC_ACT_OK;
+        return TC_ACT_OK
     }
     
     fn main(ctx: TcContext) -> TcAction {
-        return analyze_traffic(ctx);
+        return analyze_traffic(ctx)
     }
 }
 

@@ -28,12 +28,12 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -50,16 +50,16 @@ config network {
     max_size: u32 = 1500,
 }
 
-map<u32, u64> network : HashMap(1024);
+map<u32, u64> network : HashMap(1024)
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -77,17 +77,17 @@ config network {
 }
 
 fn network() -> u32 {
-    return 42;
+    return 42
 }
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -110,16 +110,16 @@ config security {
     threat_level: u32 = 3,
 }
 
-map<u32, u64> packet_counts : HashMap(1024);
+map<u32, u64> packet_counts : HashMap(1024)
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -152,16 +152,16 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size: u32 = network.max_size;
-        let timeout: u32 = network.timeout;
-        let logging: bool = network.enable_logging;
-        let limit: u64 = network.rate_limit;
-        return 2;
+        let size: u32 = network.max_size
+        let timeout: u32 = network.timeout
+        let logging: bool = network.enable_logging
+        let limit: u64 = network.rate_limit
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -185,16 +185,16 @@ config limits {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let packet_size: u32 = 800;
+        let packet_size: u32 = 800
         if (packet_size > limits.max_packet_size || packet_size < limits.min_packet_size) {
-            return 1;  // DROP
+            return 1  // DROP
         }
-        return 2;  // PASS
+        return 2  // PASS
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -219,13 +219,13 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let bad_field = network.nonexistent_field;
-        return 2;
+        let bad_field = network.nonexistent_field
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -240,13 +240,13 @@ let test_invalid_config_access () =
   let program_text = {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let bad_config = nonexistent_config.some_field;
-        return 2;
+        let bad_config = nonexistent_config.some_field
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -259,17 +259,17 @@ fn main() -> i32 {
 (** Test accessing map as config *)
 let test_accessing_map_as_config () =
   let program_text = {|
-map<u32, u64> packet_counts : HashMap(1024);
+map<u32, u64> packet_counts : HashMap(1024)
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let bad_access = packet_counts.some_field;
-        return 2;
+        let bad_access = packet_counts.some_field
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -291,12 +291,12 @@ program test : xdp {
         config local_config {
             value: u32 = 42,
         }
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -312,14 +312,14 @@ let test_config_inside_program () =
 program test : xdp {
     config program_config {
         size: u32 = 1024,
-    
+    }
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -356,13 +356,13 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size = network.max_size;
-        return 2;
+        let size = network.max_size
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -387,13 +387,13 @@ config settings {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size = settings.buffer_size;
-        return 2;
+        let size = settings.buffer_size
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -458,13 +458,13 @@ config database {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let host = database.host;
-        return 2;
+        let host = database.host
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -490,30 +490,30 @@ config application {
     max_memory: u64 = 1048576,
 }
 
-map<u32, u64> stats : HashMap(1024);
+map<u32, u64> stats : HashMap(1024)
 
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let version = application.version;
-        let debug = application.debug_mode;
-        let memory_limit = application.max_memory;
+        let version = application.version
+        let debug = application.debug_mode
+        let memory_limit = application.max_memory
         
-        stats[1] = version;
+        stats[1] = version
         
         if (debug) {
-            return 2;  // PASS in debug mode
+            return 2  // PASS in debug mode
         }
         
         if (version > 90) {
-            return 2;
+            return 2
         } else {
-            return 1;
+            return 1
         }
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -548,15 +548,15 @@ config types_test {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let u32_val = types_test.flag_u32;
-        let u64_val = types_test.flag_u64;
-        let bool_val = types_test.flag_bool;
-        return 2;
+        let u32_val = types_test.flag_u32
+        let u64_val = types_test.flag_u64
+        let bool_val = types_test.flag_bool
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try

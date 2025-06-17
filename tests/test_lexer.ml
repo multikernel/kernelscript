@@ -139,14 +139,14 @@ let test_complex_program () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        let x = 42;
-        return XdpAction::Pass;
+        let x = 42
+        return XdpAction::Pass
       }
     }
   |} in
   let tokens = tokenize_string code in
   let expected = [
-    PROGRAM; IDENTIFIER "test"; COLON; XDP; LBRACE;
+    PROGRAM IDENTIFIER "test"; COLON; XDP; LBRACE;
     FN; IDENTIFIER "main"; LPAREN; IDENTIFIER "ctx"; COLON;
     IDENTIFIER "XdpContext"; RPAREN; ARROW; IDENTIFIER "XdpAction"; LBRACE;
     LET; IDENTIFIER "x"; ASSIGN; INT 42; SEMICOLON;

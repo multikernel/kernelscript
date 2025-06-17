@@ -48,12 +48,12 @@ let test_global_functions_top_level () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -69,16 +69,16 @@ let test_program_function_isolation () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
       
       fn helper() -> u32 {
-        return 42;
+        return 42
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -95,12 +95,12 @@ let test_main_correct_signature () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -114,7 +114,7 @@ let test_main_with_struct_param () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
@@ -124,7 +124,7 @@ let test_main_with_struct_param () =
     }
     
     fn main(args: Args) -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -138,12 +138,12 @@ let test_main_wrong_param_types () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main(wrong_param: u32, another_wrong: u32) -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let test_fn () =
@@ -163,12 +163,12 @@ let test_main_wrong_return_type () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> u32 {
-      return 0;
+      return 0
     }
   |} in
   let test_fn () =
@@ -188,12 +188,12 @@ let test_main_non_struct_param () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main(bad_param: u32) -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let test_fn () =
@@ -213,12 +213,12 @@ let test_main_too_many_params () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main(param1: u32, param2: u64, extra: u32) -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let test_fn () =
@@ -238,12 +238,12 @@ let test_missing_main () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn helper(x: u32) -> u32 {
-      return x + 1;
+      return x + 1
     }
   |} in
   let test_fn () =
@@ -263,16 +263,16 @@ let test_multiple_main () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
     
     fn main(a: u32, b: u64) -> i32 {
-      return 1;
+      return 1
     }
   |} in
   let test_fn () =
@@ -292,12 +292,12 @@ let test_global_functions_with_other_functions () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -311,7 +311,7 @@ let test_global_functions_with_structs () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
@@ -326,7 +326,7 @@ let test_global_functions_with_structs () =
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -340,18 +340,18 @@ let test_multiple_programs_single_main () =
   let code = {|
     program monitor : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     program filter : tc {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 0;
+        return 0
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let ast = parse_string code in
@@ -365,12 +365,12 @@ let test_basic_global_functions () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let test_fn () =
@@ -399,12 +399,12 @@ let test_global_function_codegen () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      return 0;
+      return 0
     }
   |} in
   let test_fn () =
@@ -431,18 +431,17 @@ let test_global_function_codegen () =
 (** Test literal map assignment with test functions - should not require main *)
 let test_literal_map_assignment () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      let x = test_map[1];
-      return 0;
+      test_map[1] = 42 let x = test_map[1]
+      return 0
     }
   |} in
   let test_fn () =
@@ -462,18 +461,17 @@ let test_literal_map_assignment () =
 (** Test map lookup with literal key *)
 let test_map_lookup_with_literal_key () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      let x = test_map[1];
-      return 0;
+      test_map[1] = 42 let x = test_map[1]
+      return 0
     }
   |} in
   let test_fn () =
@@ -493,19 +491,18 @@ let test_map_lookup_with_literal_key () =
 (** Test map update with literal key and value *)
 let test_map_update_with_literal_key_value () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      test_map[1] = 43;
-      let x = test_map[1];
-      return 0;
+      test_map[1] = 42 test_map[1] = 43
+      let x = test_map[1]
+      return 0
     }
   |} in
   let test_fn () =
@@ -525,19 +522,18 @@ let test_map_update_with_literal_key_value () =
 (** Test map delete with literal key *)
 let test_map_delete_with_literal_key () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      delete test_map[1];
-      let x = test_map[1];
-      return 0;
+      test_map[1] = 42 delete test_map[1]
+      let x = test_map[1]
+      return 0
     }
   |} in
   let test_fn () =
@@ -557,20 +553,19 @@ let test_map_delete_with_literal_key () =
 (** Test map iterate with literal key *)
 let test_map_iterate_with_literal_key () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      test_map[2] = 43;
-      let x = test_map[1];
-      let y = test_map[2];
-      return 0;
+      test_map[1] = 42 test_map[2] = 43
+      let x = test_map[1]
+      let y = test_map[2]
+      return 0
     }
   |} in
   let test_fn () =
@@ -590,20 +585,19 @@ let test_map_iterate_with_literal_key () =
 (** Test mixed literal and variable expressions *)
 let test_mixed_literal_variable_expressions () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      test_map[2] = 43;
-      let x = test_map[1];
-      let y = test_map[2];
-      return 0;
+      test_map[1] = 42 test_map[2] = 43
+      let x = test_map[1]
+      let y = test_map[2]
+      return 0
     }
   |} in
   let test_fn () =
@@ -623,20 +617,18 @@ let test_mixed_literal_variable_expressions () =
 (** Test unique temporary variable names *)
 let test_unique_temp_var_names () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      test_map[2] = 43;
-      test_map[3] = 44;
-      let z = test_map[1] + test_map[2] + test_map[3];
-      return 0;
+      test_map[1] = 42 test_map[2] = 43
+      test_map[3] = 44 let z = test_map[1] + test_map[2] + test_map[3]
+      return 0
     }
   |} in
   let test_fn () =
@@ -656,18 +648,17 @@ let test_unique_temp_var_names () =
 (** Test no direct literal addressing *)
 let test_no_direct_literal_addressing () =
   let code = {|
-    map<u32, u32> test_map : HashMap(1024);
+    map<u32, u32> test_map : HashMap(1024)
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      test_map[1] = 42;
-      let x = test_map[1];
-      return 0;
+      test_map[1] = 42 let x = test_map[1]
+      return 0
     }
   |} in
   let test_fn () =
@@ -687,7 +678,7 @@ let test_no_direct_literal_addressing () =
 (** Test that BPF functions are only generated when explicitly called *)
 let test_map_loading_code_generation () =
   let code = {|
-    map<u32, u64> packet_stats : HashMap(1024);
+    map<u32, u64> packet_stats : HashMap(1024)
     
     config network {
         max_packet_size: u32 = 1500,
@@ -700,14 +691,14 @@ let test_map_loading_code_generation () =
     
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
       }
     }
     
     fn main() -> i32 {
-      network.enable_logging = true;
-      let prog_handle = load_program(test);
-      return 0;
+      network.enable_logging = true
+      let prog_handle = load_program(test)
+      return 0
     }
   |} in
   let test_fn () =

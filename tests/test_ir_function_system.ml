@@ -113,7 +113,7 @@ let test_basic_function_system () =
   let program_text = {|
 program simple : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 |} in
@@ -143,12 +143,12 @@ let test_function_registration () =
   let program_text = {|
 program func_test : xdp {
   fn helper(x: u32, y: u32) -> u32 {
-    return x + y;
+    return x + y
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = helper(10, 20);
-    return 2;
+    let result = helper(10, 20)
+    return 2
   }
 }
 |} in
@@ -178,15 +178,15 @@ let test_function_signature_validation () =
   let program_text = {|
 program signature_test : xdp {
   fn valid_function(a: u32, b: u32) -> u32 {
-    return a + b;
+    return a + b
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = valid_function(10, 20);
+    let result = valid_function(10, 20)
     if (result > 25) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -219,15 +219,15 @@ let test_function_call_resolution () =
   let program_text = {|
 program call_test : xdp {
   fn multiply(x: u32, factor: u32) -> u32 {
-    return x * factor;
+    return x * factor
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = multiply(10, 2);
+    let result = multiply(10, 2)
     if (result > 15) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -259,15 +259,15 @@ let test_recursive_function_detection () =
   let simple_program = {|
 program simple : xdp {
   fn helper() -> u32 {
-    return 42;
+    return 42
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = helper();
+    let result = helper()
     if (result > 40) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -299,25 +299,25 @@ let test_function_dependency_analysis () =
   let program_text = {|
 program dependency : xdp {
   fn level3() -> u32 {
-    return 3;
+    return 3
   }
   
   fn level2() -> u32 {
-    let val3 = level3();
-    return val3 + 2;
+    let val3 = level3()
+    return val3 + 2
   }
   
   fn level1() -> u32 {
-    let val2 = level2();
-    return val2 + 1;
+    let val2 = level2()
+    return val2 + 1
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = level1();
+    let result = level1()
     if (result > 5) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -353,20 +353,20 @@ let test_function_optimization () =
   let program_text = {|
 program optimization : xdp {
   fn constant_function() -> u32 {
-    return 42;
+    return 42
   }
   
   fn simple_math(x: u32) -> u32 {
-    return x + 1;
+    return x + 1
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let const_val = constant_function();
-    let result = simple_math(const_val);
+    let const_val = constant_function()
+    let result = simple_math(const_val)
     if (result > 40) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -404,38 +404,38 @@ let test_comprehensive_function_system () =
   let program_text = {|
 program comprehensive : xdp {
   fn validate_packet(size: u32) -> bool {
-    return size > 64 && size < 1500;
+    return size > 64 && size < 1500
   }
   
   fn calculate_hash(data: u32) -> u32 {
-    let hash = data * 31;
-    return hash % 1024;
+    let hash = data * 31
+    return hash % 1024
   }
   
   fn process_protocol(protocol: u8) -> u32 {
     if (protocol == 6) {
-      return 1;
+      return 1
     } else if (protocol == 17) {
-      return 2;
+      return 2
     } else {
-      return 0;
+      return 0
     }
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let packet_size = 1000;
+    let packet_size = 1000
     
     if (!validate_packet(packet_size)) {
-      return 1;
+      return 1
     }
     
-    let hash = calculate_hash(packet_size);
-    let proto_result = process_protocol(6);
+    let hash = calculate_hash(packet_size)
+    let proto_result = process_protocol(6)
     
     if (hash > 500 && proto_result == 1) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }

@@ -18,21 +18,21 @@ struct GlobalConfig {
 
 program test : xdp {
   fn process_packet(cfg: GlobalConfig) -> u32 {
-    let max_size = cfg.max_packet_size;
-    let timeout = cfg.timeout_ms;
+    let max_size = cfg.max_packet_size
+    let timeout = cfg.timeout_ms
     if (max_size > 1500) {
-      return 1;
+      return 1
     }
-    return 0;
+    return 0
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -54,21 +54,21 @@ program test : xdp {
   }
   
   fn check_threshold(settings: LocalConfig) -> u32 {
-    let val = settings.threshold;
-    let m = settings.mode;
+    let val = settings.threshold
+    let m = settings.mode
     if (val > 100 && m > 0) {
-      return 1;
+      return 1
     }
-    return 0;
+    return 0
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -90,22 +90,22 @@ struct NetworkLimits {
 
 program monitor : xdp {
   fn enforce_limits(limits: NetworkLimits) -> u32 {
-    let max_conn = limits.max_connections;
-    let bandwidth = limits.bandwidth_limit;
+    let max_conn = limits.max_connections
+    let bandwidth = limits.bandwidth_limit
     
     if (max_conn > 1000 || bandwidth > 10000) {
-      return 1; // Drop
+      return 1 // Drop
     }
-    return 0; // Pass
+    return 0 // Pass
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -122,7 +122,7 @@ let test_userspace_struct_parameter_field_access () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
@@ -133,16 +133,16 @@ struct ServerConfig {
 }
 
 fn setup_server(cfg: ServerConfig) -> i32 {
-  let max_conn = cfg.max_connections;
-  let port_num = cfg.port;
+  let max_conn = cfg.max_connections
+  let port_num = cfg.port
   if (cfg.enable_debug > 0) {
-    return 1;
+    return 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -167,22 +167,22 @@ struct Config2 {
 
 program test : xdp {
   fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
-    let val1 = cfg1.value1;
-    let val2 = cfg2.value2;
+    let val1 = cfg1.value1
+    let val2 = cfg2.value2
     
     if (val1 > val2) {
-      return 1;
+      return 1
     }
-    return 0;
+    return 0
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -205,29 +205,29 @@ struct PacketLimits {
 
 program test : xdp {
   fn validate_packet(limits: PacketLimits) -> u32 {
-    let packet_size: u32 = 800;
+    let packet_size: u32 = 800
     
     if (packet_size > limits.max_size || packet_size < limits.min_size) {
-      return 1;  // Invalid
+      return 1  // Invalid
     }
     
-    let total_range = limits.max_size - limits.min_size;
-    let middle_point = limits.min_size + (total_range / 2);
+    let total_range = limits.max_size - limits.min_size
+    let middle_point = limits.min_size + (total_range / 2)
     
     if (packet_size > middle_point && limits.strict_mode > 0) {
-      return 2;  // Warning
+      return 2  // Warning
     }
     
-    return 0;  // Valid
+    return 0  // Valid
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -252,18 +252,18 @@ program test : xdp {
   }
   
   fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
-    let g_limit = global.global_limit;
-    let l_limit = local.local_limit;
-    return g_limit + l_limit;
+    let g_limit = global.global_limit
+    let l_limit = local.local_limit
+    return g_limit + l_limit
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -285,22 +285,22 @@ struct PacketInfo {
 
 program test : xdp {
   fn should_drop(info: PacketInfo) -> u32 {
-    let size = info.size;
-    let proto = info.proto;
+    let size = info.size
+    let proto = info.proto
     if (size > 1500 || proto == 17) {
-      return 1;
+      return 1
     }
-    return 0;
+    return 0
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let packet_size = ctx.data_end - ctx.data;
-    return 2;
+    let packet_size = ctx.data_end - ctx.data
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -321,17 +321,17 @@ struct SimpleConfig {
 
 program test : xdp {
   fn helper(cfg: SimpleConfig) -> u32 {
-    let value = cfg.nonexistent_field;  // Should cause error
-    return value;
+    let value = cfg.nonexistent_field  // Should cause error
+    return value
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -349,16 +349,16 @@ let test_undefined_struct_error () =
   let program_text = {|
 program test : xdp {
   fn helper(cfg: UndefinedStruct) -> u32 {
-    return cfg.value;
+    return cfg.value
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try
@@ -386,18 +386,18 @@ program monitor : xdp {
   }
   
   fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
-    let packets = stats.packet_count;
-    let drops = stats.drop_count;
-    let max_entries = cfg.max_entries;
+    let packets = stats.packet_count
+    let drops = stats.drop_count
+    let max_entries = cfg.max_entries
     
     if (packets > max_entries) {
-      return drops + 1;
+      return drops + 1
     }
-    return drops;
+    return drops
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
@@ -407,18 +407,18 @@ struct UserConfig {
 }
 
 fn process_user_config(user_cfg: UserConfig, global_cfg: GlobalConfig) -> i32 {
-  let level = user_cfg.log_level;
-  let file = user_cfg.output_file;
-  let timeout = global_cfg.timeout;
+  let level = user_cfg.log_level
+  let file = user_cfg.output_file
+  let timeout = global_cfg.timeout
   
   if (level > 0 && file > 0 && timeout > 0) {
-    return 1;
+    return 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   try

@@ -396,7 +396,7 @@ let test_ir_generation_basic () =
   let program_text = {|
 program simple_ir : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 |} in
@@ -417,8 +417,8 @@ let test_basic_ir_analysis () =
   let program_text = {|
 program basic : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 42;
-    return 2;
+    let x = 42
+    return 2
   }
 }
 |} in
@@ -443,11 +443,11 @@ let test_control_flow_analysis () =
   let program_text = {|
 program control_flow : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
+    let x = 10
     if (x > 5) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }
@@ -858,11 +858,11 @@ let test_basic_cfg_construction () =
   let program_text = {|
 program cfg_test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 42;
+    let x = 42
     if (x > 10) {
-      return 2;
+      return 2
     } else {
-      return 1;
+      return 1
     }
   }
 }

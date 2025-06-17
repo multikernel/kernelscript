@@ -43,20 +43,20 @@ let test_basic_if_statement () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let x = 5;
+  let x = 5
   if x == 5 {
-    let result = 1;
+    let result = 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -77,22 +77,22 @@ let test_if_else_statement () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let count = 15;
+  let count = 15
   if count > 10 {
-    let status = 1;
+    let status = 1
   } else {
-    let status = 0;
+    let status = 0
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -113,21 +113,21 @@ let test_break_statement () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for i in 0..10 {
     if i == 5 {
-      break;
+      break
     }
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -143,21 +143,21 @@ let test_continue_statement () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for i in 0..10 {
     if i % 2 == 0 {
-      continue;
+      continue
     }
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -173,23 +173,23 @@ let test_if_with_break_in_loop () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let count = 0;
+  let count = 0
   for i in 0..10 {
     if i == 5 {
-      break;
+      break
     }
-    count = count + 1;
+    count = count + 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -207,23 +207,23 @@ let test_if_with_continue_in_loop () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let sum = 0;
+  let sum = 0
   for i in 1..10 {
     if i % 2 == 0 {
-      continue;
+      continue
     }
-    sum = sum + i;
+    sum = sum + i
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -256,21 +256,21 @@ let test_complex_binary_operators () =
     let program_text = Printf.sprintf {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let a = 5;
-  let b = 10;
+  let a = 5
+  let b = 10
   if %s {
-    let result = 1;
+    let result = 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} condition in
     
@@ -286,23 +286,23 @@ let test_nested_if_statements () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let x = 5;
-  let y = 3;
+  let x = 5
+  let y = 3
   if x > 0 {
     if y < 10 {
-      let result = 42;
+      let result = 42
     }
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -323,32 +323,32 @@ let test_complete_global_function_program_with_if_break_continue () =
   let program_text = {|
 program test_prog : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    let total: u32 = 0;
-    let count: u32 = 0;
+    let total: u32 = 0
+    let count: u32 = 0
     
     for i in 0..20 {
         if i < 3 {
-            continue;
+            continue
         }
         
         if i % 2 == 0 {
-            count = count + 1;
-            continue;
+            count = count + 1
+            continue
         }
         
         if i > 15 {
-            break;
+            break
         }
         
-        total = total + i;
+        total = total + i
     }
     
-    return 0;
+    return 0
 }
 |} in
   
@@ -403,17 +403,17 @@ let test_unsupported_statement_fallback () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
-  let x = 5;
-  return x;
+  let x = 5
+  return x
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   

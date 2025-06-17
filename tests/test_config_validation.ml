@@ -23,11 +23,11 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size: u32 = network.max_packet_size;
-        let logging: bool = network.enable_logging;
-        let timeout_val: u64 = network.timeout;
-        let proto: u8 = network.protocol;
-        return 2;
+        let size: u32 = network.max_packet_size
+        let logging: bool = network.enable_logging
+        let timeout_val: u64 = network.timeout
+        let proto: u8 = network.protocol
+        return 2
     }
 }
 |} in
@@ -48,8 +48,8 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size = nonexistent_config.max_packet_size;
-        return 2;
+        let size = nonexistent_config.max_packet_size
+        return 2
     }
 }
 |} in
@@ -75,8 +75,8 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let value = network.nonexistent_field;
-        return 2;
+        let value = network.nonexistent_field
+        return 2
     }
 }
 |} in
@@ -103,10 +103,10 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size: u32 = network.max_packet_size;  // Correct type
-        let logging: bool = network.enable_logging;  // Correct type
-        let timeout_val: u64 = network.timeout;  // Correct type
-        return 2;
+        let size: u32 = network.max_packet_size  // Correct type
+        let logging: bool = network.enable_logging  // Correct type
+        let timeout_val: u64 = network.timeout  // Correct type
+        return 2
     }
 }
 |} in
@@ -133,9 +133,9 @@ config security {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size = network.max_packet_size;
-        let threat = security.threat_level;
-        return 2;
+        let size = network.max_packet_size
+        let threat = security.threat_level
+        return 2
     }
 }
 |} in
@@ -158,15 +158,15 @@ config limits {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let packet_size: u32 = 800;
+        let packet_size: u32 = 800
         
         if (limits.enable_check && 
             (packet_size > limits.max_size || packet_size < limits.min_size)) {
-            return 1;  // DROP
+            return 1  // DROP
         }
         
-        let total = limits.max_size + limits.min_size;
-        return 2;  // PASS
+        let total = limits.max_size + limits.min_size
+        return 2  // PASS
     }
 }
 |} in
@@ -182,15 +182,15 @@ program test : xdp {
 let test_config_with_array_fields () =
   let program_text = {|
 config network {
-    blocked_ports: [u16; 4] = [22, 23, 135, 445],
-    allowed_ips: [u32; 2] = [0x7f000001, 0xc0a80001],
+    blocked_ports: u16[4] = [22, 23, 135, 445],
+    allowed_ips: u32[2] = [0x7f000001, 0xc0a80001],
 }
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let ports = network.blocked_ports;
-        let ips = network.allowed_ips;
-        return 2;
+        let ports = network.blocked_ports
+        let ips = network.allowed_ips
+        return 2
     }
 }
 |} in
@@ -212,8 +212,8 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let value = network.settings;  // Valid
-        return 2;
+        let value = network.settings  // Valid
+        return 2
     }
 }
 |} in
@@ -235,8 +235,8 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let size: u32 = 1500;  // Simple test without config access for now
-        return 2;
+        let size: u32 = 1500  // Simple test without config access for now
+        return 2
     }
 }
 |} in

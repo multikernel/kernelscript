@@ -94,19 +94,19 @@ let get_generated_userspace_code ast source_filename =
 (** Test 1: Global maps are accessible from global functions *)
 let test_global_map_accessibility () =
   let code = {|
-map<u32, u64> global_counter : HashMap(1024);
-map<u32, u32> global_config : Array(256);
+map<u32, u64> global_counter : HashMap(1024)
+map<u32, u32> global_config : Array(256)
 
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  global_counter[1] = 100;  // This will trigger map operations generation
-  let value = global_config[0];
-  return 0;
+  global_counter[1] = 100  // This will trigger map operations generation
+  let value = global_config[0]
+  return 0
 }
 |} in
   
@@ -151,20 +151,20 @@ fn main() -> i32 {
 (** Test 2: Local maps are not accessible from global functions *)
 let test_local_map_isolation () =
   let code = {|
-map<u32, u64> global_shared : HashMap(1024);
+map<u32, u64> global_shared : HashMap(1024)
 
 program test : xdp {
-  map<u32, u32> local_state : Array(256);
-  map<u32, u64> local_cache : HashMap(512);
+  map<u32, u32> local_state : Array(256)
+  map<u32, u64> local_cache : HashMap(512)
   
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  global_shared[42] = 200;  // Use the global map to trigger generation
-  return 0;
+  global_shared[42] = 200  // Use the global map to trigger generation
+  return 0
 }
 |} in
   
@@ -203,18 +203,18 @@ fn main() -> i32 {
 (** Test 3: Map operation function generation *)
 let test_map_operation_generation () =
   let code = {|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  test_map[123] = 456;  // Use the map to trigger operations generation
-  let lookup_result = test_map[123];
-  return 0;
+  test_map[123] = 456  // Use the map to trigger operations generation
+  let lookup_result = test_map[123]
+  return 0
 }
 |} in
   
@@ -254,24 +254,24 @@ fn main() -> i32 {
 (** Test 4: Multiple map types in global functions *)
 let test_multiple_map_types_global_functions () =
   let code = {|
-map<u32, u64> hash_map : HashMap(1024);
-map<u32, u32> array_map : Array(256);
-map<u32, u64> lru_map : LruHash(512);
-map<u64, u32> percpu_map : PercpuHash(128);
+map<u32, u64> hash_map : HashMap(1024)
+map<u32, u32> array_map : Array(256)
+map<u32, u64> lru_map : LruHash(512)
+map<u64, u32> percpu_map : PercpuHash(128)
 
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
   // Use all maps to trigger operations generation
-  hash_map[1] = 100;
-  array_map[2] = 200;
-  lru_map[3] = 300;
-  percpu_map[4] = 400;
-  return 0;
+  hash_map[1] = 100
+  array_map[2] = 200
+  lru_map[3] = 300
+  percpu_map[4] = 400
+  return 0
 }
 |} in
   
@@ -315,17 +315,17 @@ fn main() -> i32 {
 (** Test 5: Global function code structure and includes *)
 let test_global_function_code_structure () =
   let code = {|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  test_map[1] = 42;  // Use the map to trigger operations generation
-  return 0;
+  test_map[1] = 42  // Use the map to trigger operations generation
+  return 0
 }
 |} in
   
@@ -363,31 +363,31 @@ let test_global_function_error_handling () =
   let invalid_programs = [
     (* Missing main function *)
     ({|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn helper() -> i32 {
-  return 0;
+  return 0
 }
 |}, "missing main function");
     
     (* Invalid main signature *)
     ({|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    return 2;
+    return 2
   }
 }
 
 fn main(wrong_param: u32) -> i32 {
-  return 0;
+  return 0
 }
 |}, "invalid main signature");
   ] in

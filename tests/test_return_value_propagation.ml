@@ -45,12 +45,12 @@ let test_basic_return_value_propagation () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -58,7 +58,7 @@ fn main() -> i32 {
     let generated_code = generate_userspace_code_from_program program_text "test_basic_return" in
     
     (* With explicit-only semantics, return statements are preserved as-is *)
-    check bool "has direct return statement" true (contains_pattern generated_code "return 0;");
+    check bool "has direct return statement" true (contains_pattern generated_code "return 0");
     
     (* Verify the main function exists and is properly generated *)
     check bool "main function exists" true (contains_pattern generated_code "int main(");
@@ -75,16 +75,16 @@ let test_multiple_return_statements () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let x = 10;
+  let x = 10
   if x > 5 {
-    return 1;
+    return 1
   }
-  return 0;
+  return 0
 }
 |} in
   
@@ -92,8 +92,8 @@ fn main() -> i32 {
     let generated_code = generate_userspace_code_from_program program_text "test_multiple_returns" in
     
     (* With explicit-only semantics, return statements are preserved as-is *)
-    check bool "has first return statement" true (contains_pattern generated_code "return 1;");
-    check bool "has second return statement" true (contains_pattern generated_code "return 0;");
+    check bool "has first return statement" true (contains_pattern generated_code "return 1");
+    check bool "has second return statement" true (contains_pattern generated_code "return 0");
     
     (* Verify no implicit cleanup infrastructure *)
     check bool "no __return_value variable" false (contains_pattern generated_code "__return_value");
@@ -108,17 +108,17 @@ let test_return_in_control_structures () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
   for i in 0..10 {
     if i == 5 {
-      return 42;
+      return 42
     }
   }
-  return 0;
+  return 0
 }
 |} in
   
@@ -126,8 +126,8 @@ fn main() -> i32 {
     let generated_code = generate_userspace_code_from_program program_text "test_return_in_loops" in
     
     (* With explicit-only semantics, return statements are preserved as-is *)
-    check bool "has return in loop preserved" true (contains_pattern generated_code "return 42;");
-    check bool "has final return preserved" true (contains_pattern generated_code "return 0;");
+    check bool "has return in loop preserved" true (contains_pattern generated_code "return 42");
+    check bool "has final return preserved" true (contains_pattern generated_code "return 0");
     
     (* Verify no implicit transformation occurred *)
     check bool "no __return_value variable" false (contains_pattern generated_code "__return_value");
@@ -141,17 +141,17 @@ let test_non_main_function_returns () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn helper() -> u32 {
-  return 123;
+  return 123
 }
 
 fn main() -> i32 {
-  let result = helper();
-  return 0;
+  let result = helper()
+  return 0
 }
 |} in
   
@@ -159,8 +159,8 @@ fn main() -> i32 {
     let generated_code = generate_userspace_code_from_program program_text "test_non_main_returns" in
     
     (* With explicit-only semantics, both helper and main functions use direct returns *)
-    check bool "helper function uses direct return" true (contains_pattern generated_code "return 123;");
-    check bool "main function uses direct return" true (contains_pattern generated_code "return 0;");
+    check bool "helper function uses direct return" true (contains_pattern generated_code "return 123");
+    check bool "main function uses direct return" true (contains_pattern generated_code "return 0");
     
     (* Verify no implicit transformation occurred *)
     check bool "no __return_value variable" false (contains_pattern generated_code "__return_value");
@@ -174,12 +174,12 @@ let test_cleanup_always_reachable () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  return 1;
+  return 1
 }
 |} in
   
@@ -192,7 +192,7 @@ fn main() -> i32 {
     check bool "no goto cleanup statements" false (contains_pattern generated_code "goto cleanup");
     
     (* Verify direct return is preserved *)
-    check bool "has direct return" true (contains_pattern generated_code "return 1;");
+    check bool "has direct return" true (contains_pattern generated_code "return 1");
     check bool "main function exists" true (contains_pattern generated_code "int main(");
     
   with

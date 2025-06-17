@@ -1,9 +1,9 @@
 // This file demonstrates all the new type system features
 
 // Type alias for common types
-type IpAddress = u32;
-type PacketSize = u16;
-type Counter = u64;
+type IpAddress = u32
+type PacketSize = u16
+type Counter = u64
 
 // Struct definition for packet information
 struct PacketInfo {
@@ -63,22 +63,22 @@ program packet_inspector : xdp {
       dst_port: 8080,
       payload_size: 1024
     };
-    return some info;
+    return some info
   }
   
   fn get_filter_action(info: PacketInfo) -> FilterAction {
     // Look up in the filter map
-    let action = packet_filter[info];
+    let action = packet_filter[info]
     if action != null {
-      return action;
+      return action
     } else {
-      return FILTER_ACTION_ALLOW;
+      return FILTER_ACTION_ALLOW
     }
   }
   
   fn update_stats(info: PacketInfo) {
     // Update connection count
-    let current_count = connection_count[info.src_ip];
+    let current_count = connection_count[info.src_ip]
     if current_count != null {
       connection_count[info.src_ip] = current_count + 1;
     } else {
@@ -86,9 +86,9 @@ program packet_inspector : xdp {
     }
     
     // Update protocol stats
-    let proto = protocol_from_u8(info.protocol);
+    let proto = protocol_from_u8(info.protocol)
     if proto != null {
-      let stats = protocol_stats[proto];
+      let stats = protocol_stats[proto]
       if stats != null {
         protocol_stats[proto] = stats + 1;
       } else {
@@ -99,18 +99,18 @@ program packet_inspector : xdp {
   
   fn main(ctx: XdpContext) -> XdpAction {
     // Extract packet information
-    let packet_info = extract_packet_info(ctx);
+    let packet_info = extract_packet_info(ctx)
     
     match packet_info {
       some info -> {
         // Update statistics
-        update_stats(info);
+        update_stats(info)
         
         // Get filtering decision
-        let action = get_filter_action(info);
+        let action = get_filter_action(info)
         
         // Store in recent packets for userspace inspection
-        let packet_id = ctx.get_packet_id();
+        let packet_id = ctx.get_packet_id()
         recent_packets[packet_id] = info;
         
         // Apply filtering action
@@ -119,15 +119,15 @@ program packet_inspector : xdp {
           FILTER_ACTION_BLOCK -> return XDP_DROP,
           FILTER_ACTION_LOG -> {
             // Log packet and allow
-            ctx.log_packet(info);
-            return XDP_PASS;
+            ctx.log_packet(info)
+            return XDP_PASS
           },
           FILTER_ACTION_REDIRECT -> return XDP_REDIRECT
         }
       },
       none -> {
         // Failed to parse packet, drop it
-        return XDP_DROP;
+        return XDP_DROP
       }
     }
   }

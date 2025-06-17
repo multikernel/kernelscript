@@ -39,19 +39,17 @@ let compile_to_c_code ast =
 (** Test end-to-end compilation of a complete map program *)
 let test_complete_map_compilation () =
   let program = {|
-map<u32, u64> packet_counts : HashMap(1024);
-map<u32, u32> rate_limits : HashMap(512);
+map<u32, u64> packet_counts : HashMap(1024)
+map<u32, u32> rate_limits : HashMap(512)
 
 program rate_limiter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let src_ip = 0x08080808;
-    packet_counts[src_ip] = packet_counts[src_ip] + 1;
-    
-    if (packet_counts[src_ip] > rate_limits[src_ip]) {
-      return 1; // Drop
+    let src_ip = 0x08080808
+    packet_counts[src_ip] = packet_counts[src_ip] + 1 if (packet_counts[src_ip] > rate_limits[src_ip]) {
+      return 1 // Drop
     }
     
-    return 2; // Pass
+    return 2 // Pass
   }
 }
 |} in
@@ -96,22 +94,18 @@ program rate_limiter : xdp {
 (** Test multiple map types in one program *)
 let test_multiple_map_types () =
   let program = {|
-map<u32, u64> hash_map : HashMap(1024);
-map<u32, u32> array_map : Array(256);
-map<u32, u64> percpu_map : PercpuHash(512);
+map<u32, u64> hash_map : HashMap(1024)
+map<u32, u32> array_map : Array(256)
+map<u32, u64> percpu_map : PercpuHash(512)
 
 program multi_map : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let hash_val: u64 = hash_map[41];
-    hash_map[42] = hash_val;
+    let hash_val: u64 = hash_map[41]
+    hash_map[42] = hash_val let array_val: u32 = array_map[9]
+    array_map[10] = array_val let percpu_val: u64 = percpu_map[122]
+    percpu_map[123] = percpu_val
     
-    let array_val: u32 = array_map[9];
-    array_map[10] = array_val;
-    
-    let percpu_val: u64 = percpu_map[122];
-    percpu_map[123] = percpu_val;
-    
-    return 2;
+    return 2
   }
 }
 |} in
@@ -161,22 +155,22 @@ let test_invalid_map_operations () =
   let test_cases = [
     (* Invalid key type *)
     ({|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 program test : xdp {
   fn main() -> u32 {
-    test_map["invalid_key"] = 100;
-    return 0;
+    test_map["invalid_key"] = 100
+    return 0
   }
 }
 |}, "invalid key type");
     
     (* Invalid value type *)
     ({|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 program test : xdp {
   fn main() -> u32 {
-    test_map[42] = "invalid_value";
-    return 0;
+    test_map[42] = "invalid_value"
+    return 0
   }
 }
 |}, "invalid value type");
@@ -185,8 +179,8 @@ program test : xdp {
     ({|
 program test : xdp {
   fn main() -> u32 {
-    undefined_map[42] = 100;
-    return 0;
+    undefined_map[42] = 100
+    return 0
   }
 }
 |}, "undefined map");
@@ -209,18 +203,18 @@ program test : xdp {
 let test_complex_map_expressions () =
   (* Simplified test to avoid type issues while still testing real functionality *)
   let program = {|
-map<u32, u64> counters : HashMap(1024);
+map<u32, u64> counters : HashMap(1024)
 
 program complex_ops : xdp {
   fn compute_key(base: u32) -> u32 {
-    return base * 2 + 1;
+    return base * 2 + 1
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let base_key = 10;
-    let computed_key = compute_key(base_key);
-    counters[computed_key] = counters[base_key];
-    return 2;
+    let base_key = 10
+    let computed_key = compute_key(base_key)
+    counters[computed_key] = counters[base_key]
+    return 2
   }
 }
 |} in
@@ -260,35 +254,33 @@ program complex_ops : xdp {
 (** Test map operations in conditional statements *)
 let test_map_operations_in_conditionals () =
   let program = {|
-map<u32, u64> packet_counts : HashMap(1024);
-map<u32, u32> blacklist : HashMap(256);
+map<u32, u64> packet_counts : HashMap(1024)
+map<u32, u32> blacklist : HashMap(256)
 
 program conditional_maps : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let src_ip = 0x08080808;
+    let src_ip = 0x08080808
     
     if (blacklist[src_ip] > 0) {
-      return 1;
+      return 1
     }
     
-    let current_count = packet_counts[src_ip];
-    packet_counts[src_ip] = current_count + 1;
-    
-    if (packet_counts[src_ip] > 1000) {
-      blacklist[src_ip] = 1;
-      return 1;
+    let current_count = packet_counts[src_ip]
+    packet_counts[src_ip] = current_count + 1 if (packet_counts[src_ip] > 1000) {
+      blacklist[src_ip] = 1
+      return 1
     }
     
-    let threshold = 100;
+    let threshold = 100
     if (src_ip == 0x08080808) {
-      threshold = 500;
+      threshold = 500
     }
     
     if (packet_counts[src_ip] > threshold) {
-      return 1;
+      return 1
     }
     
-    return 2;
+    return 2
   }
 }
 |} in
@@ -329,14 +321,13 @@ program conditional_maps : xdp {
 (** Test memory safety of generated C code *)
 let test_memory_safety () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024);
+map<u32, u64> test_map : HashMap(1024)
 
 program memory_safe : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let key = 42;
-    let value = test_map[key];
-    test_map[key] = value + 1;
-    return 2;
+    let key = 42
+    let value = test_map[key] test_map[key] = value + 1
+    return 2
   }
 }
 |} in
@@ -376,25 +367,25 @@ program memory_safe : xdp {
 let test_different_context_types () =
   let programs = [
     ("xdp", {|
-map<u32, u64> xdp_stats : HashMap(1024);
+map<u32, u64> xdp_stats : HashMap(1024)
 
 program xdp_test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    xdp_stats[1] = xdp_stats[2];
-    return 2;
+    xdp_stats[1] = xdp_stats[2]
+    return 2
   }
 }
 |});
     ("tc", {|
-map<u32, u64> tc_stats : HashMap(1024);
+map<u32, u64> tc_stats : HashMap(1024)
 
 program tc_test : tc {
   fn main(ctx: TcContext) -> TcAction {
-    tc_stats[1] = tc_stats[2];
-    return 0;
+    tc_stats[1] = tc_stats[2]
+    return 0
   }
 }
-|});
+|})
   ] in
   
   List.iter (fun (prog_type, program) ->

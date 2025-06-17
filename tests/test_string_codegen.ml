@@ -43,15 +43,15 @@ let test_string_assignment_codegen () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let greeting: str<20> = "Hello";
-  let name: str<30> = "World";
-  let short: str<5> = "Hi";
-  return 0;
+  let greeting: str<20> = "Hello"
+  let name: str<30> = "World"
+  let short: str<5> = "Hi"
+  return 0
 }
 |} in
   
@@ -74,15 +74,15 @@ let test_string_concatenation_codegen () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let first: str<10> = "Hello";
-  let second: str<10> = "World";
-  let result: str<25> = first + second;
-  return 0;
+  let first: str<10> = "Hello"
+  let second: str<10> = "World"
+  let result: str<25> = first + second
+  return 0
 }
 |} in
   
@@ -107,23 +107,23 @@ let test_string_comparison_codegen () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let name: str<20> = "Alice";
-  let other: str<20> = "Bob";
+  let name: str<20> = "Alice"
+  let other: str<20> = "Bob"
   
   if name == "Alice" {
-    return 1;
+    return 1
   }
   
   if name != other {
-    return 2;
+    return 2
   }
   
-  return 0;
+  return 0
 }
 |} in
   
@@ -147,15 +147,15 @@ let test_string_indexing_codegen () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let message: str<20> = "Hello";
-  let first: char = message[0];
-  let second: char = message[1];
-  return 0;
+  let message: str<20> = "Hello"
+  let first: char = message[0]
+  let second: char = message[1]
+  return 0
 }
 |} in
   
@@ -177,15 +177,15 @@ let test_string_truncation_edge_cases () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let short: str<6> = "toolong";  // Will be truncated
-  let exact: str<6> = "exact";    // Fits exactly
-  let tiny: str<3> = "hi";        // Much shorter than buffer
-  return 0;
+  let short: str<6> = "toolong"  // Will be truncated
+  let exact: str<6> = "exact"    // Fits exactly
+  let tiny: str<3> = "hi"        // Much shorter than buffer
+  return 0
 }
 |} in
   
@@ -209,25 +209,25 @@ let test_complex_string_operations () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let greeting: str<10> = "Hello";
-  let target: str<10> = "World";
-  let punctuation: str<5> = "!";
+  let greeting: str<10> = "Hello"
+  let target: str<10> = "World"
+  let punctuation: str<5> = "!"
   
-  let message: str<25> = greeting + target;
-  let final_msg: str<30> = message + punctuation;
+  let message: str<25> = greeting + target
+  let final_msg: str<30> = message + punctuation
   
   if final_msg == "HelloWorld!" {
-    let first_char: char = final_msg[0];
-    let last_char: char = final_msg[10];
-    return 1;
+    let first_char: char = final_msg[0]
+    let last_char: char = final_msg[10]
+    return 1
   }
   
-  return 0;
+  return 0
 }
 |} in
   
@@ -251,14 +251,14 @@ let test_empty_and_single_char_strings () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let single: str<2> = "A";
-  let empty_like: str<1> = "";
-  return 0;
+  let single: str<2> = "A"
+  let empty_like: str<1> = ""
+  return 0
 }
 |} in
   
@@ -281,15 +281,15 @@ let test_string_variable_declarations () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let small: str<16> = "small";
-  let medium: str<64> = "medium";
-  let large: str<256> = "large";
-  return 0;
+  let small: str<16> = "small"
+  let medium: str<64> = "medium"
+  let large: str<256> = "large"
+  return 0
 }
 |} in
   

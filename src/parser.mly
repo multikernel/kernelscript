@@ -73,6 +73,7 @@
 %type <(string * Ast.bpf_type) list> parameter_list
 %type <string * Ast.bpf_type> parameter
 %type <Ast.bpf_type> bpf_type
+%type <Ast.bpf_type> array_type
 %type <Ast.statement list> statement_list
 %type <Ast.statement> statement
 %type <Ast.statement> expression_statement
@@ -206,9 +207,23 @@ bpf_type:
   | CHAR { Char }
   | STR LT INT GT { Str $3 }
   | IDENTIFIER { UserType $1 }
-  | LBRACKET bpf_type SEMICOLON INT RBRACKET { Array ($2, $4) }
+  | array_type { $1 }
   | MULTIPLY bpf_type { Pointer $2 }
   | map_type LT bpf_type COMMA bpf_type GT { Map ($3, $5, $1) }
+
+/* Array types: type[size] */
+array_type:
+  | U8 LBRACKET INT RBRACKET { Array (U8, $3) }
+  | U16 LBRACKET INT RBRACKET { Array (U16, $3) }
+  | U32 LBRACKET INT RBRACKET { Array (U32, $3) }
+  | U64 LBRACKET INT RBRACKET { Array (U64, $3) }
+  | I8 LBRACKET INT RBRACKET { Array (I8, $3) }
+  | I16 LBRACKET INT RBRACKET { Array (I16, $3) }
+  | I32 LBRACKET INT RBRACKET { Array (I32, $3) }
+  | I64 LBRACKET INT RBRACKET { Array (I64, $3) }
+  | BOOL LBRACKET INT RBRACKET { Array (Bool, $3) }
+  | CHAR LBRACKET INT RBRACKET { Array (Char, $3) }
+  | IDENTIFIER LBRACKET INT RBRACKET { Array (UserType $1, $3) }
 
 /* Statements */
 statement_list:
@@ -233,29 +248,29 @@ statement:
   | defer_statement { $1 }
 
 expression_statement:
-  | expression SEMICOLON { make_stmt (ExprStmt $1) (make_pos ()) }
+  | expression { make_stmt (ExprStmt $1) (make_pos ()) }
 
 variable_declaration:
-  | LET IDENTIFIER ASSIGN expression SEMICOLON
+  | LET IDENTIFIER ASSIGN expression
     { make_stmt (Declaration ($2, None, $4)) (make_pos ()) }
-  | LET IDENTIFIER COLON bpf_type ASSIGN expression SEMICOLON
+  | LET IDENTIFIER COLON bpf_type ASSIGN expression
     { make_stmt (Declaration ($2, Some $4, $6)) (make_pos ()) }
 
 assignment_statement:
-  | IDENTIFIER ASSIGN expression SEMICOLON
+  | IDENTIFIER ASSIGN expression
     { make_stmt (Assignment ($1, $3)) (make_pos ()) }
 
 field_assignment_statement:
-  | expression DOT IDENTIFIER ASSIGN expression SEMICOLON
+  | expression DOT IDENTIFIER ASSIGN expression
     { make_stmt (FieldAssignment ($1, $3, $5)) (make_pos ()) }
 
 index_assignment_statement:
-  | expression LBRACKET expression RBRACKET ASSIGN expression SEMICOLON
+  | expression LBRACKET expression RBRACKET ASSIGN expression
     { make_stmt (IndexAssignment ($1, $3, $6)) (make_pos ()) }
 
 return_statement:
-  | RETURN SEMICOLON { make_stmt (Return None) (make_pos ()) }
-  | RETURN expression SEMICOLON { make_stmt (Return (Some $2)) (make_pos ()) }
+  | RETURN { make_stmt (Return None) (make_pos ()) }
+  | RETURN expression { make_stmt (Return (Some $2)) (make_pos ()) }
 
 if_statement:
   | IF expression LBRACE statement_list RBRACE
@@ -278,14 +293,14 @@ for_statement:
       | method_name -> failwith ("Unknown iterator method: " ^ method_name) }
 
 delete_statement:
-  | DELETE expression LBRACKET expression RBRACKET SEMICOLON 
+  | DELETE expression LBRACKET expression RBRACKET
     { make_stmt (Delete ($2, $4)) (make_pos ()) }
 
 break_statement:
-  | BREAK SEMICOLON { make_stmt (Break) (make_pos ()) }
+  | BREAK { make_stmt (Break) (make_pos ()) }
 
 continue_statement:
-  | CONTINUE SEMICOLON { make_stmt (Continue) (make_pos ()) }
+  | CONTINUE { make_stmt (Continue) (make_pos ()) }
 
 try_statement:
   | TRY LBRACE statement_list RBRACE catch_clauses
@@ -306,11 +321,11 @@ catch_pattern:
     { if $1 = "_" then WildcardPattern else failwith ("Invalid catch pattern: " ^ $1) }
 
 throw_statement:
-  | THROW expression SEMICOLON
+  | THROW expression
     { make_stmt (Throw $2) (make_pos ()) }
 
 defer_statement:
-  | DEFER expression SEMICOLON
+  | DEFER expression
     { make_stmt (Defer $2) (make_pos ()) }
 
 /* Expressions */
@@ -378,19 +393,19 @@ array_access:
 
 /* Map Declarations */
 map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN SEMICOLON
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
     { let config = make_map_config $11 [] in
       make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE SEMICOLON
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
     { let config = make_map_config $11 $14 in
       make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
 
 /* Local Map Declarations (inside program blocks) */
 local_map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN SEMICOLON
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
     { let config = make_map_config $11 [] in
       make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE SEMICOLON
+  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
     { let config = make_map_config $11 $14 in
       make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
 

@@ -43,19 +43,19 @@ let test_basic_for_loop_constant_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for i in 0..10 {
-    let x = 42;
+    let x = 42
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -81,17 +81,17 @@ let test_for_loop_variable_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn main() -> i32 {
-  let start = 1;
-  let end_val = 5;
+  let start = 1
+  let end_val = 5
   for i in start..end_val {
-    let temp = i * 2;
+    let temp = i * 2
   }
-  return 0;
+  return 0
 }
 |} in
   
@@ -137,20 +137,20 @@ let test_for_loop_complex_expressions () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for i in 0..10 {
-    let doubled = i * 2;
-    let squared = i * i;
+    let doubled = i * 2
+    let squared = i * i
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -174,19 +174,19 @@ let test_for_loop_single_iteration () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for k in 5..5 {
-    let single = 99;
+    let single = 99
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -205,19 +205,19 @@ let test_for_loop_large_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for big in 0..1000000 {
-    let large = 1;
+    let large = 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -237,19 +237,19 @@ let test_for_loop_zero_iterations () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for empty in 10..5 {
-    let never = 0;
+    let never = 0
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   
@@ -269,20 +269,20 @@ let test_for_loop_in_helper_function () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn helper() -> u32 {
   for i in 1..3 {
-    let helper_var = i + 10;
+    let helper_var = i + 10
   }
-  return 42;
+  return 42
 }
 
 fn main() -> i32 {
-  let result = helper();
-  return 0;
+  let result = helper()
+  return 0
 }
 |} in
   
@@ -325,19 +325,19 @@ let test_global_functions_vs_ebpf_for_loop_differences () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 
 fn test_func() -> u32 {
   for i in 0..100 {
-    let test = 1;
+    let test = 1
   }
-  return 0;
+  return 0
 }
 
 fn main() -> i32 {
-  return 0;
+  return 0
 }
 |} in
   

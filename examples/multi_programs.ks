@@ -6,14 +6,14 @@ map<u32, u32> shared_counter : HashMap(1024) {
 program packet_counter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     shared_counter[1] = 100;
-    return 2;
+    return 2
   }
 }
 
 program packet_filter : tc {
   fn main(ctx: TcContext) -> TcAction {
     shared_counter[2] = 200;
-    return 0;
+    return 0
   }
 }
 
@@ -21,5 +21,5 @@ program packet_filter : tc {
 fn main() -> i32 {
   shared_counter[1] = 0;
   shared_counter[2] = 0;
-  return 0;
+  return 0
 } 

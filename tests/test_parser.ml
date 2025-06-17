@@ -67,7 +67,7 @@ let test_parse_statements input expected =
 program test : xdp {
   fn main() -> u32 {
     %s
-    return 0;
+    return 0
   }
 }
 |} input in
@@ -87,7 +87,7 @@ let test_simple_program () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 |} in
@@ -120,8 +120,8 @@ let test_expression_parsing () =
     let program_text = Printf.sprintf {|
 program test : xdp {
   fn main() -> u32 {
-    let result = %s;
-    return 0;
+    let result = %s
+    return 0
   }
 }
 |} expr_text in
@@ -135,13 +135,13 @@ program test : xdp {
 (** Test statement parsing *)
 let test_statement_parsing () =
   let statements = [
-    ("let x = 42;", true);
-    ("let y: u32 = 100;", true);
-    ("x = 50;", true);
-    ("return x;", true);
-    ("return;", true);
-    ("if condition { return 1; }", true);
-    ("if x > 0 { return 1; } else { return 0; }", true);
+    ("let x = 42", true);
+    ("let y: u32 = 100", true);
+    ("x = 50", true);
+    ("return x", true);
+    ("return", true);
+    ("if condition { return 1 }", true);
+    ("if x > 0 { return 1 } else { return 0 }", true);
   ] in
   
   List.iter (fun (stmt_text, should_succeed) ->
@@ -149,7 +149,7 @@ let test_statement_parsing () =
 program test : xdp {
   fn main() -> u32 {
     %s
-    return 0;
+    return 0
   }
 }
 |} stmt_text in
@@ -165,12 +165,12 @@ let test_function_declaration () =
   let program_text = {|
 program test : xdp {
   fn helper(x: u32, y: u32) -> u32 {
-    return x + y;
+    return x + y
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let result = helper(10, 20);
-    return 2;
+    let result = helper(10, 20)
+    return 2
   }
 }
 |} in
@@ -200,7 +200,7 @@ let test_program_types () =
     let program_text = Printf.sprintf {|
 program test : %s {
   fn main() -> u32 {
-    return 0;
+    return 0
   }
 }
 |} type_text in
@@ -228,8 +228,8 @@ let test_bpf_type_parsing () =
     let program_text = Printf.sprintf {|
 program test : xdp {
   fn main() -> u32 {
-    let x: %s = 0;
-    return 0;
+    let x: %s = 0
+    return 0
   }
 }
 |} type_text in
@@ -253,19 +253,19 @@ let test_control_flow_parsing () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
+    let x = 10
     
     if x > 5 {
-      x = x + 1;
+      x = x + 1
     } else {
-      x = x - 1;
+      x = x - 1
     }
     
     while x > 0 {
-      x = x - 1;
+      x = x - 1
     }
     
-    return 2;
+    return 2
   }
 }
 |} in
@@ -301,10 +301,10 @@ let test_operator_precedence () =
   let program_text = {|
 program test : xdp {
   fn main() -> u32 {
-    let result = 1 + 2 * 3;
-    let comparison = x < y && a > b;
-    let complex = (a + b) * c - d / e;
-    return 0;
+    let result = 1 + 2 * 3
+    let comparison = x < y && a > b
+    let complex = (a + b) * c - d / e
+    return 0
   }
 }
 |} in
@@ -317,24 +317,24 @@ program test : xdp {
 (** Test complete program parsing *)
 let test_complete_program_parsing () =
   let program_text = {|
-map<u32, u64> packet_count : HashMap(1024) { };
+map<u32, u64> packet_count : HashMap(1024) { }
 
 program packet_filter : xdp {
   fn process_packet(src_ip: u32) -> u64 {
-    let count = packet_count[src_ip];
-    packet_count[src_ip] = count + 1;
-    return count;
+    let count = packet_count[src_ip]
+    packet_count[src_ip] = count + 1
+    return count
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let src_ip = 0x12345678;
-    let count = process_packet(src_ip);
+    let src_ip = 0x12345678
+    let count = process_packet(src_ip)
     
     if count > 100 {
-      return 1;  // DROP
+      return 1  // DROP
     }
     
-    return 2;  // PASS
+    return 2  // PASS
   }
 }
 |} in
@@ -364,11 +364,11 @@ let test_simple_if () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
+    let x = 10
     if x > 5 {
-      return 1;
+      return 1
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -392,11 +392,11 @@ let test_if_else () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
+    let x = 10
     if x > 15 {
-      return 1;
+      return 1
     } else {
-      return 2;
+      return 2
     }
   }
 }
@@ -421,15 +421,15 @@ let test_if_else_if_else () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
+    let x = 10
     if x > 20 {
-      return 1;
+      return 1
     } else if x > 10 {
-      return 2;
+      return 2
     } else if x > 5 {
-      return 3; 
+      return 3 
     } else {
-      return 4;
+      return 4
     }
   }
 }
@@ -458,16 +458,16 @@ let test_nested_if () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
-    let y = 20;
+    let x = 10
+    let y = 20
     if x > 5 {
       if y > 15 {
-        return 1;
+        return 1
       } else {
-        return 2;
+        return 2
       }
     } else {
-      return 3;
+      return 3
     }
   }
 }
@@ -497,16 +497,16 @@ let test_multiple_statements_in_branches () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
+    let x = 10
     if x > 5 {
-      let y = x + 1;
-      let z = y * 2;
-      x = z - 1;
-      return 1;
+      let y = x + 1
+      let z = y * 2
+      x = z - 1
+      return 1
     } else {
-      x = x - 1;
-      let w = x / 2;  
-      return 2;
+      x = x - 1
+      let w = x / 2  
+      return 2
     }
   }
 }
@@ -531,25 +531,25 @@ let test_spec_compliant_syntax () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10;
-    let y = 20;
+    let x = 10
+    let y = 20
     
     // SPEC-compliant syntax without parentheses around condition
     if x > 5 {
-      return 1;
+      return 1
     }
     
     // Complex conditions should also work without parens
     if x > 5 && y < 25 {
-      return 2;
+      return 2
     }
     
     // Parentheses for grouping expressions should still work
     if (x + y) > 25 {
-      return 3;
+      return 3
     }
     
-    return 0;
+    return 0
   }
 }
 |} in
@@ -571,9 +571,9 @@ let test_if_error_cases () =
 program test : xdp {
   fn main() -> u32 {
     if {
-      return 1;
+      return 1
     }
-    return 0;
+    return 0
   }
 }
 |});
@@ -581,8 +581,8 @@ program test : xdp {
 program test : xdp {
   fn main() -> u32 {
     if x > 5
-      return 1;
-    return 0;
+      return 1
+    return 0
   }
 }
 |});
@@ -603,9 +603,9 @@ let test_simple_for_loop () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
-      return 1;
+      return 1
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -629,12 +629,12 @@ let test_for_loop_with_expressions () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let count = 5;
+    let count = 5
     for i in 0..count {
-      let x = i * 2;
-      x = x + 1;
+      let x = i * 2
+      x = x + 1
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -659,9 +659,9 @@ let test_for_iter_syntax () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for (i, v) in array.iter() {
-      return v;
+      return v
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -688,10 +688,10 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..3 {
       for j in 0..2 {
-        return 1;
+        return 1
       }
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -719,11 +719,11 @@ program test : xdp {
 let test_for_loop_edge_cases () =
   let test_cases = [
     (* Zero range - should work *)
-    ("for i in 5..5 { let x = i; }", 
+    ("for i in 5..5 { let x = i }", 
      [make_for_stmt "i" (make_int_lit 5) (make_int_lit 5) [make_decl "x" (make_id "i")]]);
     
     (* Variable bounds - should work but be unbounded *)
-    ("for j in start..(end + 1) { let y = j; }", 
+    ("for j in start..(end + 1) { let y = j }", 
      [make_for_stmt "j" (make_id "start") 
        (make_binop (make_id "end") Add (make_int_lit 1)) [make_decl "y" (make_id "j")]]);
   ] in
@@ -732,7 +732,7 @@ let test_for_loop_edge_cases () =
   ) test_cases
 
 let test_for_comprehensive () =
-  let input = "for i in 0..3 { let x = i; } for j in start..end { let y = j; } for (idx, val) in array.iter() { let z = val; }" in
+  let input = "for i in 0..3 { let x = i } for j in start..end { let y = j } for (idx, val) in array.iter() { let z = val }" in
   let expected = [
     make_for_stmt "i" (make_int_lit 0) (make_int_lit 3) [make_decl "x" (make_id "i")];
     make_for_stmt "j" (make_id "start") (make_id "end") [make_decl "y" (make_id "j")];
@@ -742,7 +742,7 @@ let test_for_comprehensive () =
 
 let test_loop_bounds_analysis () =
   (* Test that we can parse different kinds of loop bounds *)
-  let input = "for i in 0..5 { let x = i; } for j in variable..end { let y = j; }" in
+  let input = "for i in 0..5 { let x = i } for j in variable..end { let y = j }" in
   let expected = [
     make_for_stmt "i" (make_int_lit 0) (make_int_lit 5) [make_decl "x" (make_id "i")];
     make_for_stmt "j" (make_id "variable") (make_id "end") [make_decl "y" (make_id "j")];

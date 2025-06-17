@@ -10,9 +10,9 @@ let test_for_constant_bounds () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..5 {
-      let x = i * 2;
+      let x = i * 2
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -28,12 +28,12 @@ let test_for_variable_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    let start = 1;
-    let endval = 10;
+    let start = 1
+    let endval = 10
     for i in start..endval {
-      let x = i;
+      let x = i
     }
-    return 2;
+    return 2
   }
 }
 |} in
@@ -51,7 +51,7 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 1..10 {
     }
-    return 0;
+    return 0
   }
 }
 |} in
@@ -68,9 +68,9 @@ let test_for_single_iteration () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 5..5 {
-      let y = 42;
+      let y = 42
     }
-    return 0;
+    return 0
   }
 }
 |} in
@@ -87,9 +87,9 @@ let test_for_simple_arithmetic () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 1..3 {
-      let temp = i * 2;
+      let temp = i * 2
     }
-    return 1;
+    return 1
   }
 }
 |} in
@@ -115,7 +115,7 @@ let test_for_error_cases () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     %s
-    return 0;
+    return 0
   }
 }
 |} code in

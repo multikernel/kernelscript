@@ -23,10 +23,10 @@ let test_basic_type_inference () =
   let program_text = {|
 program test : xdp {
   fn main() -> u32 {
-    let x = 42;
-    let y = true;
-    let z = "hello";
-    return 0;
+    let x = 42
+    let y = true
+    let z = "hello"
+    return 0
   }
 }
 |} in
@@ -48,10 +48,10 @@ let test_variable_type_checking () =
   let program_text = {|
 program test : xdp {
   fn main() -> u32 {
-    let x: u32 = 42;
-    let y: bool = true;
-    let z = x + 10;
-    return z;
+    let x: u32 = 42
+    let y: bool = true
+    let z = x + 10
+    return z
   }
 }
 |} in
@@ -65,15 +65,15 @@ program test : xdp {
 (** Test binary operations *)
 let test_binary_operations () =
   let valid_operations = [
-    ("let x = 1 + 2;", true);
-    ("let x = 1 - 2;", true); 
-    ("let x = 1 * 2;", true);
-    ("let x = 1 / 2;", true);
-    ("let x = 1 == 2;", true);
-    ("let x = 1 != 2;", true);
-    ("let x = 1 < 2;", true);
-    ("let x = true && false;", true);
-    ("let x = true || false;", true);
+    ("let x = 1 + 2", true);
+    ("let x = 1 - 2", true); 
+    ("let x = 1 * 2", true);
+    ("let x = 1 / 2", true);
+    ("let x = 1 == 2", true);
+    ("let x = 1 != 2", true);
+    ("let x = 1 < 2", true);
+    ("let x = true && false", true);
+    ("let x = true || false", true);
   ] in
   
   List.iter (fun (stmt, should_succeed) ->
@@ -81,7 +81,7 @@ let test_binary_operations () =
 program test : xdp {
   fn main() -> u32 {
     %s
-    return 0;
+    return 0
   }
 }
 |} stmt in
@@ -98,12 +98,12 @@ let test_function_calls () =
   let program_text = {|
 program test : xdp {
   fn helper(x: u32, y: u32) -> u32 {
-    return x + y;
+    return x + y
   }
   
   fn main() -> u32 {
-    let result = helper(10, 20);
-    return result;
+    let result = helper(10, 20)
+    return result
   }
 }
 |} in
@@ -119,7 +119,7 @@ let test_context_types () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return 2;
+    return 2
   }
 }
 |} in
@@ -135,8 +135,8 @@ let test_struct_field_access () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> u32 {
-    let packet = ctx.data;
-    return 0;
+    let packet = ctx.data
+    return 0
   }
 }
 |} in
@@ -152,12 +152,12 @@ let test_statement_type_checking () =
   let program_text = {|
 program test : xdp {
   fn main() -> u32 {
-    let x: u32 = 42;
-    x = 50;
+    let x: u32 = 42
+    x = 50
     if (x > 0) {
-      return 1;
+      return 1
     }
-    return 0;
+    return 0
   }
 }
 |} in
@@ -173,13 +173,13 @@ let test_function_type_checking () =
   let program_text = {|
 program test : xdp {
   fn calculate(a: u32, b: u32) -> u32 {
-    let result = a + b;
-    return result;
+    let result = a + b
+    return result
   }
   
   fn main() -> u32 {
-    let value = calculate(10, 20);
-    return value;
+    let value = calculate(10, 20)
+    return value
   }
 }
 |} in
@@ -195,10 +195,10 @@ let test_builtin_function_type_checking () =
   let program_text = {|
 program test : xdp {
   fn main() -> u32 {
-    print("Hello from eBPF");
-    print("Message with value: ", 42);
-    print();
-    return 0;
+    print("Hello from eBPF")
+    print("Message with value: ", 42)
+    print()
+    return 0
   }
 }
 |} in
@@ -212,11 +212,11 @@ program test : xdp {
 (** Test variadic function argument handling *)
 let test_variadic_function_arguments () =
   let test_cases = [
-    ("print();", true, "no arguments");
-    ("print(\"hello\");", true, "single string argument");
-    ("print(\"value: \", 42);", true, "string and number");
-    ("print(\"a\", \"b\", \"c\");", true, "multiple arguments");
-    ("print(1, 2, 3, 4, 5);", true, "many arguments");
+    ("print()", true, "no arguments");
+    ("print(\"hello\")", true, "single string argument");
+    ("print(\"value: \", 42)", true, "string and number");
+    ("print(\"a\", \"b\", \"c\")", true, "multiple arguments");
+    ("print(1, 2, 3, 4, 5)", true, "many arguments");
   ] in
   
   List.iter (fun (call, should_succeed, desc) ->
@@ -224,7 +224,7 @@ let test_variadic_function_arguments () =
 program test : xdp {
   fn main() -> u32 {
     %s
-    return 0;
+    return 0
   }
 }
 |} call in
@@ -241,8 +241,8 @@ let test_builtin_function_return_types () =
   let program_text = {|
 program test : xdp {
   fn main() -> u32 {
-    let result: u32 = print("test message");
-    return result;
+    let result: u32 = print("test message")
+    return result
   }
 }
 |} in
@@ -258,13 +258,13 @@ let test_builtin_vs_user_function_precedence () =
   let program_text = {|
 program test : xdp {
   fn my_function(x: u32) -> u32 {
-    return x + 1;
+    return x + 1
   }
   
   fn main() -> u32 {
-    let user_result = my_function(10);
-    print("User function result: ", user_result);
-    return user_result;
+    let user_result = my_function(10)
+    print("User function result: ", user_result)
+    return user_result
   }
 }
 |} in
@@ -311,7 +311,7 @@ let test_error_handling () =
 program test : xdp {
   fn main() -> u32 {
     %s
-    return 0;
+    return 0
   }
 }
 |} stmt in
@@ -328,15 +328,15 @@ let test_program_type_checking () =
   let program_text = {|
 program packet_filter : xdp {
   fn is_tcp(protocol: u8) -> bool {
-    return protocol == 6;
+    return protocol == 6
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let protocol: u8 = 6;
+    let protocol: u8 = 6
     if (is_tcp(protocol)) {
-      return 2;
+      return 2
     }
-    return 1;
+    return 1
   }
 }
 |} in
@@ -354,24 +354,24 @@ program packet_filter : xdp {
 (** Test integer type promotion *)
 let test_integer_type_promotion () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024) { };
+map<u32, u64> counter : HashMap(1024) { }
 
 program test_promotion : xdp {
   fn main() -> u32 {
     // Test U32 literal assignment to U64 map value
-    counter[1] = 100;     // U32 literal should promote to U64
-    counter[2] = 200;     // U32 literal should promote to U64
+    counter[1] = 100     // U32 literal should promote to U64
+    counter[2] = 200     // U32 literal should promote to U64
     
     // Test arithmetic with different sizes
-    let small: u32 = 50;
-    let large: u64 = 1000;
-    let result = small + large;  // U32 should promote to U64
+    let small: u32 = 50
+    let large: u64 = 1000
+    let result = small + large  // U32 should promote to U64
     
     // Test map access with promoted values
-    let val1 = counter[1] + 50;  // U64 + U32 -> U64
-    counter[3] = val1;
+    let val1 = counter[1] + 50  // U64 + U32 -> U64
+    counter[3] = val1
     
-    return 0;
+    return 0
   }
 }
 |} in
@@ -404,29 +404,29 @@ let test_type_unification_enhanced () =
 (** Test comprehensive type checking *)
 let test_comprehensive_type_checking () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024) { };
+map<u32, u64> counter : HashMap(1024) { }
 
 program comprehensive_test : xdp {
   fn increment_counter(key: u32) -> u64 {
-    let current = counter[key];
-    let new_value = current + 1;
-    counter[key] = new_value;
-    return new_value;
+    let current = counter[key]
+    let new_value = current + 1
+    counter[key] = new_value
+    return new_value
   }
   
   fn process_packet(size: u32) -> bool {
-    return size > 1500;
+    return size > 1500
   }
   
   fn main(ctx: XdpContext) -> XdpAction {
-    let packet_size: u32 = 1000;
-    let counter_val = increment_counter(packet_size);
-    let is_large = process_packet(packet_size);
+    let packet_size: u32 = 1000
+    let counter_val = increment_counter(packet_size)
+    let is_large = process_packet(packet_size)
     
     if (is_large && counter_val > 100) {
-      return 1;
+      return 1
     } else {
-      return 2;
+      return 2
     }
   }
 }

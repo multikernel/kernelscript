@@ -15,18 +15,18 @@ Instead of complex templates, KernelScript uses **simple type aliases** and **fi
 
 ```kernelscript
 // Simple type aliases for common patterns
-type IpAddress = u32;
-type Port = u16;
-type PacketBuffer = [u8; 1500];
-type SmallBuffer = [u8; 256];
+type IpAddress = u32
+type Port = u16
+type PacketBuffer = [u8 1500]
+type SmallBuffer = [u8 256]
 
 // Fixed-size arrays (no complex bounds)
-[u8; 64]               // 64-byte buffer
-[u32; 16]              // 16 u32 values
+u8[64]                 // 64-byte buffer
+u32[16]                // 16 u32 values
 
 // Simple map declarations
-map<u32, u64> counters : array(256);
-map<IpAddress, PacketStats> flows : hash_map(1024);
+map<u32, u64> counters : array(256)
+map<IpAddress, PacketStats> flows : hash_map(1024)
 
 // No complex template metaprogramming - just practical, concrete types
 ```
@@ -42,22 +42,22 @@ KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 ```kernelscript
 // Shared resources (accessible by both kernel and userspace)
 config system { debug: bool = false }
-map<u32, u64> counters : array(256);
+map<u32, u64> counters : array(256)
 
 // Kernel space (inside program block)
 program monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        counters[0] += 1;  // Access shared map
-        return XDP_PASS;
+        counters[0] += 1  // Access shared map
+        return XDP_PASS
     }
 }
 
 // User space (outside program blocks)
 struct Args { interface: string }
 fn main(args: Args) -> i32 {
-    load_program(monitor);
-    attach_program(monitor, args.interface, 0);
-    return 0;
+    load_program(monitor)
+    attach_program(monitor, args.interface, 0)
+    return 0
 }
 ```
 
@@ -76,36 +76,36 @@ delete
 
 ### 2.2 Identifiers
 ```ebnf
-identifier = letter { letter | digit | "_" } ;
-letter = "a"..."z" | "A"..."Z" ;
-digit = "0"..."9" ;
+identifier = letter { letter | digit | "_" } 
+letter = "a"..."z" | "A"..."Z" 
+digit = "0"..."9" 
 ```
 
 ### 2.3 Literals
 ```ebnf
-integer_literal = decimal_literal | hex_literal | octal_literal | binary_literal ;
-decimal_literal = digit { digit } ;
-hex_literal = "0x" hex_digit { hex_digit } ;
-octal_literal = "0o" octal_digit { octal_digit } ;
-binary_literal = "0b" binary_digit { binary_digit } ;
+integer_literal = decimal_literal | hex_literal | octal_literal | binary_literal 
+decimal_literal = digit { digit } 
+hex_literal = "0x" hex_digit { hex_digit } 
+octal_literal = "0o" octal_digit { octal_digit } 
+binary_literal = "0b" binary_digit { binary_digit } 
 
-string_literal = '"' { string_char } '"' ;
-char_literal = "'" char "'" ;
+string_literal = '"' { string_char } '"' 
+char_literal = "'" char "'" 
 
-boolean_literal = "true" | "false" ;
+boolean_literal = "true" | "false" 
 ```
 
 ## 3. Program Structure
 
 ### 3.1 Basic Program Declaration
 ```ebnf
-program = "program" identifier ":" program_type "{" program_body "}" ;
+program = "program" identifier ":" program_type "{" program_body "}" 
 
 program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-               "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" ;
+               "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" 
 
 program_body = { local_map_declaration | 
-                 type_declaration | function_declaration | import_declaration } ;
+                 type_declaration | function_declaration | import_declaration } 
 ```
 
 **Note:** Programs no longer have local `config` sections. All configuration is done through global named config blocks.
@@ -116,7 +116,7 @@ program_body = { local_map_declaration |
 config network {
     enable_logging: bool = true,
     max_packet_size: u32 = 1500,
-    blocked_ports: [u16; 5] = [22, 23, 135, 445, 3389],
+    blocked_ports: u16[5] = [22, 23, 135, 445, 3389],
     rate_limit: u64 = 1000000,
 }
 
@@ -128,32 +128,32 @@ config security {
 
 program network_monitor : xdp {    
     fn main(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet();
+        let packet = ctx.packet()
         
         // Use named configuration values
         if packet.size > network.max_packet_size {
             if network.enable_logging {
-                bpf_printk("Packet too large: %d", packet.size);
+                bpf_printk("Packet too large: %d", packet.size)
             }
-            return XDP_DROP;
+            return XDP_DROP
         }
         
         // Check blocked ports from network config
         if packet.is_tcp() {
-            let tcp = packet.tcp_header();
+            let tcp = packet.tcp_header()
             for i in 0..5 {
                 if tcp.dst_port == network.blocked_ports[i] {
-                    return XDP_DROP;
+                    return XDP_DROP
                 }
             }
         }
         
         // Use security config for additional checks
         if security.enable_strict_mode && security.current_threat_level > security.threat_threshold {
-            return XDP_DROP;
+            return XDP_DROP
         }
         
-        return XDP_PASS;
+        return XDP_PASS
     }
 }
 ```
@@ -173,7 +173,7 @@ config monitoring {
     mut packets_processed: u64 = 0,
 }
 
-map<u32, PacketStats> global_stats : hash_map(1024);
+map<u32, PacketStats> global_stats : hash_map(1024)
 
 // Userspace types
 struct PacketStats {
@@ -192,16 +192,16 @@ program packet_analyzer : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if monitoring.enable_stats {
             // Process packet and update statistics
-            monitoring.packets_processed += 1;
-            update_stats(ctx);
+            monitoring.packets_processed += 1
+            update_stats(ctx)
         }
-        return XDP_PASS;
+        return XDP_PASS
     }
     
     fn update_stats(ctx: XdpContext) {
         // Kernel helper function
-        let key = ctx.hash() % 1024;
-        global_stats[key].packets += 1;
+        let key = ctx.hash() % 1024
+        global_stats[key].packets += 1
     }
 }
 
@@ -210,10 +210,10 @@ program flow_tracker : tc {
         // Track flow information using shared config
         if monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0) {
             // Sample this flow
-            let key = ctx.hash() % 1024;
-            global_stats[key].bytes += ctx.packet_size();
+            let key = ctx.hash() % 1024
+            global_stats[key].bytes += ctx.packet_size()
         }
-        return TC_ACT_OK;
+        return TC_ACT_OK
     }
 }
     }
@@ -224,38 +224,38 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=1 --enable-verbose=1
     
-    let interface_index = args.interface_id;
+    let interface_index = args.interface_id
     
     // Load and coordinate multiple programs
-    let analyzer_handle = load_program(packet_analyzer);
-    let tracker_handle = load_program(flow_tracker);
+    let analyzer_handle = load_program(packet_analyzer)
+    let tracker_handle = load_program(flow_tracker)
     
-    attach_program(analyzer_handle, interface_index, 0);
-    attach_program(tracker_handle, interface_index, 1);
+    attach_program(analyzer_handle, interface_index, 0)
+    attach_program(tracker_handle, interface_index, 1)
     
     if args.enable_verbose == 1 {
-        print("Multi-program system started on interface: ", interface_index);
+        print("Multi-program system started on interface: ", interface_index)
     }
     
     while true {
-        let stats = get_combined_stats();
-        print("Total packets: ", stats.packets);
-        print("Total bytes: ", stats.bytes);
-        sleep(1000);
+        let stats = get_combined_stats()
+        print("Total packets: ", stats.packets)
+        print("Total bytes: ", stats.bytes)
+        sleep(1000)
     }
     
-    return 0;
+    return 0
 }
 
 // Userspace helper functions
 fn get_combined_stats() -> PacketStats {
-    let mut total = PacketStats { packets: 0, bytes: 0, drops: 0 };
+    let mut total = PacketStats { packets: 0, bytes: 0, drops: 0 }
     for i in 0..1024 {
-        total.packets += global_stats[i].packets;
-        total.bytes += global_stats[i].bytes;
-        total.drops += global_stats[i].drops;
+        total.packets += global_stats[i].packets
+        total.bytes += global_stats[i].bytes
+        total.drops += global_stats[i].drops
     }
-    return total;
+    return total
 }
 
 fn on_packet_event(event: PacketEvent) {
@@ -274,27 +274,27 @@ Programs are first-class values that can be referenced by name and passed to lif
 ```kernelscript
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 
 program flow_monitor : tc {
     fn main(ctx: TcContext) -> TcAction {
-        return TcAction::Pass;
+        return TcAction::Pass
     }
 }
 
 // Userspace program coordination (outside program blocks)
 fn main() -> i32 {
     // Programs can be referenced by name
-    let xdp_prog = packet_filter;  // Type: ProgramRef
-    let tc_prog = flow_monitor;    // Type: ProgramRef
+    let xdp_prog = packet_filter  // Type: ProgramRef
+    let tc_prog = flow_monitor    // Type: ProgramRef
     
     // Explicit loading and attachment
-    let prog_handle = load_program(xdp_prog);
-    let result = attach_program(prog_handle, "eth0", 0);
+    let prog_handle = load_program(xdp_prog)
+    let result = attach_program(prog_handle, "eth0", 0)
     
-    return 0;
+    return 0
 }
 ```
 
@@ -333,9 +333,9 @@ config network {
 program adaptive_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if network.enable_filtering && ctx.packet_size() > network.max_packet_size {
-            return XdpAction::Drop;
+            return XdpAction::Drop
         }
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 
@@ -347,63 +347,63 @@ struct Args {
 
 fn main(args: Args) -> i32 {
     // Load program first
-    let prog_handle = load_program(adaptive_filter);
+    let prog_handle = load_program(adaptive_filter)
     
     // Configure parameters based on command line
-    network.enable_filtering = args.strict_mode;
+    network.enable_filtering = args.strict_mode
     if args.strict_mode {
-        network.max_packet_size = 1000;  // Stricter limit
+        network.max_packet_size = 1000  // Stricter limit
     }
     
     // Now attach with configured parameters
-    let result = attach_program(prog_handle, args.interface, 0);
+    let result = attach_program(prog_handle, args.interface, 0)
     
     if result == 0 {
-        print("Filter attached successfully");
+        print("Filter attached successfully")
     } else {
-        print("Failed to attach filter");
-        return 1;
+        print("Failed to attach filter")
+        return 1
     }
     
-    return 0;
+    return 0
 }
 ```
 
 **Multi-Program Coordination:**
 ```kernelscript
 program ingress_monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction { return XdpAction::Pass; }
+    fn main(ctx: XdpContext) -> XdpAction { return XdpAction::Pass }
 }
 
 program egress_monitor : tc {
-    fn main(ctx: TcContext) -> TcAction { return TcAction::Pass; }
+    fn main(ctx: TcContext) -> TcAction { return TcAction::Pass }
 }
 
 program security_check : lsm {
-    fn main(ctx: LsmContext) -> i32 { return 0; }
+    fn main(ctx: LsmContext) -> i32 { return 0 }
 }
 
 // Multi-program userspace coordination
 fn main() -> i32 {
     // Load all programs
-    let ingress_handle = load_program(ingress_monitor);
-    let egress_handle = load_program(egress_monitor);
-    let security_handle = load_program(security_check);
+    let ingress_handle = load_program(ingress_monitor)
+    let egress_handle = load_program(egress_monitor)
+    let security_handle = load_program(security_check)
     
     // Attach in specific order for coordinated monitoring
-    attach_program(security_handle, "socket_connect", 0);
-    attach_program(ingress_handle, "eth0", 0);
-    attach_program(egress_handle, "eth0", 1);  // Egress direction
+    attach_program(security_handle, "socket_connect", 0)
+    attach_program(ingress_handle, "eth0", 0)
+    attach_program(egress_handle, "eth0", 1)  // Egress direction
     
-    print("Multi-program monitoring system active");
+    print("Multi-program monitoring system active")
     
     // Event processing loop
     while true {
-        process_events();
-        sleep(1000);
+        process_events()
+        sleep(1000)
     }
     
-    return 0;
+    return 0
 }
 ```
 
@@ -431,8 +431,8 @@ ProgramHandle          // Handle returned by load_program() for safe attachment
 ### 4.2 Compound Types
 ```kernelscript
 // Fixed-size arrays
-[u8; 64]               // Array of 64 bytes
-[u32; 16]              // Array of 16 u32 values
+u8[64]                 // Array of 64 bytes
+u32[16]                // Array of 16 u32 values
 
 // Structures
 struct PacketHeader {
@@ -474,24 +474,24 @@ Result_void_Error      // Ok(()) or Err(Error)
 ### 4.3 Type Aliases for Common Patterns
 ```kernelscript
 // Simple type aliases without complex constraints
-type IpAddress = u32;
-type Port = u16;
-type PacketSize = u16;
-type Timestamp = u64;
+type IpAddress = u32
+type Port = u16
+type PacketSize = u16
+type Timestamp = u64
 
 // Buffer types with fixed sizes (no templates needed)
-type EthBuffer = [u8; 14];      // Ethernet header buffer
-type IpBuffer = [u8; 20];       // IP header buffer
-type SmallBuffer = [u8; 256];   // Small general buffer
-type PacketBuffer = [u8; 1500]; // Maximum packet buffer
+type EthBuffer = [u8 14];      // Ethernet header buffer
+type IpBuffer = [u8 20];       // IP header buffer
+type SmallBuffer = [u8 256];   // Small general buffer
+type PacketBuffer = [u8 1500]; // Maximum packet buffer
 
 // String type aliases for common patterns
-type ProcessName = str<16>;     // Process name string
-type IpAddressStr = str<16>;    // IP address string ("255.255.255.255")
-type FilePath = str<256>;       // File path string
-type LogMessage = str<128>;     // Log message string
-type ShortString = str<32>;     // Short general-purpose string
-type MediumString = str<128>;   // Medium general-purpose string
+type ProcessName = str<16>     // Process name string
+type IpAddressStr = str<16>    // IP address string ("255.255.255.255")
+type FilePath = str<256>       // File path string
+type LogMessage = str<128>     // Log message string
+type ShortString = str<32>     // Short general-purpose string
+type MediumString = str<128>   // Medium general-purpose string
 ```
 
 ### 4.4 String Operations
@@ -499,32 +499,32 @@ KernelScript supports fixed-size strings with `str<N>` syntax, where N can be an
 
 ```kernelscript
 // String declaration and assignment (N can be any positive integer)
-let name: str<16> = "John";
-let surname: str<16> = "Doe";
-let mut buffer: str<32> = "Hello";
-let small_buffer: str<8> = "tiny";
-let custom_size: str<42> = "custom";
-let large_buffer: str<512> = "large text content";
+let name: str<16> = "John"
+let surname: str<16> = "Doe"
+let mut buffer: str<32> = "Hello"
+let small_buffer: str<8> = "tiny"
+let custom_size: str<42> = "custom"
+let large_buffer: str<512> = "large text content"
 
 // Assignment
-buffer = name;                  // Assignment (size must be compatible)
+buffer = name                  // Assignment (size must be compatible)
 
 // Indexing (read-only character access)
-let first_char: char = name[0]; // Returns 'J'
-let last_char: char = name[3];  // Returns 'n'
+let first_char: char = name[0] // Returns 'J'
+let last_char: char = name[3]  // Returns 'n'
 
 // String concatenation (explicit result size required)
-let full_name: str<32> = name + surname;  // "JohnDoe"
-let greeting: str<20> = "Hello " + name;  // "Hello John"
-let custom_msg: str<100> = small_buffer + " and " + custom_size;  // Arbitrary sizes work
+let full_name: str<32> = name + surname  // "JohnDoe"
+let greeting: str<20> = "Hello " + name  // "Hello John"
+let custom_msg: str<100> = small_buffer + " and " + custom_size  // Arbitrary sizes work
 
 // String comparison
 if name == "John" {             // Equality comparison
-    print("Name matches");
+    print("Name matches")
 }
 
 if surname != "Smith" {         // Inequality comparison
-    print("Surname is not Smith");
+    print("Surname is not Smith")
 }
 
 // Examples with different contexts
@@ -537,17 +537,17 @@ struct PersonInfo {
 // Kernel space usage
 program user_monitor : kprobe("sys_open") {
     fn main(ctx: KprobeContext) -> i32 {
-        let process_name: ProcessName = get_current_process_name();
-        let file_path: FilePath = get_file_path(ctx);
+        let process_name: ProcessName = get_current_process_name()
+        let file_path: FilePath = get_file_path(ctx)
         
         // String operations work the same in kernel space
         if process_name == "malware" {
-            let log_msg: LogMessage = "Blocked process: " + process_name;
-            bpf_printk(log_msg);
-            return -1;
+            let log_msg: LogMessage = "Blocked process: " + process_name
+            bpf_printk(log_msg)
+            return -1
         }
         
-        return 0;
+        return 0
     }
 }
 
@@ -560,11 +560,11 @@ struct Args {
 fn main(args: Args) -> i32 {
     // Same string operations in userspace
     if args.interface == "eth0" {
-        let status_msg: str<64> = "Using interface: " + args.interface;
-        print(status_msg);
+        let status_msg: str<64> = "Using interface: " + args.interface
+        print(status_msg)
     }
     
-    return 0;
+    return 0
 }
 ```
 
@@ -573,15 +573,15 @@ fn main(args: Args) -> i32 {
 ### 5.1 Map Declaration Syntax
 ```ebnf
 map_declaration = "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")" 
-                  [ map_attributes ] ";" ;
+                  [ map_attributes ] ";" 
 
 map_type = "hash_map" | "array" | "prog_array" | "percpu_hash" | "percpu_array" |
-           "lru_hash" | "ring_buffer" | "perf_event" | "stack_trace" ;
+           "lru_hash" | "ring_buffer" | "perf_event" | "stack_trace" 
 
-map_config = max_entries [ "," additional_config ] ;
-map_attributes = "{" { map_attribute "," } "}" ;
+map_config = max_entries [ "," additional_config ] 
+map_attributes = "{" { map_attribute "," } "}" 
 map_attribute = "pinned" | "read_only" | "write_only" | "userspace_writable" |
-                "pin_path" "=" string_literal | "permissions" "=" string_literal ;
+                "pin_path" "=" string_literal | "permissions" "=" string_literal 
 ```
 
 ### 5.2 Global Maps (Shared Across Programs)
@@ -592,54 +592,54 @@ Global maps are declared outside any program block and are automatically shared:
 // Global maps - automatically shared between all programs
 map<FlowKey, FlowStats> global_flows : hash_map(10000) {
     pinned: "/sys/fs/bpf/global_flows",
-};
+}
 
 map<u32, InterfaceStats> interface_stats : array(256) {
     pinned: "/sys/fs/bpf/interface_stats",
-};
+}
 
 map<SecurityEvent> security_events : ring_buffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/security_events",
-};
+}
 
 map<ConfigKey, ConfigValue> global_config : array(64) {
     pinned: "/sys/fs/bpf/global_config",
-};
+}
 
 // Program 1: Can access all global maps
 program ingress_monitor : xdp {
     // Local maps (only accessible within this program)
-    map<u32, LocalStats> local_cache : hash_map(512);
+    map<u32, LocalStats> local_cache : hash_map(512)
     
     fn main(ctx: XdpContext) -> XdpAction {
-        let flow_key = extract_flow_key(ctx)?;
+        let flow_key = extract_flow_key(ctx)?
         
         // Access global map directly
         if global_flows[flow_key] == null {
-            global_flows[flow_key] = FlowStats::new();
+            global_flows[flow_key] = FlowStats::new()
         }
-        global_flows[flow_key].ingress_packets += 1;
-        global_flows[flow_key].ingress_bytes += ctx.packet_size();
+        global_flows[flow_key].ingress_packets += 1
+        global_flows[flow_key].ingress_bytes += ctx.packet_size()
         
         // Update interface stats
-        interface_stats[ctx.ingress_ifindex()].packets += 1;
+        interface_stats[ctx.ingress_ifindex()].packets += 1
         
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 
 // Program 2: Automatically has access to the same global maps
 program egress_monitor : tc {
     // Local maps
-    map<FlowKey, EgressInfo> egress_cache : lru_hash(1000);
+    map<FlowKey, EgressInfo> egress_cache : lru_hash(1000)
     
     fn main(ctx: TcContext) -> TcAction {
-        let flow_key = extract_flow_key(ctx)?;
+        let flow_key = extract_flow_key(ctx)?
         
         // Same global map, no import needed
         if let Some(stats) = global_flows.get_mut(flow_key) {
-            stats.egress_packets += 1;
-            stats.egress_bytes += ctx.packet_size();
+            stats.egress_packets += 1
+            stats.egress_bytes += ctx.packet_size()
         }
         
         // Check global configuration
@@ -647,7 +647,7 @@ program egress_monitor : tc {
             global_config[ConfigKey::EnableFiltering]
         } else {
             ConfigValue::Bool(false)
-        };
+        }
         
         if enable_filtering.as_bool() && should_drop(flow_key) {
             // Log to global security events
@@ -655,33 +655,33 @@ program egress_monitor : tc {
                 event_type: EventType::PacketDropped,
                 flow_key: flow_key,
                 timestamp: bpf_ktime_get_ns(),
-            });
-            return TcAction::Shot;
+            })
+            return TcAction::Shot
         }
         
-        return TcAction::Pass;
+        return TcAction::Pass
     }
 }
 
 // Program 3: Security analyzer using the same global maps
 program security_analyzer : lsm("socket_connect") {
     fn main(ctx: LsmContext) -> i32 {
-        let flow_key = extract_flow_key_from_socket(ctx)?;
+        let flow_key = extract_flow_key_from_socket(ctx)?
         
         // Check global flow statistics
         if global_flows[flow_key] != null {
-            let flow_stats = global_flows[flow_key];
+            let flow_stats = global_flows[flow_key]
             if flow_stats.is_suspicious() {
                 security_events.submit(SecurityEvent {
                     event_type: EventType::SuspiciousConnection,
                     flow_key: flow_key,
                     timestamp: bpf_ktime_get_ns(),
-                });
-                return -EPERM;  // Block connection
+                })
+                return -EPERM  // Block connection
             }
         }
         
-        return 0;  // Allow connection
+        return 0  // Allow connection
     }
 }
 ```
@@ -690,31 +690,31 @@ program security_analyzer : lsm("socket_connect") {
 
 ```kernelscript
 // Global maps (outside any program)
-map<u32, GlobalCounter> global_counters : array(256);
-map<Event> event_stream : ring_buffer(1024 * 1024);
+map<u32, GlobalCounter> global_counters : array(256)
+map<Event> event_stream : ring_buffer(1024 * 1024)
 
 program producer : kprobe("sys_read") {
     // Local maps (only accessible within this program)
-    map<u32, LocalState> producer_state : hash_map(1024);
+    map<u32, LocalState> producer_state : hash_map(1024)
     
     fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32;
+        let pid = bpf_get_current_pid_tgid() as u32
         
         // Update local state
-        producer_state[pid] += 1;
+        producer_state[pid] += 1
         
         // Update global counter (accessible by other programs)
-        global_counters[pid % 256] += 1;
+        global_counters[pid % 256] += 1
         
         // Send event to global stream
         let event = Event {
             pid: pid,
             syscall: "read",
             timestamp: bpf_ktime_get_ns(),
-        };
-        event_stream.submit(event);
+        }
+        event_stream.submit(event)
         
-        return 0;
+        return 0
     }
     
 }
@@ -722,22 +722,22 @@ program producer : kprobe("sys_read") {
 
 program consumer : kprobe("sys_write") {
     // Local maps
-    map<u32, LocalState> consumer_state : hash_map(1024);
+    map<u32, LocalState> consumer_state : hash_map(1024)
     
     fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32;
+        let pid = bpf_get_current_pid_tgid() as u32
         
         // Access global counter (same map as producer program)
-        let read_count = global_counters[pid % 256];
+        let read_count = global_counters[pid % 256]
         
         // Update local state
         let local_state = LocalState {
             write_count: 1,
             corresponding_reads: read_count,
-        };
-        consumer_state[pid] = local_state;
+        }
+        consumer_state[pid] = local_state
         
-        return 0;
+        return 0
     }
     
 }
@@ -749,37 +749,37 @@ program consumer : kprobe("sys_write") {
 // Global maps accessible by all programs
 map<u32, PacketStats> packet_stats : hash_map(1024) {
     pinned: "/sys/fs/bpf/packet_stats",
-};
+}
 
 map<u32, u64> counters : percpu_array(256) {
     pinned: "/sys/fs/bpf/counters",
-};
+}
 
 map<FlowKey, FlowInfo> active_flows : lru_hash(10000) {
     pinned: "/sys/fs/bpf/active_flows",
-};
+}
 
 map<PacketEvent> events : ring_buffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/events",
-};
+}
 
 map<ConfigKey, ConfigValue> config_map : array(16) {
     pinned: "/sys/fs/bpf/config",
-};
+}
 
 program simple_monitor : xdp {
     // Local map - only accessible within this program
-    map<u32, LocalCache> cache : hash_map(256);
+    map<u32, LocalCache> cache : hash_map(256)
     
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
-        packet_stats[ctx.packet_type()] += 1;
-        counters[0] += 1;
+        packet_stats[ctx.packet_type()] += 1
+        counters[0] += 1
         
         // Access local map
-        cache[ctx.hash()] = LocalCache::new();
+        cache[ctx.hash()] = LocalCache::new()
         
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 ```
@@ -788,12 +788,12 @@ program simple_monitor : xdp {
 
 ### 6.1 Function Declaration
 ```ebnf
-function_declaration = [ visibility ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" ;
+function_declaration = [ visibility ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
 
-visibility = "pub" | "priv" ;
-parameter_list = [ parameter { "," parameter } ] ;
-parameter = identifier ":" type_annotation ;
-return_type = type_annotation ;
+visibility = "pub" | "priv" 
+parameter_list = [ parameter { "," parameter } ] 
+parameter = identifier ":" type_annotation 
+return_type = type_annotation 
 ```
 
 ### 6.2 Main Program Function
@@ -801,13 +801,13 @@ return_type = type_annotation ;
 program simple_xdp : xdp {
     // Required main function - entry point
     fn main(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet()?;
+        let packet = ctx.packet()?
         
         if packet.is_tcp() {
-            return XdpAction::Pass;
+            return XdpAction::Pass
         }
         
-        return XdpAction::Drop;
+        return XdpAction::Drop
     }
 }
 ```
@@ -821,14 +821,14 @@ priv fn validate_packet(packet: *PacketHeader) -> bool {
 
 // Public function (can be called from other programs)
 pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
-    let mut sum: u32 = 0;
+    let mut sum: u32 = 0
     for i in 0..(len / 2) {
-        sum += data[i * 2] + (data[i * 2 + 1] << 8);
+        sum += data[i * 2] + (data[i * 2 + 1] << 8)
     }
     while sum >> 16 != 0 {
-        sum = (sum & 0xFFFF) + (sum >> 16);
+        sum = (sum & 0xFFFF) + (sum >> 16)
     }
-    return !(sum as u16);
+    return !(sum as u16)
 }
 ```
 
@@ -844,13 +844,13 @@ if condition {
 }
 
 // Pattern matching (simplified)
-let protocol = packet.protocol();
+let protocol = packet.protocol()
 if protocol == Protocol::TCP {
-    handle_tcp(packet);
+    handle_tcp(packet)
 } else if protocol == Protocol::UDP {
-    handle_udp(packet);
+    handle_udp(packet)
 } else if protocol == Protocol::ICMP {
-    handle_icmp(packet);
+    handle_icmp(packet)
 } else {
     // default case
 }
@@ -858,16 +858,16 @@ if protocol == Protocol::TCP {
 // Loops with automatic bounds checking
 for i in 0..MAX_ITERATIONS {
     if should_break() {
-        break;
+        break
     }
-    process_item(i);
+    process_item(i)
 }
 
 // While loops (compiler ensures termination)
-let iterations = 0;
+let iterations = 0
 while condition && iterations < MAX_ITERATIONS {
-    do_work();
-    iterations = iterations + 1;
+    do_work()
+    iterations = iterations + 1
 }
 ```
 
@@ -892,59 +892,59 @@ enum NetworkError {
 }
 
 // Or use simple constants
-const ERROR_INVALID_PACKET = 100;
-const ERROR_RATE_LIMITED = 101;
+const ERROR_INVALID_PACKET = 100
+const ERROR_RATE_LIMITED = 101
 
 // Functions can throw integer error codes
 fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
     if len < 20 {
-        throw PARSE_ERROR_TOO_SHORT;  // Throws integer value 1
+        throw PARSE_ERROR_TOO_SHORT  // Throws integer value 1
     }
     
-    let header = cast_to_ip_header(packet);
+    let header = cast_to_ip_header(packet)
     if header.version != 4 {
-        throw PARSE_ERROR_INVALID_VERSION;  // Throws integer value 2
+        throw PARSE_ERROR_INVALID_VERSION  // Throws integer value 2
     }
     
-    return header;
+    return header
 }
 
 // Error handling with try/catch blocks using integer matching
 fn process_packet(ctx: XdpContext) -> XdpAction {
     try {
-        let packet = get_packet(ctx);
+        let packet = get_packet(ctx)
         if packet == null {
-            throw NETWORK_ERROR_ALLOCATION_FAILED;  // Throws integer value 10
+            throw NETWORK_ERROR_ALLOCATION_FAILED  // Throws integer value 10
         }
         
-        let header = parse_ip_header(packet.data, packet.len);
-        update_flow_stats(header);
+        let header = parse_ip_header(packet.data, packet.len)
+        update_flow_stats(header)
         
-        return XDP_PASS;
+        return XDP_PASS
         
     } catch 1 {  // PARSE_ERROR_TOO_SHORT
-        return XDP_DROP;
+        return XDP_DROP
         
     } catch 2 {  // PARSE_ERROR_INVALID_VERSION
-        return XDP_DROP;
+        return XDP_DROP
         
     } catch 10 {  // NETWORK_ERROR_ALLOCATION_FAILED
-        return XDP_ABORTED;
+        return XDP_ABORTED
         
     } catch _ {  // Catch-all for any other error
-        return XDP_ABORTED;
+        return XDP_ABORTED
     }
 }
 
 // You can also throw literal integers or variables
 fn validate_input(value: i32) {
     if value < 0 {
-        throw 42;  // Direct integer throw
+        throw 42  // Direct integer throw
     }
     
-    let error_code = compute_error_code(value);
+    let error_code = compute_error_code(value)
     if error_code != 0 {
-        throw error_code;  // Variable throw
+        throw error_code  // Variable throw
     }
 }
 ```
@@ -956,38 +956,38 @@ The `defer` statement ensures cleanup code runs automatically at function exit, 
 ```kernelscript
 // Resource management with automatic cleanup
 fn update_shared_counter(index: u32) -> bool {
-    let data = shared_counters[index];
+    let data = shared_counters[index]
     if data == null {
-        return false;
+        return false
     }
     
     // Acquire lock and ensure it's always released
-    bpf_spin_lock(&data.lock);
-    defer bpf_spin_unlock(&data.lock);  // Always executes at function exit
+    bpf_spin_lock(&data.lock)
+    defer bpf_spin_unlock(&data.lock)  // Always executes at function exit
     
     // Critical section
-    data.counter += 1;
+    data.counter += 1
     
     if data.counter > 1000000 {
-        throw NetworkError::RateLimitExceeded;  // defer still executes (throws 12)
+        throw NetworkError::RateLimitExceeded  // defer still executes (throws 12)
     }
     
-    return true;  // defer executes here too
+    return true  // defer executes here too
 }
 
 // Multiple defer statements execute in reverse order (LIFO)
 fn complex_resource_management() -> bool {
-    let buffer = allocate_buffer();
-    defer free_buffer(buffer);          // Executes 3rd
+    let buffer = allocate_buffer()
+    defer free_buffer(buffer)          // Executes 3rd
     
-    let lock = acquire_lock();
-    defer release_lock(lock);           // Executes 2nd
+    let lock = acquire_lock()
+    defer release_lock(lock)           // Executes 2nd
     
-    let fd = open_file("config.txt");
-    defer close_file(fd);               // Executes 1st
+    let fd = open_file("config.txt")
+    defer close_file(fd)               // Executes 1st
     
     // Use resources safely
-    return process_data(buffer, lock, fd);
+    return process_data(buffer, lock, fd)
     // All defer statements execute automatically in reverse order
 }
 ```
@@ -998,23 +998,23 @@ Defer statements work seamlessly with error handling - cleanup always occurs eve
 
 ```kernelscript
 fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
-    let packet_buffer = allocate_packet_buffer();
-    defer free_packet_buffer(packet_buffer);  // Always executes
+    let packet_buffer = allocate_packet_buffer()
+    defer free_packet_buffer(packet_buffer)  // Always executes
     
     try {
-        let lock = acquire_flow_lock();
-        defer release_flow_lock(lock);        // Always executes
+        let lock = acquire_flow_lock()
+        defer release_flow_lock(lock)        // Always executes
         
-        let flow_data = process_flow(packet_buffer);
+        let flow_data = process_flow(packet_buffer)
         if flow_data.is_suspicious() {
-            throw NetworkError::RateLimitExceeded;  // Throws 12
+            throw NetworkError::RateLimitExceeded  // Throws 12
         }
         
-        return XdpAction::Pass;
+        return XdpAction::Pass
         
     } catch 12 {  // NetworkError::RateLimitExceeded
-        increment_drop_counter();
-        return XdpAction::Drop;
+        increment_drop_counter()
+        return XdpAction::Drop
         // Both defer statements execute even in catch block
     }
 }
@@ -1030,14 +1030,14 @@ fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         try {
-            let result = process_packet(ctx);  // Might throw
-            return XdpAction::Pass;
+            let result = process_packet(ctx)  // Might throw
+            return XdpAction::Pass
             
         } catch 1 {  // ParseError::TooShort
-            return XdpAction::Drop;
+            return XdpAction::Drop
             
         } catch 10 {  // NetworkError::AllocationFailed
-            return XdpAction::Aborted;
+            return XdpAction::Aborted
         }
         // ❌ Compiler ERROR if any possible throw is not caught
     }
@@ -1051,21 +1051,21 @@ Helper functions can propagate errors without catching them - this enables natur
 ```kernelscript
 // Helper functions can throw without catching
 fn extract_flow_key(ctx: XdpContext) -> FlowKey {
-    let packet = get_packet(ctx);
+    let packet = get_packet(ctx)
     if packet == null {
-        throw NetworkError::AllocationFailed;  // ✅ OK - propagates to caller (throws 10)
+        throw NetworkError::AllocationFailed  // ✅ OK - propagates to caller (throws 10)
     }
     
-    return parse_flow_key(packet);  // May also throw - propagates up
+    return parse_flow_key(packet)  // May also throw - propagates up
 }
 
 fn validate_flow(key: FlowKey) -> FlowState {
-    let state = lookup_flow_state(key);  // May throw
+    let state = lookup_flow_state(key)  // May throw
     if state.is_expired() {
-        throw NetworkError::RateLimitExceeded;  // ✅ OK - propagates to caller (throws 12)
+        throw NetworkError::RateLimitExceeded  // ✅ OK - propagates to caller (throws 12)
     }
     
-    return state;
+    return state
 }
 ```
 
@@ -1075,27 +1075,27 @@ Userspace functions generate **compiler warnings** for uncaught throws, but comp
 
 ```kernelscript
 fn main() -> i32 {
-    let prog = load_program(packet_filter);    // ⚠️ Warning: might throw
-    attach_program(prog, "eth0", 0);           // ⚠️ Warning: might throw
-    return 0;
+    let prog = load_program(packet_filter)    // ⚠️ Warning: might throw
+    attach_program(prog, "eth0", 0)           // ⚠️ Warning: might throw
+    return 0
     // If any throw occurs, program terminates (like panic)
 }
 
 // Better - explicit error handling
 fn main() -> i32 {
     try {
-        let prog = load_program(packet_filter);
-        attach_program(prog, "eth0", 0);
-        print("Program attached successfully");
-        return 0;
+        let prog = load_program(packet_filter)
+        attach_program(prog, "eth0", 0)
+        print("Program attached successfully")
+        return 0
         
     } catch 20 {  // LoadError::ProgramNotFound
-        print("Failed to load program");
-        return 1;
+        print("Failed to load program")
+        return 1
         
     } catch 30 {  // AttachError::PermissionDenied
-        print("Permission denied - check privileges");
-        return 2;
+        print("Permission denied - check privileges")
+        return 2
     }
 }
 ```
@@ -1108,13 +1108,13 @@ For unrecoverable errors, KernelScript provides panic and assert macros:
 // Panic for unrecoverable errors
 fn critical_operation() {
     if unsafe_condition() {
-        panic("Critical system state violated");
+        panic("Critical system state violated")
     }
 }
 
 // Simple assertions
 fn validate_state() {
-    assert(map_size < MAX_ENTRIES, "Map overflow detected");
+    assert(map_size < MAX_ENTRIES, "Map overflow detected")
 }
 ```
 
@@ -1138,15 +1138,15 @@ fn main(args: Args) -> i32 {
     // Usage: program --interface_id=1 --enable_debug=1 --packet_limit=1000 --timeout_ms=5000
     
     if args.enable_debug == 1 {
-        print("Debug mode enabled for interface: ", args.interface_id);
-        print("Packet limit: ", args.packet_limit);
-        print("Timeout: ", args.timeout_ms, " ms");
+        print("Debug mode enabled for interface: ", args.interface_id)
+        print("Packet limit: ", args.packet_limit)
+        print("Timeout: ", args.timeout_ms, " ms")
     }
     
     // Use the parsed arguments
-    configure_system(args.interface_id, args.packet_limit, args.timeout_ms);
+    configure_system(args.interface_id, args.packet_limit, args.timeout_ms)
     
-    return 0;
+    return 0
 }
 
 fn configure_system(interface_id: u32, packet_limit: u64, timeout_ms: u32) {
@@ -1155,8 +1155,8 @@ fn configure_system(interface_id: u32, packet_limit: u64, timeout_ms: u32) {
 
 // For programs that don't need command line arguments
 fn main() -> i32 {
-    print("Simple program with no arguments");
-    return 0;
+    print("Simple program with no arguments")
+    return 0
 }
 ```
 
@@ -1171,57 +1171,57 @@ fn main() -> i32 {
 // Global maps (accessible from all programs and userspace)
 map<FlowKey, FlowStats> global_flows : hash_map(10000) {
     pinned: "/sys/fs/bpf/global_flows",
-};
+}
 
 map<Event> global_events : ring_buffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/global_events",
-};
+}
 
 map<ConfigKey, ConfigValue> global_config : array(64) {
     pinned: "/sys/fs/bpf/global_config",
-};
+}
 
 // Multiple eBPF programs working together
 program network_monitor : xdp {
     // Local maps (only accessible within this program)
-    map<u32, LocalStats> local_stats : hash_map(1024);
+    map<u32, LocalStats> local_stats : hash_map(1024)
     
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
-        let flow_key = extract_flow_key(ctx)?;
-        global_flows[flow_key] += 1;
+        let flow_key = extract_flow_key(ctx)?
+        global_flows[flow_key] += 1
         
         // Use named config for decisions
         if monitoring.enable_stats {
-            monitoring.packets_processed += 1;
+            monitoring.packets_processed += 1
         }
         
         // Send event to global stream
-        global_events.submit(Event::PacketProcessed { flow_key });
+        global_events.submit(Event::PacketProcessed { flow_key })
         
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 
 program security_filter : lsm("socket_connect") {
     fn main(ctx: LsmContext) -> i32 {
-        let flow_key = extract_flow_key_from_socket(ctx)?;
+        let flow_key = extract_flow_key_from_socket(ctx)?
         
         // Check global flow statistics for threat detection
         if global_flows[flow_key] != null {
-            let flow_stats = global_flows[flow_key];
+            let flow_stats = global_flows[flow_key]
             if flow_stats.is_suspicious() {
-                global_events.submit(Event::ThreatDetected { flow_key });
-                return -EPERM;  // Block connection
+                global_events.submit(Event::ThreatDetected { flow_key })
+                return -EPERM  // Block connection
             }
         }
         
-        return 0;  // Allow connection
+        return 0  // Allow connection
     }
 }
 
 // Userspace coordination types and functions
-use std::collections::HashMap;
+use std::collections::HashMap
 
 struct SystemCoordinator {
     network_monitor: BpfProgram,
@@ -1248,8 +1248,8 @@ impl SystemCoordinator {
     
     fn start(&mut self) -> Result<(), Error> {
         // Coordinate multiple programs
-        attach_program(network_monitor, "eth0", 0)?;
-        attach_program(security_filter, "socket_connect", 0)?;
+        attach_program(network_monitor, "eth0", 0)?
+        attach_program(security_filter, "socket_connect", 0)?
         Ok(())
     }
     
@@ -1258,11 +1258,11 @@ impl SystemCoordinator {
         while let Some(event) = self.global_events.read() {
             match event {
                 Event::PacketProcessed { flow_key } => {
-                    print("Processed packet for flow: ", flow_key);
+                    print("Processed packet for flow: ", flow_key)
                 },
                 Event::ThreatDetected { flow_key } => {
-                    print("THREAT DETECTED: ", flow_key);
-                    self.handle_threat(flow_key);
+                    print("THREAT DETECTED: ", flow_key)
+                    self.handle_threat(flow_key)
                 },
             }
         }
@@ -1270,7 +1270,7 @@ impl SystemCoordinator {
     
     fn handle_threat(&self, flow_key: FlowKey) {
         // Coordinated response across all programs
-        self.global_config[ConfigKey::ThreatLevel] = ConfigValue::High;
+        self.global_config[ConfigKey::ThreatLevel] = ConfigValue::High
     }
 }
 
@@ -1283,19 +1283,19 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --monitoring-enabled=1
     
-    let mut coordinator = SystemCoordinator::new().unwrap();
-    coordinator.start_on_interface_by_id(args.interface_id).unwrap();
+    let mut coordinator = SystemCoordinator::new().unwrap()
+    coordinator.start_on_interface_by_id(args.interface_id).unwrap()
     
     if args.monitoring_enabled == 1 {
-        print("Multi-program eBPF system started on interface: ", args.interface_id);
+        print("Multi-program eBPF system started on interface: ", args.interface_id)
     }
     
     loop {
-        coordinator.process_events();
-        sleep(100);
+        coordinator.process_events()
+        sleep(100)
     }
     
-    return 0;
+    return 0
 }
 ```
 
@@ -1310,15 +1310,15 @@ config runtime {
 program network_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if runtime.enable_logging {
-            bpf_printk("Processing packet");
+            bpf_printk("Processing packet")
         }
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 
 program flow_analyzer : tc {
     fn main(ctx: TcContext) -> TcAction {
-        return TcAction::Pass;
+        return TcAction::Pass
     }
 }
 
@@ -1333,33 +1333,33 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --verbose-mode=1 --enable-monitoring=1
     
-    let network_monitor = load_program(network_monitor);
-    let flow_analyzer = load_program(flow_analyzer);
+    let network_monitor = load_program(network_monitor)
+    let flow_analyzer = load_program(flow_analyzer)
     
-    attach_program(network_monitor, args.interface_id, 0);
-    attach_program(flow_analyzer, args.interface_id, 1);
+    attach_program(network_monitor, args.interface_id, 0)
+    attach_program(flow_analyzer, args.interface_id, 1)
     
     // Update runtime config based on command line
-    runtime.verbose_mode = (args.verbose_mode == 1);
+    runtime.verbose_mode = (args.verbose_mode == 1)
     
     if runtime.verbose_mode {
-        print("Multi-program system loaded on interface: ", args.interface_id);
-        print("Verbose mode enabled");
+        print("Multi-program system loaded on interface: ", args.interface_id)
+        print("Verbose mode enabled")
     }
     
     // Coordinate both programs
-    handle_system_events(args.verbose_mode == 1);
+    handle_system_events(args.verbose_mode = = 1)
     
-    return 0;
+    return 0
 }
 
 fn handle_system_events(verbose: bool) {
     while true {
         // Process events from all programs
         if runtime.verbose_mode {
-            print("Processing system events...");
+            print("Processing system events...")
         }
-        sleep(1000);
+        sleep(1000)
     }
 }
 
@@ -1393,7 +1393,7 @@ fn safe_packet_access(packet: &Packet, offset: usize, size: usize) -> Option<&[u
 }
 
 // Array access with compile-time and runtime checks
-fn process_array(arr: &[u32; 256], index: usize) -> u32 {
+fn process_array(arr: &u32[256], index: usize) -> u32 {
     // Compile-time check if index is constant
     arr[index]  // Compiler generates bounds check if needed
 }
@@ -1403,10 +1403,10 @@ fn process_array(arr: &[u32; 256], index: usize) -> u32 {
 ```kernelscript
 // Automatic stack usage tracking
 fn large_function() {
-    let buffer: [u8; 400] = [0; 400];  // Compiler tracks stack usage
+    let buffer: u8[400] = [0; 400];  // Compiler tracks stack usage
     // Compiler will automatically spill to map if stack limit exceeded
     
-    process_buffer(&buffer);
+    process_buffer(&buffer)
     
     // Automatic cleanup
 }
@@ -1481,29 +1481,29 @@ kernelscript attach perf_monitor --function=sys_read
 ```kernelscript
 // Network utilities
 mod net {
-    pub fn parse_ethernet(data: &[u8]) -> Result<EthernetHeader, ParseError>;
-    pub fn parse_ipv4(data: &[u8]) -> Result<Ipv4Header, ParseError>;
-    pub fn parse_tcp(data: &[u8]) -> Result<TcpHeader, ParseError>;
-    pub fn calculate_checksum(data: &[u8]) -> u16;
+    pub fn parse_ethernet(data: &[u8]) -> Result<EthernetHeader, ParseError>
+    pub fn parse_ipv4(data: &[u8]) -> Result<Ipv4Header, ParseError>
+    pub fn parse_tcp(data: &[u8]) -> Result<TcpHeader, ParseError>
+    pub fn calculate_checksum(data: &[u8]) -> u16
 }
 
 // String utilities (limited for eBPF)
 mod str {
-    pub fn compare(a: &[u8], b: &[u8]) -> i32;
-    pub fn find_byte(haystack: &[u8], needle: u8) -> Option<usize>;
+    pub fn compare(a: &[u8], b: &[u8]) -> i32
+    pub fn find_byte(haystack: &[u8], needle: u8) -> Option<usize>
 }
 
 // Math utilities
 mod math {
-    pub fn min(a: u64, b: u64) -> u64;
-    pub fn max(a: u64, b: u64) -> u64;
-    pub fn clamp(value: u64, min: u64, max: u64) -> u64;
+    pub fn min(a: u64, b: u64) -> u64
+    pub fn max(a: u64, b: u64) -> u64
+    pub fn clamp(value: u64, min: u64, max: u64) -> u64
 }
 
 // Program lifecycle management (userspace only)
 mod program {
     // Load an eBPF program and return its handle
-    pub fn load_program(program_ref: ProgramRef) -> ProgramHandle;
+    pub fn load_program(program_ref: ProgramRef) -> ProgramHandle
     
     // Attach a program to a target with optional flags using its handle
     // - First parameter must be a ProgramHandle returned from load_program()
@@ -1511,7 +1511,7 @@ mod program {
     // - For TC: target is interface name, flags indicate direction (ingress/egress)
     // - For Kprobe: target is function name (e.g., "sys_read"), flags are unused (0)
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
-    pub fn attach_program(handle: ProgramHandle, target: string, flags: u32) -> u32;
+    pub fn attach_program(handle: ProgramHandle, target: string, flags: u32) -> u32
 }
 ```
 
@@ -1519,16 +1519,16 @@ mod program {
 ```kernelscript
 // XDP context helpers
 impl XdpContext {
-    pub fn packet(&self) -> Result<Packet, ContextError>;
-    pub fn adjust_head(&mut self, delta: i32) -> Result<(), ContextError>;
-    pub fn adjust_tail(&mut self, delta: i32) -> Result<(), ContextError>;
+    pub fn packet(&self) -> Result<Packet, ContextError>
+    pub fn adjust_head(&mut self, delta: i32) -> Result<(), ContextError>
+    pub fn adjust_tail(&mut self, delta: i32) -> Result<(), ContextError>
 }
 
 // Kprobe context helpers
 impl KprobeContext {
-    pub fn arg<T>(&self, index: usize) -> T;
-    pub fn return_value<T>(&self) -> T;
-    pub fn function_name(&self) -> &str;
+    pub fn arg<T>(&self, index: usize) -> T
+    pub fn return_value<T>(&self) -> T
+    pub fn function_name(&self) -> &str
 }
 ```
 
@@ -1538,7 +1538,7 @@ impl KprobeContext {
 ```kernelscript
 // Named configuration for packet filtering
 config filtering {
-    blocked_ports: [u16; 4] = [22, 23, 135, 445],
+    blocked_ports: u16[4] = [22, 23, 135, 445],
     enable_logging: bool = false,
     max_packet_size: u32 = 1500,
 }
@@ -1550,27 +1550,27 @@ config system {
 
 program simple_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet();
+        let packet = ctx.packet()
         if packet == null {
-            return XdpAction::Pass;
+            return XdpAction::Pass
         }
         
-        system.packets_processed += 1;
+        system.packets_processed += 1
         
         if packet.is_tcp() {
-            let tcp = packet.tcp_header();
+            let tcp = packet.tcp_header()
             for i in 0..4 {
                 if tcp.dst_port == filtering.blocked_ports[i] {
                     if filtering.enable_logging {
-                        bpf_printk("Blocked port %d", tcp.dst_port);
+                        bpf_printk("Blocked port %d", tcp.dst_port)
                     }
-                    system.packets_dropped += 1;
-                    return XdpAction::Drop;
+                    system.packets_dropped += 1
+                    return XdpAction::Drop
                 }
             }
         }
         
-        return XdpAction::Pass;
+        return XdpAction::Pass
     }
 }
 
@@ -1586,46 +1586,46 @@ fn main(args: Args) -> i32 {
     // Usage: program --interface=eth0 --quiet-mode=false --strict-mode=true
     
     // Configure system before loading program
-    filtering.enable_logging = !args.quiet_mode;
+    filtering.enable_logging = !args.quiet_mode
     if args.strict_mode {
-        filtering.max_packet_size = 1000;  // Stricter filtering
+        filtering.max_packet_size = 1000  // Stricter filtering
     }
     
     // Explicit program lifecycle management
-    let prog_handle = load_program(simple_filter);
+    let prog_handle = load_program(simple_filter)
     
-    let attach_result = attach_program(prog_handle, args.interface, 0);
+    let attach_result = attach_program(prog_handle, args.interface, 0)
     if attach_result != 0 {
-        print("Failed to attach program to interface: ", args.interface);
-        return 1;
+        print("Failed to attach program to interface: ", args.interface)
+        return 1
     }
     
     if !args.quiet_mode {
-        print("Packet filter started on interface: ", args.interface);
-        print("Blocking ports: 22, 23, 135, 445");
+        print("Packet filter started on interface: ", args.interface)
+        print("Blocking ports: 22, 23, 135, 445")
         if args.strict_mode {
-            print("Strict mode enabled - max packet size: 1000");
+            print("Strict mode enabled - max packet size: 1000")
         }
     }
     
     // Monitor system health using config stats
     while true {
         if system.packets_dropped > 1000 && !args.quiet_mode {
-            print("High drop rate detected: ", system.packets_dropped);
+            print("High drop rate detected: ", system.packets_dropped)
         }
-        sleep(10000);
+        sleep(10000)
     }
     
-    return 0;
+    return 0
 }
 ```
 
 ### 12.2 Performance Monitoring
 ```kernelscript
 // Global maps for performance data
-map<u32, CallInfo> active_calls : hash_map(1024);
-map<u32, u64> read_stats : array(1024);
-map<u32, u64> write_stats : array(1024);
+map<u32, CallInfo> active_calls : hash_map(1024)
+map<u32, u64> read_stats : array(1024)
+map<u32, u64> write_stats : array(1024)
 
 struct CallInfo {
     start_time: u64,
@@ -1634,36 +1634,36 @@ struct CallInfo {
 
 program perf_monitor : kprobe("sys_read") {
     fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32;
+        let pid = bpf_get_current_pid_tgid() as u32
         let call_info = CallInfo {
             start_time: bpf_ktime_get_ns(),
             bytes_requested: ctx.arg_u32(2),
-        };
+        }
         
-        active_calls[pid] = call_info;
-        return 0;
+        active_calls[pid] = call_info
+        return 0
     }
     
     fn on_return(ctx: KretprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32;
+        let pid = bpf_get_current_pid_tgid() as u32
         
-        let call_info = active_calls[pid];
+        let call_info = active_calls[pid]
         if call_info != null {
-            let duration = bpf_ktime_get_ns() - call_info.start_time;
-            read_stats[pid % 1024] += duration;
-            delete active_calls[pid];
+            let duration = bpf_ktime_get_ns() - call_info.start_time
+            read_stats[pid % 1024] += duration
+            delete active_calls[pid]
         }
         
-        return 0;
+        return 0
     }
 }
 
 program write_monitor : kprobe("sys_write") {
     fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32;
-        let duration = measure_write_time(ctx);
-        write_stats[pid % 1024] += duration;
-        return 0;
+        let pid = bpf_get_current_pid_tgid() as u32
+        let duration = measure_write_time(ctx)
+        write_stats[pid % 1024] += duration
+        return 0
     }
 }
 
@@ -1679,64 +1679,64 @@ fn main(args: Args) -> i32 {
     // Usage: program --interval-ms=5000 --show-details=1 --help-mode=0
     
     if args.help_mode == 1 {
-        print("Performance monitoring system");
-        print("Options: --interval-ms=<ms> --show-details=0/1 --help-mode=0/1");
-        return 0;
+        print("Performance monitoring system")
+        print("Options: --interval-ms = <ms> --show-details=0/1 --help-mode=0/1")
+        return 0
     }
     
-    let interval = if args.interval_ms == 0 { 5000 } else { args.interval_ms };
-    let show_details = (args.show_details == 1);
+    let interval = if args.interval_ms == 0 { 5000 } else { args.interval_ms }
+    let show_details = (args.show_details == 1)
     
     // Explicit program lifecycle management for multiple programs
-    let read_handle = load_program(perf_monitor);
-    let write_handle = load_program(write_monitor);
+    let read_handle = load_program(perf_monitor)
+    let write_handle = load_program(write_monitor)
     
     // Attach programs to different kprobe targets
-    let read_attach = attach_program(read_handle, "sys_read", 0);
-    let write_attach = attach_program(write_handle, "sys_write", 0);
+    let read_attach = attach_program(read_handle, "sys_read", 0)
+    let write_attach = attach_program(write_handle, "sys_write", 0)
     
     if read_attach != 0 || write_attach != 0 {
-        print("Failed to attach monitoring programs");
-        return 1;
+        print("Failed to attach monitoring programs")
+        return 1
     }
     
-    print("Performance monitoring active - read and write syscalls");
+    print("Performance monitoring active - read and write syscalls")
     
     while true {
         if show_details {
-            print_detailed_stats();
+            print_detailed_stats()
         } else {
-            print_summary_stats();
+            print_summary_stats()
         }
-        sleep(interval);
+        sleep(interval)
     }
     
-    return 0;
+    return 0
 }
 
 fn print_detailed_stats() {
     // Access global maps to show detailed performance data
     for i in 0..1024 {
         if read_stats[i] > 0 {
-            print("PID bucket ", i, " read time: ", read_stats[i]);
+            print("PID bucket ", i, " read time: ", read_stats[i])
         }
         if write_stats[i] > 0 {
-            print("PID bucket ", i, " write time: ", write_stats[i]);
+            print("PID bucket ", i, " write time: ", write_stats[i])
         }
     }
 }
 
 fn print_summary_stats() {
-    let total_read_time = 0u64;
-    let total_write_time = 0u64;
+    let total_read_time = 0u64
+    let total_write_time = 0u64
     
     for i in 0..1024 {
-        total_read_time += read_stats[i];
-        total_write_time += write_stats[i];
+        total_read_time += read_stats[i]
+        total_write_time += write_stats[i]
     }
     
-    print("Total read time: ", total_read_time);
-    print("Total write time: ", total_write_time);
+    print("Total read time: ", total_read_time)
+    print("Total write time: ", total_write_time)
 }
 ```
 
@@ -1746,47 +1746,47 @@ fn print_summary_stats() {
 (* KernelScript Complete Grammar *)
 
 (* Top-level structure *)
-kernelscript_file = { global_declaration } ;
+kernelscript_file = { global_declaration } 
 
 global_declaration = config_declaration | map_declaration | type_declaration | 
                     program_declaration | function_declaration | struct_declaration | 
-                    bindings_declaration | import_declaration ;
+                    bindings_declaration | import_declaration 
 
 (* Map declarations - global scope *)
 map_declaration = "map" "<" key_type "," value_type ">" identifier 
-                  ":" map_type "(" map_config ")" [ map_attributes ] ";" ;
+                  ":" map_type "(" map_config ")" [ map_attributes ] 
 
 map_type = "hash_map" | "array" | "percpu_hash" | "percpu_array" | "lru_hash" | 
-           "ring_buffer" | "perf_event" | "stack_trace" | "prog_array" ;
+           "ring_buffer" | "perf_event" | "stack_trace" | "prog_array" 
 
-map_config = integer_literal [ "," map_config_item { "," map_config_item } ] ;
-map_config_item = identifier "=" literal ;
+map_config = integer_literal [ "," map_config_item { "," map_config_item } ] 
+map_config_item = identifier "=" literal 
 
-map_attributes = "{" map_attribute { "," map_attribute } [ "," ] "}" ;
-map_attribute = identifier [ "=" literal ] ;
+map_attributes = "{" map_attribute { "," map_attribute } [ "," ] "}" 
+map_attribute = identifier [ "=" literal ] 
 
 (* Program declarations *)
-program_declaration = "program" identifier ":" program_type "{" program_body "}" ;
+program_declaration = "program" identifier ":" program_type "{" program_body "}" 
 
 program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-               "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" ;
+               "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" 
 
-program_body = { program_item } ;
+program_body = { program_item } 
 
-program_item = local_map_declaration | function_declaration | type_declaration ;
+program_item = local_map_declaration | function_declaration | type_declaration 
 
 (* Local maps - inside program scope *)
 local_map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" identifier 
-                        ":" map_type "(" map_config ")" [ map_attributes ] ";" ;
+                        ":" map_type "(" map_config ")" [ map_attributes ] 
 
 (* Named configuration declarations *)
-config_declaration = "config" identifier "{" { config_field } "}" ;
-config_field = [ "mut" ] identifier ":" type_annotation [ "=" expression ] "," ;
+config_declaration = "config" identifier "{" { config_field } "}" 
+config_field = [ "mut" ] identifier ":" type_annotation [ "=" expression ] "," 
 
 (* Cross-language bindings declaration *)
-bindings_declaration = "bindings" "{" { bindings_config } "}" ;
-bindings_config = identifier "{" { bindings_config_item } "}" ;
-bindings_config_item = identifier ":" literal "," ;
+bindings_declaration = "bindings" "{" { bindings_config } "}" 
+bindings_config = identifier "{" { bindings_config_item } "}" 
+bindings_config_item = identifier ":" literal "," 
 
 (* Scoping rules for KernelScript:
    - Inside program {} blocks: Kernel space (eBPF) - compiles to eBPF bytecode
@@ -1801,150 +1801,150 @@ bindings_config_item = identifier ":" literal "," ;
 
 
 (* Type declarations *)
-type_declaration = "type" identifier "=" type_definition ";" ;
-type_definition = struct_type | enum_type | type_alias ;
+type_declaration = "type" identifier "=" type_definition 
+type_definition = struct_type | enum_type | type_alias 
 
-struct_type = "struct" identifier "{" { struct_field } "}" ;
-struct_field = identifier ":" type_annotation "," ;
+struct_type = "struct" identifier "{" { struct_field } "}" 
+struct_field = identifier ":" type_annotation "," 
 
-enum_type = "enum" identifier "{" enum_variant { "," enum_variant } [ "," ] "}" ;
-enum_variant = identifier [ "=" integer_literal ] ;
+enum_type = "enum" identifier "{" enum_variant { "," enum_variant } [ "," ] "}" 
+enum_variant = identifier [ "=" integer_literal ] 
 
-type_alias = type_annotation ;
+type_alias = type_annotation 
 
 (* Function declarations *)
 function_declaration = [ visibility ] "fn" identifier "(" parameter_list ")" 
-                       [ "->" type_annotation ] "{" statement_list "}" ;
+                       [ "->" type_annotation ] "{" statement_list "}" 
 
-visibility = "pub" | "priv" ;
-parameter_list = [ parameter { "," parameter } ] ;
-parameter = identifier ":" type_annotation ;
+visibility = "pub" | "priv" 
+parameter_list = [ parameter { "," parameter } ] 
+parameter = identifier ":" type_annotation 
 
 (* Statements *)
-statement_list = { statement } ;
+statement_list = { statement } 
 statement = expression_statement | assignment_statement | declaration_statement |
             if_statement | for_statement | while_statement | return_statement |
             break_statement | continue_statement | block_statement | delete_statement |
-            try_statement | throw_statement | defer_statement ;
+            try_statement | throw_statement | defer_statement 
 
-expression_statement = expression ";" ;
-assignment_statement = identifier assignment_operator expression ";" ;
-assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+expression_statement = expression 
+assignment_statement = identifier assignment_operator expression 
+assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%=" 
 
-declaration_statement = "let" [ "mut" ] identifier [ ":" type_annotation ] "=" expression ";" ;
+declaration_statement = "let" [ "mut" ] identifier [ ":" type_annotation ] "=" expression 
 
 if_statement = "if" expression "{" statement_list "}" 
                { "else" "if" expression "{" statement_list "}" }
-               [ "else" "{" statement_list "}" ] ;
+               [ "else" "{" statement_list "}" ] 
 
 for_statement = "for" identifier "in" expression ".." expression "{" statement_list "}" |
-                "for" "(" identifier "," identifier ")" "in" expression ".iter()" "{" statement_list "}" ;
+                "for" "(" identifier "," identifier ")" "in" expression ".iter()" "{" statement_list "}" 
 
-while_statement = "while" expression "{" statement_list "}" ;
+while_statement = "while" expression "{" statement_list "}" 
 
-return_statement = "return" [ expression ] ";" ;
-break_statement = "break" ";" ;
-continue_statement = "continue" ";" ;
-delete_statement = "delete" primary_expression "[" expression "]" ";" ;
-block_statement = "{" statement_list "}" ;
+return_statement = "return" [ expression ] 
+break_statement = "break" 
+continue_statement = "continue" 
+delete_statement = "delete" primary_expression "[" expression "]" 
+block_statement = "{" statement_list "}" 
 
 (* Error handling and resource management statements *)
-try_statement = "try" "{" statement_list "}" { catch_clause } ;
-catch_clause = "catch" ( integer_literal | "_" ) "{" statement_list "}" ;
+try_statement = "try" "{" statement_list "}" { catch_clause } 
+catch_clause = "catch" ( integer_literal | "_" ) "{" statement_list "}" 
 
-throw_statement = "throw" expression ";" ;
+throw_statement = "throw" expression 
 
-defer_statement = "defer" expression ";" ;
+defer_statement = "defer" expression 
 
 (* Expressions *)
-expression = logical_or_expression ;
+expression = logical_or_expression 
 
-logical_or_expression = logical_and_expression { "or" logical_and_expression } ;
-logical_and_expression = equality_expression { "and" equality_expression } ;
-equality_expression = relational_expression { equality_operator relational_expression } ;
-equality_operator = "==" | "!=" ;
+logical_or_expression = logical_and_expression { "or" logical_and_expression } 
+logical_and_expression = equality_expression { "and" equality_expression } 
+equality_expression = relational_expression { equality_operator relational_expression } 
+equality_operator = "==" | "!=" 
 
-relational_expression = additive_expression { relational_operator additive_expression } ;
-relational_operator = "<" | "<=" | ">" | ">=" ;
+relational_expression = additive_expression { relational_operator additive_expression } 
+relational_operator = "<" | "<=" | ">" | ">=" 
 
-additive_expression = multiplicative_expression { additive_operator multiplicative_expression } ;
-additive_operator = "+" | "-" ;
+additive_expression = multiplicative_expression { additive_operator multiplicative_expression } 
+additive_operator = "+" | "-" 
 
-multiplicative_expression = unary_expression { multiplicative_operator unary_expression } ;
-multiplicative_operator = "*" | "/" | "%" ;
+multiplicative_expression = unary_expression { multiplicative_operator unary_expression } 
+multiplicative_operator = "*" | "/" | "%" 
 
-unary_expression = [ unary_operator ] primary_expression ;
-unary_operator = "!" | "-" | "*" | "&" ;
+unary_expression = [ unary_operator ] primary_expression 
+unary_operator = "!" | "-" | "*" | "&" 
 
 primary_expression = config_access | identifier | literal | function_call | field_access | 
-                     array_access | parenthesized_expression | struct_literal ;
+                     array_access | parenthesized_expression | struct_literal 
 
-config_access = identifier "." identifier ;
+config_access = identifier "." identifier 
 
-function_call = identifier "(" argument_list ")" ;
-argument_list = [ expression { "," expression } ] ;
+function_call = identifier "(" argument_list ")" 
+argument_list = [ expression { "," expression } ] 
 
-field_access = primary_expression "." identifier ;
-array_access = primary_expression "[" expression "]" ;
-parenthesized_expression = "(" expression ")" ;
+field_access = primary_expression "." identifier 
+array_access = primary_expression "[" expression "]" 
+parenthesized_expression = "(" expression ")" 
 
-struct_literal = identifier "{" struct_literal_field { "," struct_literal_field } [ "," ] "}" ;
-struct_literal_field = identifier ":" expression ;
+struct_literal = identifier "{" struct_literal_field { "," struct_literal_field } [ "," ] "}" 
+struct_literal_field = identifier ":" expression 
 
 (* Type annotations *)
-type_annotation = primitive_type | compound_type | identifier ;
+type_annotation = primitive_type | compound_type | identifier 
 
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
-                 "bool" | "char" | "void" | "ProgramRef" | string_type ;
+                 "bool" | "char" | "void" | "ProgramRef" | string_type 
 
-compound_type = array_type | pointer_type | option_type | result_type ;
+compound_type = array_type | pointer_type | option_type | result_type 
 
-string_type = "str" "<" integer_literal ">" ;
+string_type = "str" "<" integer_literal ">" 
 
-array_type = "[" type_annotation ";" integer_literal "]" ;
-pointer_type = "*" [ "const" | "mut" ] type_annotation ;
-option_type = "Option_" type_annotation ;
-result_type = "Result_" type_annotation "_" type_annotation ;
+array_type = "[" type_annotation "" integer_literal "]" 
+pointer_type = "*" [ "const" | "mut" ] type_annotation 
+option_type = "Option_" type_annotation 
+result_type = "Result_" type_annotation "_" type_annotation 
 
 (* Literals *)
 literal = integer_literal | string_literal | char_literal | boolean_literal | 
-          array_literal | null_literal ;
+          array_literal | null_literal 
 
-integer_literal = decimal_literal | hex_literal | octal_literal | binary_literal ;
-decimal_literal = digit { digit } ;
-hex_literal = "0x" hex_digit { hex_digit } ;
-octal_literal = "0o" octal_digit { octal_digit } ;
-binary_literal = "0b" binary_digit { binary_digit } ;
+integer_literal = decimal_literal | hex_literal | octal_literal | binary_literal 
+decimal_literal = digit { digit } 
+hex_literal = "0x" hex_digit { hex_digit } 
+octal_literal = "0o" octal_digit { octal_digit } 
+binary_literal = "0b" binary_digit { binary_digit } 
 
-string_literal = '"' { string_char } '"' ;
-char_literal = "'" char "'" ;
-boolean_literal = "true" | "false" ;
-array_literal = "[" [ expression { "," expression } ] "]" ;
-null_literal = "null" ;
+string_literal = '"' { string_char } '"' 
+char_literal = "'" char "'" 
+boolean_literal = "true" | "false" 
+array_literal = "[" [ expression { "," expression } ] "]" 
+null_literal = "null" 
 
 (* Import declarations *)
-import_declaration = "import" import_target ";" ;
-import_target = identifier | string_literal ;
+import_declaration = "import" import_target 
+import_target = identifier | string_literal 
 
 (* Identifiers and basic tokens *)
-identifier = letter { letter | digit | "_" } ;
-letter = "a"..."z" | "A"..."Z" ;
-digit = "0"..."9" ;
-hex_digit = digit | "a"..."f" | "A"..."F" ;
-octal_digit = "0"..."7" ;
-binary_digit = "0" | "1" ;
+identifier = letter { letter | digit | "_" } 
+letter = "a"..."z" | "A"..."Z" 
+digit = "0"..."9" 
+hex_digit = digit | "a"..."f" | "A"..."F" 
+octal_digit = "0"..."7" 
+binary_digit = "0" | "1" 
 
 (* String and character content *)
-string_char = any_char_except_quote_and_backslash | escape_sequence ;
-char = any_char_except_quote_and_backslash | escape_sequence ;
-escape_sequence = "\" ( "n" | "t" | "r" | "\" | "'" | '"' | "0" | "x" hex_digit hex_digit ) ;
+string_char = any_char_except_quote_and_backslash | escape_sequence 
+char = any_char_except_quote_and_backslash | escape_sequence 
+escape_sequence = "\" ( "n" | "t" | "r" | "\" | "'" | '"' | "0" | "x" hex_digit hex_digit ) 
 
 (* Comments *)
-comment = line_comment ;
-line_comment = "//" { any_char_except_newline } newline ;
+comment = line_comment 
+line_comment = "//" { any_char_except_newline } newline 
 
 (* Whitespace *)
-whitespace = " " | "\t" | "\n" | "\r" ;
+whitespace = " " | "\t" | "\n" | "\r" 
 ```
 
 ### Grammar Hierarchy Explanation:

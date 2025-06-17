@@ -227,10 +227,10 @@ let test_context_types () =
 ```ocaml
 let test_global_local_scoping () =
   let code = {|
-    map<u32, u64> global_counter : array(256);
-    
-    program test : xdp {
-      map<u32, LocalData> local_map : hash_map(100);
+    map<u32, u64> global_counter : array(256)
+
+program test : xdp {
+    map<u32, LocalData> local_map : hash_map(100)
       
       fn main(ctx: XdpContext) -> XdpAction {
         global_counter[0] = 1;

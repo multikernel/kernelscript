@@ -9,15 +9,15 @@ config demo {
 program simple_logger : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if demo.enable_logging {
-            print("eBPF: Processing packet");
+            print("eBPF: Processing packet")
         }
-        return 2; // XDP_PASS
+        return 2 // XDP_PASS
     }
 }
 
 // Userspace coordinator that also uses print() (no wrapper)
 fn main() -> i32 {
-    print("Userspace: Starting packet logger");
-    print("Userspace: Logger initialized successfully");
-    return 0;
+    print("Userspace: Starting packet logger")
+    print("Userspace: Logger initialized successfully")
+    return 0
 } 

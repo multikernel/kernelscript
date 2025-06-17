@@ -23,8 +23,8 @@ let test_array_literal_basic_types () =
     let program_text = Printf.sprintf {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let arr = %s;
-        return 2;
+        let arr = %s
+        return 2
     }
 }
 |} array_literal in
@@ -50,8 +50,8 @@ let test_array_literal_type_consistency () =
     let program_text = Printf.sprintf {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let arr = %s;
-        return 2;
+        let arr = %s
+        return 2
     }
 }
 |} array_literal in
@@ -77,8 +77,8 @@ let test_array_literal_type_inconsistency () =
     let program_text = Printf.sprintf {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let arr = %s;
-        return 2;
+        let arr = %s
+        return 2
     }
 }
 |} array_literal in
@@ -98,8 +98,8 @@ let test_empty_array_literals () =
   let program_text = {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let empty_arr = [];
-        return 2;
+        let empty_arr = []
+        return 2
     }
 }
 |} in
@@ -115,14 +115,14 @@ program test : xdp {
 let test_array_literals_in_config () =
   let program_text = {|
 config network {
-    blocked_ports: [u16; 4] = [22, 23, 135, 445],
-    allowed_protocols: [u8; 3] = [1, 6, 17],
-    feature_flags: [bool; 2] = [true, false],
+    blocked_ports: u16[4] = [22, 23, 135, 445],
+    allowed_protocols: u8[3] = [1, 6, 17],
+    feature_flags: bool[2] = [true, false],
 }
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 |} in
@@ -139,13 +139,13 @@ let test_array_literal_size_validation () =
   (* Test that array literal size matches declared size *)
   let program_text = {|
 config test_config {
-    ports: [u16; 3] = [80, 443, 8080],
-    flags: [bool; 2] = [true, false],
+    ports: u16[3] = [80, 443, 8080],
+    flags: bool[2] = [true, false],
 }
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 |} in
@@ -162,8 +162,8 @@ let test_nested_array_literals () =
   let program_text = {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let nested = [[1, 2], [3, 4]];
-        return 2;
+        let nested = [[1, 2], [3, 4]]
+        return 2
     }
 }
 |} in
@@ -181,8 +181,8 @@ let test_large_array_literals () =
   let program_text = Printf.sprintf {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let large_arr = [%s];
-        return 2;
+        let large_arr = [%s]
+        return 2
     }
 }
 |} large_array in
@@ -199,9 +199,9 @@ let test_array_literal_ir_generation () =
   let program_text = {|
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        let numbers = [1, 2, 3, 4];
-        let flags = [true, false];
-        return 2;
+        let numbers = [1, 2, 3, 4]
+        let flags = [true, false]
+        return 2
     }
 }
 |} in

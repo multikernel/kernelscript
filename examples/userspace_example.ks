@@ -1,6 +1,6 @@
 program packet_monitor : xdp {
     fn main(ctx: u32) -> u32 {
-        return 2; // XDP_PASS
+        return 2 // XDP_PASS
     }
 }
 
@@ -18,17 +18,17 @@ struct Config {
 
 fn main() -> i32 {
     // Load and attach the packet monitor program
-    print("Loading packet monitor program");
+    print("Loading packet monitor program")
     
     // TODO: Add proper argument parsing and program loading
     
-    return 0;
+    return 0
 }
 
 fn get_packet_stats() -> u32 {
-    return 0;
+    return 0
 }
 
 fn update_config() -> u32 {
-    return 0;
+    return 0
 } 

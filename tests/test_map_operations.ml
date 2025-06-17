@@ -257,12 +257,12 @@ let test_delete_statement_codegen_validation () =
 let test_delete_statement_end_to_end () =
   let program_code = {|
     program test_delete : xdp {
-      map<u32, u64> test_map : HashMap(1024);
+      map<u32, u64> test_map : HashMap(1024)
       
       fn main(ctx: XdpContext) -> u32 {
-        let key: u32 = 42;
-        delete test_map[key];
-        return 0;
+        let key: u32 = 42
+        delete test_map[key]
+        return 0
       }
     }
   |} in

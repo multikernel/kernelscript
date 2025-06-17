@@ -69,12 +69,12 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -116,12 +116,12 @@ config security {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -155,18 +155,18 @@ fn main() -> i32 {
 let test_config_with_arrays () =
   let program_text = {|
 config network {
-    blocked_ports: [u16; 4] = [22, 23, 135, 445],
-    allowed_ips: [u32; 2] = [192168001001, 192168001002],
+    blocked_ports: u16[4] = [22, 23, 135, 445],
+    allowed_ips: u32[2] = [192168001001, 192168001002],
 }
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    return 0;
+    return 0
 }
 |} in
   try
@@ -190,13 +190,13 @@ config test_config {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
 fn main() -> i32 {
-    let prog_handle = load_program(test);  // This will cause BPF functions to be generated
-    return 0;
+    let prog_handle = load_program(test)  // This will cause BPF functions to be generated
+    return 0
 }
 |} in
   try
@@ -222,7 +222,7 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
@@ -232,9 +232,9 @@ struct Args {
 
 fn main(args: Args) -> i32 {
     if args.enable_logging > 0 {
-        network.enable_logging = true;
+        network.enable_logging = true
     }
-    return 0;
+    return 0
 }
 |} in
   try
@@ -260,14 +260,14 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        network.enable_logging = false;  // This should cause a type error
-        return 2;
+        network.enable_logging = false  // This should cause a type error
+        return 2
     }
 }
 
 fn main() -> i32 {
-    network.enable_logging = true;  // This should be allowed
-    return 0;
+    network.enable_logging = true  // This should be allowed
+    return 0
 }
 |} in
   try
@@ -294,15 +294,15 @@ config network {
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if network.enable_logging {  // This should be allowed
-            return 2;
+            return 2
         }
-        return 1;
+        return 1
     }
 }
 
 fn main() -> i32 {
-    network.enable_logging = true;  // This should be allowed
-    return 0;
+    network.enable_logging = true  // This should be allowed
+    return 0
 }
 |} in
   try

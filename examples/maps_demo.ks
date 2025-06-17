@@ -1,9 +1,9 @@
 // This example demonstrates the complete eBPF map type system
 
 // Type aliases for clarity
-type IpAddress = u32;
-type Counter = u64;
-type PacketSize = u16;
+type IpAddress = u32
+type Counter = u64
+type PacketSize = u16
 
 // Struct for packet statistics
 struct PacketStats {
@@ -42,19 +42,19 @@ program packet_analyzer : xdp {
   
   fn main(ctx: XdpContext) -> XdpAction {
     // Get packet information
-    let src_ip: IpAddress = get_src_ip(ctx);
-    let packet_len: PacketSize = get_packet_len(ctx);
+    let src_ip: IpAddress = get_src_ip(ctx)
+    let packet_len: PacketSize = get_packet_len(ctx)
     
     // Update CPU counter
-    let cpu_id = get_cpu_id();
+    let cpu_id = get_cpu_id()
     cpu_counters[cpu_id] = cpu_counters[cpu_id] + 1;
     
     // Update IP statistics
-    let stats = ip_stats[src_ip];
+    let stats = ip_stats[src_ip]
     if stats != null {
-      stats.count = stats.count + 1;
-      stats.total_bytes = stats.total_bytes + packet_len;
-      stats.last_seen = get_timestamp();
+      stats.count = stats.count + 1
+      stats.total_bytes = stats.total_bytes + packet_len
+      stats.last_seen = get_timestamp()
       ip_stats[src_ip] = stats;
     } else {
       let new_stats = PacketStats {
@@ -66,7 +66,7 @@ program packet_analyzer : xdp {
     }
     
     // Check recent connections
-    let recent = recent_connections[src_ip];
+    let recent = recent_connections[src_ip]
     if recent != null {
       // Log repeated connection
       event_log[0] = 1;
@@ -75,24 +75,24 @@ program packet_analyzer : xdp {
     // Update local state
     local_state[0] = local_state[0] + 1;
     
-    return XDP_PASS;
+    return XDP_PASS
   };
   
   // Helper functions (would be implemented in stdlib)
   fn get_src_ip(ctx: XdpContext) -> IpAddress {
-    return 0x7f000001; // 127.0.0.1 for demo
+    return 0x7f000001 // 127.0.0.1 for demo
   };
   
   fn get_packet_len(ctx: XdpContext) -> PacketSize {
-    return 64; // Demo packet size
+    return 64 // Demo packet size
   };
   
   fn get_cpu_id() -> u32 {
-    return 0; // Demo CPU ID
+    return 0 // Demo CPU ID
   };
   
   fn get_timestamp() -> u64 {
-    return 1234567890; // Demo timestamp
+    return 1234567890 // Demo timestamp
   };
 }
 
@@ -105,21 +105,21 @@ program traffic_shaper : tc {
   };
   
   fn main(ctx: TcContext) -> TcAction {
-    let cpu = get_cpu_id();
-    let bytes = get_packet_len(ctx);
+    let cpu = get_cpu_id()
+    let bytes = get_packet_len(ctx)
     
     // Update bandwidth usage
     bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes;
     
     // Simple rate limiting logic
     if bandwidth_usage[cpu] > 1000000 {
-      return TC_ACT_SHOT;
+      return TC_ACT_SHOT
     };
     
-    return TC_ACT_OK;
+    return TC_ACT_OK
   };
   
   fn get_packet_len(ctx: TcContext) -> u64 {
-    return 128; // Demo packet size
+    return 128 // Demo packet size
   };
 } 

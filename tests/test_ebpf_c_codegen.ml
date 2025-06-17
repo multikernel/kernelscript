@@ -165,7 +165,7 @@ let test_literal_map_operations () =
 let test_function_generation () =
   let ctx = create_c_context () in
   
-  (* Create a simple function: return 42; *)
+  (* Create a simple function: return 42 *)
   let return_val = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in

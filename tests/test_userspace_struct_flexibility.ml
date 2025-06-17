@@ -41,11 +41,11 @@ let generate_userspace_code_from_program program_text filename =
 (** Test 1: Ensure global function main works with custom struct name "ServerConfig" *)
 let test_global_function_main_with_different_struct_name () =
   let program_text = {|
-map<u32, u64> server_stats : HashMap(32);
+map<u32, u64> server_stats : HashMap(32)
 
 program server_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
@@ -57,9 +57,9 @@ struct ServerConfig {
 
 fn main(settings: ServerConfig) -> i32 {
     if settings.enable_logging > 0 {
-        return settings.port_number;
+        return settings.port_number
     }
-    return 0;
+    return 0
 }
 |} in
   
@@ -108,11 +108,11 @@ fn main(settings: ServerConfig) -> i32 {
 (** Test 2: Ensure global function main works with single-letter struct name *)
 let test_global_function_main_with_minimal_struct_name () =
   let program_text = {|
-map<u32, u64> minimal_map : HashMap(8);
+map<u32, u64> minimal_map : HashMap(8)
 
 program minimal_prog : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
@@ -122,7 +122,7 @@ struct X {
 }
 
 fn main(x: X) -> i32 {
-    return x.a + x.b;
+    return x.a + x.b
 }
 |} in
   
@@ -159,11 +159,11 @@ fn main(x: X) -> i32 {
 (** Test 3: Ensure compilation and validation still works with custom struct names *)
 let test_global_function_main_validation_with_custom_struct () =
   let program_text = {|
-map<u32, u64> validation_map : HashMap(16);
+map<u32, u64> validation_map : HashMap(16)
 
 program validation_prog : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return 2;
+        return 2
     }
 }
 
@@ -174,9 +174,9 @@ struct CustomArgs {
 
 fn main(custom_args: CustomArgs) -> i32 {
     if custom_args.debug_level > 0 {
-        return 1;
+        return 1
     }
-    return 0;
+    return 0
 }
 |} in
   
