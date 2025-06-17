@@ -198,19 +198,35 @@ let is_visible table symbol =
       | [], _ -> true  (* global private symbols are visible *)
       | _ -> false
 
+(** Process enum values with automatic numbering *)
+let process_enum_values values =
+  let rec process_values acc current_value = function
+    | [] -> List.rev acc
+    | (const_name, None) :: rest ->
+        (* Auto-assign current value *)
+        let processed_value = (const_name, Some current_value) in
+        process_values (processed_value :: acc) (current_value + 1) rest
+    | (const_name, Some explicit_value) :: rest ->
+        (* Use explicit value and update current value *)
+        let processed_value = (const_name, Some explicit_value) in
+        process_values (processed_value :: acc) (explicit_value + 1) rest
+  in
+  process_values [] 0 values
+
 (** Add type definition to symbol table *)
 let add_type_def table type_def pos =
   match type_def with
   | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
       add_symbol table name (TypeDef type_def) Public pos;
       
-      (* For enums, also add enum constants *)
+      (* For enums, also add enum constants with auto-value assignment *)
       (match type_def with
        | EnumDef (enum_name, values) ->
+           let processed_values = process_enum_values values in
            List.iter (fun (const_name, value) ->
              let full_name = enum_name ^ "::" ^ const_name in
              add_symbol table full_name (EnumConstant (enum_name, value)) Public pos
-           ) values
+           ) processed_values
        | _ -> ())
 
 (** Add map declaration to symbol table *)

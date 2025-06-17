@@ -170,6 +170,10 @@ let rec unify_types t1 t2 =
   (* Program reference types *)
   | ProgramRef pt1, ProgramRef pt2 when pt1 = pt2 -> Some (ProgramRef pt1)
   
+  (* Enum-integer compatibility: enums are represented as u32 *)
+  | Enum _, U32 | U32, Enum _ -> Some U32
+  | Enum enum_name, Enum other_name when enum_name = other_name -> Some (Enum enum_name)
+  
   (* No unification possible *)
   | _ -> None
 

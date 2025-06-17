@@ -57,11 +57,11 @@ program packet_analyzer : xdp {
   fn classify_protocol(proto: u8) -> ProtocolType {
     // Type checker validates enum constant access
     if proto == 6 {
-      return some ProtocolType::TCP;
+      return some PROTOCOL_TYPE_TCP;
     } else if proto == 17 {
-      return some ProtocolType::UDP;
+      return some PROTOCOL_TYPE_UDP;
     } else if proto == 1 {
-      return some ProtocolType::ICMP;
+      return some PROTOCOL_TYPE_ICMP;
     }
     return none;
   }
@@ -84,16 +84,16 @@ program packet_analyzer : xdp {
     let proto_type = classify_protocol(header.protocol);
     
     match proto_type {
-      some ProtocolType::TCP -> {
+      some PROTOCOL_TYPE_TCP -> {
         // Type checker validates field access on struct types
         if header.length > 1500 {
-          return FilterDecision::Block;
+          return FILTER_DECISION_BLOCK;
         }
-        return FilterDecision::Allow;
+        return FILTER_DECISION_ALLOW;
       },
-      some ProtocolType::UDP -> return FilterDecision::Allow,
-      some ProtocolType::ICMP -> return FilterDecision::Log,
-      none -> return FilterDecision::Block
+      some PROTOCOL_TYPE_UDP -> return FILTER_DECISION_ALLOW,
+      some PROTOCOL_TYPE_ICMP -> return FILTER_DECISION_LOG,
+      none -> return FILTER_DECISION_BLOCK
     }
   }
   
@@ -109,18 +109,18 @@ program packet_analyzer : xdp {
         
         // Type checker validates match expressions and enum types
         match decision {
-          FilterDecision::Allow -> return XdpAction::Pass,
-          FilterDecision::Block -> return XdpAction::Drop,
-          FilterDecision::Log -> {
+          FILTER_DECISION_ALLOW -> return XDP_PASS,
+          FILTER_DECISION_BLOCK -> return XDP_DROP,
+          FILTER_DECISION_LOG -> {
             // Type checker validates built-in function signatures
             bpf_trace_printk("Logging packet", 14);
-            return XdpAction::Pass;
+            return XDP_PASS;
           }
         }
       },
       none -> {
         // Type checker validates return type compatibility
-        return XdpAction::Drop;
+        return XDP_DROP;
       }
     }
   }

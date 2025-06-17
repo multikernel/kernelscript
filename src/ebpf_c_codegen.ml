@@ -196,6 +196,101 @@ let collect_string_sizes_from_multi_program ir_multi_prog =
     acc @ main_sizes @ other_sizes
   ) [] ir_multi_prog.programs
 
+(** Collect enum definitions from IR types *)
+let collect_enum_definitions ir_multi_prog =
+  let enum_map = Hashtbl.create 16 in
+  
+  let rec collect_from_type = function
+    | IREnum (name, values) -> Hashtbl.replace enum_map name values
+    | IRPointer (inner_type, _) -> collect_from_type inner_type
+    | IRArray (inner_type, _, _) -> collect_from_type inner_type
+    | IROption inner_type -> collect_from_type inner_type
+    | IRResult (ok_type, err_type) -> 
+        collect_from_type ok_type; collect_from_type err_type
+    | _ -> ()
+  in
+  
+  let collect_from_map_def map_def =
+    collect_from_type map_def.map_key_type;
+    collect_from_type map_def.map_value_type
+  in
+  
+  let collect_from_value ir_val =
+    collect_from_type ir_val.val_type
+  in
+  
+  let collect_from_expr ir_expr =
+    match ir_expr.expr_desc with
+    | IRValue ir_val -> collect_from_value ir_val
+    | IRBinOp (left, _, right) -> 
+        collect_from_value left; collect_from_value right
+    | IRUnOp (_, ir_val) -> collect_from_value ir_val
+    | IRCast (ir_val, target_type) -> 
+        collect_from_value ir_val; collect_from_type target_type
+    | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+  in
+  
+  let rec collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRAssign (dest_val, expr) -> 
+        collect_from_value dest_val; collect_from_expr expr
+    | IRCall (_, args, ret_opt) ->
+        List.iter collect_from_value args;
+        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+    | IRMapLoad (map_val, key_val, dest_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
+    | IRMapStore (map_val, key_val, value_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
+    | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+        collect_from_value cond_val;
+        List.iter collect_from_instr then_instrs;
+        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | _ -> ()
+  in
+  
+  let collect_from_function ir_func =
+    List.iter (fun block ->
+      List.iter collect_from_instr block.instructions
+    ) ir_func.basic_blocks
+  in
+  
+  (* Collect from global maps *)
+  List.iter collect_from_map_def ir_multi_prog.global_maps;
+  
+  (* Collect from all programs *)
+  List.iter (fun ir_prog ->
+    List.iter collect_from_map_def ir_prog.local_maps;
+    collect_from_function ir_prog.main_function;
+    List.iter collect_from_function ir_prog.functions
+  ) ir_multi_prog.programs;
+  
+  enum_map
+
+(** Generate enum definition *)
+let generate_enum_definition ctx enum_name enum_values =
+  emit_line ctx (sprintf "enum %s {" enum_name);
+  increase_indent ctx;
+  let value_count = List.length enum_values in
+  List.iteri (fun i (const_name, value) ->
+    let line = sprintf "%s = %d%s" const_name value (if i = value_count - 1 then "" else ",") in
+    emit_line ctx line
+  ) enum_values;
+  decrease_indent ctx;
+  emit_line ctx "};";
+  emit_blank_line ctx
+
+(** Generate enum definitions *)
+let generate_enum_definitions ctx ir_multi_prog =
+  let enum_map = collect_enum_definitions ir_multi_prog in
+  if Hashtbl.length enum_map > 0 then (
+    emit_line ctx "/* Enum definitions */";
+    Hashtbl.iter (fun enum_name enum_values ->
+      generate_enum_definition ctx enum_name enum_values
+    ) enum_map;
+    emit_blank_line ctx
+  )
+
 (** Generate string type definitions *)
 
 let generate_string_typedefs ctx ir_multi_prog =
@@ -1148,6 +1243,9 @@ let generate_c_program ?config_declarations ir_prog =
   } in
   generate_string_typedefs ctx temp_multi_prog;
   
+  (* Generate enum definitions *)
+  generate_enum_definitions ctx temp_multi_prog;
+  
   (* Generate config maps if provided *)
   begin match config_declarations with
   | Some configs -> List.iter (generate_config_map_definition ctx) configs
@@ -1244,6 +1342,12 @@ let compile_multi_to_c_with_analysis ir_multi_program
   
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_program;
+  
+  (* Generate enum definitions *)
+  generate_enum_definitions ctx ir_multi_program;
+  
+  (* Generate enum definitions *)
+  generate_enum_definitions ctx ir_multi_program;
   
   emit_line ctx "/* Enhanced Multi-Program eBPF System */";
   emit_line ctx (sprintf "/* Programs: %d, Global Maps: %d */" 

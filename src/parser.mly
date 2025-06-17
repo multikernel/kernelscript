@@ -58,6 +58,9 @@
 %type <Ast.struct_def> struct_declaration
 %type <(string * Ast.bpf_type) list> struct_fields
 %type <string * Ast.bpf_type> struct_field
+%type <Ast.type_def> enum_declaration
+%type <(string * int option) list> enum_variants
+%type <string * int option> enum_variant
 %type <Ast.map_type> map_type
 
 %type <Ast.map_attribute list> map_attributes
@@ -120,6 +123,7 @@ declaration:
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
   | struct_declaration { StructDecl $1 }
+  | enum_declaration { TypeDef $1 }
 
 /* Config declaration: config name { config_fields } */
 config_declaration:
@@ -464,6 +468,19 @@ struct_fields:
 struct_field:
   | IDENTIFIER COLON bpf_type { ($1, $3) }
 
+/* Enum declaration: enum name { variants } */
+enum_declaration:
+  | ENUM IDENTIFIER LBRACE enum_variants RBRACE
+    { make_enum_def $2 $4 }
 
+enum_variants:
+  | /* empty */ { [] }
+  | enum_variant { [$1] } 
+  | enum_variant COMMA enum_variants { $1 :: $3 }
+  | enum_variant COMMA { [$1] }  /* Allow trailing comma */
+
+enum_variant:
+  | IDENTIFIER { ($1, None) }  /* Auto-assigned value */
+  | IDENTIFIER ASSIGN INT { ($1, Some $3) }  /* Explicit value */
 
 %% 

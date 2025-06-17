@@ -48,7 +48,7 @@ map<u32, u64> counters : array(256);
 program monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         counters[0] += 1;  // Access shared map
-        return XdpAction::Pass;
+        return XDP_PASS;
     }
 }
 
@@ -135,7 +135,7 @@ program network_monitor : xdp {
             if network.enable_logging {
                 bpf_printk("Packet too large: %d", packet.size);
             }
-            return XdpAction::Drop;
+            return XDP_DROP;
         }
         
         // Check blocked ports from network config
@@ -143,17 +143,17 @@ program network_monitor : xdp {
             let tcp = packet.tcp_header();
             for i in 0..5 {
                 if tcp.dst_port == network.blocked_ports[i] {
-                    return XdpAction::Drop;
+                    return XDP_DROP;
                 }
             }
         }
         
         // Use security config for additional checks
         if security.enable_strict_mode && security.current_threat_level > security.threat_threshold {
-            return XdpAction::Drop;
+            return XDP_DROP;
         }
         
-        return XdpAction::Pass;
+        return XDP_PASS;
     }
 }
 ```
@@ -195,7 +195,7 @@ program packet_analyzer : xdp {
             monitoring.packets_processed += 1;
             update_stats(ctx);
         }
-        return XdpAction::Pass;
+        return XDP_PASS;
     }
     
     fn update_stats(ctx: XdpContext) {
@@ -213,7 +213,9 @@ program flow_tracker : tc {
             let key = ctx.hash() % 1024;
             global_stats[key].bytes += ctx.packet_size();
         }
-        return TcAction::Pass;
+        return TC_ACT_OK;
+    }
+}
     }
 }
 
@@ -440,13 +442,24 @@ struct PacketHeader {
     flags: u16,
 }
 
-// Enumerations
+// Enumerations (C-style naming)
 enum XdpAction {
-    Aborted = 0,
-    Drop = 1,
-    Pass = 2,
-    Tx = 3,
-    Redirect = 4,
+    XDP_ABORTED = 0,
+    XDP_DROP = 1,
+    XDP_PASS = 2,
+    XDP_TX = 3,
+    XDP_REDIRECT = 4,
+}
+
+enum TcAction {
+    TC_ACT_UNSPEC = -1,
+    TC_ACT_OK = 0,
+    TC_ACT_SHOT = 2,
+    TC_ACT_PIPE = 3,
+    TC_ACT_STOLEN = 4,
+    TC_ACT_QUEUED = 5,
+    TC_ACT_REPEAT = 6,
+    TC_ACT_REDIRECT = 7,
 }
 
 // Simple option type for null safety
@@ -731,101 +744,7 @@ program consumer : kprobe("sys_write") {
 }
 ```
 
-### 5.4 Namespace Organization (Optional)
-
-For better organization, you can group related global maps in namespaces:
-
-```kernelscript
-// Namespace for network monitoring maps
-namespace network {
-    map<FlowKey, FlowStats> flows : hash_map(10000);
-    map<u32, InterfaceStats> interfaces : array(256);
-    map<PacketEvent> events : ring_buffer(1024 * 1024);
-}
-
-// Namespace for security monitoring maps
-namespace security {
-    map<u32, ThreatScore> threat_scores : hash_map(10000);
-    map<SecurityEvent> alerts : ring_buffer(512 * 1024);
-    map<ConfigKey, ConfigValue> policy : array(32);
-}
-
-program network_monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        let flow_key = extract_flow_key(ctx);
-        
-        // Access namespaced global maps
-        network::flows[flow_key] += 1;
-        network::interfaces[ctx.ingress_ifindex()].packets += 1;
-        
-        return XdpAction::Pass;
-    }
-    
-}
-}
-
-program security_monitor : lsm("socket_connect") {
-    fn main(ctx: LsmContext) -> i32 {
-        let flow_key = extract_flow_key_from_socket(ctx);
-        
-        // Check both network and security namespaces
-        let flow_stats = network::flows[flow_key];
-        if flow_stats != null {
-            let threat_score = calculate_threat_score(flow_stats);
-            security::threat_scores[flow_key.src_ip] = threat_score;
-            
-            let threshold = security::policy[ConfigKey::ThreatThreshold];
-            if threat_score > threshold {
-                let alert = SecurityEvent::HighThreatDetected {
-                    flow_key: flow_key,
-                    threat_score: threat_score,
-                };
-                security::alerts.submit(alert);
-                return -EPERM;
-            }
-        }
-        
-        return 0;
-    }
-    
-}
-}
-
-// Userspace coordination for namespace-organized programs
-fn main() -> i32 {
-    // Load and coordinate programs
-    let network_handle = load_program(network_monitor);
-    let security_handle = load_program(security_monitor);
-    
-    // Attach programs
-    attach_program(network_handle, "eth0", 0);
-    attach_program(security_handle, "socket_connect", 0);
-    
-    print("Network and security monitoring active");
-    
-    // Monitor for threats
-    while true {
-        process_security_events();
-        sleep(1000);
-    }
-    
-    return 0;
-}
-
-fn process_security_events() {
-    // Process events from security namespace
-    while let Some(alert) = security::alerts.read() {
-        match alert.event_type {
-            SecurityEvent::HighThreatDetected => {
-                print("HIGH THREAT DETECTED: ", alert.flow_key);
-                // Take coordinated action
-            }
-        }
-    }
-}
-```
-
-### 5.5 Map Examples
+### 5.4 Map Examples
 ```kernelscript
 // Global maps accessible by all programs
 map<u32, PacketStats> packet_stats : hash_map(1024) {
@@ -959,17 +878,17 @@ while condition && iterations < MAX_ITERATIONS {
 KernelScript provides modern error handling through `throw` and `catch` statements that compile to efficient C error checking code. Error handling uses integer values for maximum performance and compatibility with both eBPF and userspace environments.
 
 ```kernelscript
-// Error codes as simple enums or constants
+// Error codes as simple enums or constants (C-style naming)
 enum ParseError {
-    TooShort = 1,
-    InvalidVersion = 2,
-    BadChecksum = 3,
+    PARSE_ERROR_TOO_SHORT = 1,
+    PARSE_ERROR_INVALID_VERSION = 2,
+    PARSE_ERROR_BAD_CHECKSUM = 3,
 }
 
 enum NetworkError {
-    AllocationFailed = 10,
-    MapUpdateFailed = 11,
-    RateLimitExceeded = 12,
+    NETWORK_ERROR_ALLOCATION_FAILED = 10,
+    NETWORK_ERROR_MAP_UPDATE_FAILED = 11,
+    NETWORK_ERROR_RATE_LIMITED = 12,
 }
 
 // Or use simple constants
@@ -979,12 +898,12 @@ const ERROR_RATE_LIMITED = 101;
 // Functions can throw integer error codes
 fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
     if len < 20 {
-        throw ParseError::TooShort;  // Throws integer value 1
+        throw PARSE_ERROR_TOO_SHORT;  // Throws integer value 1
     }
     
     let header = cast_to_ip_header(packet);
     if header.version != 4 {
-        throw ParseError::InvalidVersion;  // Throws integer value 2
+        throw PARSE_ERROR_INVALID_VERSION;  // Throws integer value 2
     }
     
     return header;
@@ -995,25 +914,25 @@ fn process_packet(ctx: XdpContext) -> XdpAction {
     try {
         let packet = get_packet(ctx);
         if packet == null {
-            throw NetworkError::AllocationFailed;  // Throws integer value 10
+            throw NETWORK_ERROR_ALLOCATION_FAILED;  // Throws integer value 10
         }
         
         let header = parse_ip_header(packet.data, packet.len);
         update_flow_stats(header);
         
-        return XdpAction::Pass;
+        return XDP_PASS;
         
-    } catch 1 {  // ParseError::TooShort
-        return XdpAction::Drop;
+    } catch 1 {  // PARSE_ERROR_TOO_SHORT
+        return XDP_DROP;
         
-    } catch 2 {  // ParseError::InvalidVersion
-        return XdpAction::Drop;
+    } catch 2 {  // PARSE_ERROR_INVALID_VERSION
+        return XDP_DROP;
         
-    } catch 10 {  // NetworkError::AllocationFailed
-        return XdpAction::Aborted;
+    } catch 10 {  // NETWORK_ERROR_ALLOCATION_FAILED
+        return XDP_ABORTED;
         
     } catch _ {  // Catch-all for any other error
-        return XdpAction::Aborted;
+        return XDP_ABORTED;
     }
 }
 
@@ -1829,7 +1748,7 @@ fn print_summary_stats() {
 (* Top-level structure *)
 kernelscript_file = { global_declaration } ;
 
-global_declaration = config_declaration | map_declaration | type_declaration | namespace_declaration | 
+global_declaration = config_declaration | map_declaration | type_declaration | 
                     program_declaration | function_declaration | struct_declaration | 
                     bindings_declaration | import_declaration ;
 
@@ -1879,9 +1798,7 @@ bindings_config_item = identifier ":" literal "," ;
    2. fn main(args: CustomStruct) -> i32 { ... }  // Custom argument struct, automatically parsed from command line
 *)
 
-(* Namespace declarations *)
-namespace_declaration = "namespace" identifier "{" { namespace_item } "}" ;
-namespace_item = map_declaration | type_declaration ;
+
 
 (* Type declarations *)
 type_declaration = "type" identifier "=" type_definition ";" ;

@@ -75,7 +75,7 @@ program packet_analyzer : xdp {
     // Update local state
     local_state[0] = local_state[0] + 1;
     
-    return XdpAction::Pass;
+    return XDP_PASS;
   };
   
   // Helper functions (would be implemented in stdlib)
@@ -113,10 +113,10 @@ program traffic_shaper : tc {
     
     // Simple rate limiting logic
     if bandwidth_usage[cpu] > 1000000 {
-      return TcAction::Drop;
+      return TC_ACT_SHOT;
     };
     
-    return TcAction::Ok;
+    return TC_ACT_OK;
   };
   
   fn get_packet_len(ctx: TcContext) -> u64 {

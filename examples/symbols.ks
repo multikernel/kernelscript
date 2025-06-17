@@ -55,9 +55,9 @@ program packet_filter : xdp {
         
         // Use global enum (visible from here)
         if info.protocol == 6 {
-            return XdpAction::Pass;
-        } else {
-            return XdpAction::Drop;
+                    return XDP_PASS;
+    } else {
+        return XDP_DROP;
         }
     }
     
@@ -70,7 +70,7 @@ program packet_filter : xdp {
         let local_var: u32 = 42;
         
         // Block scope demonstration
-        if result == XdpAction::Pass {
+        if result == XDP_PASS {
             let block_var: u32 = local_var + 1;
             global_stats[1] = block_var;
         }
@@ -107,7 +107,7 @@ program traffic_monitor : tc {
         };
         log_packet(info);
         
-        return TcAction::Ok;
+        return TC_ACT_OK;
     }
     
     fn main(ctx: TcContext) -> TcAction {

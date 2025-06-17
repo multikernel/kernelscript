@@ -77,7 +77,7 @@ program traffic_monitor : xdp {
             percpu_data[cpu_id] = new_data;
         }
         
-        return XdpAction::Pass;
+        return XDP_PASS;
     }
 }
 
@@ -119,7 +119,7 @@ program stats_updater : tc {
             }
         }
         
-        return TcAction::Ok;
+        return TC_ACT_OK;
     }
 }
 

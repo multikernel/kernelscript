@@ -177,6 +177,91 @@ let collect_string_sizes_from_userspace_program userspace_prog =
     acc @ (collect_string_sizes_from_ir_function func)
   ) [] userspace_prog.userspace_functions
 
+(** Collect enum definitions from IR types *)
+let collect_enum_definitions_from_userspace userspace_prog =
+  let enum_map = Hashtbl.create 16 in
+  
+  let rec collect_from_type = function
+    | IREnum (name, values) -> Hashtbl.replace enum_map name values
+    | IRPointer (inner_type, _) -> collect_from_type inner_type
+    | IRArray (inner_type, _, _) -> collect_from_type inner_type
+    | IROption inner_type -> collect_from_type inner_type
+    | IRResult (ok_type, err_type) -> 
+        collect_from_type ok_type; collect_from_type err_type
+    | _ -> ()
+  in
+  
+  let collect_from_value ir_val =
+    collect_from_type ir_val.val_type
+  in
+  
+  let collect_from_expr ir_expr =
+    match ir_expr.expr_desc with
+    | IRValue ir_val -> collect_from_value ir_val
+    | IRBinOp (left, _, right) -> 
+        collect_from_value left; collect_from_value right
+    | IRUnOp (_, ir_val) -> collect_from_value ir_val
+    | IRCast (ir_val, target_type) -> 
+        collect_from_value ir_val; collect_from_type target_type
+    | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+  in
+  
+  let rec collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRAssign (dest_val, expr) -> 
+        collect_from_value dest_val; collect_from_expr expr
+    | IRCall (_, args, ret_opt) ->
+        List.iter collect_from_value args;
+        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+    | IRMapLoad (map_val, key_val, dest_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
+    | IRMapStore (map_val, key_val, value_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
+    | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+        collect_from_value cond_val;
+        List.iter collect_from_instr then_instrs;
+        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | _ -> ()
+  in
+  
+  let collect_from_function ir_func =
+    List.iter (fun block ->
+      List.iter collect_from_instr block.instructions
+    ) ir_func.basic_blocks
+  in
+  
+  (* Collect from struct fields *)
+  List.iter (fun struct_def ->
+    List.iter (fun (_field_name, field_type) ->
+      collect_from_type field_type
+    ) struct_def.struct_fields
+  ) userspace_prog.userspace_structs;
+  
+  (* Collect from all userspace functions *)
+  List.iter collect_from_function userspace_prog.userspace_functions;
+  
+  enum_map
+
+(** Generate enum definition *)
+let generate_enum_definition_userspace enum_name enum_values =
+  let value_count = List.length enum_values in
+  let enum_variants = List.mapi (fun i (const_name, value) ->
+    let line = sprintf "    %s = %d%s" const_name value (if i = value_count - 1 then "" else ",") in
+    line
+  ) enum_values in
+  sprintf "enum %s {\n%s\n};" enum_name (String.concat "\n" enum_variants)
+
+(** Generate all enum definitions for userspace *)
+let generate_enum_definitions_userspace userspace_prog =
+  let enum_map = collect_enum_definitions_from_userspace userspace_prog in
+  if Hashtbl.length enum_map > 0 then (
+    let enum_defs = Hashtbl.fold (fun enum_name enum_values acc ->
+      (generate_enum_definition_userspace enum_name enum_values) :: acc
+    ) enum_map [] in
+    "/* Enum definitions */\n" ^ (String.concat "\n\n" enum_defs) ^ "\n\n"
+  ) else ""
+
 (** Generate string type definitions *)
 let generate_string_typedefs _string_sizes =
   (* For userspace, we don't need complex string typedefs - just use char arrays *)
@@ -932,6 +1017,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
   let string_typedefs = generate_string_typedefs string_sizes in
   let string_helpers = generate_string_helpers string_sizes in
   
+  (* Generate enum definitions *)
+  let enum_definitions = generate_enum_definitions_userspace userspace_prog in
+  
   (* Collect function usage information from all functions *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function func in
@@ -1108,10 +1196,12 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 %s
 
 %s
+
+%s
 %s
 
 %s
-|} includes string_typedefs string_helpers structs all_fd_declarations map_operation_functions getopt_parsing_code bpf_helper_functions functions
+|} includes string_typedefs string_helpers enum_definitions structs all_fd_declarations map_operation_functions getopt_parsing_code bpf_helper_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =

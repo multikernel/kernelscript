@@ -72,7 +72,7 @@ program packet_inspector : xdp {
     if action != null {
       return action;
     } else {
-      return FilterAction::Allow;
+      return FILTER_ACTION_ALLOW;
     }
   }
   
@@ -86,7 +86,7 @@ program packet_inspector : xdp {
     }
     
     // Update protocol stats
-    let proto = Protocol::from_u8(info.protocol);
+    let proto = protocol_from_u8(info.protocol);
     if proto != null {
       let stats = protocol_stats[proto];
       if stats != null {
@@ -115,19 +115,19 @@ program packet_inspector : xdp {
         
         // Apply filtering action
         match action {
-          FilterAction::Allow -> return XdpAction::Pass,
-          FilterAction::Block -> return XdpAction::Drop,
-          FilterAction::Log -> {
+          FILTER_ACTION_ALLOW -> return XDP_PASS,
+          FILTER_ACTION_BLOCK -> return XDP_DROP,
+          FILTER_ACTION_LOG -> {
             // Log packet and allow
             ctx.log_packet(info);
-            return XdpAction::Pass;
+            return XDP_PASS;
           },
-          FilterAction::Redirect -> return XdpAction::Redirect
+          FILTER_ACTION_REDIRECT -> return XDP_REDIRECT
         }
       },
       none -> {
         // Failed to parse packet, drop it
-        return XdpAction::Drop;
+        return XDP_DROP;
       }
     }
   }

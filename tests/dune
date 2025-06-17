@@ -192,6 +192,168 @@
  (modules test_return_path_analysis)
  (libraries kernelscript ounit2))
 
+(executable
+ (name test_enum)
+ (modules test_enum)
+ (libraries kernelscript alcotest))
+
+; Test rules for individual execution
+(rule
+ (alias runtest_lexer)
+ (action (run ./test_lexer_simple.exe)))
+
+(rule
+ (alias runtest_ast)
+ (action (run ./test_ast.exe)))
+
+(rule
+ (alias runtest_parser)
+ (action (run ./test_parser.exe)))
+
+(rule
+ (alias runtest_type_checker)
+ (action (run ./test_type_checker.exe)))
+
+(rule
+ (alias runtest_symbol_table)
+ (action (run ./test_symbol_table.exe)))
+
+(rule
+ (alias runtest_maps)
+ (action (run ./test_maps.exe)))
+
+(rule
+ (alias runtest_safety_checker)
+ (action (run ./test_safety_checker.exe)))
+
+(rule
+ (alias runtest_map_operations)
+ (action (run ./test_map_operations.exe)))
+
+(rule
+ (alias runtest_evaluator)
+ (action (run ./test_evaluator.exe)))
+
+(rule
+ (alias runtest_ir)
+ (action (run ./test_ir.exe)))
+
+(rule
+ (alias runtest_ir_analysis)
+ (action (run ./test_ir_analysis.exe)))
+
+(rule
+ (alias runtest_ir_function_system)
+ (action (run ./test_ir_function_system.exe)))
+
+(rule
+ (alias runtest_ebpf_c_codegen)
+ (action (run ./test_ebpf_c_codegen.exe)))
+
+(rule
+ (alias runtest_map_syntax)
+ (action (run ./test_map_syntax.exe)))
+
+(rule
+ (alias runtest_map_assignment)
+ (action (run ./test_map_assignment.exe)))
+
+(rule
+ (alias runtest_map_integration)
+ (action (run ./test_map_integration.exe)))
+
+(rule
+ (alias runtest_userspace)
+ (action (run ./test_userspace.exe)))
+
+(rule
+ (alias runtest_map_flags)
+ (action (run ./test_map_flags.exe)))
+
+(rule
+ (alias runtest_userspace_maps)
+ (action (run ./test_userspace_maps.exe)))
+
+(rule
+ (alias runtest_comment_positions)
+ (action (run ./test_comment_positions.exe)))
+
+(rule
+ (alias runtest_for_statements)
+ (action (run ./test_for_statements.exe)))
+
+(rule
+ (alias runtest_config)
+ (action (run ./test_config.exe)))
+
+(rule
+ (alias runtest_break_continue)
+ (action (run ./test_break_continue.exe)))
+
+(rule
+ (alias runtest_userspace_for_codegen)
+ (action (run ./test_userspace_for_codegen.exe)))
+
+(rule
+ (alias runtest_userspace_statements)
+ (action (run ./test_userspace_statements.exe)))
+
+(rule
+ (alias runtest_return_value_propagation)
+ (action (run ./test_return_value_propagation.exe)))
+
+(rule
+ (alias runtest_stdlib)
+ (action (run ./test_stdlib.exe)))
+
+(rule
+ (alias runtest_config_struct_generation)
+ (action (run ./test_config_struct_generation.exe)))
+
+(rule
+ (alias runtest_array_literals)
+ (action (run ./test_array_literals.exe)))
+
+(rule
+ (alias runtest_config_validation)
+ (action (run ./test_config_validation.exe)))
+
+(rule
+ (alias runtest_userspace_struct_flexibility)
+ (action (run ./test_userspace_struct_flexibility.exe)))
+
+(rule
+ (alias runtest_struct_field_access)
+ (action (run ./test_struct_field_access.exe)))
+
+(rule
+ (alias runtest_program_ref)
+ (action (run ./test_program_ref.exe)))
+
+(rule
+ (alias runtest_string_type)
+ (action (run ./test_string_type.exe)))
+
+(rule
+ (alias runtest_string_codegen)
+ (action (run ./test_string_codegen.exe)))
+
+(rule
+ (alias runtest_error_handling)
+ (action (run ./test_error_handling.exe)))
+
+(rule
+ (alias runtest_string_literal_bugs)
+ (action (run ./test_string_literal_bugs.exe)))
+
+(rule
+ (alias runtest_return_path_analysis)
+ (action (run ./test_return_path_analysis.exe)))
+
+(rule
+ (alias runtest_enum)
+ (action (run ./test_enum.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -244,7 +406,8 @@
   test_config_validation.exe
   test_stdlib.exe
   test_struct_field_access.exe
-  test_error_handling.exe)
+  test_error_handling.exe
+  test_enum.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -261,7 +424,8 @@
    (run ./test_config_validation.exe)
    (run ./test_stdlib.exe)
    (run ./test_struct_field_access.exe)
-   (run ./test_error_handling.exe))))
+   (run ./test_error_handling.exe)
+   (run ./test_enum.exe))))
 
 (rule
  (alias ir-tests)

@@ -34,7 +34,7 @@ program safety_demo : xdp {
     // Safe map operations
     packet_stats[1] = counter;
     
-    return XdpAction::Pass;
+    return XDP_PASS;
   }
   
   // Function demonstrating bounds checking
@@ -49,7 +49,7 @@ program safety_demo : xdp {
     // data_array[10] = 200; // ERROR: index 10 >= size 10
     // data_array[-1] = 300; // ERROR: negative index
     
-    return XdpAction::Pass;
+    return XDP_PASS;
   }
   
   // Function with moderate stack usage
@@ -66,7 +66,7 @@ program safety_demo : xdp {
     // Process data
     buffer[0] = info.protocol;
     
-    return XdpAction::Pass;
+    return XDP_PASS;
   }
   
   // Function that would trigger stack overflow warning
@@ -77,7 +77,7 @@ program safety_demo : xdp {
     
     large_buffer[0] = 1;
     
-    return XdpAction::Pass;
+    return XDP_PASS;
   }
   
   // Function demonstrating array size validation
@@ -94,13 +94,13 @@ program safety_demo : xdp {
     valid_small[5] = 42;
     valid_medium[50] = 255;
     
-    return XdpAction::Pass;
+    return XDP_PASS;
   }
   
   // Main function with comprehensive safety checks
   fn main(ctx: XdpContext) -> XdpAction {
     // Stack usage: minimal for main function
-    let result: XdpAction = XdpAction::Pass;
+    let result: XdpAction = XDP_PASS;
     
     // Call safe functions
     let _ = safe_function(ctx);
