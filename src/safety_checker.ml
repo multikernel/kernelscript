@@ -146,7 +146,22 @@ let check_array_bounds expr =
          | Identifier arr_name, _ ->
              (* Runtime bounds check needed *)
              UnknownBounds arr_name :: errors
-         | _ -> errors)
+         | FieldAccess (_, "data"), Literal (IntLit idx) when idx >= 1500 ->
+             (* Unsafe packet access - large index into packet data *)
+             PointerOutOfBounds ("packet_data") :: errors
+         | _ -> 
+             (* Check sub-expressions *)
+             let errors' = check_expr arr_expr errors in
+             check_expr idx_expr errors')
+    | FieldAccess (ptr_expr, field) ->
+        (match ptr_expr.expr_desc with
+         | Literal (IntLit 0) ->
+             (* Null pointer field access *)
+             NullPointerDereference field :: errors
+         | FieldAccess (_, "data") ->
+             (* Direct packet data field access without bounds check *)
+             PointerOutOfBounds ("packet_field_" ^ field) :: errors
+         | _ -> check_expr ptr_expr errors)
     | FunctionCall (_, args) ->
         List.fold_left (fun acc arg -> check_expr arg acc) errors args
     | BinaryOp (left, _, right) ->
@@ -211,6 +226,9 @@ let check_pointer_safety expr =
     match e.expr_desc with
     | FieldAccess (ptr_expr, _field) ->
         (match ptr_expr.expr_desc with
+         | Literal (IntLit 0) ->
+             (* Direct null pointer dereference *)
+             (valid_ptrs, ("null", "Null pointer dereference") :: invalid_ptrs)
          | Identifier ptr_name ->
              (match ptr_expr.expr_type with
               | Some (Pointer _) ->
@@ -220,13 +238,25 @@ let check_pointer_safety expr =
                   else
                     (valid_ptrs, (ptr_name, "Potential null dereference") :: invalid_ptrs)
               | _ -> (valid_ptrs, invalid_ptrs))
-         | _ -> (valid_ptrs, invalid_ptrs))
+         | _ -> check_expr ptr_expr valid_ptrs invalid_ptrs)
     | FunctionCall (_, args) ->
         List.fold_left (fun (v, i) arg ->
           check_expr arg v i
         ) (valid_ptrs, invalid_ptrs) args
-    | BinaryOp (left, _, right) ->
-        let (v1, i1) = check_expr left valid_ptrs invalid_ptrs in
+    | BinaryOp (left, op, right) ->
+        (* Check for division by zero *)
+        let invalid_ptrs' = match op, right.expr_desc with
+          | Div, Literal (IntLit 0) -> ("division", "Division by zero") :: invalid_ptrs
+          | Mod, Literal (IntLit 0) -> ("modulo", "Modulo by zero") :: invalid_ptrs
+          | _ -> invalid_ptrs
+        in
+        (* Check for integer overflow *)
+        let invalid_ptrs'' = match op, left.expr_desc, right.expr_desc with
+          | Add, Literal (IntLit a), Literal (IntLit b) when a > 0 && b > 0 && a > max_int - b ->
+              ("overflow", "Integer overflow in addition") :: invalid_ptrs'
+          | _ -> invalid_ptrs'
+        in
+        let (v1, i1) = check_expr left valid_ptrs invalid_ptrs'' in
         check_expr right v1 i1
     | UnaryOp (_, expr) ->
         check_expr expr valid_ptrs invalid_ptrs
@@ -431,29 +461,49 @@ let analyze_map_access_safety program =
     concurrent_access_issues = [];
   }
 
+(** Check for infinite loops *)
+let check_infinite_loops program =
+  let has_infinite_loop = ref false in
+  
+  let rec check_stmt stmt =
+    match stmt.stmt_desc with
+    | While (cond, _body) ->
+        (* Check for obviously infinite loops *)
+        (match cond.expr_desc with
+         | Literal (BoolLit true) -> has_infinite_loop := true
+         | _ -> ())
+    | For (_, start, end_, _body) ->
+        (* Check for infinite for loops *)
+        (match start.expr_desc, end_.expr_desc with
+         | Literal (IntLit s), Literal (IntLit e) when s >= e -> has_infinite_loop := true
+         | _ -> ())
+    | If (_, then_stmts, else_opt) ->
+        List.iter check_stmt then_stmts;
+        (match else_opt with
+         | None -> ()
+         | Some else_stmts -> List.iter check_stmt else_stmts)
+    | _ -> ()
+  in
+  
+  List.iter (fun func ->
+    List.iter check_stmt func.func_body
+  ) program.prog_functions;
+  
+  !has_infinite_loop
+
 (** Main safety analysis function *)
 let analyze_safety program =
   let stack_analysis = analyze_stack_usage program in
   let bounds_errors = analyze_bounds_safety program in
-  
-  (* Placeholder implementations for pointer and map safety *)
-  let pointer_safety = {
-    valid_pointers = [];
-    invalid_pointers = [];
-    dangling_pointers = [];
-    null_checks_needed = [];
-  } in
-  
-  let map_safety = {
-    valid_accesses = [];
-    invalid_accesses = [];
-    missing_bounds_checks = [];
-    concurrent_access_issues = [];
-  } in
+  let pointer_safety = analyze_pointer_safety program in
+  let map_safety = analyze_map_access_safety program in
+  let has_infinite_loops = check_infinite_loops program in
   
   let overall_safe = 
     not stack_analysis.potential_overflow &&
-    bounds_errors = [] in
+    bounds_errors = [] &&
+    pointer_safety.invalid_pointers = [] &&
+    not has_infinite_loops in
   
   {
     stack_analysis = stack_analysis;
@@ -466,12 +516,9 @@ let analyze_safety program =
 (** Exception for safety violations *)
 exception Bounds_error of bounds_error
 
-(** Safety check function that raises exceptions *)
+(** Safety check function that returns analysis results *)
 let safety_check program =
-  let analysis = analyze_safety program in
-  match analysis.bounds_errors with
-  | error :: _ -> raise (Bounds_error error)
-  | [] -> analysis
+  analyze_safety program
 
 (** Pretty printing functions *)
 
