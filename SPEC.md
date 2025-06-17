@@ -17,16 +17,16 @@ Instead of complex templates, KernelScript uses **simple type aliases** and **fi
 // Simple type aliases for common patterns
 type IpAddress = u32
 type Port = u16
-type PacketBuffer = [u8 1500]
-type SmallBuffer = [u8 256]
+type PacketBuffer = [u8][1500]
+type SmallBuffer = [u8][256]
 
 // Fixed-size arrays (no complex bounds)
 u8[64]                 // 64-byte buffer
 u32[16]                // 16 u32 values
 
 // Simple map declarations
-map<u32, u64> counters : array(256)
-map<IpAddress, PacketStats> flows : hash_map(1024)
+map<u32, u64> counters : Array(256)
+map<IpAddress, PacketStats> flows : HashMap(1024)
 
 // No complex template metaprogramming - just practical, concrete types
 ```
@@ -42,7 +42,7 @@ KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 ```kernelscript
 // Shared resources (accessible by both kernel and userspace)
 config system { debug: bool = false }
-map<u32, u64> counters : array(256)
+map<u32, u64> counters : Array(256)
 
 // Kernel space (inside program block)
 program monitor : xdp {
@@ -173,7 +173,7 @@ config monitoring {
     mut packets_processed: u64 = 0,
 }
 
-map<u32, PacketStats> global_stats : hash_map(1024)
+map<u32, PacketStats> global_stats : HashMap(1024)
 
 // Userspace types
 struct PacketStats {
@@ -274,13 +274,13 @@ Programs are first-class values that can be referenced by name and passed to lif
 ```kernelscript
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 
 program flow_monitor : tc {
     fn main(ctx: TcContext) -> TcAction {
-        return TcAction::Pass
+        return TC_ACT_OK
     }
 }
 
@@ -333,9 +333,9 @@ config network {
 program adaptive_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if network.enable_filtering && ctx.packet_size() > network.max_packet_size {
-            return XdpAction::Drop
+            return XDP_DROP
         }
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 
@@ -372,11 +372,11 @@ fn main(args: Args) -> i32 {
 **Multi-Program Coordination:**
 ```kernelscript
 program ingress_monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction { return XdpAction::Pass }
+    fn main(ctx: XdpContext) -> XdpAction { return XDP_PASS }
 }
 
 program egress_monitor : tc {
-    fn main(ctx: TcContext) -> TcAction { return TcAction::Pass }
+    fn main(ctx: TcContext) -> TcAction { return TC_ACT_OK }
 }
 
 program security_check : lsm {
@@ -575,8 +575,8 @@ fn main(args: Args) -> i32 {
 map_declaration = "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")" 
                   [ map_attributes ] ";" 
 
-map_type = "hash_map" | "array" | "prog_array" | "percpu_hash" | "percpu_array" |
-           "lru_hash" | "ring_buffer" | "perf_event" | "stack_trace" 
+map_type = "HashMap" | "Array" | "ProgArray" | "PerCpuHash" | "PerCpuArray" |
+           "LruHash" | "RingBuffer" | "PerfEvent" | "StackTrace" 
 
 map_config = max_entries [ "," additional_config ] 
 map_attributes = "{" { map_attribute "," } "}" 
@@ -590,26 +590,26 @@ Global maps are declared outside any program block and are automatically shared:
 
 ```kernelscript
 // Global maps - automatically shared between all programs
-map<FlowKey, FlowStats> global_flows : hash_map(10000) {
+map<FlowKey, FlowStats> global_flows : HashMap(10000) {
     pinned: "/sys/fs/bpf/global_flows",
 }
 
-map<u32, InterfaceStats> interface_stats : array(256) {
+map<u32, InterfaceStats> interface_stats : Array(256) {
     pinned: "/sys/fs/bpf/interface_stats",
 }
 
-map<SecurityEvent> security_events : ring_buffer(1024 * 1024) {
+map<SecurityEvent> security_events : RingBuffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/security_events",
 }
 
-map<ConfigKey, ConfigValue> global_config : array(64) {
+map<ConfigKey, ConfigValue> global_config : Array(64) {
     pinned: "/sys/fs/bpf/global_config",
 }
 
 // Program 1: Can access all global maps
 program ingress_monitor : xdp {
     // Local maps (only accessible within this program)
-    map<u32, LocalStats> local_cache : hash_map(512)
+    map<u32, LocalStats> local_cache : HashMap(512)
     
     fn main(ctx: XdpContext) -> XdpAction {
         let flow_key = extract_flow_key(ctx)?
@@ -624,14 +624,14 @@ program ingress_monitor : xdp {
         // Update interface stats
         interface_stats[ctx.ingress_ifindex()].packets += 1
         
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 
 // Program 2: Automatically has access to the same global maps
 program egress_monitor : tc {
     // Local maps
-    map<FlowKey, EgressInfo> egress_cache : lru_hash(1000)
+    map<FlowKey, EgressInfo> egress_cache : LruHash(1000)
     
     fn main(ctx: TcContext) -> TcAction {
         let flow_key = extract_flow_key(ctx)?
@@ -643,23 +643,23 @@ program egress_monitor : tc {
         }
         
         // Check global configuration
-        let enable_filtering = if global_config[ConfigKey::EnableFiltering] != null {
-            global_config[ConfigKey::EnableFiltering]
+        let enable_filtering = if global_config[CONFIG_KEY_ENABLE_FILTERING] != null {
+            global_config[CONFIG_KEY_ENABLE_FILTERING]
         } else {
-            ConfigValue::Bool(false)
+            CONFIG_VALUE_BOOL_FALSE
         }
         
         if enable_filtering.as_bool() && should_drop(flow_key) {
             // Log to global security events
             security_events.submit(SecurityEvent {
-                event_type: EventType::PacketDropped,
+                event_type: EVENT_TYPE_PACKET_DROPPED,
                 flow_key: flow_key,
                 timestamp: bpf_ktime_get_ns(),
             })
-            return TcAction::Shot
+            return TC_ACT_SHOT
         }
         
-        return TcAction::Pass
+        return TC_ACT_OK
     }
 }
 
@@ -673,7 +673,7 @@ program security_analyzer : lsm("socket_connect") {
             let flow_stats = global_flows[flow_key]
             if flow_stats.is_suspicious() {
                 security_events.submit(SecurityEvent {
-                    event_type: EventType::SuspiciousConnection,
+                    event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
                     flow_key: flow_key,
                     timestamp: bpf_ktime_get_ns(),
                 })
@@ -690,12 +690,12 @@ program security_analyzer : lsm("socket_connect") {
 
 ```kernelscript
 // Global maps (outside any program)
-map<u32, GlobalCounter> global_counters : array(256)
-map<Event> event_stream : ring_buffer(1024 * 1024)
+map<u32, GlobalCounter> global_counters : Array(256)
+map<Event> event_stream : RingBuffer(1024 * 1024)
 
 program producer : kprobe("sys_read") {
     // Local maps (only accessible within this program)
-    map<u32, LocalState> producer_state : hash_map(1024)
+    map<u32, LocalState> producer_state : HashMap(1024)
     
     fn main(ctx: KprobeContext) -> i32 {
         let pid = bpf_get_current_pid_tgid() as u32
@@ -722,7 +722,7 @@ program producer : kprobe("sys_read") {
 
 program consumer : kprobe("sys_write") {
     // Local maps
-    map<u32, LocalState> consumer_state : hash_map(1024)
+    map<u32, LocalState> consumer_state : HashMap(1024)
     
     fn main(ctx: KprobeContext) -> i32 {
         let pid = bpf_get_current_pid_tgid() as u32
@@ -747,29 +747,29 @@ program consumer : kprobe("sys_write") {
 ### 5.4 Map Examples
 ```kernelscript
 // Global maps accessible by all programs
-map<u32, PacketStats> packet_stats : hash_map(1024) {
+map<u32, PacketStats> packet_stats : HashMap(1024) {
     pinned: "/sys/fs/bpf/packet_stats",
 }
 
-map<u32, u64> counters : percpu_array(256) {
+map<u32, u64> counters : PerCpuArray(256) {
     pinned: "/sys/fs/bpf/counters",
 }
 
-map<FlowKey, FlowInfo> active_flows : lru_hash(10000) {
+map<FlowKey, FlowInfo> active_flows : LruHash(10000) {
     pinned: "/sys/fs/bpf/active_flows",
 }
 
-map<PacketEvent> events : ring_buffer(1024 * 1024) {
+map<PacketEvent> events : RingBuffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/events",
 }
 
-map<ConfigKey, ConfigValue> config_map : array(16) {
+map<ConfigKey, ConfigValue> config_map : Array(16) {
     pinned: "/sys/fs/bpf/config",
 }
 
 program simple_monitor : xdp {
     // Local map - only accessible within this program
-    map<u32, LocalCache> cache : hash_map(256)
+    map<u32, LocalCache> cache : HashMap(256)
     
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
@@ -779,7 +779,7 @@ program simple_monitor : xdp {
         // Access local map
         cache[ctx.hash()] = LocalCache::new()
         
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 ```
@@ -804,10 +804,10 @@ program simple_xdp : xdp {
         let packet = ctx.packet()?
         
         if packet.is_tcp() {
-            return XdpAction::Pass
+            return XDP_PASS
         }
         
-        return XdpAction::Drop
+        return XDP_DROP
     }
 }
 ```
@@ -845,11 +845,11 @@ if condition {
 
 // Pattern matching (simplified)
 let protocol = packet.protocol()
-if protocol == Protocol::TCP {
+if protocol == PROTOCOL_TCP {
     handle_tcp(packet)
-} else if protocol == Protocol::UDP {
+} else if protocol == PROTOCOL_UDP {
     handle_udp(packet)
-} else if protocol == Protocol::ICMP {
+} else if protocol == PROTOCOL_ICMP {
     handle_icmp(packet)
 } else {
     // default case
@@ -969,7 +969,7 @@ fn update_shared_counter(index: u32) -> bool {
     data.counter += 1
     
     if data.counter > 1000000 {
-        throw NetworkError::RateLimitExceeded  // defer still executes (throws 12)
+        throw NETWORK_ERROR_RATE_LIMITED  // defer still executes (throws 12)
     }
     
     return true  // defer executes here too
@@ -1007,14 +1007,14 @@ fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
         
         let flow_data = process_flow(packet_buffer)
         if flow_data.is_suspicious() {
-            throw NetworkError::RateLimitExceeded  // Throws 12
+            throw NETWORK_ERROR_RATE_LIMITED  // Throws 12
         }
         
-        return XdpAction::Pass
+        return XDP_PASS
         
-    } catch 12 {  // NetworkError::RateLimitExceeded
+    } catch 12 {  // NETWORK_ERROR_RATE_LIMITED
         increment_drop_counter()
-        return XdpAction::Drop
+        return XDP_DROP
         // Both defer statements execute even in catch block
     }
 }
@@ -1031,13 +1031,13 @@ program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         try {
             let result = process_packet(ctx)  // Might throw
-            return XdpAction::Pass
+            return XDP_PASS
             
-        } catch 1 {  // ParseError::TooShort
-            return XdpAction::Drop
+        } catch 1 {  // PARSE_ERROR_TOO_SHORT
+            return XDP_DROP
             
-        } catch 10 {  // NetworkError::AllocationFailed
-            return XdpAction::Aborted
+        } catch 10 {  // NETWORK_ERROR_ALLOCATION_FAILED
+            return XDP_ABORTED
         }
         // ❌ Compiler ERROR if any possible throw is not caught
     }
@@ -1053,7 +1053,7 @@ Helper functions can propagate errors without catching them - this enables natur
 fn extract_flow_key(ctx: XdpContext) -> FlowKey {
     let packet = get_packet(ctx)
     if packet == null {
-        throw NetworkError::AllocationFailed  // ✅ OK - propagates to caller (throws 10)
+        throw NETWORK_ERROR_ALLOCATION_FAILED  // ✅ OK - propagates to caller (throws 10)
     }
     
     return parse_flow_key(packet)  // May also throw - propagates up
@@ -1062,7 +1062,7 @@ fn extract_flow_key(ctx: XdpContext) -> FlowKey {
 fn validate_flow(key: FlowKey) -> FlowState {
     let state = lookup_flow_state(key)  // May throw
     if state.is_expired() {
-        throw NetworkError::RateLimitExceeded  // ✅ OK - propagates to caller (throws 12)
+        throw NETWORK_ERROR_RATE_LIMITED  // ✅ OK - propagates to caller (throws 12)
     }
     
     return state
@@ -1089,11 +1089,11 @@ fn main() -> i32 {
         print("Program attached successfully")
         return 0
         
-    } catch 20 {  // LoadError::ProgramNotFound
+    } catch 20 {  // LOAD_ERROR_PROGRAM_NOT_FOUND
         print("Failed to load program")
         return 1
         
-    } catch 30 {  // AttachError::PermissionDenied
+    } catch 30 {  // ATTACH_ERROR_PERMISSION_DENIED
         print("Permission denied - check privileges")
         return 2
     }
@@ -1169,22 +1169,22 @@ fn main() -> i32 {
 ### 8.2 Top-Level Userspace Coordination with Global Maps
 ```kernelscript
 // Global maps (accessible from all programs and userspace)
-map<FlowKey, FlowStats> global_flows : hash_map(10000) {
+map<FlowKey, FlowStats> global_flows : HashMap(10000) {
     pinned: "/sys/fs/bpf/global_flows",
 }
 
-map<Event> global_events : ring_buffer(1024 * 1024) {
+map<Event> global_events : RingBuffer(1024 * 1024) {
     pinned: "/sys/fs/bpf/global_events",
 }
 
-map<ConfigKey, ConfigValue> global_config : array(64) {
+map<ConfigKey, ConfigValue> global_config : Array(64) {
     pinned: "/sys/fs/bpf/global_config",
 }
 
 // Multiple eBPF programs working together
 program network_monitor : xdp {
     // Local maps (only accessible within this program)
-    map<u32, LocalStats> local_stats : hash_map(1024)
+    map<u32, LocalStats> local_stats : HashMap(1024)
     
     fn main(ctx: XdpContext) -> XdpAction {
         // Access global maps directly
@@ -1197,9 +1197,9 @@ program network_monitor : xdp {
         }
         
         // Send event to global stream
-        global_events.submit(Event::PacketProcessed { flow_key })
+        global_events.submit(EVENT_PACKET_PROCESSED { flow_key })
         
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 
@@ -1211,7 +1211,7 @@ program security_filter : lsm("socket_connect") {
         if global_flows[flow_key] != null {
             let flow_stats = global_flows[flow_key]
             if flow_stats.is_suspicious() {
-                global_events.submit(Event::ThreatDetected { flow_key })
+                global_events.submit(EVENT_THREAT_DETECTED { flow_key })
                 return -EPERM  // Block connection
             }
         }
@@ -1219,9 +1219,6 @@ program security_filter : lsm("socket_connect") {
         return 0  // Allow connection
     }
 }
-
-// Userspace coordination types and functions
-use std::collections::HashMap
 
 struct SystemCoordinator {
     network_monitor: BpfProgram,
@@ -1257,10 +1254,10 @@ impl SystemCoordinator {
         // Process events from all programs
         while let Some(event) = self.global_events.read() {
             match event {
-                Event::PacketProcessed { flow_key } => {
+                EVENT_PACKET_PROCESSED { flow_key } => {
                     print("Processed packet for flow: ", flow_key)
                 },
-                Event::ThreatDetected { flow_key } => {
+                EVENT_THREAT_DETECTED { flow_key } => {
                     print("THREAT DETECTED: ", flow_key)
                     self.handle_threat(flow_key)
                 },
@@ -1270,7 +1267,7 @@ impl SystemCoordinator {
     
     fn handle_threat(&self, flow_key: FlowKey) {
         // Coordinated response across all programs
-        self.global_config[ConfigKey::ThreatLevel] = ConfigValue::High
+        self.global_config[CONFIG_KEY_THREAT_LEVEL] = CONFIG_VALUE_HIGH
     }
 }
 
@@ -1312,13 +1309,13 @@ program network_monitor : xdp {
         if runtime.enable_logging {
             bpf_printk("Processing packet")
         }
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 
 program flow_analyzer : tc {
     fn main(ctx: TcContext) -> TcAction {
-        return TcAction::Pass
+        return TC_ACT_OK
     }
 }
 
@@ -1552,7 +1549,7 @@ program simple_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         let packet = ctx.packet()
         if packet == null {
-            return XdpAction::Pass
+            return XDP_PASS
         }
         
         system.packets_processed += 1
@@ -1565,12 +1562,12 @@ program simple_filter : xdp {
                         bpf_printk("Blocked port %d", tcp.dst_port)
                     }
                     system.packets_dropped += 1
-                    return XdpAction::Drop
+                    return XDP_DROP
                 }
             }
         }
         
-        return XdpAction::Pass
+        return XDP_PASS
     }
 }
 
@@ -1623,9 +1620,9 @@ fn main(args: Args) -> i32 {
 ### 12.2 Performance Monitoring
 ```kernelscript
 // Global maps for performance data
-map<u32, CallInfo> active_calls : hash_map(1024)
-map<u32, u64> read_stats : array(1024)
-map<u32, u64> write_stats : array(1024)
+map<u32, CallInfo> active_calls : HashMap(1024)
+map<u32, u64> read_stats : Array(1024)
+map<u32, u64> write_stats : Array(1024)
 
 struct CallInfo {
     start_time: u64,
@@ -1756,8 +1753,8 @@ global_declaration = config_declaration | map_declaration | type_declaration |
 map_declaration = "map" "<" key_type "," value_type ">" identifier 
                   ":" map_type "(" map_config ")" [ map_attributes ] 
 
-map_type = "hash_map" | "array" | "percpu_hash" | "percpu_array" | "lru_hash" | 
-           "ring_buffer" | "perf_event" | "stack_trace" | "prog_array" 
+map_type = "HashMap" | "Array" | "PerCpuHash" | "PerCpuArray" | "LruHash" |
+           "RingBuffer" | "PerfEvent" | "StackTrace" | "ProgArray" 
 
 map_config = integer_literal [ "," map_config_item { "," map_config_item } ] 
 map_config_item = identifier "=" literal 
