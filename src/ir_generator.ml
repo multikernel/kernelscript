@@ -39,6 +39,10 @@ type ir_context = {
   mutable in_bpf_loop_callback: bool; (* New field to track bpf_loop context *)
   mutable is_userspace: bool; (* New field to track if the program is userspace *)
   mutable in_try_block: bool; (* New field to track if we're inside a try block *)
+  (* Track which registers were declared with type aliases *)
+  register_aliases: (int, string * ir_type) Hashtbl.t; (* register -> (alias_name, underlying_type) *)
+  (* Track variable names to their original declared type names *)
+  variable_declared_types: (string, string) Hashtbl.t; (* variable_name -> original_type_name *)
 }
 
 (** Create new IR generation context *)
@@ -57,6 +61,8 @@ let create_context symbol_table = {
   in_bpf_loop_callback = false;
   is_userspace = false;
   in_try_block = false;
+  register_aliases = Hashtbl.create 32;
+  variable_declared_types = Hashtbl.create 32;
 }
 
 (** Register allocation *)
@@ -451,7 +457,7 @@ let rec lower_statement ctx stmt =
       let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
         | Some symbol -> 
             (match symbol.kind with
-             | Symbol_table.Variable var_type -> ast_type_to_ir_type var_type
+             | Symbol_table.Variable var_type -> ast_type_to_ir_type_with_context ctx.symbol_table var_type
              | _ -> value.val_type)
         | None -> value.val_type (* Fallback to value type if not found *)
       in
@@ -505,7 +511,27 @@ let rec lower_statement ctx stmt =
       let value = lower_expression ctx expr in
       let reg = get_variable_register ctx name in
       let target_type = match typ_opt with
-        | Some ast_type -> ast_type_to_ir_type ast_type
+        | Some ast_type -> 
+                         (* Generate comment for variable name tracking *)
+             let debug_comment = make_ir_instruction 
+               (IRComment (Printf.sprintf "Declaration %s" name))
+               stmt.stmt_pos in
+             emit_instruction ctx debug_comment;
+            (* Check if this is a type alias and track it *)
+            (match ast_type with
+             | UserType alias_name ->
+                 (match Symbol_table.lookup_symbol ctx.symbol_table alias_name with
+                  | Some symbol ->
+                      (match symbol.kind with
+                       | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
+                           let underlying_ir_type = ast_type_to_ir_type underlying_type in
+                           (* Store the alias information for this register *)
+                           Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
+                           (* Create IRTypeAlias to preserve the alias name *)
+                           IRTypeAlias (alias_name, underlying_ir_type)
+                       | _ -> ast_type_to_ir_type ast_type)
+                  | None -> ast_type_to_ir_type ast_type)
+             | _ -> ast_type_to_ir_type ast_type)
         | None -> value.val_type
       in
       
@@ -1015,7 +1041,7 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   (* Allocate registers for parameters *)
   let ir_params = List.map (fun (name, ast_type) ->
     let _reg = get_variable_register ctx name in
-    let ir_type = ast_type_to_ir_type ast_type in
+    let ir_type = ast_type_to_ir_type_with_context ctx.symbol_table ast_type in
     (name, ir_type)
   ) func_def.func_params in
   
@@ -1049,7 +1075,7 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   
   (* Convert return type *)
   let ir_return_type = match func_def.func_return_type with
-    | Some ast_type -> Some (ast_type_to_ir_type ast_type)
+    | Some ast_type -> Some (ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
     | None -> None
   in
   

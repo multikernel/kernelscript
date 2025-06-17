@@ -96,8 +96,8 @@ let loop_depth = ref 0
 (** Helper to create type error *)
 let type_error msg pos = raise (Type_error (msg, pos))
 
-(** Resolve user types to built-in types *)
-let resolve_user_type = function
+(** Resolve user types to built-in types and type aliases *)
+let rec resolve_user_type ctx = function
   | UserType "XdpContext" -> XdpContext
   | UserType "TcContext" -> TcContext
   | UserType "KprobeContext" -> KprobeContext
@@ -107,6 +107,17 @@ let resolve_user_type = function
   | UserType "CgroupSkbContext" -> CgroupSkbContext
   | UserType "XdpAction" -> XdpAction
   | UserType "TcAction" -> TcAction
+  | UserType name ->
+      (* Look up type alias in the context *)
+      (try
+         let type_def = Hashtbl.find ctx.types name in
+         match type_def with
+         | TypeAlias (_, underlying_type) -> 
+             (* Recursively resolve the underlying type in case it's also an alias *)
+             resolve_user_type ctx underlying_type
+         | StructDef (_, _) -> Struct name
+         | EnumDef (_, _) -> Enum name
+       with Not_found -> UserType name)
   | other_type -> other_type
 
 (** Type unification algorithm *)
@@ -716,8 +727,11 @@ let rec type_check_statement ctx stmt =
       
       let var_type = match type_opt with
         | Some declared_type ->
-            (match unify_types declared_type typed_expr.texpr_type with
-             | Some unified -> unified
+            let resolved_declared_type = resolve_user_type ctx declared_type in
+            (* For variable declarations, we should enforce the declared type *)
+            (* and check if the expression type can be converted to it *)
+            (match unify_types resolved_declared_type typed_expr.texpr_type with
+             | Some _ -> resolved_declared_type  (* Use the declared type, not the unified type *)
              | None -> type_error ("Type mismatch in declaration") stmt.stmt_pos)
         | None -> typed_expr.texpr_type
       in
@@ -885,7 +899,7 @@ let type_check_function ctx func =
   
   (* Add parameters to scope with proper type resolution *)
   let resolved_params = List.map (fun (name, typ) -> 
-    let resolved_type = resolve_user_type typ in
+    let resolved_type = resolve_user_type ctx typ in
     Hashtbl.replace ctx.variables name resolved_type;
     (name, resolved_type)
   ) func.func_params in
@@ -895,7 +909,7 @@ let type_check_function ctx func =
   
   (* Determine return type *)
   let return_type = match func.func_return_type with
-    | Some t -> resolve_user_type t
+    | Some t -> resolve_user_type ctx t
     | None -> U32  (* Default return type *)
   in
   

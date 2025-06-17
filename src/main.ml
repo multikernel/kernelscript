@@ -143,7 +143,8 @@ let compile opts source_file =
     (* Phase 5: Multi-program IR optimization *)
     current_phase := IROptimization;
     Printf.printf "Phase 5: %s\n" (string_of_phase !current_phase);
-    let optimized_ir = generate_optimized_ir annotated_ast multi_prog_analysis symbol_table source_file in
+    (* Generate optimized IR using the original function *)
+    let optimized_ir = Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table source_file in
     
     (* Phase 6: Advanced multi-target code generation *)
     current_phase := CodeGeneration;
@@ -151,13 +152,53 @@ let compile opts source_file =
     let resource_plan = plan_system_resources optimized_ir.programs multi_prog_analysis in
     let optimization_strategies = generate_optimization_strategies multi_prog_analysis in
     
+    (* Extract type aliases from original AST *)
+    let type_aliases = List.filter_map (function
+      | Ast.TypeDef (Ast.TypeAlias (name, underlying_type)) -> Some (name, underlying_type)
+      | _ -> None
+    ) ast in
+    
+    (* Extract variable declarations with their original declared types *)
+    let extract_variable_declarations ast_nodes =
+      List.fold_left (fun acc node ->
+        match node with
+        | Ast.Program prog ->
+            let func_decls = List.fold_left (fun acc2 func ->
+              List.fold_left (fun acc3 stmt ->
+                match stmt.Ast.stmt_desc with
+                | Ast.Declaration (var_name, Some declared_type, _) ->
+                    (match declared_type with
+                     | Ast.UserType alias_name -> 
+                         (* Only store type alias declarations *)
+                         (var_name, alias_name) :: acc3
+                     | _ -> acc3)
+                | _ -> acc3
+              ) acc2 func.Ast.func_body
+            ) [] prog.Ast.prog_functions in
+            func_decls @ acc
+        | Ast.GlobalFunction func ->
+            List.fold_left (fun acc2 stmt ->
+              match stmt.Ast.stmt_desc with
+              | Ast.Declaration (var_name, Some declared_type, _) ->
+                  (match declared_type with
+                   | Ast.UserType alias_name -> 
+                       (* Only store type alias declarations *)
+                       (var_name, alias_name) :: acc2
+                   | _ -> acc2)
+              | _ -> acc2
+            ) acc func.Ast.func_body
+        | _ -> acc
+      ) [] ast_nodes
+    in
+    let variable_type_aliases = extract_variable_declarations ast in
+    
     (* Generate eBPF C code using enhanced existing generator *)
     let ebpf_c_code = 
       if List.length config_declarations > 0 then
-        Ebpf_c_codegen.compile_multi_to_c ~config_declarations optimized_ir
+        Ebpf_c_codegen.compile_multi_to_c ~config_declarations ~type_aliases ~variable_type_aliases optimized_ir
       else
         Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-          optimized_ir multi_prog_analysis resource_plan optimization_strategies in
+          ~type_aliases ~variable_type_aliases optimized_ir multi_prog_analysis resource_plan optimization_strategies in
       
     (* Determine output directory *)
     let base_name = Filename.remove_extension (Filename.basename source_file) in
@@ -168,7 +209,7 @@ let compile opts source_file =
     
     (* Generate userspace coordinator directly to output directory *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations optimized_ir ~output_dir source_file;
+      ~config_declarations ~type_aliases optimized_ir ~output_dir source_file;
     
     (* Read the generated userspace code for preview *)
     let userspace_file = output_dir ^ "/" ^ base_name ^ ".c" in

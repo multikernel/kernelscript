@@ -267,10 +267,53 @@ let generate_string_typedefs _string_sizes =
   (* For userspace, we don't need complex string typedefs - just use char arrays *)
   ""
 
-(** Generate string helper functions *)
-let generate_string_helpers _string_sizes =
-  (* For userspace, we don't need complex string helper functions - just use standard C *)
-  ""
+(** Collect type aliases from userspace program *)
+let collect_type_aliases_from_userspace_program userspace_prog =
+  let type_aliases = ref [] in
+  
+  let collect_from_type ir_type =
+    match ir_type with
+    | IRTypeAlias (name, underlying_type) ->
+        if not (List.mem_assoc name !type_aliases) then
+          type_aliases := (name, underlying_type) :: !type_aliases
+    | _ -> ()
+  in
+  
+  let rec collect_from_value ir_val =
+    collect_from_type ir_val.val_type
+  and collect_from_expr ir_expr =
+    collect_from_type ir_expr.expr_type
+  and collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRAssign (dest_val, expr) -> 
+        collect_from_value dest_val; collect_from_expr expr
+    | IRCall (_, args, ret_opt) ->
+        List.iter collect_from_value args;
+        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+    | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | _ -> ()
+  in
+  
+  let collect_from_function ir_func =
+    List.iter (fun block ->
+      List.iter collect_from_instr block.instructions
+    ) ir_func.basic_blocks;
+    (* Also collect from function parameters and return type *)
+    List.iter (fun (_, param_type) -> collect_from_type param_type) ir_func.parameters;
+    (match ir_func.return_type with Some ret_type -> collect_from_type ret_type | None -> ())
+  in
+  
+  (* Collect from struct fields *)
+  List.iter (fun struct_def ->
+    List.iter (fun (_field_name, field_type) ->
+      collect_from_type field_type
+    ) struct_def.struct_fields
+  ) userspace_prog.userspace_structs;
+  
+  (* Collect from all userspace functions *)
+  List.iter collect_from_function userspace_prog.userspace_functions;
+  
+  List.rev !type_aliases
 
 (** Convert IR types to C types *)
 let rec c_type_from_ir_type = function
@@ -294,6 +337,55 @@ let rec c_type_from_ir_type = function
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
   | IRContext _ -> "void*" (* context pointers *)
   | IRAction _ -> "int" (* action return values *)
+
+(** Generate type alias definitions for userspace *)
+let generate_type_alias_definitions_userspace type_aliases =
+  if type_aliases <> [] then (
+    let type_alias_defs = List.map (fun (alias_name, underlying_type) ->
+      let c_type = c_type_from_ir_type underlying_type in
+      sprintf "typedef %s %s;" c_type alias_name
+    ) type_aliases in
+    "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
+  ) else ""
+
+(** Generate type alias definitions for userspace from AST types *)
+let generate_type_alias_definitions_userspace_from_ast type_aliases =
+  if type_aliases <> [] then (
+    let type_alias_defs = List.map (fun (alias_name, underlying_type) ->
+      match underlying_type with
+        | Ast.Array (element_type, size) ->
+            let element_c_type = match element_type with
+              | Ast.U8 -> "uint8_t"
+              | Ast.U16 -> "uint16_t"
+              | Ast.U32 -> "uint32_t"
+              | Ast.U64 -> "uint64_t"
+              | _ -> "uint8_t"
+            in
+            (* Array typedef syntax: typedef element_type alias_name[size]; *)
+            sprintf "typedef %s %s[%d];" element_c_type alias_name size
+        | _ ->
+            let c_type = match underlying_type with
+              | Ast.U8 -> "uint8_t"
+              | Ast.U16 -> "uint16_t"
+              | Ast.U32 -> "uint32_t"
+              | Ast.U64 -> "uint64_t"
+              | Ast.I8 -> "int8_t"
+              | Ast.I16 -> "int16_t"
+              | Ast.I32 -> "int32_t"
+              | Ast.I64 -> "int64_t"
+              | Ast.Bool -> "bool"
+              | Ast.Char -> "char"
+              | _ -> "uint32_t" (* fallback *)
+            in
+            sprintf "typedef %s %s;" c_type alias_name
+    ) type_aliases in
+    "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
+  ) else ""
+
+(** Generate string helper functions *)
+let generate_string_helpers _string_sizes =
+  (* For userspace, we don't need complex string helper functions - just use standard C *)
+  ""
 
 (** Get or create a meaningful variable name for a register *)
 let get_register_var_name ctx reg_id ir_type =
@@ -972,7 +1064,7 @@ let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
   sprintf "struct %s {\n%s\n};" struct_name (String.concat "\n" field_declarations)
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
   let includes = {|#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1020,6 +1112,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
   (* Generate enum definitions *)
   let enum_definitions = generate_enum_definitions_userspace userspace_prog in
   
+  (* Generate type alias definitions from AST *)
+  let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
+  
   (* Collect function usage information from all functions *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function func in
@@ -1039,8 +1134,6 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
-  
-
   
   (* Filter out config structs from IR structs since we generate them separately from config_declarations *)
   let non_config_ir_structs = List.filter (fun ir_struct ->
@@ -1198,16 +1291,18 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) (use
 %s
 
 %s
+
+%s
 %s
 
 %s
-|} includes string_typedefs string_helpers enum_definitions structs all_fd_declarations map_operation_functions getopt_parsing_code bpf_helper_functions functions
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions getopt_parsing_code bpf_helper_functions functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir ?(config_declarations = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations userspace_prog ir_multi_prog.global_maps source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases userspace_prog ir_multi_prog.global_maps source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 

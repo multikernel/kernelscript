@@ -33,6 +33,8 @@ type c_codegen_context = {
   mutable pending_callbacks: string list;
   (* Current error variable for try/catch blocks *)
   mutable current_error_var: string option;
+  (* Variable name to original type alias mapping *)
+  mutable variable_type_aliases: (string * string) list;
 }
 
 let create_c_context () = {
@@ -45,6 +47,7 @@ let create_c_context () = {
   next_label_id = 0;
   pending_callbacks = [];
   current_error_var = None;
+  variable_type_aliases = [];
 }
 
 (** Helper functions for code generation *)
@@ -241,6 +244,8 @@ let collect_enum_definitions ir_multi_prog =
         collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
     | IRMapStore (map_val, key_val, value_val, _) ->
         collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
+    | IRMapDelete (map_val, key_val) ->
+        collect_from_value map_val; collect_from_value key_val
     | IRReturn (Some ret_val) -> collect_from_value ret_val
     | IRIf (cond_val, then_instrs, else_instrs_opt) ->
         collect_from_value cond_val;
@@ -301,6 +306,115 @@ let generate_string_typedefs ctx ir_multi_prog =
     List.iter (fun size ->
       emit_line ctx (sprintf "typedef struct { char data[%d]; __u16 len; } str_%d_t;" (size + 1) size)
     ) unique_sizes;
+    emit_blank_line ctx
+  )
+
+(** Collect type aliases from IR multi-program *)
+let collect_type_aliases_from_multi_program ir_multi_prog =
+  let type_aliases = ref [] in
+  
+  let collect_from_type ir_type =
+    match ir_type with
+    | IRTypeAlias (name, underlying_type) ->
+        if not (List.mem_assoc name !type_aliases) then
+          type_aliases := (name, underlying_type) :: !type_aliases
+    | _ -> ()
+  in
+  
+  let rec collect_from_value ir_val =
+    collect_from_type ir_val.val_type
+  and collect_from_expr ir_expr =
+    collect_from_type ir_expr.expr_type
+  and collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRAssign (dest_val, expr) -> 
+        collect_from_value dest_val; collect_from_expr expr
+    | IRCall (_, args, ret_opt) ->
+        List.iter collect_from_value args;
+        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+    | IRMapLoad (map_val, key_val, dest_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
+    | IRMapStore (map_val, key_val, value_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
+    | IRMapDelete (map_val, key_val) ->
+        collect_from_value map_val; collect_from_value key_val
+    | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+        collect_from_value cond_val;
+        List.iter collect_from_instr then_instrs;
+        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | _ -> ()
+  in
+  
+  let collect_from_map_def map_def =
+    collect_from_type map_def.map_key_type;
+    collect_from_type map_def.map_value_type
+  in
+  
+  let collect_from_function ir_func =
+    List.iter (fun block ->
+      List.iter collect_from_instr block.instructions
+    ) ir_func.basic_blocks;
+    (* Also collect from function parameters and return type *)
+    List.iter (fun (_, param_type) -> collect_from_type param_type) ir_func.parameters;
+    (match ir_func.return_type with Some ret_type -> collect_from_type ret_type | None -> ())
+  in
+  
+  (* Collect from global maps *)
+  List.iter collect_from_map_def ir_multi_prog.global_maps;
+  
+  (* Collect from all programs *)
+  List.iter (fun ir_prog ->
+    List.iter collect_from_map_def ir_prog.local_maps;
+    collect_from_function ir_prog.main_function;
+    List.iter collect_from_function ir_prog.functions
+  ) ir_multi_prog.programs;
+  
+  List.rev !type_aliases
+
+(** Generate type alias definitions *)
+let generate_type_alias_definitions ctx type_aliases =
+  if type_aliases <> [] then (
+    emit_line ctx "/* Type alias definitions */";
+    List.iter (fun (alias_name, underlying_type) ->
+      let c_type = ebpf_type_from_ir_type underlying_type in
+      emit_line ctx (sprintf "typedef %s %s;" c_type alias_name)
+    ) type_aliases;
+    emit_blank_line ctx
+  )
+
+(** Generate type alias definitions from AST types *)
+let generate_ast_type_alias_definitions ctx type_aliases =
+  if type_aliases <> [] then (
+    emit_line ctx "/* Type alias definitions */";
+    List.iter (fun (alias_name, underlying_type) ->
+      match underlying_type with
+        | Ast.Array (element_type, size) ->
+            let element_c_type = match element_type with
+              | Ast.U8 -> "uint8_t"
+              | Ast.U16 -> "uint16_t"
+              | Ast.U32 -> "uint32_t"
+              | Ast.U64 -> "uint64_t"
+              | _ -> "uint8_t"
+            in
+            (* Array typedef syntax: typedef element_type alias_name[size]; *)
+            emit_line ctx (sprintf "typedef %s %s[%d];" element_c_type alias_name size)
+        | _ ->
+            let c_type = match underlying_type with
+              | Ast.U8 -> "uint8_t"
+              | Ast.U16 -> "uint16_t"
+              | Ast.U32 -> "uint32_t"
+              | Ast.U64 -> "uint64_t"
+              | Ast.I8 -> "int8_t"
+              | Ast.I16 -> "int16_t"
+              | Ast.I32 -> "int32_t"
+              | Ast.I64 -> "int64_t"
+              | Ast.Bool -> "bool"
+              | Ast.Char -> "char"
+              | _ -> "uint32_t" (* fallback *)
+            in
+            emit_line ctx (sprintf "typedef %s %s;" c_type alias_name)
+    ) type_aliases;
     emit_blank_line ctx
   )
 
@@ -1111,6 +1225,37 @@ let generate_c_basic_block ctx ir_block =
   (* Emit instructions *)
   List.iter (generate_c_instruction ctx) ir_block.instructions
 
+(** Collect mapping from registers to variable names *)
+let collect_register_variable_mapping ir_func =
+  let register_var_map = ref [] in
+  let last_declared_var = ref None in
+  let collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRComment comment ->
+        (* Parse comments like "Declaration ip" to extract variable names *)
+        (try
+           let prefix = "Declaration " in
+           if String.length comment > String.length prefix && 
+              String.sub comment 0 (String.length prefix) = prefix then (
+             let var_name = String.sub comment (String.length prefix) 
+                                     (String.length comment - String.length prefix) in
+             let clean_var_name = String.trim var_name in
+             last_declared_var := Some clean_var_name
+           )
+         with _ -> ())
+    | IRAssign (dest_val, _) ->
+        (match dest_val.value_desc, !last_declared_var with
+         | IRRegister reg, Some var_name ->
+             register_var_map := (reg, var_name) :: !register_var_map;
+             last_declared_var := None
+         | _ -> ())
+    | _ -> ()
+  in
+  List.iter (fun block ->
+    List.iter collect_from_instr block.instructions
+  ) ir_func.basic_blocks;
+  !register_var_map
+
 (** Collect all registers used in a function with their types *)
 let collect_registers_in_function ir_func =
   let registers = ref [] in
@@ -1180,7 +1325,7 @@ let collect_registers_in_function ir_func =
   ) ir_func.basic_blocks;
   List.sort (fun (r1, _) (r2, _) -> compare r1 r2) !registers
 
-(** Generate C function from IR function *)
+(** Generate C function from IR function with type alias support *)
 
 let generate_c_function ctx ir_func =
   let return_type_str = match ir_func.return_type with
@@ -1210,8 +1355,19 @@ let generate_c_function ctx ir_func =
   
   (* Declare temporary variables for all registers used *)
   let registers = collect_registers_in_function ir_func in
+  let register_variable_map = collect_register_variable_mapping ir_func in
   List.iter (fun (reg, reg_type) ->
-    let c_type = ebpf_type_from_ir_type reg_type in
+    let c_type = match reg_type with
+      | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
+      | _ ->
+          (* Check if this register corresponds to a variable with a type alias *)
+          (match List.assoc_opt reg register_variable_map with
+           | Some var_name ->
+               (match List.assoc_opt var_name ctx.variable_type_aliases with
+                | Some alias_name -> alias_name
+                | None -> ebpf_type_from_ir_type reg_type)
+           | None -> ebpf_type_from_ir_type reg_type)
+    in
     emit_line ctx (sprintf "%s tmp_%d;" c_type reg)
   ) registers;
   if registers <> [] then emit_blank_line ctx;
@@ -1245,6 +1401,10 @@ let generate_c_program ?config_declarations ir_prog =
   
   (* Generate enum definitions *)
   generate_enum_definitions ctx temp_multi_prog;
+  
+  (* Generate type alias definitions *)
+  let type_aliases = collect_type_aliases_from_multi_program temp_multi_prog in
+  generate_type_alias_definitions ctx type_aliases;
   
   (* Generate config maps if provided *)
   begin match config_declarations with
@@ -1282,11 +1442,17 @@ let generate_c_program ?config_declarations ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ?config_declarations ir_multi_program =
+let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
   let ctx = create_c_context () in
+  
+  (* Store variable type aliases for later lookup *)
+  ctx.variable_type_aliases <- variable_type_aliases;
   
   (* Add standard includes *)
   generate_includes ctx;
+  
+  (* Generate type alias definitions from AST *)
+  generate_ast_type_alias_definitions ctx type_aliases;
   
   (* Generate config maps if provided *)
   begin match config_declarations with
@@ -1331,7 +1497,7 @@ let generate_c_multi_program ?config_declarations ir_multi_program =
 
 (** Enhanced multi-program compilation entry point with analysis *)
 
-let compile_multi_to_c_with_analysis ir_multi_program 
+let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program 
                                    (multi_prog_analysis: Multi_program_analyzer.multi_program_analysis) 
                                    (resource_plan: Multi_program_ir_optimizer.resource_plan)
                                    (_optimization_results: Multi_program_ir_optimizer.optimization_strategy list) =
@@ -1343,11 +1509,14 @@ let compile_multi_to_c_with_analysis ir_multi_program
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_program;
   
-  (* Generate enum definitions *)
-  generate_enum_definitions ctx ir_multi_program;
+  (* Store variable type aliases for later lookup *)
+  ctx.variable_type_aliases <- variable_type_aliases;
   
   (* Generate enum definitions *)
   generate_enum_definitions ctx ir_multi_program;
+  
+  (* Generate type alias definitions from AST *)
+  generate_ast_type_alias_definitions ctx type_aliases;
   
   emit_line ctx "/* Enhanced Multi-Program eBPF System */";
   emit_line ctx (sprintf "/* Programs: %d, Global Maps: %d */" 
@@ -1431,8 +1600,8 @@ let compile_to_c ?config_declarations ir_program =
 
 (** Multi-program compilation entry point *)
 
-let compile_multi_to_c ?config_declarations ir_multi_program =
-  let c_code = generate_c_multi_program ?config_declarations ir_multi_program in
+let compile_multi_to_c ?config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+  let c_code = generate_c_multi_program ?config_declarations ~type_aliases ~variable_type_aliases ir_multi_program in
   c_code
 
 (** Helper function to write C code to file *)

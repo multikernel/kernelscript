@@ -197,6 +197,11 @@
  (modules test_enum)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_type_alias)
+ (modules test_type_alias)
+ (libraries kernelscript ounit2))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)

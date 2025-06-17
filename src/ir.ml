@@ -528,6 +528,25 @@ let rec ast_type_to_ir_type = function
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
   | ProgramHandle -> IRU32 (* Program handles are represented as file descriptors (u32) in IR *)
 
+(* Helper function that preserves type aliases when converting AST types to IR types *)
+let ast_type_to_ir_type_with_context symbol_table ast_type =
+  match ast_type with
+  | UserType name ->
+      (* Check if this is a type alias by looking up the symbol *)
+      (match Symbol_table.lookup_symbol symbol_table name with
+         | Some symbol ->
+             (match symbol.kind with
+              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
+                  (* Create IRTypeAlias to preserve the alias name *)
+                  IRTypeAlias (name, ast_type_to_ir_type underlying_type)
+              | Symbol_table.TypeDef (Ast.StructDef (_, _)) -> IRStruct (name, [])
+              | Symbol_table.TypeDef (Ast.EnumDef (_, _)) -> IREnum (name, [])
+              | _ -> ast_type_to_ir_type ast_type)
+         | None -> 
+             (* Fallback to regular conversion *)
+             ast_type_to_ir_type ast_type)
+  | _ -> ast_type_to_ir_type ast_type
+
 let ast_map_type_to_ir_map_type = function
   | HashMap -> IRHashMap
   | Array -> IRMapArray

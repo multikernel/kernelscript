@@ -59,6 +59,7 @@
 %type <(string * Ast.bpf_type) list> struct_fields
 %type <string * Ast.bpf_type> struct_field
 %type <Ast.type_def> enum_declaration
+%type <Ast.type_def> type_alias_declaration
 %type <(string * int option) list> enum_variants
 %type <string * int option> enum_variant
 %type <Ast.map_type> map_type
@@ -125,6 +126,7 @@ declaration:
   | map_declaration { MapDecl $1 }
   | struct_declaration { StructDecl $1 }
   | enum_declaration { TypeDef $1 }
+  | type_alias_declaration { TypeDef $1 }
 
 /* Config declaration: config name { config_fields } */
 config_declaration:
@@ -497,5 +499,10 @@ enum_variants:
 enum_variant:
   | IDENTIFIER { ($1, None) }  /* Auto-assigned value */
   | IDENTIFIER ASSIGN INT { ($1, Some $3) }  /* Explicit value */
+
+/* Type alias declaration: type name = type */
+type_alias_declaration:
+  | TYPE IDENTIFIER ASSIGN bpf_type
+    { make_type_alias $2 $4 }
 
 %% 
