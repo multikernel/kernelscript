@@ -66,7 +66,7 @@ fn main(args: Args) -> i32 {
 ### 2.1 Keywords
 ```
 program     fn          let         mut         const       config
-map         type        struct      enum        match       if          else
+map         type        struct      enum        if          else
 for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
@@ -214,8 +214,6 @@ program flow_tracker : tc {
             global_stats[key].bytes += ctx.packet_size()
         }
         return TC_ACT_OK
-    }
-}
     }
 }
 
@@ -461,14 +459,6 @@ enum TcAction {
     TC_ACT_REPEAT = 6,
     TC_ACT_REDIRECT = 7,
 }
-
-// Simple option type for null safety
-Option_u32             // Can be Some(value) or None
-Option_PacketHeader    // Option containing a PacketHeader
-
-// Simple result type for error handling
-Result_u32_ParseError  // Ok(u32) or Err(ParseError)
-Result_void_Error      // Ok(()) or Err(Error)
 ```
 
 ### 4.3 Type Aliases for Common Patterns
@@ -480,10 +470,10 @@ type PacketSize = u16
 type Timestamp = u64
 
 // Buffer types with fixed sizes (no templates needed)
-type EthBuffer = [u8 14];      // Ethernet header buffer
-type IpBuffer = [u8 20];       // IP header buffer
-type SmallBuffer = [u8 256];   // Small general buffer
-type PacketBuffer = [u8 1500]; // Maximum packet buffer
+type EthBuffer = [u8 14]      // Ethernet header buffer
+type IpBuffer = [u8 20]       // IP header buffer
+type SmallBuffer = [u8 256];  // Small general buffer
+type PacketBuffer = [u8 1500] // Maximum packet buffer
 
 // String type aliases for common patterns
 type ProcessName = str<16>     // Process name string
@@ -637,9 +627,9 @@ program egress_monitor : tc {
         let flow_key = extract_flow_key(ctx)?
         
         // Same global map, no import needed
-        if let Some(stats) = global_flows.get_mut(flow_key) {
-            stats.egress_packets += 1
-            stats.egress_bytes += ctx.packet_size()
+        if global_flows[flow_key] != null {
+            global_flows[flow_key].egress_packets += 1
+            global_flows[flow_key].egress_bytes += ctx.packet_size()
         }
         
         // Check global configuration
@@ -718,7 +708,6 @@ program producer : kprobe("sys_read") {
     }
     
 }
-}
 
 program consumer : kprobe("sys_write") {
     // Local maps
@@ -740,7 +729,6 @@ program consumer : kprobe("sys_write") {
         return 0
     }
     
-}
 }
 ```
 
@@ -1252,15 +1240,13 @@ impl SystemCoordinator {
     
     fn process_events(&self) {
         // Process events from all programs
-        while let Some(event) = self.global_events.read() {
-            match event {
-                EVENT_PACKET_PROCESSED { flow_key } => {
-                    print("Processed packet for flow: ", flow_key)
-                },
-                EVENT_THREAT_DETECTED { flow_key } => {
-                    print("THREAT DETECTED: ", flow_key)
-                    self.handle_threat(flow_key)
-                },
+        let event = self.global_events.read()
+        if event != null {
+            if event.event_type == EVENT_PACKET_PROCESSED {
+                print("Processed packet for flow: ", event.flow_key)
+            } else if event.event_type == EVENT_THREAT_DETECTED {
+                print("THREAT DETECTED: ", event.flow_key)
+                self.handle_threat(event.flow_key)
             }
         }
     }
@@ -1307,7 +1293,7 @@ config runtime {
 program network_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         if runtime.enable_logging {
-            bpf_printk("Processing packet")
+            print("Processing packet")
         }
         return XDP_PASS
     }
@@ -1360,32 +1346,18 @@ fn handle_system_events(verbose: bool) {
     }
 }
 
-// Cross-language binding configuration (optional)
-bindings {
-    rust {
-        crate_name: "network_system",
-    },
-    
-    go {
-        package: "networksystem",
-    },
-    
-    python {
-        package: "network_system",
-    },
-}
 ```
 
 ## 9. Memory Management and Safety
 
 ### 9.1 Automatic Bounds Checking
 ```kernelscript
-fn safe_packet_access(packet: &Packet, offset: usize, size: usize) -> Option<&[u8]> {
+fn safe_packet_access(packet: &Packet, offset: usize, size: usize) -> *u8 {
     // Compiler automatically inserts bounds checks
     if offset + size <= packet.len() {
-        Some(&packet.data()[offset..offset + size])
+        &packet.data()[offset]
     } else {
-        None
+        null
     }
 }
 
@@ -1459,9 +1431,6 @@ spec:
 # Compile KernelScript to eBPF bytecode
 kernelscript build
 
-# Generate userspace bindings
-kernelscript generate --target=rust --output=bindings/
-
 # Run tests
 kernelscript test
 
@@ -1487,7 +1456,7 @@ mod net {
 // String utilities (limited for eBPF)
 mod str {
     pub fn compare(a: &[u8], b: &[u8]) -> i32
-    pub fn find_byte(haystack: &[u8], needle: u8) -> Option<usize>
+    pub fn find_byte(haystack: &[u8], needle: u8) -> i32  // Returns index or -1 if not found
 }
 
 // Math utilities
@@ -1780,11 +1749,6 @@ local_map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" id
 config_declaration = "config" identifier "{" { config_field } "}" 
 config_field = [ "mut" ] identifier ":" type_annotation [ "=" expression ] "," 
 
-(* Cross-language bindings declaration *)
-bindings_declaration = "bindings" "{" { bindings_config } "}" 
-bindings_config = identifier "{" { bindings_config_item } "}" 
-bindings_config_item = identifier ":" literal "," 
-
 (* Scoping rules for KernelScript:
    - Inside program {} blocks: Kernel space (eBPF) - compiles to eBPF bytecode
    - Outside program {} blocks: User space - compiles to native executable  
@@ -1894,13 +1858,12 @@ type_annotation = primitive_type | compound_type | identifier
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
                  "bool" | "char" | "void" | "ProgramRef" | string_type 
 
-compound_type = array_type | pointer_type | option_type | result_type 
+compound_type = array_type | pointer_type | result_type 
 
 string_type = "str" "<" integer_literal ">" 
 
 array_type = "[" type_annotation "" integer_literal "]" 
 pointer_type = "*" [ "const" | "mut" ] type_annotation 
-option_type = "Option_" type_annotation 
 result_type = "Result_" type_annotation "_" type_annotation 
 
 (* Literals *)
