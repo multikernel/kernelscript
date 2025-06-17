@@ -197,6 +197,8 @@
  (modules test_enum)
  (libraries kernelscript alcotest))
 
+
+
 (executable
  (name test_type_alias)
  (modules test_type_alias)
@@ -359,6 +361,12 @@
  (alias runtest_enum)
  (action (run ./test_enum.exe)))
 
+(rule
+ (alias runtest_type_alias)
+ (action (run ./test_type_alias.exe)))
+
+
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -366,13 +374,17 @@
   test_map_syntax.exe
   test_map_assignment.exe
   test_map_integration.exe
-  test_map_flags.exe)
+  test_map_flags.exe
+  test_maps.exe
+  test_map_operations.exe)
  (action
   (progn
    (run ./test_map_syntax.exe)
    (run ./test_map_assignment.exe)
    (run ./test_map_integration.exe)
-   (run ./test_map_flags.exe))))
+   (run ./test_map_flags.exe)
+   (run ./test_maps.exe)
+   (run ./test_map_operations.exe))))
 
 (rule
  (alias userspace-tests)
@@ -383,7 +395,9 @@
   test_userspace_statements.exe
   test_return_value_propagation.exe
   test_userspace_struct_flexibility.exe
-  test_string_codegen.exe)
+  test_string_codegen.exe
+  test_string_type.exe
+  test_string_literal_bugs.exe)
  (action
   (progn
    (run ./test_userspace.exe)
@@ -392,7 +406,9 @@
    (run ./test_userspace_statements.exe)
    (run ./test_return_value_propagation.exe)
    (run ./test_userspace_struct_flexibility.exe)
-   (run ./test_string_codegen.exe))))
+   (run ./test_string_codegen.exe)
+   (run ./test_string_type.exe)
+   (run ./test_string_literal_bugs.exe))))
 
 (rule
  (alias core-tests)
@@ -412,7 +428,12 @@
   test_stdlib.exe
   test_struct_field_access.exe
   test_error_handling.exe
-  test_enum.exe)
+  test_enum.exe
+  test_type_alias.exe
+  test_evaluator.exe
+  test_safety_checker.exe
+  test_program_ref.exe
+  test_return_path_analysis.exe)
  (action
   (progn
    (run ./test_lexer_simple.exe)
@@ -430,7 +451,12 @@
    (run ./test_stdlib.exe)
    (run ./test_struct_field_access.exe)
    (run ./test_error_handling.exe)
-   (run ./test_enum.exe))))
+   (run ./test_enum.exe)
+   (run ./test_type_alias.exe)
+   (run ./test_evaluator.exe)
+   (run ./test_safety_checker.exe)
+   (run ./test_program_ref.exe)
+   (run ./test_return_path_analysis.exe))))
 
 (rule
  (alias ir-tests)
