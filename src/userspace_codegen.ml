@@ -896,14 +896,22 @@ let generate_c_function_from_ir (ir_func : ir_function) =
       else
         "    // No arguments to parse"
     in
-    (* Generate ONLY what the user explicitly wrote - no implicit setup/cleanup *)
+    
+    (* Check if this main function uses maps and needs auto-initialization *)
+    let func_usage = collect_function_usage_from_ir_function ir_func in
+    let needs_auto_init = func_usage.uses_map_operations && not func_usage.uses_load_program in
+    let auto_init_call = if needs_auto_init then
+      "    \n    // Auto-initialize BPF maps\n    atexit(cleanup_bpf_maps);\n    if (init_bpf_maps() < 0) {\n        return 1;\n    }"
+    else "" in
+    
+    (* Generate ONLY what the user explicitly wrote with auto-initialization if needed *)
     let default_return = if all_paths_have_return ir_func then "" else "\n    \n    return 0; /* Default return if no explicit return */" in
     sprintf {|%s %s(%s) {
 %s    
-%s
+%s%s
     
     %s%s
-}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code body_c default_return
+}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code auto_init_call body_c default_return
   else
     sprintf {|%s %s(%s) {
 %s    %s
@@ -1193,6 +1201,39 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Extract base name from source filename *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
   
+  (* Generate automatic BPF object initialization when maps are used but load_program is not called *)
+  let needs_auto_bpf_init = all_usage.uses_map_operations && not all_usage.uses_load_program in
+  let auto_bpf_init_code = if needs_auto_bpf_init && all_setup_code <> "" then
+    sprintf {|
+/* Auto-generated BPF object initialization */
+static struct bpf_object *bpf_obj = NULL;
+
+int init_bpf_maps(void) {
+    if (bpf_obj) return 0; // Already initialized
+    
+    bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
+    if (libbpf_get_error(bpf_obj)) {
+        fprintf(stderr, "Failed to open BPF object\n");
+        return -1;
+    }
+    if (bpf_object__load(bpf_obj)) {
+        fprintf(stderr, "Failed to load BPF object\n");
+        return -1;
+    }
+    
+%s
+    return 0;
+}
+
+void cleanup_bpf_maps(void) {
+    if (bpf_obj) {
+        bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
+    }
+}
+|} base_name all_setup_code
+  else "" in
+  
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
     let load_function = if all_usage.uses_load_program then
@@ -1291,12 +1332,13 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
 %s
 
 %s
-
-%s
 %s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions getopt_parsing_code bpf_helper_functions functions
+%s
+
+%s
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =

@@ -342,7 +342,7 @@ fn main() -> i32 {
         (* Check for main function with correct signature *)
         let has_main_function = contains_pattern generated_content "int main" in
         
-        (* Check for BPF object management (only when maps are used) *)
+        (* Check for BPF object management (auto-generated when maps are used) *)
         let has_bpf_object = contains_pattern generated_content "bpf_object\\|struct bpf_object" in
         
         (* Check for signal handling functions (not just headers) *)
@@ -351,7 +351,7 @@ fn main() -> i32 {
         check bool "has stdio include" true has_stdio;
         check bool "has BPF includes" true has_bpf_includes;
         check bool "has main function" true has_main_function;
-        check bool "has BPF object management (when maps used)" false has_bpf_object;  (* Maps used but no BPF functions called *)
+        check bool "has BPF object management (auto-generated when maps used)" true has_bpf_object;  (* Auto-generated BPF initialization for map operations *)
         check bool "has signal handling" false has_signal_handling;  (* No signal handling needed *)
     | None ->
         fail "Failed to generate userspace code"
