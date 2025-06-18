@@ -68,6 +68,19 @@ let generate_tc_field_access ctx_var field_name =
   with Not_found ->
     failwith ("Unknown TC context field: " ^ field_name)
 
+(** Map TC action constants *)
+let map_tc_action_constant = function
+  | 255 -> Some "TC_ACT_UNSPEC"
+  | 0 -> Some "TC_ACT_OK"
+  | 1 -> Some "TC_ACT_RECLASSIFY"
+  | 2 -> Some "TC_ACT_SHOT"
+  | 3 -> Some "TC_ACT_PIPE"
+  | 4 -> Some "TC_ACT_STOLEN"
+  | 5 -> Some "TC_ACT_QUEUED"
+  | 6 -> Some "TC_ACT_REPEAT"
+  | 7 -> Some "TC_ACT_REDIRECT"
+  | _ -> None
+
 (** Create TC code generator *)
 let create () = {
   name = "TC";
@@ -76,6 +89,7 @@ let create () = {
   field_mappings = tc_field_mappings;
   generate_includes = generate_tc_includes;
   generate_field_access = generate_tc_field_access;
+  map_action_constant = map_tc_action_constant;
 }
 
 (** Register this codegen with the context registry *)

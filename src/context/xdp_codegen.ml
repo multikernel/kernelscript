@@ -68,6 +68,15 @@ let generate_xdp_field_access ctx_var field_name =
   with Not_found ->
     failwith ("Unknown XDP context field: " ^ field_name)
 
+(** Map XDP action constants *)
+let map_xdp_action_constant = function
+  | 0 -> Some "XDP_ABORTED"
+  | 1 -> Some "XDP_DROP"
+  | 2 -> Some "XDP_PASS"
+  | 3 -> Some "XDP_REDIRECT"
+  | 4 -> Some "XDP_TX"
+  | _ -> None
+
 (** Create XDP code generator *)
 let create () = {
   name = "XDP";
@@ -76,6 +85,7 @@ let create () = {
   field_mappings = xdp_field_mappings;
   generate_includes = generate_xdp_includes;
   generate_field_access = generate_xdp_field_access;
+  map_action_constant = map_xdp_action_constant;
 }
 
 (** Register this codegen with the context registry *)

@@ -16,6 +16,7 @@ type context_codegen = {
   field_mappings: (string * context_field_access) list;
   generate_includes: unit -> string list;
   generate_field_access: string -> string -> string; (* ctx_var -> field_name -> C expression *)
+  map_action_constant: int -> string option; (* Map integer to action constant *)
 }
 
 (** Registry for context code generators *)
@@ -46,4 +47,13 @@ let generate_context_field_access ctx_type ctx_var field_name =
 let get_context_includes ctx_type =
   match get_context_codegen ctx_type with
   | Some codegen -> codegen.generate_includes ()
-  | None -> [] 
+  | None -> []
+
+(** Generate context-specific includes (alias for compatibility) *)
+let generate_context_includes = get_context_includes
+
+(** Map action constant for a context type *)
+let map_context_action_constant ctx_type action_value =
+  match get_context_codegen ctx_type with
+  | Some codegen -> codegen.map_action_constant action_value
+  | None -> None 

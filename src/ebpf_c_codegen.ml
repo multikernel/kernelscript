@@ -432,6 +432,25 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     "#include <stdbool.h>";
   ] in
   
+  (* Get context-specific includes *)
+  let context_includes = List.fold_left (fun acc prog_type ->
+    let context_type = match prog_type with
+      | Ast.Xdp -> Some "xdp"
+      | Ast.Tc -> Some "tc"
+      | Ast.Kprobe -> Some "kprobe"
+      | _ -> None
+    in
+    match context_type with
+    | Some ctx_type -> 
+        let includes = Kernelscript_context.Context_codegen.generate_context_includes ctx_type in
+        acc @ includes
+    | None -> acc
+  ) [] program_types in
+  
+  (* Remove duplicates between standard and context includes *)
+  let unique_context_includes = List.filter (fun inc -> 
+    not (List.mem inc standard_includes)) context_includes in
+  
   (* Only add builtin headers if explicitly requested (for debugging/testing) *)
   let builtin_includes = if include_builtin_headers then
     List.fold_left (fun acc prog_type ->
@@ -445,7 +464,7 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     [] (* Skip builtin headers - enum constants come from system headers *)
   in
   
-  let all_includes = standard_includes @ (List.rev builtin_includes) in
+  let all_includes = standard_includes @ unique_context_includes @ (List.rev builtin_includes) in
   List.iter (fun inc -> ctx.output_lines <- inc :: ctx.output_lines) (List.rev all_includes);
   emit_blank_line ctx
 
@@ -1005,12 +1024,15 @@ let rec generate_c_instruction ctx ir_instr =
       begin match ret_opt with
       | Some ret_val ->
           let ret_str = match ret_val.value_desc with
-            (* Convert integer literals to XDP constants for XDP programs *)
-            | IRLiteral (IntLit 0) when ret_val.val_type = IRAction XdpActionType -> "XDP_ABORTED"
-            | IRLiteral (IntLit 1) when ret_val.val_type = IRAction XdpActionType -> "XDP_DROP"
-            | IRLiteral (IntLit 2) when ret_val.val_type = IRAction XdpActionType -> "XDP_PASS"
-            | IRLiteral (IntLit 3) when ret_val.val_type = IRAction XdpActionType -> "XDP_REDIRECT"
-            | IRLiteral (IntLit 4) when ret_val.val_type = IRAction XdpActionType -> "XDP_TX"
+            (* Use context-specific action constant mapping *)
+            | IRLiteral (IntLit i) when ret_val.val_type = IRAction XdpActionType ->
+                (match Kernelscript_context.Context_codegen.map_context_action_constant "xdp" i with
+                 | Some action -> action
+                 | None -> string_of_int i)
+            | IRLiteral (IntLit i) when ret_val.val_type = IRAction TcActionType ->
+                (match Kernelscript_context.Context_codegen.map_context_action_constant "tc" i with
+                 | Some action -> action
+                 | None -> string_of_int i)
             | _ -> generate_c_value ctx ret_val
           in
           emit_line ctx (sprintf "return %s;" ret_str)
