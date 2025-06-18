@@ -178,6 +178,11 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
+ (name test_string_struct_fixes)
+ (modules test_string_struct_fixes)
+ (libraries kernelscript alcotest str unix))
+
+(executable
  (name test_error_handling)
  (modules test_error_handling)
  (libraries kernelscript alcotest str))
@@ -346,6 +351,10 @@
  (action (run ./test_string_codegen.exe)))
 
 (rule
+ (alias runtest_string_struct_fixes)
+ (action (run ./test_string_struct_fixes.exe)))
+
+(rule
  (alias runtest_error_handling)
  (action (run ./test_error_handling.exe)))
 
@@ -396,6 +405,7 @@
   test_return_value_propagation.exe
   test_userspace_struct_flexibility.exe
   test_string_codegen.exe
+  test_string_struct_fixes.exe
   test_string_type.exe
   test_string_literal_bugs.exe)
  (action
@@ -407,6 +417,7 @@
    (run ./test_return_value_propagation.exe)
    (run ./test_userspace_struct_flexibility.exe)
    (run ./test_string_codegen.exe)
+   (run ./test_string_struct_fixes.exe)
    (run ./test_string_type.exe)
    (run ./test_string_literal_bugs.exe))))
 

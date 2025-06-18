@@ -326,7 +326,7 @@ let rec c_type_from_ir_type = function
   | IRF64 -> "double"
   | IRBool -> "bool"
   | IRChar -> "char"
-  | IRStr size -> sprintf "char[%d]" size (* Use fixed-size char arrays for userspace *)
+  | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
   | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
   | IRStruct (name, _) -> sprintf "struct %s" name
@@ -393,7 +393,11 @@ let get_register_var_name ctx reg_id ir_type =
   | Some var_name -> var_name
   | None ->
       let var_name = sprintf "var_%d" reg_id in
-      let c_type = c_type_from_ir_type ir_type in
+      (* Handle string types specially for variable declarations *)
+      let c_type = match ir_type with
+        | IRStr size -> sprintf "char[%d]" size
+        | _ -> c_type_from_ir_type ir_type
+      in
       Hashtbl.add ctx.register_vars reg_id var_name;
       Hashtbl.add ctx.var_declarations var_name c_type;
       var_name
@@ -814,7 +818,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
 let generate_c_struct_from_ir ir_struct =
   let fields_str = String.concat ";\n    " 
     (List.map (fun (field_name, field_type) ->
-       sprintf "%s %s" (c_type_from_ir_type field_type) field_name
+       (* Handle string types specially for correct C syntax *)
+       match field_type with
+       | IRStr size -> sprintf "char %s[%d]" field_name size
+       | _ -> sprintf "%s %s" (c_type_from_ir_type field_type) field_name
      ) ir_struct.struct_fields)
   in
   sprintf "struct %s {\n    %s;\n};" ir_struct.struct_name fields_str
@@ -852,7 +859,10 @@ let all_paths_have_return (ir_func : ir_function) : bool =
 let generate_c_function_from_ir (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
-       sprintf "%s %s" (c_type_from_ir_type ir_type) name
+       (* Handle string types specially for function parameters *)
+       match ir_type with
+       | IRStr size -> sprintf "char %s[%d]" name size
+       | _ -> sprintf "%s %s" (c_type_from_ir_type ir_type) name
      ) ir_func.parameters)
   in
   
@@ -935,6 +945,7 @@ let generate_getopt_parsing (struct_name : string) (param_name : string) (struct
        | IRU64 -> sprintf "%s.%s = (uint64_t)atoll(optarg);" param_name field_name
        | IRI8 -> sprintf "%s.%s = (int8_t)atoi(optarg);" param_name field_name
        | IRBool -> sprintf "%s.%s = (atoi(optarg) != 0);" param_name field_name
+       | IRStr size -> sprintf "strncpy(%s.%s, optarg, %d - 1); %s.%s[%d - 1] = '\\0';" param_name field_name size param_name field_name size
        | _ -> sprintf "%s.%s = (uint32_t)atoi(optarg); // fallback" param_name field_name
     in
     sprintf "        case %d:\n            %s\n            break;" (i + 1) parse_code
@@ -948,6 +959,7 @@ let generate_getopt_parsing (struct_name : string) (param_name : string) (struct
        | IRU8 | IRU16 | IRU32 | IRU64 -> "<number>"
        | IRI8 -> "<number>" 
        | IRBool -> "<0|1>"
+       | IRStr _ -> "<string>"
        | _ -> "<value>"
     in
     sprintf "    printf(\"  --%s=%s\\n\");" field_name type_hint
