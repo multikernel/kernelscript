@@ -13,6 +13,7 @@ program packet_filter : xdp {
         // Use network config
         if network.max_packet_size > 1000 {
             if network.enable_logging {
+                print("Dropping big packets")
                 return XDP_DROP
             }
         }

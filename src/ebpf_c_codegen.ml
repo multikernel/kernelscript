@@ -1498,6 +1498,12 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   let program_types = List.map (fun prog -> prog.program_type) ir_multi_program.programs in
   generate_includes ctx ~program_types ();
   
+  (* Generate string type definitions *)
+  generate_string_typedefs ctx ir_multi_program;
+  
+  (* Generate enum definitions *)
+  generate_enum_definitions ctx ir_multi_program;
+  
   (* Generate type alias definitions from AST *)
   generate_ast_type_alias_definitions ctx type_aliases;
   

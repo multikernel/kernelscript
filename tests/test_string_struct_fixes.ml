@@ -381,6 +381,49 @@ fn main(args: EdgeCases) -> i32 {
   with
   | exn -> fail ("String size edge cases test failed: " ^ Printexc.to_string exn)
 
+let test_ebpf_string_typedef_generation () =
+  (* This test verifies that the original compilation error is resolved.
+     The specific issue was that eBPF code was using string types like str_20_t
+     without generating the necessary typedef definitions, causing:
+     "error: use of undeclared identifier 'str_20_t'"
+     
+     We test this directly by generating eBPF code from a program that uses string literals. *)
+  
+  let program_text = {|
+config test_config {
+    enable_logging: bool = true,
+}
+
+program test : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if test_config.enable_logging {
+            print("Dropping big packets")
+            return 2
+        }
+        return 1
+    }
+}
+|} in
+  
+  try
+    let ast = parse_string program_text in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test_string_typedef" in
+    
+    (* Generate eBPF C code *)
+    let ebpf_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir_multi in
+    
+    (* The specific fix: check that string typedefs are generated *)
+    check bool "eBPF code contains string typedef comment" true 
+      (contains_pattern ebpf_code "String type definitions");
+    check bool "eBPF code contains string typedef definition" true 
+      (contains_pattern ebpf_code "typedef struct { char data\\[[0-9]+\\]; __u16 len; } str_[0-9]+_t;");
+    check bool "eBPF code uses string type without undeclared identifier error" true 
+      (contains_pattern ebpf_code "str_[0-9]+_t str_lit_");
+  with
+  | exn -> fail ("eBPF string typedef generation test failed: " ^ Printexc.to_string exn)
+
 (** Test suite for the specific string struct bugs we fixed *)
 let tests = [
   test_case "Struct field string syntax fix" `Quick test_struct_field_string_syntax;
@@ -391,6 +434,7 @@ let tests = [
   (* Comprehensive test temporarily disabled due to syntax issues - individual tests cover all fixes *)
   (* test_case "Comprehensive string struct fixes" `Quick test_comprehensive_string_struct_fixes; *)
   test_case "String size edge cases" `Quick test_string_size_edge_cases;
+  test_case "eBPF string typedef generation" `Quick test_ebpf_string_typedef_generation;
 ]
 
 (** Main test runner *)
