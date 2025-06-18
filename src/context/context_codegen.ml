@@ -49,8 +49,7 @@ let get_context_includes ctx_type =
   | Some codegen -> codegen.generate_includes ()
   | None -> []
 
-(** Generate context-specific includes (alias for compatibility) *)
-let generate_context_includes = get_context_includes
+
 
 (** Map action constant for a context type *)
 let map_context_action_constant ctx_type action_value =

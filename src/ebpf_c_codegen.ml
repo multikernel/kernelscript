@@ -442,7 +442,7 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     in
     match context_type with
     | Some ctx_type -> 
-        let includes = Kernelscript_context.Context_codegen.generate_context_includes ctx_type in
+        let includes = Kernelscript_context.Context_codegen.get_context_includes ctx_type in
         acc @ includes
     | None -> acc
   ) [] program_types in
