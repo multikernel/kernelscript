@@ -414,6 +414,69 @@ fn main(wrong_param: u32) -> i32 {
         check bool ("should have failed for: " ^ description) false true
   ) invalid_programs
 
+(** Test 6: Map file descriptor generation for userspace *)
+let test_map_fd_generation () =
+  let code = {|
+map<u32, u32> shared_counter : HashMap(1024) {
+  pinned: "/sys/fs/bpf/shared_counter"
+}
+
+program packet_counter : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    shared_counter[1] = 100
+    return XDP_PASS
+  }
+}
+
+program packet_filter : tc {
+  fn main(ctx: TcContext) -> TcAction {
+    shared_counter[2] = 200
+    return TC_ACT_OK
+  }
+}
+
+fn main() -> i32 {
+  shared_counter[1] = 0
+  shared_counter[2] = 0
+  return 0
+} 
+|} in
+  
+  try
+    let ast = parse_string code in
+    let maps = extract_maps_from_ast ast in
+    
+    check int "one shared counter map" 1 (List.length maps);
+    let shared_counter = List.hd maps in
+    check string "shared_counter name" "shared_counter" shared_counter.name;
+    
+    (* Generate userspace code and verify map fd usage *)
+    match get_generated_userspace_code ast "test_map_fd.ks" with
+    | Some generated_content ->
+        (* Check for file descriptor declaration *)
+        let has_fd_declaration = contains_pattern generated_content "int shared_counter_fd = -1" in
+        check bool "shared_counter_fd declaration" true has_fd_declaration;
+        
+        (* Check that map operations use the file descriptor, not raw map name *)
+        let has_fd_in_update = contains_pattern generated_content "bpf_map_update_elem.*shared_counter_fd" in
+        check bool "bpf_map_update_elem uses shared_counter_fd" true has_fd_in_update;
+        
+        (* Ensure raw map reference is NOT used in map operations *)
+        let has_raw_map_ref = contains_pattern generated_content "bpf_map_update_elem.*&shared_counter[^_]" in
+        check bool "bpf_map_update_elem does NOT use &shared_counter" false has_raw_map_ref;
+        
+        (* Check for map operation helper functions using fd *)
+        let has_helper_functions = contains_pattern generated_content "shared_counter_lookup\\|shared_counter_update" in
+        check bool "map helper functions present" true has_helper_functions;
+        
+        (* Verify helper functions use fd correctly *)
+        let helper_uses_fd = contains_pattern generated_content "return bpf_map_.*elem.*shared_counter_fd" in
+        check bool "map helper functions use fd" true helper_uses_fd
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
 let global_function_maps_tests = [
   "global_map_accessibility", `Quick, test_global_map_accessibility;
   "local_map_isolation", `Quick, test_local_map_isolation;
@@ -421,6 +484,7 @@ let global_function_maps_tests = [
   "multiple_map_types_global_functions", `Quick, test_multiple_map_types_global_functions;
   "global_function_code_structure", `Quick, test_global_function_code_structure;
   "global_function_error_handling", `Quick, test_global_function_error_handling;
+  "map_fd_generation", `Quick, test_map_fd_generation;
 ]
 
 let () =

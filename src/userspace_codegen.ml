@@ -419,7 +419,7 @@ let generate_c_value_from_ir ctx ir_value =
   | IRVariable name -> name
   | IRRegister reg_id -> get_register_var_name ctx reg_id ir_value.val_type
   | IRContextField (_ctx_type, field) -> sprintf "ctx->%s" field
-  | IRMapRef map_name -> sprintf "&%s" map_name
+  | IRMapRef map_name -> sprintf "%s_fd" map_name
 
 (** Generate C expression from IR expression *)
 let generate_c_expression_from_ir ctx ir_expr =
