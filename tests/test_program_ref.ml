@@ -7,7 +7,7 @@ let test_program_reference_type () =
   let program_text = {|
 program packet_filter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass
+    return XDP_PASS
   }
 }
 
@@ -39,7 +39,7 @@ program kprobe_tracer : kprobe {
 
 program tc_filter : tc {
   fn main(ctx: TcContext) -> TcAction {
-    return TcAction::Pass
+    return TC_ACT_OK
   }
 }
 
@@ -91,7 +91,7 @@ let test_program_reference_as_variable () =
   let program_text = {|
 program my_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass
+    return XDP_PASS
   }
 }
 
@@ -117,7 +117,7 @@ let test_wrong_argument_types () =
   let program_text = {|
 program my_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass
+    return XDP_PASS
   }
 }
 
@@ -164,7 +164,7 @@ let test_attach_without_load_fails () =
   let program_text = {|
 program simple_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass
+    return XDP_PASS
   }
 }
 
@@ -189,13 +189,13 @@ let test_multiple_program_handles () =
   let program_text = {|
 program xdp_filter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass
+    return XDP_PASS
   }
 }
 
 program tc_shaper : tc {
   fn main(ctx: TcContext) -> TcAction {
-    return TcAction::Pass
+    return TC_ACT_OK
   }
 }
 
@@ -225,7 +225,7 @@ let test_program_handle_naming () =
   let program_text = {|
 program simple_xdp : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    return XdpAction::Pass
+    return XDP_PASS
   }
 }
 
