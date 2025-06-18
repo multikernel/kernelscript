@@ -486,11 +486,8 @@ let generate_map_definition ctx map_def =
   if map_def.flags <> 0 then
     emit_line ctx (sprintf "__uint(map_flags, 0x%x);" map_def.flags);
   
-  (* Add pinning if specified *)
-  begin match map_def.pin_path with
-  | Some _path -> emit_line ctx (sprintf "__uint(pinning, LIBBPF_PIN_BY_NAME);")
-  | None -> ()
-  end;
+  (* Note: We do NOT emit __uint(pinning, LIBBPF_PIN_BY_NAME) here when pin_path is specified.
+     Userspace code will handle pinning to the exact path specified in pin_path. *)
   
   decrease_indent ctx;
   emit_line ctx (sprintf "} %s SEC(\".maps\");" map_def.map_name);

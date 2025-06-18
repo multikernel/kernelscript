@@ -1028,18 +1028,55 @@ int %s_get_next_key(%s *key, %s *next_key) {
       map.map_name key_type key_type map.map_name
   ) maps |> String.concat "\n"
 
-(** Generate map setup code - load from eBPF object *)
+(** Generate map setup code - handle both regular and pinned maps *)
 let generate_map_setup_code maps =
   List.map (fun map ->
-    sprintf {|    /* Load %s map from eBPF object */
+    match map.pin_path with
+    | Some pin_path ->
+        (* For pinned maps, try multiple approaches in order *)
+        sprintf {|    /* Load or create pinned %s map */
+    %s_fd = bpf_obj_get("%s");
+    if (%s_fd < 0) {
+        /* Map not pinned yet, load from eBPF object and pin it */
+        struct bpf_map *%s_map = bpf_object__find_map_by_name(bpf_obj, "%s");
+        if (!%s_map) {
+            fprintf(stderr, "Failed to find %s map in eBPF object\n");
+            return -1;
+        }
+        /* Pin the map to the specified path */
+        if (bpf_map__pin(%s_map, "%s") < 0) {
+            fprintf(stderr, "Failed to pin %s map to %s\n");
+            return -1;
+        }
+        /* Get file descriptor after pinning */
+        %s_fd = bpf_map__fd(%s_map);
+        if (%s_fd < 0) {
+            fprintf(stderr, "Failed to get fd for %s map\n");
+            return -1;
+        }
+    }|}
+          map.map_name
+          map.map_name pin_path
+          map.map_name
+          map.map_name map.map_name
+          map.map_name
+          map.map_name
+          map.map_name pin_path
+          map.map_name pin_path
+          map.map_name map.map_name
+          map.map_name
+          map.map_name
+    | None ->
+        (* For non-pinned maps, just load from BPF object *)
+        sprintf {|    /* Load %s map from eBPF object */
     %s_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s");
     if (%s_fd < 0) {
         fprintf(stderr, "Failed to find %s map in eBPF object\n");
         return -1;
     }|}
-      map.map_name
-      map.map_name map.map_name
-      map.map_name map.map_name
+          map.map_name
+          map.map_name map.map_name
+          map.map_name map.map_name
   ) maps |> String.concat "\n"
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
@@ -1071,26 +1108,52 @@ let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
   
   sprintf "struct %s {\n%s\n};" struct_name (String.concat "\n" field_declarations)
 
+(** Generate necessary headers based on maps used *)
+let generate_headers_for_maps maps =
+  let has_maps = List.length maps > 0 in
+  let has_pinned_maps = List.exists (fun map -> map.pin_path <> None) maps in
+  let has_perf_events = List.exists (fun map -> map.map_type = IRPerfEvent) maps in
+  let has_ring_buffer = List.exists (fun map -> map.map_type = IRRingBuffer) maps in
+  
+  let base_headers = [
+    "#include <stdio.h>";
+    "#include <stdlib.h>";
+    "#include <string.h>";
+    "#include <errno.h>";
+    "#include <unistd.h>";
+    "#include <signal.h>";
+  ] in
+  
+  let bpf_headers = if has_maps then [
+    "#include <bpf/bpf.h>";
+    "#include <bpf/libbpf.h>";
+  ] else [] in
+  
+  let pinning_headers = if has_pinned_maps then [
+    "#include <sys/stat.h>";
+    "#include <sys/types.h>";
+  ] else [] in
+  
+  let event_headers = 
+    (if has_perf_events then ["#include <sys/poll.h>"] else []) @
+    (if has_ring_buffer then ["#include <linux/ring_buffer.h>"] else []) in
+  
+  String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
+
 (** Generate complete userspace program from IR *)
 let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
-  let includes = {|#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <errno.h>
-#include <stdbool.h>
+  let base_includes = generate_headers_for_maps global_maps in
+  let additional_includes = {|#include <stdbool.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <net/if.h>
 #include <setjmp.h>
-#include <bpf/bpf.h>
-#include <bpf/libbpf.h>
 #include <linux/bpf.h>
 #include <sys/resource.h>
 
 /* Generated from KernelScript IR */
 |} in
+  let includes = base_includes ^ "\n" ^ additional_includes in
 
   (* Reset and use the global config names collector *)
   global_config_names := [];
