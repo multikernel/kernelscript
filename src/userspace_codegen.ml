@@ -907,6 +907,18 @@ let generate_c_function_from_ir (ir_func : ir_function) =
         "    // No arguments to parse"
     in
     
+    (* Generate assignment from parsed args to IR variables *)
+    let args_assignment_code = 
+      if List.length ir_func.parameters > 0 then
+        let (param_name, param_type) = List.hd ir_func.parameters in
+        (match param_type with
+         | IRStruct (_, _) ->
+           sprintf "    // Copy parsed arguments to function variable\n    var_0 = %s;" param_name
+         | _ -> "")
+      else
+        ""
+    in
+    
     (* Check if this main function uses maps and needs auto-initialization *)
     let func_usage = collect_function_usage_from_ir_function ir_func in
     let needs_auto_init = func_usage.uses_map_operations && not func_usage.uses_load_program in
@@ -919,9 +931,10 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     sprintf {|%s %s(%s) {
 %s    
 %s%s
+%s
     
     %s%s
-}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code auto_init_call body_c default_return
+}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code auto_init_call body_c default_return
   else
     sprintf {|%s %s(%s) {
 %s    %s

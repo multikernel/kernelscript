@@ -192,11 +192,81 @@ fn main(custom_args: CustomArgs) -> i32 {
   with
   | exn -> fail ("Validation failed with custom struct: " ^ Printexc.to_string exn)
 
+(** Test 4: Verify argument parsing and assignment to IR variables works correctly *)
+let test_argument_parsing_assignment_bug_fix () =
+  let program_text = {|
+program packet_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        return 2
+    }
+}
+
+struct Args {
+    enable_debug: u32,
+    interface: str<16>
+}
+
+fn main(args: Args) -> i32 {
+    if args.enable_debug > 0 {
+        print("Debug mode enabled")
+    }
+    let prog = load_program(packet_filter)
+    attach_program(prog, args.interface, 0)
+    return 0
+}
+|} in
+  
+  try
+    let result = generate_userspace_code_from_program program_text "test_arg_assignment" in
+    
+    (* 1. Check that arguments are parsed correctly *)
+    check bool "parse_arguments generates struct Args" true 
+      (contains_pattern result "struct Args parse_arguments");
+    check bool "args variable declared correctly" true 
+      (contains_pattern result "struct Args args = parse_arguments");
+    
+    (* 2. Check that parsed arguments are assigned to IR variables *)
+    check bool "parsed args assigned to var_0" true 
+      (contains_pattern result "var_0 = args;");
+    
+    (* 3. Check that IR variables use the struct fields correctly *)
+    check bool "var_0.interface used for attach_program" true 
+      (contains_pattern result "var_0\\.interface");
+    check bool "var_0.enable_debug accessible" true 
+      (contains_pattern result "var_0\\.enable_debug");
+    
+    (* 4. Check that string argument parsing uses strncpy (not atoi) *)
+    check bool "interface uses strncpy not atoi" true 
+      (contains_pattern result "strncpy(args\\.interface, optarg");
+    check bool "interface does not use atoi" false 
+      (contains_pattern result "args\\.interface.*atoi");
+    
+    (* 5. Check the assignment bridge exists (critical for the bug fix) *)
+    check bool "assignment from args to var_0 exists" true 
+      (contains_pattern result "// Copy parsed arguments to function variable");
+    
+    (* 6. Ensure no orphaned uninitialized var_0 usage *)
+    let var_0_usage_count = 
+      let rec count_matches pattern text start acc =
+        try
+          let pos = Str.search_forward (Str.regexp pattern) text start in
+          count_matches pattern text (pos + 1) (acc + 1)
+        with Not_found -> acc
+      in
+      count_matches "var_0\\." result 0 0
+    in
+    check bool "var_0 is used at least twice (enable_debug and interface)" true 
+      (var_0_usage_count >= 2);
+    
+  with
+  | exn -> fail ("Argument parsing assignment test failed: " ^ Printexc.to_string exn)
+
 (** All global function struct flexibility tests *)
 let global_function_struct_flexibility_tests = [
   "global_function_main_with_different_struct_name", `Quick, test_global_function_main_with_different_struct_name;
   "global_function_main_with_minimal_struct_name", `Quick, test_global_function_main_with_minimal_struct_name;
   "global_function_main_validation_with_custom_struct", `Quick, test_global_function_main_validation_with_custom_struct;
+  "argument_parsing_assignment_bug_fix", `Quick, test_argument_parsing_assignment_bug_fix;
 ]
 
 let () =
