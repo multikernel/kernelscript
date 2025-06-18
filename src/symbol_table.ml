@@ -322,39 +322,24 @@ let get_global_symbols table =
   ) table.symbols []
 
 (** Build symbol table from AST *)
-let rec build_symbol_table ast =
+let rec build_symbol_table ?builtin_path ast =
   let table = create_symbol_table () in
   
   (* Load builtin definitions from KernelScript files *)
-  let builtin_dir = "builtin" in
-  let load_builtin_ast builtin_file =
-    if Sys.file_exists builtin_file then
-      try
-        let content = 
-          let ic = open_in builtin_file in
-          let content = really_input_string ic (in_channel_length ic) in
-          close_in ic;
-          content
-        in
-        Some (Parse.parse_string content)
-      with _ -> None
-    else None
-  in
-  
   (* Load XDP builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "xdp.ks") with
+  (match Type_checker.load_builtin_ast ?builtin_path "xdp.ks" with
    | Some builtin_ast ->
        List.iter (process_declaration table) builtin_ast
    | None -> ());
   
   (* Load TC builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "tc.ks") with
+  (match Type_checker.load_builtin_ast ?builtin_path "tc.ks" with
    | Some builtin_ast ->
        List.iter (process_declaration table) builtin_ast
    | None -> ());
   
   (* Load Kprobe builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "kprobe.ks") with
+  (match Type_checker.load_builtin_ast ?builtin_path "kprobe.ks" with
    | Some builtin_ast ->
        List.iter (process_declaration table) builtin_ast
    | None -> ());

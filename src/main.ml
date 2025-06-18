@@ -16,6 +16,7 @@ type options = {
   output_dir: string option;
   verbose: bool;
   generate_makefile: bool;
+  builtin_path: string option;
 }
 
 let default_opts = {
@@ -23,6 +24,7 @@ let default_opts = {
   output_dir = None;
   verbose = false;
   generate_makefile = true;
+  builtin_path = None;
 }
 
 (** Argument parsing *)
@@ -33,6 +35,7 @@ let rec parse_args_aux opts = function
   | "-v" :: rest -> parse_args_aux { opts with verbose = true } rest
   | "--verbose" :: rest -> parse_args_aux { opts with verbose = true } rest
   | "--no-makefile" :: rest -> parse_args_aux { opts with generate_makefile = false } rest
+  | "--builtin-path" :: path :: rest -> parse_args_aux { opts with builtin_path = Some path } rest
   | arg :: rest when not (String.starts_with ~prefix:"-" arg) ->
       parse_args_aux { opts with input_file = arg } rest
   | unknown :: _ ->
@@ -42,6 +45,7 @@ let rec parse_args_aux opts = function
       printf "  -o, --output <dir>     Specify output directory\n";
       printf "  -v, --verbose          Enable verbose output\n";
       printf "  --no-makefile          Don't generate Makefile\n";
+      printf "  --builtin-path <path>  Specify path to builtin KernelScript files\n";
       exit 1
 
 let parse_args () =
@@ -117,7 +121,7 @@ let compile opts source_file =
     (* Phase 2: Symbol table analysis *)
     current_phase := SymbolAnalysis;
     Printf.printf "Phase 2: %s\n" (string_of_phase !current_phase);
-    let symbol_table = Symbol_table.build_symbol_table ast in
+    let symbol_table = Symbol_table.build_symbol_table ?builtin_path:opts.builtin_path ast in
     Printf.printf "✅ Symbol table created successfully\n\n";
     
     (* Phase 3: Multi-program analysis *)
@@ -137,7 +141,7 @@ let compile opts source_file =
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := TypeChecking;
     Printf.printf "Phase 4: %s\n" (string_of_phase !current_phase);
-    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ast in
+    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ?builtin_path:opts.builtin_path ast in
     Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
     
     (* Phase 5: Multi-program IR optimization *)

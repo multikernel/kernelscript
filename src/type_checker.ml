@@ -2,6 +2,38 @@
 
 open Ast
 
+(** Utility function to find builtin directory from various locations *)
+let find_builtin_dir ?builtin_path () =
+  match builtin_path with
+  | Some path when Sys.file_exists path && Sys.is_directory path -> Some path
+  | Some _ -> None  (* Invalid custom path *)
+  | None ->
+      let candidates = [
+        "builtin";              (* Current directory *)
+        "../../../builtin";     (* From _build/default/tests/ *)
+        "../../builtin";        (* From _build/default/ *)
+        "../builtin";           (* From subdirectory *)
+      ] in
+      List.find_opt (fun dir -> Sys.file_exists dir && Sys.is_directory dir) candidates
+
+(** Utility function to load builtin AST files *)
+let load_builtin_ast ?builtin_path builtin_name =
+  match find_builtin_dir ?builtin_path () with
+  | Some builtin_dir ->
+      let builtin_file = Filename.concat builtin_dir builtin_name in
+      if Sys.file_exists builtin_file then
+        try
+          let content = 
+            let ic = open_in builtin_file in
+            let content = really_input_string ic (in_channel_length ic) in
+            close_in ic;
+            content
+          in
+          Some (Parse.parse_string content)
+        with _ -> None
+      else None
+  | None -> None
+
 (** Type checking exceptions *)
 exception Type_error of string * position
 exception Unification_error of bpf_type * bpf_type * position
@@ -977,12 +1009,12 @@ let type_check_userspace _ctx _userspace_block =
   failwith "Userspace blocks are no longer supported"
 
 (** Main type checking entry point *)
-let type_check_ast ast =
+let type_check_ast ?builtin_path ast =
   let ctx = create_context () in
   
   (* Load builtin definitions from KernelScript files *)
-  let builtin_dir = "builtin" in
-  let load_builtin_ast builtin_file =
+  let _builtin_dir = "builtin" in
+  let _load_builtin_ast builtin_file =
     if Sys.file_exists builtin_file then
       try
         let content = 
@@ -997,7 +1029,7 @@ let type_check_ast ast =
   in
   
   (* Load XDP builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "xdp.ks") with
+  (match load_builtin_ast ?builtin_path "xdp.ks" with
    | Some builtin_ast ->
        List.iter (function
          | TypeDef type_def ->
@@ -1009,7 +1041,7 @@ let type_check_ast ast =
    | None -> ());
   
   (* Load TC builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "tc.ks") with
+  (match load_builtin_ast ?builtin_path "tc.ks" with
    | Some builtin_ast ->
        List.iter (function
          | TypeDef type_def ->
@@ -1021,7 +1053,7 @@ let type_check_ast ast =
    | None -> ());
   
   (* Load Kprobe builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "kprobe.ks") with
+  (match load_builtin_ast ?builtin_path "kprobe.ks" with
    | Some builtin_ast ->
        List.iter (function
          | TypeDef type_def ->
@@ -1225,7 +1257,7 @@ let typed_ast_to_annotated_ast typed_ast typed_userspace_functions original_ast 
   ) original_ast 
 
 (** PHASE 2: Type check and annotate AST with multi-program analysis *)
-let rec type_check_and_annotate_ast ast =
+let rec type_check_and_annotate_ast ?builtin_path ast =
   (* STEP 1: Multi-program analysis *)
   let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system ast in
   
@@ -1241,8 +1273,8 @@ let rec type_check_and_annotate_ast ast =
   let ctx = create_context () in
   
   (* Load builtin definitions from KernelScript files *)
-  let builtin_dir = "builtin" in
-  let load_builtin_ast builtin_file =
+  let _builtin_dir = "builtin" in
+  let _load_builtin_ast builtin_file =
     if Sys.file_exists builtin_file then
       try
         let content = 
@@ -1257,7 +1289,7 @@ let rec type_check_and_annotate_ast ast =
   in
   
   (* Load XDP builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "xdp.ks") with
+  (match load_builtin_ast ?builtin_path "xdp.ks" with
    | Some builtin_ast ->
        List.iter (function
          | TypeDef type_def ->
@@ -1269,7 +1301,7 @@ let rec type_check_and_annotate_ast ast =
    | None -> ());
   
   (* Load TC builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "tc.ks") with
+  (match load_builtin_ast ?builtin_path "tc.ks" with
    | Some builtin_ast ->
        List.iter (function
          | TypeDef type_def ->
@@ -1281,7 +1313,7 @@ let rec type_check_and_annotate_ast ast =
    | None -> ());
   
   (* Load Kprobe builtins *)
-  (match load_builtin_ast (Filename.concat builtin_dir "kprobe.ks") with
+  (match load_builtin_ast ?builtin_path "kprobe.ks" with
    | Some builtin_ast ->
        List.iter (function
          | TypeDef type_def ->
