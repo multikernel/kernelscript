@@ -579,14 +579,14 @@ let generate_c_value ctx ir_val =
   | IRMapRef map_name -> sprintf "&%s" map_name
   | IRContextField (ctx_type, field) ->
       let ctx_var = "ctx" in (* Standard context parameter name *)
-      begin match ctx_type, field with
-      | XdpCtx, "data" -> sprintf "(void*)(long)%s->data" ctx_var
-      | XdpCtx, "data_end" -> sprintf "(void*)(long)%s->data_end" ctx_var
-      | XdpCtx, "data_meta" -> sprintf "(void*)(long)%s->data_meta" ctx_var
-      | TcCtx, "data" -> sprintf "(void*)(long)%s->data" ctx_var
-      | TcCtx, "data_end" -> sprintf "(void*)(long)%s->data_end" ctx_var
-      | _, field -> sprintf "%s->%s" ctx_var field
-      end
+      (* Use modular context code generation *)
+      let ctx_type_str = match ctx_type with
+        | XdpCtx -> "xdp"
+        | TcCtx -> "tc" 
+        | KprobeCtx -> "kprobe"
+        | _ -> failwith ("Unsupported context type in IRContextField")
+      in
+      Kernelscript_context.Context_codegen.generate_context_field_access ctx_type_str ctx_var field
 
 (** Generate string operations for eBPF *)
 
@@ -945,16 +945,19 @@ let rec generate_c_instruction ctx ir_instr =
       
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
-      let access_str = match access_type with
-        | PacketData -> "ctx->data"
-        | PacketEnd -> "ctx->data_end"
-        | DataMeta -> "ctx->data_meta"
-        | IngressIfindex -> "ctx->ingress_ifindex"
-        | DataLen -> "ctx->len"
-        | MarkField -> "ctx->mark"
-        | Priority -> "ctx->priority"
-        | CbField -> "ctx->cb[0]"
+      (* Map access type to context field name and determine context type *)
+      let (ctx_type_str, field_name) = match access_type with
+        | PacketData -> ("xdp", "data")
+        | PacketEnd -> ("xdp", "data_end") 
+        | DataMeta -> ("xdp", "data_meta")
+        | IngressIfindex -> ("xdp", "ingress_ifindex")
+        | DataLen -> ("tc", "len") (* TC-specific *)
+        | MarkField -> ("tc", "mark") (* TC-specific *)
+        | Priority -> ("tc", "priority") (* TC-specific *)
+        | CbField -> ("tc", "cb") (* TC-specific *)
       in
+      (* Use modular context code generation *)
+      let access_str = Kernelscript_context.Context_codegen.generate_context_field_access ctx_type_str "ctx" field_name in
       emit_line ctx (sprintf "%s = %s;" dest_str access_str)
 
   | IRBoundsCheck (value_val, min_bound, max_bound) ->
@@ -1399,6 +1402,10 @@ let generate_c_function ctx ir_func =
 let generate_c_program ?config_declarations ir_prog =
   let ctx = create_c_context () in
   
+  (* Initialize modular context code generators *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  
   (* Add standard includes *)
   let program_types = [ir_prog.program_type] in
   generate_includes ctx ~program_types ();
@@ -1461,6 +1468,10 @@ let generate_c_program ?config_declarations ir_prog =
 let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
   let ctx = create_c_context () in
   
+  (* Initialize modular context code generators *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  
   (* Store variable type aliases for later lookup *)
   ctx.variable_type_aliases <- variable_type_aliases;
   
@@ -1519,6 +1530,10 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
                                    (resource_plan: Multi_program_ir_optimizer.resource_plan)
                                    (_optimization_results: Multi_program_ir_optimizer.optimization_strategy list) =
   let ctx = create_c_context () in
+  
+  (* Initialize modular context code generators *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
   
   (* Add enhanced includes for multi-program systems *)
   let program_types = List.map (fun prog -> prog.program_type) ir_multi_program.programs in

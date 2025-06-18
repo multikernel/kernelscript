@@ -62,6 +62,9 @@ let test_c_expression_generation () =
 
 (** Test context field access *)
 let test_context_access () =
+  (* Initialize context codegens *)
+  Kernelscript_context.Xdp_codegen.register ();
+  
   let ctx = create_c_context () in
   
   let data_field = make_ir_value (IRContextField (XdpCtx, "data")) (IRPointer (IRU8, make_bounds_info ())) test_pos in
@@ -163,6 +166,9 @@ let test_literal_map_operations () =
 
 (** Test simple function generation *)
 let test_function_generation () =
+  (* Initialize context codegens *)
+  Kernelscript_context.Xdp_codegen.register ();
+  
   let ctx = create_c_context () in
   
   (* Create a simple function: return 42 *)
@@ -181,6 +187,9 @@ let test_function_generation () =
 
 (** Test complete program generation *)
 let test_complete_program () =
+  (* Initialize context codegens *)
+  Kernelscript_context.Xdp_codegen.register ();
+  
   (* Create a simple XDP program *)
   let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in

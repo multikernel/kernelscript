@@ -11,9 +11,9 @@ enum XdpAction {
 
 // XDP context structure (read-only)
 struct XdpContext {
-    data: u32,           // Pointer to packet data start
-    data_end: u32,       // Pointer to packet data end
-    data_meta: u32,      // Pointer to metadata
+    data: *u8,           // Pointer to packet data start
+    data_end: *u8,       // Pointer to packet data end
+    data_meta: *u8,      // Pointer to metadata
     ingress_ifindex: u32, // Ingress interface index
     rx_queue_index: u32,  // RX queue index
     egress_ifindex: u32   // Egress interface index (for redirect)
