@@ -202,7 +202,10 @@
  (modules test_enum)
  (libraries kernelscript alcotest))
 
-
+(executable
+ (name test_nested_if_codegen)
+ (modules test_nested_if_codegen)
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_type_alias)
@@ -371,6 +374,10 @@
  (action (run ./test_enum.exe)))
 
 (rule
+ (alias runtest_nested_if_codegen)
+ (action (run ./test_nested_if_codegen.exe)))
+
+(rule
  (alias runtest_type_alias)
  (action (run ./test_type_alias.exe)))
 
@@ -483,8 +490,11 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe)
- (action (run ./test_ebpf_c_codegen.exe)))
+ (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe)
+ (action
+  (progn
+   (run ./test_ebpf_c_codegen.exe)
+   (run ./test_nested_if_codegen.exe))))
 
 ; Top-level alias to run all tests
 (alias

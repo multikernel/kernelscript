@@ -687,41 +687,32 @@ let rec lower_statement ctx stmt =
           stmt.stmt_pos in
         emit_instruction ctx if_instr
       else
-        (* Regular control flow for eBPF contexts *)
-        (* Create labels for control flow *)
-        let cond_label = Printf.sprintf "cond_%d" ctx.next_block_id in
-        let then_label = Printf.sprintf "then_%d" (ctx.next_block_id + 1) in
-        let else_label = Printf.sprintf "else_%d" (ctx.next_block_id + 2) in
-        let merge_label = Printf.sprintf "merge_%d" (ctx.next_block_id + 3) in
+        (* For eBPF contexts, use structured IRIf to avoid goto complexity *)
+        let then_instructions = ref [] in
         
-        (* Conditional jump *)
-        let cond_jump = make_ir_instruction 
-          (IRCondJump (cond_val, then_label, else_label)) 
-          stmt.stmt_pos in
-        emit_instruction ctx cond_jump;
-        
-        (* End current block *)
-        let _ = create_basic_block ctx cond_label in
-        
-        (* Then block *)
+        (* Temporarily capture instructions for then block *)
+        let old_block = ctx.current_block in
+        ctx.current_block <- [];
         List.iter (lower_statement ctx) then_stmts;
-        let jump_to_merge = make_ir_instruction (IRJump merge_label) stmt.stmt_pos in
-        emit_instruction ctx jump_to_merge;
-        let _then_block = create_basic_block ctx then_label in
+        then_instructions := List.rev ctx.current_block;
+        ctx.current_block <- old_block;
         
-        (* Else block *)
-        (match else_opt with
-         | Some else_stmts -> List.iter (lower_statement ctx) else_stmts
-         | None -> ());
-        let else_jump_to_merge = make_ir_instruction (IRJump merge_label) stmt.stmt_pos in
-        emit_instruction ctx else_jump_to_merge;
-        let _else_block = create_basic_block ctx else_label in
+        (* Temporarily capture instructions for else block *)
+        let else_instrs_opt = match else_opt with
+          | Some else_stmts ->
+              ctx.current_block <- [];
+              List.iter (lower_statement ctx) else_stmts;
+              let else_instrs = List.rev ctx.current_block in
+              ctx.current_block <- old_block;
+              Some else_instrs
+          | None -> None
+        in
         
-        (* Merge block *)
-        let _merge_block = create_basic_block ctx merge_label in
-        
-        (* Note: Control flow connections will be established during CFG construction *)
-        ()
+        (* Generate IRIf instruction *)
+        let if_instr = make_ir_instruction 
+          (IRIf (cond_val, !then_instructions, else_instrs_opt))
+          stmt.stmt_pos in
+        emit_instruction ctx if_instr
       
   | Ast.For (var, start_expr, end_expr, body_stmts) ->
       (* Analyze the loop to determine if it's bounded or unbounded *)
