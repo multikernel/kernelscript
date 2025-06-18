@@ -420,7 +420,7 @@ let generate_ast_type_alias_definitions ctx type_aliases =
 
 (** Generate standard eBPF includes *)
 
-let generate_includes ctx ?(program_types=[]) () =
+let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) () =
   let standard_includes = [
     "#include <linux/bpf.h>";
     "#include <bpf/bpf_helpers.h>";
@@ -432,14 +432,18 @@ let generate_includes ctx ?(program_types=[]) () =
     "#include <stdbool.h>";
   ] in
   
-  (* Add builtin headers based on program types *)
-  let builtin_includes = List.fold_left (fun acc prog_type ->
-    match prog_type with
-    | Ast.Xdp -> "#include \"xdp.h\"" :: acc
-    | Ast.Tc -> "#include \"tc.h\"" :: acc
-    | Ast.Kprobe -> "#include \"kprobe.h\"" :: acc
-    | _ -> acc
-  ) [] program_types in
+  (* Only add builtin headers if explicitly requested (for debugging/testing) *)
+  let builtin_includes = if include_builtin_headers then
+    List.fold_left (fun acc prog_type ->
+      match prog_type with
+      | Ast.Xdp -> "#include \"xdp.h\"" :: acc
+      | Ast.Tc -> "#include \"tc.h\"" :: acc
+      | Ast.Kprobe -> "#include \"kprobe.h\"" :: acc
+      | _ -> acc
+    ) [] program_types
+  else
+    [] (* Skip builtin headers - enum constants come from system headers *)
+  in
   
   let all_includes = standard_includes @ (List.rev builtin_includes) in
   List.iter (fun inc -> ctx.output_lines <- inc :: ctx.output_lines) (List.rev all_includes);

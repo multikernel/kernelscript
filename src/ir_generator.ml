@@ -251,13 +251,41 @@ let rec lower_expression ctx (expr : Ast.expr) =
              (* Program references should be converted to string literals containing the program name *)
              make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
          | _ ->
-             (* Regular variable *)
-             let reg = get_variable_register ctx name in
-             let ir_type = match expr.expr_type with
-               | Some ast_type -> ast_type_to_ir_type ast_type
-               | None -> failwith ("Untyped identifier: " ^ name)
-             in
-             make_ir_value (IRRegister reg) ir_type expr.expr_pos)
+             (* Check if this is a constant from the symbol table *)
+             (match Symbol_table.lookup_symbol ctx.symbol_table name with
+              | Some symbol -> 
+                  (match symbol.kind with
+                   | Symbol_table.EnumConstant (_, Some value) ->
+                       (* Enum constants are treated as constants *)
+                       let ir_type = match expr.expr_type with
+                         | Some ast_type -> ast_type_to_ir_type ast_type
+                         | None -> IRU32
+                       in
+                       make_ir_value (IRLiteral (IntLit value)) ir_type expr.expr_pos
+                   | Symbol_table.EnumConstant (_, None) ->
+                       (* Enum constant without value - treat as variable *)
+                       let reg = get_variable_register ctx name in
+                       let ir_type = match expr.expr_type with
+                         | Some ast_type -> ast_type_to_ir_type ast_type
+                         | None -> failwith ("Untyped identifier: " ^ name)
+                       in
+                       make_ir_value (IRRegister reg) ir_type expr.expr_pos
+                   | _ ->
+                       (* Regular variable *)
+                       let reg = get_variable_register ctx name in
+                       let ir_type = match expr.expr_type with
+                         | Some ast_type -> ast_type_to_ir_type ast_type
+                         | None -> failwith ("Untyped identifier: " ^ name)
+                       in
+                       make_ir_value (IRRegister reg) ir_type expr.expr_pos)
+              | None ->
+                  (* Regular variable *)
+                  let reg = get_variable_register ctx name in
+                  let ir_type = match expr.expr_type with
+                    | Some ast_type -> ast_type_to_ir_type ast_type
+                    | None -> failwith ("Untyped identifier: " ^ name)
+                  in
+                  make_ir_value (IRRegister reg) ir_type expr.expr_pos))
       
   | Ast.ConfigAccess (config_name, field_name) ->
       (* Handle config access like config.field_name *)

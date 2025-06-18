@@ -244,6 +244,7 @@ let compile opts source_file =
     ) [] ast in
     
     let unique_program_types = List.sort_uniq compare program_types in
+    let generated_builtin_headers = ref [] in  (* Track generated headers for cleanup *)
     List.iter (fun prog_type ->
       let (builtin_file, header_name) = match prog_type with
         | Ast.Xdp -> ("builtin/xdp.ks", "xdp.h")
@@ -256,6 +257,7 @@ let compile opts source_file =
         try
           Printf.printf "🔧 Compiling builtin: %s -> %s\n" builtin_file output_header;
           Builtin_compiler.compile_builtin_file builtin_file output_header;
+          generated_builtin_headers := output_header :: !generated_builtin_headers;
           Printf.printf "✅ Builtin header generated: %s\n" header_name
         with
         | exn ->
@@ -346,6 +348,21 @@ run: $(USERSPACE_BIN)
     
     Printf.printf "📄 Generated Makefile: %s/Makefile\n" output_dir;
     Printf.printf "🔨 To compile: cd %s && make\n" output_dir;
+    
+    (* Clean up temporary builtin headers since they're not included in generated C code *)
+    if !generated_builtin_headers <> [] then (
+      Printf.printf "🧹 Cleaning up temporary builtin headers...\n";
+      List.iter (fun header_path ->
+        try
+          Sys.remove header_path;
+          let header_name = Filename.basename header_path in
+          Printf.printf "   ✅ Removed: %s\n" header_name
+        with
+        | Sys_error _ -> 
+          Printf.printf "   ⚠️ Could not remove: %s\n" (Filename.basename header_path)
+      ) !generated_builtin_headers;
+      Printf.printf "✨ Temporary headers cleaned up\n"
+    );
     
   with
   | Failure msg when msg = "Parse error" ->

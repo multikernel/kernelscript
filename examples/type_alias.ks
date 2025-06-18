@@ -9,6 +9,6 @@ program test_type_aliases : xdp {
         let ip: IpAddress = 192168001001
 
         
-        return 2
+        return XDP_PASS
     }
 } 
