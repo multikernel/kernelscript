@@ -13,20 +13,21 @@ program packet_filter : xdp {
         // Use network config
         if network.max_packet_size > 1000 {
             if network.enable_logging {
-                return 1  // XDP_DROP
+                return XDP_DROP
             }
         }
         
         // Update stats
-        packet_stats[0] = 1;
+        packet_stats[0] = 1
         
-        return 2  // XDP_PASS
+        return XDP_PASS
     }
 }
 
 // Userspace coordination (no wrapper)
 struct Args {
     enable_debug: u32,
+    interface: str<16>
 }
 
 fn main(args: Args) -> i32 {
@@ -34,6 +35,7 @@ fn main(args: Args) -> i32 {
     if args.enable_debug > 0 {
         network.enable_logging = true
     }
-    load_program(packet_filter)
+    let prog = load_program(packet_filter)
+    attach_program(prog, args.interface, 0)
     return 0
 } 
