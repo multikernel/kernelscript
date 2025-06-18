@@ -575,6 +575,126 @@ fn main() -> i32 {
   with
   | e -> fail ("Error with different config types: " ^ Printexc.to_string e)
 
+(** Test config map initialization with default values (bug fix test) *)
+let test_config_map_default_value_initialization () =
+  let program_text = {|
+config network {
+    max_packet_size: u32 = 1500,
+    enable_logging: bool = true,
+    blocked_ports: u16[4] = [22, 23, 135, 445],
+    timeout: u32 = 5000,
+}
+
+program packet_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if network.max_packet_size > 1000 {
+            return 2
+        }
+        return 1
+    }
+}
+
+fn main() -> i32 {
+    network.enable_logging = true
+    return 0
+}
+|} in
+  
+  let temp_dir = Filename.temp_file "test_config_init" "" in
+  Unix.unlink temp_dir;
+  Unix.mkdir temp_dir 0o755;
+  
+  try
+    let ast = parse_string program_text in
+    let symbol_table = build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    let ir = generate_ir annotated_ast symbol_table "test_config_init" in
+    
+    (* Extract config declarations *)
+    let config_declarations = List.filter_map (fun decl -> match decl with
+      | ConfigDecl config -> Some config
+      | _ -> None
+    ) ast in
+    
+    (* Generate userspace code with config declarations *)
+    let _output_file = generate_userspace_code_from_ir ~config_declarations ir ~output_dir:temp_dir "test_config_init" in
+    let generated_file = Filename.concat temp_dir "test_config_init.c" in
+    
+    if Sys.file_exists generated_file then (
+      let ic = open_in generated_file in
+      let content = really_input_string ic (in_channel_length ic) in
+      close_in ic;
+      
+      (* Cleanup *)
+      Unix.unlink generated_file;
+      Unix.rmdir temp_dir;
+      
+      (* Test 1: Config map is loaded *)
+      check bool "network_config_map_fd is loaded" true 
+        (String.contains content 'n' && 
+         (try ignore (Str.search_forward (Str.regexp "network_config_map_fd.*find_map_fd_by_name") content 0); true 
+          with Not_found -> false));
+      
+      (* Test 2: Default value initialization exists *)
+      check bool "config initialization comment exists" true 
+        (try ignore (Str.search_forward (Str.regexp "Initialize.*config map with default values") content 0); true 
+         with Not_found -> false);
+      
+      (* Test 3: Struct with default values is created *)
+      check bool "init_config struct created" true 
+        (try ignore (Str.search_forward (Str.regexp "struct network_config init_config") content 0); true 
+         with Not_found -> false);
+      
+      (* Test 4: Specific default values are set correctly *)
+      check bool "max_packet_size initialized to 1500" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.max_packet_size = 1500") content 0); true 
+         with Not_found -> false);
+      
+      check bool "enable_logging initialized to true" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.enable_logging = true") content 0); true 
+         with Not_found -> false);
+      
+      check bool "timeout initialized to 5000" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.timeout = 5000") content 0); true 
+         with Not_found -> false);
+      
+      (* Test 5: Array initialization is correct *)
+      check bool "blocked_ports[0] = 22" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.blocked_ports\\[0\\] = 22") content 0); true 
+         with Not_found -> false);
+      
+      check bool "blocked_ports[1] = 23" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.blocked_ports\\[1\\] = 23") content 0); true 
+         with Not_found -> false);
+      
+      check bool "blocked_ports[2] = 135" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.blocked_ports\\[2\\] = 135") content 0); true 
+         with Not_found -> false);
+      
+      check bool "blocked_ports[3] = 445" true 
+        (try ignore (Str.search_forward (Str.regexp "init_config\\.blocked_ports\\[3\\] = 445") content 0); true 
+         with Not_found -> false);
+      
+      (* Test 6: Map update call exists *)
+      check bool "bpf_map_update_elem called for initialization" true 
+        (try ignore (Str.search_forward (Str.regexp "bpf_map_update_elem.*network_config_map_fd.*init_config") content 0); true 
+         with Not_found -> false);
+      
+      (* Test 7: Error handling for initialization failure *)
+      check bool "initialization error handling" true 
+        (try ignore (Str.search_forward (Str.regexp "Failed to initialize.*config map with default values") content 0); true 
+         with Not_found -> false);
+      
+    ) else (
+      Unix.rmdir temp_dir;
+      fail "Generated C file does not exist"
+    )
+  with
+  | exn ->
+    (* Cleanup on error *)
+    (try Unix.rmdir temp_dir with _ -> ());
+    fail ("Config map initialization test failed: " ^ Printexc.to_string exn)
+
 (** All config tests *)
 let config_tests = [
   (* Name Conflict Tests *)
@@ -602,6 +722,7 @@ let config_tests = [
   
   (* Userspace Code Generation Tests *)
   "config_initialization_generation", `Quick, test_config_initialization_generation;
+  "config_map_default_value_initialization", `Quick, test_config_map_default_value_initialization;
   
   (* Integration Tests *)
   "end_to_end_config_compilation", `Quick, test_end_to_end_config_compilation;

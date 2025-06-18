@@ -1133,6 +1133,41 @@ let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
   
   sprintf "struct %s {\n%s\n};" struct_name (String.concat "\n" field_declarations)
 
+(** Generate config initialization from declaration defaults *)
+let generate_config_initialization (config_decl : Ast.config_declaration) =
+  let config_name = config_decl.config_name in
+  let struct_name = sprintf "%s_config" config_name in
+  
+  (* Generate field initializations with default values *)
+  let field_initializations = List.map (fun field ->
+    let initialization = match field.Ast.field_default with
+      | Some default_value -> 
+          (match default_value with
+           | Ast.IntLit i -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
+           | Ast.BoolLit b -> sprintf "    init_config.%s = %s;" field.Ast.field_name (if b then "true" else "false")
+           | Ast.ArrayLit elements ->
+               (* Handle array initialization *)
+               let elements_str = List.mapi (fun i element ->
+                 match element with
+                 | Ast.IntLit value -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
+                 | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
+               ) elements in
+               String.concat "\n" elements_str
+           | _ -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* fallback *))
+      | None -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* default to 0 if no default specified *)
+    in
+    initialization
+  ) config_decl.Ast.config_fields in
+  
+  sprintf {|    /* Initialize %s config map with default values */
+    struct %s init_config = {0};
+    uint32_t config_key = 0;
+%s
+    if (bpf_map_update_elem(%s_config_map_fd, &config_key, &init_config, BPF_ANY) < 0) {
+        fprintf(stderr, "Failed to initialize %s config map with default values\n");
+        return -1;
+    }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
+
 (** Generate necessary headers based on maps used *)
 let generate_headers_for_maps maps =
   let has_maps = List.length maps > 0 in
@@ -1268,17 +1303,18 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     generate_map_setup_code used_global_maps
   else "" in
   
-  (* Generate config map setup code - load from eBPF object *)
+  (* Generate config map setup code - load from eBPF object and initialize with defaults *)
   let config_setup_code = if all_usage.uses_map_operations then
     List.map (fun config_decl ->
       let config_name = config_decl.Ast.config_name in
-      sprintf {|    /* Load %s config map from eBPF object */
+      let load_code = sprintf {|    /* Load %s config map from eBPF object */
     %s_config_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s_config_map");
     if (%s_config_map_fd < 0) {
         fprintf(stderr, "Failed to find %s config map in eBPF object\n");
         return -1;
-    }|}
-        config_name config_name config_name config_name config_name
+    }|} config_name config_name config_name config_name config_name in
+      let init_code = generate_config_initialization config_decl in
+      load_code ^ "\n" ^ init_code
     ) config_declarations |> String.concat "\n"
   else "" in
   
