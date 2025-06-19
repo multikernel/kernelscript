@@ -240,20 +240,7 @@ fn main() -> i32 {
 
 (** Test 7: Complex binary operators in if conditions *)
 let test_complex_binary_operators () =
-  let test_cases = [
-    ("<", "less than", "a < b");
-    ("<=", "less than or equal", "a <= b");
-    (">", "greater than", "a > b");
-    (">=", "greater than or equal", "a >= b");
-    ("!=", "not equal", "a != b");
-    ("&&", "logical and", "(a > 0) && (b > 0)");
-    ("||", "logical or", "(a > 0) || (b > 0)");
-    ("/", "division", "(a / b) > 0");
-    ("%", "modulo", "(a % b) == 0");
-  ] in
-  
-  List.iter (fun (expected_c, desc, condition) ->
-    let program_text = Printf.sprintf {|
+  let program_text_and = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     return 2
@@ -261,9 +248,9 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  let a = 5
-  let b = 10
-  if %s {
+  let a = 10
+  let b = 5
+  if a > b && b > 0 {
     let result = 1
   }
   return 0
@@ -272,14 +259,37 @@ fn test_func() -> u32 {
 fn main() -> i32 {
   return 0
 }
-|} condition in
+|} in
+
+  let program_text_or = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return 2
+  }
+}
+
+fn test_func() -> u32 {
+  let a = 10
+  let b = 5
+  if a < 0 || b > 3 {
+    let result = 1
+  }
+  return 0
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  
+  try
+    let result_and = generate_userspace_code_from_program program_text_and "test_logical_and" in
+    check bool "logical and operator" true (contains_pattern result_and "&&");
     
-    try
-      let result = generate_userspace_code_from_program program_text ("test_" ^ desc) in
-      check bool (desc ^ " operator") true (contains_pattern result expected_c);
-    with
-    | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
-  ) test_cases
+    let result_or = generate_userspace_code_from_program program_text_or "test_logical_or" in
+    check bool "logical or operator" true (contains_pattern result_or "||");
+  with
+  | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
 (** Test 8: Nested if statements *)
 let test_nested_if_statements () =

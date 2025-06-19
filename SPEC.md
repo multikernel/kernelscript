@@ -1820,8 +1820,8 @@ defer_statement = "defer" expression
 (* Expressions *)
 expression = logical_or_expression 
 
-logical_or_expression = logical_and_expression { "or" logical_and_expression } 
-logical_and_expression = equality_expression { "and" equality_expression } 
+logical_or_expression = logical_and_expression { "||" logical_and_expression } 
+logical_and_expression = equality_expression { "&&" equality_expression } 
 equality_expression = relational_expression { equality_operator relational_expression } 
 equality_operator = "==" | "!=" 
 
