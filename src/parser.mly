@@ -100,6 +100,7 @@
 %type <Ast.literal> literal
 %type <Ast.expr> binary_expression
 %type <Ast.expr> unary_expression
+%type <Ast.expr * Ast.expr> range_expression
 %type <Ast.expr> function_call
 %type <Ast.expr list> argument_list
 %type <Ast.expr> field_access
@@ -290,8 +291,9 @@ while_statement:
     { make_stmt (While ($2, $4)) (make_pos ()) }
 
 for_statement:
-  | FOR IDENTIFIER IN expression DOT DOT expression LBRACE statement_list RBRACE
-    { make_stmt (For ($2, $4, $7, $9)) (make_pos ()) }
+  | FOR IDENTIFIER IN range_expression LBRACE statement_list RBRACE
+    { let (start_expr, end_expr) = $4 in
+      make_stmt (For ($2, start_expr, end_expr, $6)) (make_pos ()) }
   | FOR LPAREN IDENTIFIER COMMA IDENTIFIER RPAREN IN expression DOT IDENTIFIER LPAREN RPAREN LBRACE statement_list RBRACE
     { match $10 with
       | "iter" -> make_stmt (ForIter ($3, $5, $8, $14)) (make_pos ())
@@ -378,6 +380,9 @@ binary_expression:
 unary_expression:
   | NOT expression %prec NOT { make_expr (UnaryOp (Not, $2)) (make_pos ()) }
   | MINUS expression %prec NEG { make_expr (UnaryOp (Neg, $2)) (make_pos ()) }
+
+range_expression:
+  | primary_expression DOT DOT primary_expression { ($1, $4) }
 
 function_call:
   | IDENTIFIER LPAREN argument_list RPAREN

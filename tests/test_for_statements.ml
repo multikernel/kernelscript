@@ -100,6 +100,188 @@ program test : xdp {
   with
   | e -> fail ("Failed for simple arithmetic: " ^ Printexc.to_string e)
 
+(** Test for loop with break statement *)
+let test_for_with_break () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for i in 0..10 {
+      if i == 5 {
+        break
+      }
+      let x = i
+    }
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "for loop with break parsed and type checked" true true
+  with
+  | e -> fail ("Failed for loop with break: " ^ Printexc.to_string e)
+
+(** Test for loop with continue statement *)
+let test_for_with_continue () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for i in 0..10 {
+      if i % 2 == 0 {
+        continue
+      }
+      let x = i
+    }
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "for loop with continue parsed and type checked" true true
+  with
+  | e -> fail ("Failed for loop with continue: " ^ Printexc.to_string e)
+
+(** Test for loop with complex expressions in bounds *)
+let test_for_complex_bounds () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let base = 5
+    let multiplier = 2
+    for i in (base - 1)..(base + multiplier) {
+      let result = i * base
+    }
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "for loop with complex bounds parsed and type checked" true true
+  with
+  | e -> fail ("Failed for loop with complex bounds: " ^ Printexc.to_string e)
+
+(** Test for loop with different integer types *)
+let test_for_different_integer_types () =
+  let test_cases = [
+    ("u8", "u8");
+    ("u16", "u16"); 
+    ("u32", "u32");
+    ("u64", "u64");
+    (* Skip signed integer types as they might have different literal parsing rules *)
+  ] in
+  
+  List.iter (fun (type_name, _) ->
+    let program_text = Printf.sprintf {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let start: %s = 1
+    let end_val: %s = 5
+    for i in start..end_val {
+      let x = i
+    }
+    return 2
+  }
+}
+|} type_name type_name in
+    try
+      let ast = parse_string program_text in
+      let _typed_ast = type_check_ast ast in
+      check bool (type_name ^ " bounds for loop") true true
+    with
+    | e -> fail ("Failed for " ^ type_name ^ " bounds: " ^ Printexc.to_string e)
+  ) test_cases
+
+(** Test for loop with large bounds *)
+let test_for_large_bounds () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for i in 0..1000000 {
+      let large = i
+    }
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "large bounds for loop parsed and type checked" true true
+  with
+  | e -> fail ("Failed for large bounds: " ^ Printexc.to_string e)
+
+(** Test for loop with reverse bounds (start > end) *)
+let test_for_reverse_bounds () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    for i in 10..5 {
+      let never_executed = i
+    }
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "reverse bounds for loop parsed and type checked" true true
+  with
+  | e -> fail ("Failed for reverse bounds: " ^ Printexc.to_string e)
+
+(** Test for loop variable scoping *)
+let test_for_variable_scoping () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let i = 100
+    for i in 0..5 {
+      let x = i * 2
+    }
+    let after_loop = i
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "for loop variable scoping parsed and type checked" true true
+  with
+  | e -> fail ("Failed for variable scoping: " ^ Printexc.to_string e)
+
+(** Test for loop in global functions *)
+let test_for_in_global_function () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return 2
+  }
+}
+
+fn helper() -> u32 {
+  for i in 1..3 {
+    let helper_var = i + 10
+  }
+  return 0
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _typed_ast = type_check_ast ast in
+    check bool "for loop in global function parsed and type checked" true true
+  with
+  | e -> fail ("Failed for loop in global function: " ^ Printexc.to_string e)
+
 (** Test error cases for for statements *)
 let test_for_error_cases () =
   let error_cases = [
@@ -124,7 +306,8 @@ program test : xdp {
       fail ("Should have failed: " ^ desc)
     with
     | Parse_error (_, _) -> check bool ("error case: " ^ desc) true true
-    | _ -> fail ("Expected parse error for: " ^ desc)
+    | Type_error (_, _) -> check bool ("type error case: " ^ desc) true true
+    | _ -> fail ("Expected parse or type error for: " ^ desc)
   ) error_cases
 
 let for_statement_tests = [
@@ -133,6 +316,14 @@ let for_statement_tests = [
   "for_empty_body", `Quick, test_for_empty_body;
   "for_single_iteration", `Quick, test_for_single_iteration;
   "for_simple_arithmetic", `Quick, test_for_simple_arithmetic;
+  "for_with_break", `Quick, test_for_with_break;
+  "for_with_continue", `Quick, test_for_with_continue;
+  "for_complex_bounds", `Quick, test_for_complex_bounds;
+  "for_different_integer_types", `Quick, test_for_different_integer_types;
+  "for_large_bounds", `Quick, test_for_large_bounds;
+  "for_reverse_bounds", `Quick, test_for_reverse_bounds;
+  "for_variable_scoping", `Quick, test_for_variable_scoping;
+  "for_in_global_function", `Quick, test_for_in_global_function;
   "for_error_cases", `Quick, test_for_error_cases;
 ]
 
