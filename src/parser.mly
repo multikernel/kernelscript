@@ -30,7 +30,7 @@
 /* Special */
 %token EOF
 
-/* Operator precedence (lowest to highest) - FIXED FOR VARIABLE COMPARISONS */
+/* Operator precedence (lowest to highest) - Restored for compatibility */
 %left OR
 %left AND
 %nonassoc EQ NE   /* Equality - NON-ASSOCIATIVE to prevent conflicts */
@@ -60,6 +60,7 @@
 %type <Ast.type_def> enum_declaration
 %type <Ast.type_def> type_alias_declaration
 %type <(string * int option) list> enum_variants
+%type <(string * int option) list> enum_variant_list
 %type <string * int option> enum_variant
 %type <Ast.map_type> map_type
 
@@ -95,16 +96,16 @@
 %type <Ast.catch_pattern> catch_pattern
 %type <Ast.expr> expression
 %type <Ast.expr> primary_expression
-%type <Ast.literal> literal
-%type <Ast.expr * Ast.expr> range_expression
 %type <Ast.expr> function_call
-%type <Ast.expr list> argument_list
 %type <Ast.expr> field_access
 %type <Ast.expr> array_access
+%type <Ast.expr> struct_literal
+%type <Ast.literal> literal
+%type <Ast.expr * Ast.expr> range_expression
+%type <Ast.expr list> argument_list
 %type <Ast.literal list> literal_list
 %type <(string * Ast.expr) list> struct_literal_fields
 %type <string * Ast.expr> struct_literal_field
-%type <Ast.expr> struct_literal
 
 /* Start symbol */
 %start program
@@ -328,7 +329,7 @@ defer_statement:
   | DEFER expression
     { make_stmt (Defer $2) (make_pos ()) }
 
-/* Expressions - UNIFIED RULE (NO LEFT-RECURSION) */
+/* Expressions - Conservative approach with precedence declarations */
 expression:
   | primary_expression { $1 }
   | function_call { $1 }
@@ -358,6 +359,23 @@ primary_expression:
   | IDENTIFIER { make_expr (Identifier $1) (make_pos ()) }
   | LPAREN expression RPAREN { $2 }
 
+function_call:
+  | IDENTIFIER LPAREN argument_list RPAREN
+    { make_expr (FunctionCall ($1, $3)) (make_pos ()) }
+
+field_access:
+  | expression DOT IDENTIFIER { 
+      (* Parse all identifier.field as FieldAccess - let type checker determine if it's a config *)
+      make_expr (FieldAccess ($1, $3)) (make_pos ())
+    }
+
+array_access:
+  | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }
+
+struct_literal:
+  | IDENTIFIER LBRACE struct_literal_fields RBRACE
+    { make_expr (StructLiteral ($1, $3)) (make_pos ()) }
+
 literal:
   | INT { let (value, original) = $1 in IntLit (value, original) }
   | STRING { StringLit $1 }
@@ -373,27 +391,10 @@ literal_list:
 range_expression:
   | primary_expression DOT DOT primary_expression { ($1, $4) }
 
-function_call:
-  | IDENTIFIER LPAREN argument_list RPAREN
-    { make_expr (FunctionCall ($1, $3)) (make_pos ()) }
-
 argument_list:
   | /* empty */ { [] }
   | expression { [$1] }
   | expression COMMA argument_list { $1 :: $3 }
-
-field_access:
-  | expression DOT IDENTIFIER { 
-      (* Parse all identifier.field as FieldAccess - let type checker determine if it's a config *)
-      make_expr (FieldAccess ($1, $3)) (make_pos ())
-    }
-
-array_access:
-  | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }
-
-struct_literal:
-  | IDENTIFIER LBRACE struct_literal_fields RBRACE %prec LBRACE
-    { make_expr (StructLiteral ($1, $3)) (make_pos ()) }
 
 struct_literal_fields:
   | struct_literal_field { [$1] }
@@ -495,16 +496,19 @@ struct_fields:
 struct_field:
   | IDENTIFIER COLON bpf_type { ($1, $3) }
 
-/* Enum declaration: enum name { variants } */
+/* Enum declaration: enum name { variants } - Fixed to eliminate unused production */
 enum_declaration:
   | ENUM IDENTIFIER LBRACE enum_variants RBRACE
     { make_enum_def $2 $4 }
 
 enum_variants:
   | /* empty */ { [] }
-  | enum_variant { [$1] } 
-  | enum_variant COMMA enum_variants { $1 :: $3 }
-  | enum_variant COMMA { [$1] }  /* Allow trailing comma */
+  | enum_variant_list { List.rev $1 }
+
+enum_variant_list:
+  | enum_variant { [$1] }
+  | enum_variant_list COMMA enum_variant { $3 :: $1 }
+  | enum_variant_list COMMA { $1 }  /* Allow trailing comma */
 
 enum_variant:
   | IDENTIFIER { ($1, None) }  /* Auto-assigned value */
