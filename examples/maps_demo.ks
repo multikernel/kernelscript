@@ -49,7 +49,7 @@ program packet_analyzer : xdp {
     
     // Update IP statistics
     let stats = ip_stats[src_ip]
-    if stats != null {
+    if (stats != null) {
       stats.count = stats.count + 1
       stats.total_bytes = stats.total_bytes + packet_len
       stats.last_seen = get_timestamp()
@@ -65,7 +65,7 @@ program packet_analyzer : xdp {
     
     // Check recent connections
     let recent = recent_connections[src_ip]
-    if recent != null {
+    if (recent != null) {
       // Log repeated connection
       event_log[0] = 1
     }
@@ -110,7 +110,7 @@ program traffic_shaper : tc {
     bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes;
     
     // Simple rate limiting logic
-    if bandwidth_usage[cpu] > 1000000 {
+    if (bandwidth_usage[cpu] > 1000000) {
       return TC_ACT_SHOT
     }
     

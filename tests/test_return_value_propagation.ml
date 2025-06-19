@@ -81,7 +81,7 @@ program test : xdp {
 
 fn main() -> i32 {
   let x = 10
-  if x > 5 {
+  if (x > 5) {
     return 1
   }
   return 0
@@ -114,7 +114,7 @@ program test : xdp {
 
 fn main() -> i32 {
   for i in 0..10 {
-    if i == 5 {
+    if (i == 5) {
       return 42
     }
   }

@@ -113,7 +113,7 @@ program safety_demo : xdp {
     // Safe map access
     let key: u32 = 1
     let count = packet_stats[key]
-    if count != null {
+    if (count != null) {
       packet_stats[key] = count + 1;
     } else {
       packet_stats[key] = 1;

@@ -99,7 +99,7 @@ let test_error_position_multiline () =
 // Comment line 2
 program test : xdp {
   fn main() -> u32 {
-    let x = if missing_condition {
+    let x = if (missing_condition) {
       return 1
     }
     return 0

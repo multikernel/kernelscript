@@ -106,7 +106,7 @@ let test_for_with_break () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
-      if i == 5 {
+      if (i == 5) {
         break
       }
       let x = i
@@ -128,7 +128,7 @@ let test_for_with_continue () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
-      if i % 2 == 0 {
+      if (i % 2 == 0) {
         continue
       }
       let x = i

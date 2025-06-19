@@ -30,12 +30,12 @@
 /* Special */
 %token EOF
 
-/* Operator precedence (lowest to highest) */
+/* Operator precedence (lowest to highest) - FIXED FOR VARIABLE COMPARISONS */
 %left PIPE      /* Flag combination */
 %left OR
 %left AND
-%left EQ NE
-%left LT LE GT GE
+%nonassoc EQ NE   /* Equality - NON-ASSOCIATIVE to prevent conflicts */
+%nonassoc LT LE GT GE /* Relational - NON-ASSOCIATIVE */
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
 %right NOT NEG  /* Unary operators */
@@ -77,9 +77,8 @@
 %type <Ast.bpf_type> array_type
 %type <Ast.statement list> statement_list
 %type <Ast.statement> statement
-%type <Ast.statement> expression_statement
 %type <Ast.statement> variable_declaration
-%type <Ast.statement> assignment_statement
+%type <Ast.statement> assignment_or_expression_statement
 %type <Ast.statement> field_assignment_statement
 %type <Ast.statement> index_assignment_statement
 %type <Ast.statement> return_statement
@@ -98,8 +97,6 @@
 %type <Ast.expr> expression
 %type <Ast.expr> primary_expression
 %type <Ast.literal> literal
-%type <Ast.expr> binary_expression
-%type <Ast.expr> unary_expression
 %type <Ast.expr * Ast.expr> range_expression
 %type <Ast.expr> function_call
 %type <Ast.expr list> argument_list
@@ -237,9 +234,8 @@ statement_list:
   | statement statement_list { $1 :: $2 }
 
 statement:
-  | expression_statement { $1 }
   | variable_declaration { $1 }
-  | assignment_statement { $1 }
+  | assignment_or_expression_statement { $1 }
   | field_assignment_statement { $1 }
   | index_assignment_statement { $1 }
   | return_statement { $1 }
@@ -253,18 +249,16 @@ statement:
   | throw_statement { $1 }
   | defer_statement { $1 }
 
-expression_statement:
-  | expression { make_stmt (ExprStmt $1) (make_pos ()) }
-
 variable_declaration:
   | LET IDENTIFIER ASSIGN expression
     { make_stmt (Declaration ($2, None, $4)) (make_pos ()) }
   | LET IDENTIFIER COLON bpf_type ASSIGN expression
     { make_stmt (Declaration ($2, Some $4, $6)) (make_pos ()) }
 
-assignment_statement:
+assignment_or_expression_statement:
   | IDENTIFIER ASSIGN expression
     { make_stmt (Assignment ($1, $3)) (make_pos ()) }
+  | expression { make_stmt (ExprStmt $1) (make_pos ()) }
 
 field_assignment_statement:
   | expression DOT IDENTIFIER ASSIGN expression
@@ -279,16 +273,16 @@ return_statement:
   | RETURN expression { make_stmt (Return (Some $2)) (make_pos ()) }
 
 if_statement:
-  | IF expression LBRACE statement_list RBRACE
-    { make_stmt (If ($2, $4, None)) (make_pos ()) }
-  | IF expression LBRACE statement_list RBRACE ELSE LBRACE statement_list RBRACE
-    { make_stmt (If ($2, $4, Some $8)) (make_pos ()) }
-  | IF expression LBRACE statement_list RBRACE ELSE if_statement
-    { make_stmt (If ($2, $4, Some [$7])) (make_pos ()) }
+  | IF LPAREN expression RPAREN LBRACE statement_list RBRACE
+    { make_stmt (If ($3, $6, None)) (make_pos ()) }
+  | IF LPAREN expression RPAREN LBRACE statement_list RBRACE ELSE LBRACE statement_list RBRACE
+    { make_stmt (If ($3, $6, Some $10)) (make_pos ()) }
+  | IF LPAREN expression RPAREN LBRACE statement_list RBRACE ELSE if_statement
+    { make_stmt (If ($3, $6, Some [$9])) (make_pos ()) }
 
 while_statement:
-  | WHILE expression LBRACE statement_list RBRACE
-    { make_stmt (While ($2, $4)) (make_pos ()) }
+  | WHILE LPAREN expression RPAREN LBRACE statement_list RBRACE
+    { make_stmt (While ($3, $6)) (make_pos ()) }
 
 for_statement:
   | FOR IDENTIFIER IN range_expression LBRACE statement_list RBRACE
@@ -335,15 +329,30 @@ defer_statement:
   | DEFER expression
     { make_stmt (Defer $2) (make_pos ()) }
 
-/* Expressions */
+/* Expressions - UNIFIED RULE (NO LEFT-RECURSION) */
 expression:
   | primary_expression { $1 }
-  | binary_expression { $1 }
-  | unary_expression { $1 }
   | function_call { $1 }
   | field_access { $1 }
   | array_access { $1 }
   | struct_literal { $1 }
+  /* Binary operations - precedence handled by %left/%right declarations */
+  | expression PLUS expression { make_expr (BinaryOp ($1, Add, $3)) (make_pos ()) }
+  | expression MINUS expression { make_expr (BinaryOp ($1, Sub, $3)) (make_pos ()) }
+  | expression MULTIPLY expression { make_expr (BinaryOp ($1, Mul, $3)) (make_pos ()) }
+  | expression DIVIDE expression { make_expr (BinaryOp ($1, Div, $3)) (make_pos ()) }
+  | expression MODULO expression { make_expr (BinaryOp ($1, Mod, $3)) (make_pos ()) }
+  | expression EQ expression { make_expr (BinaryOp ($1, Eq, $3)) (make_pos ()) }
+  | expression NE expression { make_expr (BinaryOp ($1, Ne, $3)) (make_pos ()) }
+  | expression LT expression { make_expr (BinaryOp ($1, Lt, $3)) (make_pos ()) }
+  | expression LE expression { make_expr (BinaryOp ($1, Le, $3)) (make_pos ()) }
+  | expression GT expression { make_expr (BinaryOp ($1, Gt, $3)) (make_pos ()) }
+  | expression GE expression { make_expr (BinaryOp ($1, Ge, $3)) (make_pos ()) }
+  | expression AND expression { make_expr (BinaryOp ($1, And, $3)) (make_pos ()) }
+  | expression OR expression { make_expr (BinaryOp ($1, Or, $3)) (make_pos ()) }
+  /* Unary operations */
+  | NOT expression %prec NOT { make_expr (UnaryOp (Not, $2)) (make_pos ()) }
+  | MINUS expression %prec NEG { make_expr (UnaryOp (Neg, $2)) (make_pos ()) }
 
 primary_expression:
   | literal { make_expr (Literal $1) (make_pos ()) }
@@ -361,25 +370,6 @@ literal_list:
   | /* empty */ { [] }
   | literal { [$1] }
   | literal COMMA literal_list { $1 :: $3 }
-
-binary_expression:
-  | expression PLUS expression { make_expr (BinaryOp ($1, Add, $3)) (make_pos ()) }
-  | expression MINUS expression { make_expr (BinaryOp ($1, Sub, $3)) (make_pos ()) }
-  | expression MULTIPLY expression { make_expr (BinaryOp ($1, Mul, $3)) (make_pos ()) }
-  | expression DIVIDE expression { make_expr (BinaryOp ($1, Div, $3)) (make_pos ()) }
-  | expression MODULO expression { make_expr (BinaryOp ($1, Mod, $3)) (make_pos ()) }
-  | expression EQ expression { make_expr (BinaryOp ($1, Eq, $3)) (make_pos ()) }
-  | expression NE expression { make_expr (BinaryOp ($1, Ne, $3)) (make_pos ()) }
-  | expression LT expression { make_expr (BinaryOp ($1, Lt, $3)) (make_pos ()) }
-  | expression LE expression { make_expr (BinaryOp ($1, Le, $3)) (make_pos ()) }
-  | expression GT expression { make_expr (BinaryOp ($1, Gt, $3)) (make_pos ()) }
-  | expression GE expression { make_expr (BinaryOp ($1, Ge, $3)) (make_pos ()) }
-  | expression AND expression { make_expr (BinaryOp ($1, And, $3)) (make_pos ()) }
-  | expression OR expression { make_expr (BinaryOp ($1, Or, $3)) (make_pos ()) }
-
-unary_expression:
-  | NOT expression %prec NOT { make_expr (UnaryOp (Not, $2)) (make_pos ()) }
-  | MINUS expression %prec NEG { make_expr (UnaryOp (Neg, $2)) (make_pos ()) }
 
 range_expression:
   | primary_expression DOT DOT primary_expression { ($1, $4) }
@@ -403,11 +393,10 @@ array_access:
   | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }
 
 struct_literal:
-  | IDENTIFIER LBRACE struct_literal_fields RBRACE
+  | IDENTIFIER LBRACE struct_literal_fields RBRACE %prec LBRACE
     { make_expr (StructLiteral ($1, $3)) (make_pos ()) }
 
 struct_literal_fields:
-  | /* empty */ { [] }
   | struct_literal_field { [$1] }
   | struct_literal_field COMMA struct_literal_fields { $1 :: $3 }
   | struct_literal_field COMMA { [$1] }  /* Allow trailing comma */

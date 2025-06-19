@@ -53,7 +53,7 @@ program traffic_monitor : xdp {
         
         // Safe concurrent read access - multiple programs can read simultaneously
         let counter = global_counter[key]
-        if counter != null {
+        if (counter != null) {
             // High-frequency lookup pattern - will generate optimization suggestions
             for i in 0..100 {
                 let _ = global_counter[key + i]
@@ -66,7 +66,7 @@ program traffic_monitor : xdp {
         // Per-CPU access for maximum performance
         let cpu_id = bpf_get_smp_processor_id()
         let data = percpu_data[cpu_id]
-        if data != null {
+        if (data != null) {
             data.local_counter += 1;
             percpu_data[cpu_id] = data;
         } else {
@@ -88,7 +88,7 @@ program stats_updater : tc {
         
         // Potential write conflict with other programs
         let stats = shared_stats[ifindex]
-        if stats == null {
+        if (stats == null) {
             stats = Statistics {
                 packet_count: 0,
                 byte_count: 0,
@@ -103,7 +103,7 @@ program stats_updater : tc {
         stats.last_seen = bpf_ktime_get_ns()
         
         // Calculate error rate (simplified)
-        if ctx.protocol() == 0 {
+        if (ctx.protocol() == 0) {
             stats.error_rate += 1;
         }
         
@@ -113,7 +113,7 @@ program stats_updater : tc {
         for i in 0..20 {
             let batch_key = ifindex + i
             let entry = shared_stats[batch_key]
-            if entry != null {
+            if (entry != null) {
                 entry.packet_count += 1;
                 shared_stats[batch_key] = entry;
             }
@@ -151,8 +151,8 @@ program data_processor : kprobe {
         // Sequential access pattern - will be detected and optimized
         for i in 0..32 {
             let element = sequential_data[i]
-            if element != null {
-                if !element.processed {
+            if (element != null) {
+                if (!element.processed) {
                     element.value = element.value * 2
                     element.processed = true
                     sequential_data[i] = element;

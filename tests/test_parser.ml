@@ -152,8 +152,8 @@ let test_statement_parsing () =
     ("x = 50", true);
     ("return x", true);
     ("return", true);
-    ("if true { return 1 }", true);
-    ("if x > 0 { return 1 } else { return 0 }", true);
+    ("if (true) { return 1 }", true);
+    ("if (x > 0) { return 1 } else { return 0 }", true);
   ] in
   
   List.iter (fun (stmt_text, should_succeed) ->
@@ -267,13 +267,13 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10
     
-    if x > 5 {
+    if (x > 5) {
       x = x + 1
     } else {
       x = x - 1
     }
     
-    while x > 0 {
+    while (x > 0) {
       x = x - 1
     }
     
@@ -342,7 +342,7 @@ program packet_filter : xdp {
     let src_ip = 0x12345678
     let count = process_packet(src_ip)
     
-    if count > 100 {
+    if (count > 100) {
       return 1  // DROP
     }
     
@@ -377,7 +377,7 @@ let test_simple_if () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10
-    if x > 5 {
+    if (x > 5) {
       return 1
     }
     return 2
@@ -405,7 +405,7 @@ let test_if_else () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10
-    if x > 15 {
+    if (x > 15) {
       return 1
     } else {
       return 2
@@ -434,11 +434,11 @@ let test_if_else_if_else () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10
-    if x > 20 {
+    if (x > 20) {
       return 1
-    } else if x > 10 {
+    } else if (x > 10) {
       return 2
-    } else if x > 5 {
+    } else if (x > 5) {
       return 3 
     } else {
       return 4
@@ -472,8 +472,8 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10
     let y = 20
-    if x > 5 {
-      if y > 15 {
+    if (x > 5) {
+      if (y > 15) {
         return 1
       } else {
         return 2
@@ -510,7 +510,7 @@ let test_multiple_statements_in_branches () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let x = 10
-    if x > 5 {
+    if (x > 5) {
       let y = x + 1
       let z = y * 2
       x = z - 1
@@ -546,18 +546,18 @@ program test : xdp {
     let x = 10
     let y = 20
     
-    // SPEC-compliant syntax without parentheses around condition
-    if x > 5 {
+    // SPEC-compliant syntax with mandatory parentheses around condition
+    if (x > 5) {
       return 1
     }
     
-    // Complex conditions should also work without parens
-    if x > 5 && y < 25 {
+    // Complex conditions also require parentheses
+    if (x > 5 && y < 25) {
       return 2
     }
     
     // Parentheses for grouping expressions should still work
-    if (x + y) > 25 {
+    if ((x + y) > 25) {
       return 3
     }
     

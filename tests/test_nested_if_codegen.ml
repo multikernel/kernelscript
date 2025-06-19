@@ -55,8 +55,8 @@ map<u32, u64> packet_stats : HashMap(1024)
 
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if network.max_packet_size > 1000 {
-            if network.enable_logging {
+        if (network.max_packet_size > 1000) {
+            if (network.enable_logging) {
                 print("Dropping big packets")
                 return XDP_DROP
             }

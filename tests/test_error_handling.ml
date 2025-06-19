@@ -113,7 +113,7 @@ let test_complex_error_handling_parsing () =
     
     try {
         let value = test_map[42]
-        if value == 0 {
+        if (value == 0) {
             throw 404
         }
         defer cleanup_transaction()

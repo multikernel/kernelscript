@@ -50,7 +50,7 @@ program packet_filter : xdp {
         action: 2,
     }
     
-    if info.size > 1500 {
+    if (info.size > 1500) {
       return 1
     }
     return info.action
@@ -96,7 +96,7 @@ program config_filter : xdp {
         flags: 42,
     }
     
-    if info.mode > 1500 {
+    if (info.mode > 1500) {
       return 1
     }
     return info.flags
@@ -137,7 +137,7 @@ program variable_test : xdp {
         action: 3,
     }
     
-    if info.size > 1500 {
+    if (info.size > 1500) {
       return 1
     }
     return info.action
@@ -187,7 +187,7 @@ program multi_struct : xdp {
         data_type: 42,
     }
     
-    if hdr.version == 1 && payload.size > 0 {
+    if (hdr.version == 1 && payload.size > 0) {
       return 2
     }
     return 1
@@ -233,7 +233,7 @@ program field_test : xdp {
         action: 4,
     }
     
-    if info.size > 1500 {
+    if (info.size > 1500) {
       return 1
     }
     return info.action
@@ -326,7 +326,7 @@ program param_test : xdp {
         action: 5,
     }
     
-    if info.size > 1500 {
+    if (info.size > 1500) {
       return 1
     }
     return info.action

@@ -8,7 +8,7 @@ config demo {
 // eBPF program that uses print()
 program simple_logger : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if demo.enable_logging {
+        if (demo.enable_logging) {
             print("eBPF: Processing packet")
         }
         return XDP_PASS

@@ -8,7 +8,7 @@ program error_demo : xdp {
         try {
             // Try to get value from map
             let value = counters[key]
-            if value == 0 {
+            if (value == 0) {
                 throw 1  // Key not found
             }
             return 2  // XDP_PASS
@@ -25,7 +25,7 @@ fn main() -> i32 {
     try {
         // Simulate some operation that might fail
         let result = 42
-        if result > 40 {
+        if (result > 40) {
             throw 2  // Throw error code 2
         }
         return 0  // Success

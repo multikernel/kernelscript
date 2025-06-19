@@ -13,12 +13,12 @@ program string_demo : xdp {
     let second_char: char = name[1]
     
     // Test string comparison
-    if name == "hello" {
+    if (name == "hello") {
       // String concatenation
       let result: str<48> = name + message
       
       // Test string inequality
-      if result != "helloworld" {
+      if (result != "helloworld") {
         return 1
       }
     }
@@ -43,13 +43,13 @@ fn main() -> i32 {
     let final_message: str<50> = message + punctuation
     
     // String comparison in userspace
-    if greeting == "Hello" {
+    if (greeting == "Hello") {
         // Character access
         let first: char = greeting[0]
         let last: char = target[4]
         
         // String inequality test
-        if final_message != "HelloWorld!" {
+        if (final_message != "HelloWorld!") {
             return 1
         }
     }

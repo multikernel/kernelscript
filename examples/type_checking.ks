@@ -39,7 +39,7 @@ program packet_analyzer : xdp {
     // Type checker ensures arithmetic operations are on numeric types
     let packet_len = data_end - data
     
-    if packet_len < 20 {
+    if (packet_len < 20) {
       return 1
     }
     
@@ -56,11 +56,11 @@ program packet_analyzer : xdp {
   
   fn classify_protocol(proto: u8) -> ProtocolType {
     // Type checker validates enum constant access
-    if proto == 6 {
+    if (proto == 6) {
       return some PROTOCOL_TYPE_TCP
-    } else if proto == 17 {
+    } else if (proto == 17) {
       return some PROTOCOL_TYPE_UDP
-    } else if proto == 1 {
+    } else if (proto == 1) {
       return some PROTOCOL_TYPE_ICMP
     }
     return none
@@ -70,7 +70,7 @@ program packet_analyzer : xdp {
     // Type checker validates map operations and key/value types
     let current_count = connection_stats[header.src_ip]
     
-    if current_count != null {
+    if (current_count != null) {
       // Type checker ensures arithmetic on compatible types
       connection_stats[header.src_ip] = current_count + 1;
     } else {
@@ -86,7 +86,7 @@ program packet_analyzer : xdp {
     match proto_type {
       some PROTOCOL_TYPE_TCP -> {
         // Type checker validates field access on struct types
-        if header.length > 1500 {
+        if (header.length > 1500) {
           return FILTER_DECISION_BLOCK
         }
         return FILTER_DECISION_ALLOW

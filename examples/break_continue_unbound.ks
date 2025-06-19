@@ -10,12 +10,12 @@ program packet_filter : xdp {
     // This should be treated as unbound due to large range
     for i in 0..end_value {
       // Skip even numbers
-      if i % 2 == 0 {
+      if (i % 2 == 0) {
         continue
       }
       
       // Stop processing at threshold
-      if i > 50 {
+      if (i > 50) {
         break
       }
       
@@ -36,11 +36,11 @@ fn main() -> i32 {
   
   // This should also be unbound
   for i in 0..limit {
-    if i % 2 == 0 {
+    if (i % 2 == 0) {
       continue
     }
     
-    if i > 50 {
+    if (i > 50) {
       break
     }
     

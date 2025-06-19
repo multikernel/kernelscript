@@ -56,7 +56,7 @@ struct ServerConfig {
 }
 
 fn main(settings: ServerConfig) -> i32 {
-    if settings.enable_logging > 0 {
+    if (settings.enable_logging > 0) {
         return settings.port_number
     }
     return 0
@@ -173,7 +173,7 @@ struct CustomArgs {
 }
 
 fn main(custom_args: CustomArgs) -> i32 {
-    if custom_args.debug_level > 0 {
+    if (custom_args.debug_level > 0) {
         return 1
     }
     return 0
@@ -207,7 +207,7 @@ struct Args {
 }
 
 fn main(args: Args) -> i32 {
-    if args.enable_debug > 0 {
+    if (args.enable_debug > 0) {
         print("Debug mode enabled")
     }
     let prog = load_program(packet_filter)

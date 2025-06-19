@@ -17,7 +17,7 @@ program packet_filter : xdp {
     }
     
     // Use the struct values
-    if info.size > 1500 {
+    if (info.size > 1500) {
       return 1
     }
     

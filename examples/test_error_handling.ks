@@ -14,7 +14,7 @@ program error_test : xdp {
         try {
             // Simulate looking up a potentially non-existent key
             let value = test_map[key]
-            if value == 0 {
+            if (value == 0) {
                 throw 1  // Key not found
             }
             
@@ -40,7 +40,7 @@ program error_test : xdp {
         
         try {
             let result = process_key(key)
-            if result > 1000 {
+            if (result > 1000) {
                 throw 2  // Overflow detected
             }
             

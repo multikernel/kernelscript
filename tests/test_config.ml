@@ -587,7 +587,7 @@ config network {
 
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if network.max_packet_size > 1000 {
+        if (network.max_packet_size > 1000) {
             return 2
         }
         return 1

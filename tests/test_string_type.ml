@@ -75,10 +75,10 @@ let test_string_equality _ =
       fn main(ctx: XdpContext) -> i32 {
         let name: str<16> = "test"
         let other: str<16> = "other"
-        if name == "test" {
+        if (name == "test") {
           return 1
         }
-        if name != other {
+        if (name != other) {
           return 2
         }
         return 0
@@ -125,7 +125,7 @@ let test_invalid_string_operations _ =
       fn main(ctx: XdpContext) -> i32 {
         let first: str<10> = "hello"
         let second: str<10> = "world"
-        if first < second {
+        if (first < second) {
           return 1
         }
         return 0

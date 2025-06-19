@@ -231,7 +231,7 @@ struct Args {
 }
 
 fn main(args: Args) -> i32 {
-    if args.enable_logging > 0 {
+    if (args.enable_logging > 0) {
         network.enable_logging = true
     }
     return 0
@@ -293,7 +293,7 @@ config network {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if network.enable_logging {  // This should be allowed
+        if (network.enable_logging) {  // This should be allowed
             return 2
         }
         return 1
@@ -325,7 +325,7 @@ config demo {
 
 program simple_logger : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if demo.enable_logging {
+        if (demo.enable_logging) {
             print("eBPF: Processing packet")
         }
         return 2
@@ -393,7 +393,7 @@ config settings {
 
 program packet_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if settings.debug_mode {
+        if (settings.debug_mode) {
             print("Debug mode enabled")
         }
         return 2
@@ -441,7 +441,7 @@ config security {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if network.enable_logging && security.strict_mode {
+        if (network.enable_logging && security.strict_mode) {
             print("Strict logging enabled")
         }
         return 2

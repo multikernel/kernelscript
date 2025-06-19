@@ -54,7 +54,7 @@ program packet_filter : xdp {
         let logged_size = log_packet(info)
         
         // Use global enum (visible from here)
-        if info.protocol == 6 {
+        if (info.protocol == 6) {
                     return XDP_PASS
     } else {
         return XDP_DROP
@@ -70,7 +70,7 @@ program packet_filter : xdp {
         let local_var: u32 = 42
         
         // Block scope demonstration
-        if result == XDP_PASS {
+        if (result == XDP_PASS) {
             let block_var: u32 = local_var + 1
             global_stats[1] = block_var;
         }

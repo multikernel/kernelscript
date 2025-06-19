@@ -396,7 +396,7 @@ config test_config {
 
 program test : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if test_config.enable_logging {
+        if (test_config.enable_logging) {
             print("Dropping big packets")
             return 2
         }

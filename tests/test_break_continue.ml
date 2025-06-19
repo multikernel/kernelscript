@@ -19,7 +19,7 @@ let test_break_statement_parsing () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
-      if i == 5 {
+      if (i == 5) {
         break
       }
       let x = i
@@ -38,7 +38,7 @@ let test_continue_statement_parsing () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..10 {
-      if i == 5 {
+      if (i == 5) {
         continue
       }
       let x = i
@@ -57,9 +57,9 @@ let test_break_in_while_loop () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let count = 0
-    while count < 100 {
+    while (count < 100) {
       count = count + 1
-      if count == 50 {
+      if (count == 50) {
         break
       }
     }
@@ -77,9 +77,9 @@ let test_continue_in_while_loop () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let count = 0
-    while count < 10 {
+    while (count < 10) {
       count = count + 1
-      if count == 5 {
+      if (count == 5) {
         continue
       }
       let processed = count * 2
@@ -99,7 +99,7 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let array = [1, 2, 3, 4, 5]
     for (i, val) in array.iter() {
-      if i == 3 {
+      if (i == 3) {
         break
       }
       let processed = val * 2
@@ -152,10 +152,10 @@ let test_break_continue_in_nested_conditional () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..20 {
-      if i < 5 {
+      if (i < 5) {
         continue
       } else {
-        if i > 15 {
+        if (i > 15) {
           break
         }
       }
@@ -175,13 +175,13 @@ let test_multiple_break_continue_statements () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 0..100 {
-      if i < 10 {
+      if (i < 10) {
         continue
       }
-      if i == 50 {
+      if (i == 50) {
         break
       }
-      if i > 80 {
+      if (i > 80) {
         continue
       }
       let x = i * 2
@@ -200,7 +200,7 @@ let test_break_evaluation () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     for i in 1..3 {
-      if i == 2 {
+      if (i == 2) {
         break
       }
     }

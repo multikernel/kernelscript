@@ -115,7 +115,7 @@ fn main() -> i32 {
   let name: str<20> = "Alice"
   let second: str<20> = "Bob"
   
-  if name == second {
+  if (name == second) {
     return 1
   }
   
@@ -177,15 +177,15 @@ fn main() -> i32 {
       let result = content in
       Printf.printf "DEBUG: Code generation successful\n";
       
-      (* Should generate strcmp for equality *)
-      check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*\"Alice\".*==.*0");
-      check bool "inequality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*!=.*0");
-      check bool "has string literal comparison" true (contains_pattern result "strcmp.*var_.*\"Alice\"");
+      (* Should generate strcmp for equality with variable assignment *)
+      check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*==.*0");
       check bool "has variable comparison" true (contains_pattern result "strcmp.*var_.*var_");
+      check bool "assigns comparison result" true (contains_pattern result "var_.*=.*(strcmp");
+      check bool "uses comparison variable in if" true (contains_pattern result "if.*(var_");
       
-      (* Should be stored in variables then used in conditionals *)
-      check bool "assigns comparison result" true (contains_pattern result "var_.*=.*strcmp");
-      check bool "uses comparison variable in if" true (contains_pattern result "if.*var_");
+      (* Should have proper string assignments *)
+      check bool "has Alice assignment" true (contains_pattern result "strcpy.*var_.*\"Alice\"");
+      check bool "has Bob assignment" true (contains_pattern result "strcpy.*var_.*\"Bob\"");
     ) else (
       failwith "Failed to generate userspace code file"
     )
@@ -273,7 +273,7 @@ fn main() -> i32 {
   let message: str<25> = greeting + target
   let final_msg: str<30> = message + punctuation
   
-  if final_msg == "HelloWorld!" {
+  if (final_msg == "HelloWorld!") {
     let first_char: char = final_msg[0]
     let last_char: char = final_msg[10]
     return 1

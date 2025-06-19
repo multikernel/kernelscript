@@ -69,7 +69,7 @@ program packet_inspector : xdp {
   fn get_filter_action(info: PacketInfo) -> FilterAction {
     // Look up in the filter map
     let action = packet_filter[info]
-    if action != null {
+    if (action != null) {
       return action
     } else {
       return FILTER_ACTION_ALLOW
@@ -79,7 +79,7 @@ program packet_inspector : xdp {
   fn update_stats(info: PacketInfo) {
     // Update connection count
     let current_count = connection_count[info.src_ip]
-    if current_count != null {
+    if (current_count != null) {
       connection_count[info.src_ip] = current_count + 1;
     } else {
       connection_count[info.src_ip] = 1;
@@ -87,9 +87,9 @@ program packet_inspector : xdp {
     
     // Update protocol stats
     let proto = protocol_from_u8(info.protocol)
-    if proto != null {
+    if (proto != null) {
       let stats = protocol_stats[proto]
-      if stats != null {
+      if (stats != null) {
         protocol_stats[proto] = stats + 1;
       } else {
         protocol_stats[proto] = 1;

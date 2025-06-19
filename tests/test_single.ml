@@ -51,11 +51,11 @@ fn main() -> i32 {
   let name: str<20> = "Alice"
   let other: str<20> = "Bob"
   
-  if name == "Alice" {
+  if (name == "Alice") {
     return 1
   }
   
-  if name != other {
+  if (name != other) {
     return 2
   }
   
