@@ -212,16 +212,18 @@ let test_complete_program () =
   check bool "program contains function name" true (contains_substr c_code "xdp_prog");
   check bool "program contains GPL license" true (contains_substr c_code "GPL")
 
-(** Test helper function calls *)
-let test_helper_calls () =
+(** Test builtin print function calls *)
+let test_builtin_print_calls () =
   let ctx = create_c_context () in
   
-  let pid_var = make_ir_value (IRVariable "pid") IRU64 test_pos in
-  generate_helper_call ctx "get_current_pid_tgid" [] (Some pid_var);
+  (* Test print function call - should use stdlib mechanism *)
+  let string_val = make_ir_value (IRLiteral (StringLit "Hello eBPF")) (IRStr 10) test_pos in
+  let print_instr = make_ir_instruction (IRCall ("print", [string_val], None)) test_pos in
+  generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  check bool "helper call contains bpf function name" true (contains_substr output "bpf_get_current_pid_tgid");
-  check bool "helper call contains assignment" true (contains_substr output "pid =")
+  check bool "print call uses bpf_printk" true (contains_substr output "bpf_printk");
+  check bool "print call has string data" true (contains_substr output ".data")
 
 (** Test advanced control flow *)
 let test_control_flow () =
@@ -429,7 +431,7 @@ let suite =
     ("Map operations", `Quick, test_map_operations);
     ("Literal map operations", `Quick, test_literal_map_operations);
     ("Function generation", `Quick, test_function_generation);
-    ("Helper calls", `Quick, test_helper_calls);
+    ("Builtin print calls", `Quick, test_builtin_print_calls);
     ("Control flow", `Quick, test_control_flow);
     ("File writing", `Quick, test_file_writing);
     ("Complete program", `Quick, test_complete_program);

@@ -245,11 +245,6 @@ let get_builtin_function_signature name =
            | [_map_name; "delete"] -> Some ([Pointer U8], U32)
            | _ -> None)
       
-      (* Utility functions *)
-      | "bpf_trace_printk" -> Some ([Pointer U8; U32], U32)
-      | "bpf_get_current_pid_tgid" -> Some ([], U64)
-      | "bpf_ktime_get_ns" -> Some ([], U64)
-      
       (* Type conversion functions *)
       | "Protocol.from_u8" -> Some ([U8], Option (Enum "Protocol"))
       

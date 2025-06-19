@@ -882,28 +882,7 @@ let generate_c_expression ctx ir_expr =
       ) field_assignments in
       sprintf "{%s}" (String.concat ", " field_strs)
 
-(** Generate helper function calls *)
 
-let generate_helper_call ctx func_name args ret_var_opt =
-  let bpf_func_name = match func_name with
-    | "trace_printk" -> "bpf_trace_printk"
-    | "get_current_pid_tgid" -> "bpf_get_current_pid_tgid"
-    | "ktime_get_ns" -> "bpf_ktime_get_ns"
-    | "map_lookup_elem" -> "bpf_map_lookup_elem"
-    | "map_update_elem" -> "bpf_map_update_elem"
-    | "map_delete_elem" -> "bpf_map_delete_elem"
-    | name -> name (* Pass through unknown functions *)
-  in
-  
-  let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
-  let call_str = sprintf "%s(%s)" bpf_func_name args_str in
-  
-  match ret_var_opt with
-  | Some ret_var ->
-      let ret_str = generate_c_value ctx ret_var in
-      emit_line ctx (sprintf "%s = %s;" ret_str call_str)
-  | None ->
-      emit_line ctx (sprintf "%s;" call_str)
 
 (** Generate bounds checking *)
 
