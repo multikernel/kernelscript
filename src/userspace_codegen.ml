@@ -1226,6 +1226,7 @@ let generate_headers_for_maps maps =
 let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
   let base_includes = generate_headers_for_maps global_maps in
   let additional_includes = {|#include <stdbool.h>
+#include <stdint.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <net/if.h>
