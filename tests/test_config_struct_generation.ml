@@ -313,6 +313,174 @@ fn main() -> i32 {
   with
   | e -> fail ("Unexpected error in config read test: " ^ Printexc.to_string e)
 
+(** Test that config maps are initialized with default values in userspace code *)
+let test_config_initialization_with_defaults () =
+  let program_text = {|
+config demo {
+    enable_logging: bool = true,
+    message_count: u32 = 0,
+    max_connections: u64 = 100,
+    timeout_ms: u16 = 5000,
+}
+
+program simple_logger : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if demo.enable_logging {
+            print("eBPF: Processing packet")
+        }
+        return 2
+    }
+}
+
+fn main() -> i32 {
+    print("Userspace: Starting packet logger")
+    let prog = load_program(simple_logger)
+    attach_program(prog, "lo", 0)
+    return 0
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let userspace_code = generate_userspace_with_configs ast in
+    
+    (* Verify config file descriptor is declared *)
+    check bool "config file descriptor declared" true 
+      (try ignore (Str.search_forward (Str.regexp "int demo_config_map_fd = -1;") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify config map is loaded from eBPF object *)
+    check bool "config map loaded from eBPF object" true 
+      (try ignore (Str.search_forward (Str.regexp "demo_config_map_fd = bpf_object__find_map_fd_by_name") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify config initialization comment *)
+    check bool "config initialization comment present" true 
+      (try ignore (Str.search_forward (Str.regexp "Initialize demo config map with default values") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify config struct is initialized *)
+    check bool "config struct initialized" true 
+      (try ignore (Str.search_forward (Str.regexp "struct demo_config init_config = {0};") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify config key is set *)
+    check bool "config key initialized" true 
+      (try ignore (Str.search_forward (Str.regexp "uint32_t config_key = 0;") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify default values are set correctly *)
+    check bool "enable_logging default set to true" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.enable_logging = true;") userspace_code 0); true with Not_found -> false);
+    check bool "message_count default set to 0" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.message_count = 0;") userspace_code 0); true with Not_found -> false);
+    check bool "max_connections default set to 100" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.max_connections = 100;") userspace_code 0); true with Not_found -> false);
+    check bool "timeout_ms default set to 5000" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.timeout_ms = 5000;") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify map update call *)
+    check bool "config map updated with defaults" true 
+      (try ignore (Str.search_forward (Str.regexp "bpf_map_update_elem(demo_config_map_fd, &config_key, &init_config, BPF_ANY)") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify error handling for config initialization *)
+    check bool "config initialization error handling" true 
+      (try ignore (Str.search_forward (Str.regexp "Failed to initialize demo config map with default values") userspace_code 0); true with Not_found -> false)
+  with
+  | e -> fail ("Error in config initialization test: " ^ Printexc.to_string e)
+
+(** Test that config initialization works even when config is only used in eBPF *)
+let test_config_initialization_ebpf_only () =
+  let program_text = {|
+config settings {
+    debug_mode: bool = false,
+    max_entries: u32 = 1024,
+}
+
+program packet_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if settings.debug_mode {
+            print("Debug mode enabled")
+        }
+        return 2
+    }
+}
+
+fn main() -> i32 {
+    // No direct config access in userspace - only eBPF uses it
+    let prog = load_program(packet_filter)
+    attach_program(prog, "eth0", 0)
+    return 0
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let userspace_code = generate_userspace_with_configs ast in
+    
+    (* Verify config initialization is still generated even though userspace doesn't directly access config *)
+    check bool "config fd declared for eBPF-only usage" true 
+      (try ignore (Str.search_forward (Str.regexp "int settings_config_map_fd = -1;") userspace_code 0); true with Not_found -> false);
+    
+    check bool "config initialization for eBPF-only usage" true 
+      (try ignore (Str.search_forward (Str.regexp "Initialize settings config map with default values") userspace_code 0); true with Not_found -> false);
+    
+    check bool "debug_mode default set to false" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.debug_mode = false;") userspace_code 0); true with Not_found -> false);
+    
+    check bool "max_entries default set to 1024" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.max_entries = 1024;") userspace_code 0); true with Not_found -> false)
+  with
+  | e -> fail ("Error in eBPF-only config initialization test: " ^ Printexc.to_string e)
+
+(** Test multiple config initialization *)
+let test_multiple_config_initialization () =
+  let program_text = {|
+config network {
+    enable_logging: bool = true,
+    port: u16 = 8080,
+}
+
+config security {
+    strict_mode: bool = false,
+    max_attempts: u32 = 5,
+}
+
+program test : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        if network.enable_logging && security.strict_mode {
+            print("Strict logging enabled")
+        }
+        return 2
+    }
+}
+
+fn main() -> i32 {
+    let prog = load_program(test)
+    return 0
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let userspace_code = generate_userspace_with_configs ast in
+    
+    (* Verify both config file descriptors are declared *)
+    check bool "network config fd declared" true 
+      (try ignore (Str.search_forward (Str.regexp "int network_config_map_fd = -1;") userspace_code 0); true with Not_found -> false);
+    check bool "security config fd declared" true 
+      (try ignore (Str.search_forward (Str.regexp "int security_config_map_fd = -1;") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify both configs are initialized *)
+    check bool "network config initialization" true 
+      (try ignore (Str.search_forward (Str.regexp "Initialize network config map with default values") userspace_code 0); true with Not_found -> false);
+    check bool "security config initialization" true 
+      (try ignore (Str.search_forward (Str.regexp "Initialize security config map with default values") userspace_code 0); true with Not_found -> false);
+    
+    (* Verify default values for both configs *)
+    check bool "network enable_logging true" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.enable_logging = true;") userspace_code 0); true with Not_found -> false);
+    check bool "network port 8080" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.port = 8080;") userspace_code 0); true with Not_found -> false);
+    check bool "security strict_mode false" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.strict_mode = false;") userspace_code 0); true with Not_found -> false);
+    check bool "security max_attempts 5" true 
+      (try ignore (Str.search_forward (Str.regexp "init_config\\.max_attempts = 5;") userspace_code 0); true with Not_found -> false)
+  with
+  | e -> fail ("Error in multiple config initialization test: " ^ Printexc.to_string e)
+
 (** All config struct generation tests *)
 let config_struct_generation_tests = [
   "single_config_basic_types", `Quick, test_single_config_basic_types;
@@ -322,6 +490,9 @@ let config_struct_generation_tests = [
   "no_debug_comments", `Quick, test_no_debug_comments;
   "config_assignment_restriction", `Quick, test_config_assignment_restriction;
   "config_read_allowed_in_ebpf", `Quick, test_config_read_allowed_in_ebpf;
+  "config_initialization_with_defaults", `Quick, test_config_initialization_with_defaults;
+  "config_initialization_ebpf_only", `Quick, test_config_initialization_ebpf_only;
+  "multiple_config_initialization", `Quick, test_multiple_config_initialization;
 ]
 
 let () =
