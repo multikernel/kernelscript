@@ -16,7 +16,7 @@
 %token PROGRAM FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
-%token LET MUT PUB PRIV CONFIG
+%token LET CONFIG
 %token IN DELETE TRY CATCH THROW DEFER
 
 /* Operators */
@@ -25,13 +25,12 @@
 
 /* Punctuation */
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET
-%token SEMICOLON COMMA DOT COLON ARROW ASSIGN PIPE
+%token COMMA DOT COLON ARROW ASSIGN PIPE
 
 /* Special */
 %token EOF
 
 /* Operator precedence (lowest to highest) - FIXED FOR VARIABLE COMPARISONS */
-%left PIPE      /* Flag combination */
 %left OR
 %left AND
 %nonassoc EQ NE   /* Equality - NON-ASSOCIATIVE to prevent conflicts */

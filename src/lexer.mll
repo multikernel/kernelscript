@@ -81,9 +81,6 @@
     | "break" -> BREAK
     | "continue" -> CONTINUE
     | "let" -> LET
-    | "mut" -> MUT
-    | "pub" -> PUB
-    | "priv" -> PRIV
     | "config" -> CONFIG
     | "in" -> IN
     | "delete" -> DELETE
@@ -153,7 +150,6 @@ rule token = parse
   | ')' { RPAREN }
   | '[' { LBRACKET }
   | ']' { RBRACKET }
-  | ';' { SEMICOLON }
   | ',' { COMMA }
   | '.' { DOT }
   | ':' { COLON }

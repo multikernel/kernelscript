@@ -30,7 +30,6 @@ let token_testable = testable (fun fmt -> function
   | Parser.RPAREN -> Format.fprintf fmt "RPAREN"
   | Parser.LBRACKET -> Format.fprintf fmt "LBRACKET"
   | Parser.RBRACKET -> Format.fprintf fmt "RBRACKET"
-  | Parser.SEMICOLON -> Format.fprintf fmt "SEMICOLON"
   | Parser.COMMA -> Format.fprintf fmt "COMMA"
   | Parser.DOT -> Format.fprintf fmt "DOT"
   | Parser.COLON -> Format.fprintf fmt "COLON"
@@ -54,9 +53,6 @@ let token_testable = testable (fun fmt -> function
   | Parser.BREAK -> Format.fprintf fmt "BREAK"
   | Parser.CONTINUE -> Format.fprintf fmt "CONTINUE"
   | Parser.LET -> Format.fprintf fmt "LET"
-  | Parser.MUT -> Format.fprintf fmt "MUT"
-  | Parser.PUB -> Format.fprintf fmt "PUB"
-  | Parser.PRIV -> Format.fprintf fmt "PRIV"
   | Parser.CONFIG -> Format.fprintf fmt "CONFIG"
   | Parser.EOF -> Format.fprintf fmt "EOF"
   | _ -> Format.fprintf fmt "OTHER_TOKEN"
@@ -99,8 +95,8 @@ let test_operators () =
   check (list token_testable) "operators" [Parser.PLUS; Parser.MINUS; Parser.MULTIPLY; Parser.DIVIDE; Parser.MODULO; Parser.EQ; Parser.NE; Parser.LT; Parser.LE; Parser.GT; Parser.GE; Parser.AND; Parser.OR; Parser.NOT] tokens
 
 let test_punctuation () =
-  let tokens = Lexer.tokenize_string "{ } ( ) [ ] ; , . : -> =" in
-  check (list token_testable) "punctuation" [Parser.LBRACE; Parser.RBRACE; Parser.LPAREN; Parser.RPAREN; Parser.LBRACKET; Parser.RBRACKET; Parser.SEMICOLON; Parser.COMMA; Parser.DOT; Parser.COLON; Parser.ARROW; Parser.ASSIGN] tokens
+  let tokens = Lexer.tokenize_string "{ } ( ) [ ] , . : -> =" in
+  check (list token_testable) "punctuation" [Parser.LBRACE; Parser.RBRACE; Parser.LPAREN; Parser.RPAREN; Parser.LBRACKET; Parser.RBRACKET; Parser.COMMA; Parser.DOT; Parser.COLON; Parser.ARROW; Parser.ASSIGN] tokens
 
 let test_primitive_types () =
   let tokens = Lexer.tokenize_string "u8 u16 u32 u64 i8 i16 i32 i64 bool char" in
@@ -111,8 +107,8 @@ let test_control_flow () =
   check (list token_testable) "control flow" [Parser.IF; Parser.ELSE; Parser.FOR; Parser.WHILE; Parser.RETURN; Parser.BREAK; Parser.CONTINUE] tokens
 
 let test_variable_keywords () =
-  let tokens = Lexer.tokenize_string "let mut pub priv config" in
-  check (list token_testable) "variable keywords" [Parser.LET; Parser.MUT; Parser.PUB; Parser.PRIV; Parser.CONFIG] tokens
+  let tokens = Lexer.tokenize_string "let config" in
+  check (list token_testable) "variable keywords" [Parser.LET; Parser.CONFIG] tokens
 
 let test_line_comments () =
   let tokens = Lexer.tokenize_string "program // this is a comment\nfn" in
