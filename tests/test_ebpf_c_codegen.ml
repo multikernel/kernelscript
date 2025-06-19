@@ -1,5 +1,6 @@
 (** Tests for eBPF C Code Generation *)
 
+open Alcotest
 open Kernelscript.Ast
 open Kernelscript.Ir
 open Kernelscript.Ebpf_c_codegen
@@ -16,11 +17,11 @@ let contains_substr str substr =
 
 (** Test basic C type conversion *)
 let test_type_conversion () =
-  Alcotest.(check string) "IRU32 conversion" "__u32" (ebpf_type_from_ir_type IRU32);
-  Alcotest.(check string) "IRBool conversion" "__u8" (ebpf_type_from_ir_type IRBool);
-  Alcotest.(check string) "IRPointer conversion" "__u8*" (ebpf_type_from_ir_type (IRPointer (IRU8, make_bounds_info ())));
-  Alcotest.(check string) "IRArray conversion" "__u32[10]" (ebpf_type_from_ir_type (IRArray (IRU32, 10, make_bounds_info ())));
-  Alcotest.(check string) "IRContext conversion" "struct xdp_md*" (ebpf_type_from_ir_type (IRContext XdpCtx))
+  check string "IRU32 conversion" "__u32" (ebpf_type_from_ir_type IRU32);
+  check string "IRBool conversion" "__u8" (ebpf_type_from_ir_type IRBool);
+  check string "IRPointer conversion" "__u8*" (ebpf_type_from_ir_type (IRPointer (IRU8, make_bounds_info ())));
+  check string "IRArray conversion" "__u32[10]" (ebpf_type_from_ir_type (IRArray (IRU32, 10, make_bounds_info ())));
+  check string "IRContext conversion" "struct xdp_md*" (ebpf_type_from_ir_type (IRContext XdpCtx))
 
 (** Test map definition generation *)
 let test_map_definition () =
@@ -29,10 +30,10 @@ let test_map_definition () =
   generate_map_definition ctx map_def;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "output contains opening brace" true (String.contains output '{');
-  Alcotest.(check bool) "output contains closing brace" true (String.contains output '}');
-  Alcotest.(check bool) "output contains map name" true (contains_substr output "test_map");
-  Alcotest.(check bool) "output contains map type" true (contains_substr output "BPF_MAP_TYPE_HASH")
+  check bool "output contains opening brace" true (String.contains output '{');
+  check bool "output contains closing brace" true (String.contains output '}');
+  check bool "output contains map name" true (contains_substr output "test_map");
+  check bool "output contains map type" true (contains_substr output "BPF_MAP_TYPE_HASH")
 
 (** Test C value generation *)
 let test_c_value_generation () =
@@ -40,13 +41,13 @@ let test_c_value_generation () =
   
   (* Test literals *)
   let int_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
-  Alcotest.(check string) "integer literal" "42" (generate_c_value ctx int_val);
+  check string "integer literal" "42" (generate_c_value ctx int_val);
   
   let bool_val = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
-  Alcotest.(check string) "boolean literal" "true" (generate_c_value ctx bool_val);
+  check string "boolean literal" "true" (generate_c_value ctx bool_val);
   
   let var_val = make_ir_value (IRVariable "my_var") IRU32 test_pos in
-  Alcotest.(check string) "variable reference" "my_var" (generate_c_value ctx var_val)
+  check string "variable reference" "my_var" (generate_c_value ctx var_val)
 
 (** Test C expression generation *)
 let test_c_expression_generation () =
@@ -58,7 +59,7 @@ let test_c_expression_generation () =
   let add_expr = make_ir_expr (IRBinOp (left_val, IRAdd, right_val)) IRU32 test_pos in
   
   let result = generate_c_expression ctx add_expr in
-  Alcotest.(check string) "binary addition" "(10 + 20)" result
+  check string "binary addition" "(10 + 20)" result
 
 (** Test context field access *)
 let test_context_access () =
@@ -69,7 +70,7 @@ let test_context_access () =
   
   let data_field = make_ir_value (IRContextField (XdpCtx, "data")) (IRPointer (IRU8, make_bounds_info ())) test_pos in
   let result = generate_c_value ctx data_field in
-  Alcotest.(check string) "context data field access" "(__u64)(long)ctx->data" result
+  check string "context data field access" "(__u64)(long)ctx->data" result
 
 (** Test bounds checking generation *)
 let test_bounds_checking () =
@@ -79,8 +80,8 @@ let test_bounds_checking () =
   generate_bounds_check ctx index_val 0 9;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "bounds check contains if statement" true (contains_substr output "if");
-  Alcotest.(check bool) "bounds check contains XDP_DROP" true (contains_substr output "return XDP_DROP")
+  check bool "bounds check contains if statement" true (contains_substr output "if");
+  check bool "bounds check contains XDP_DROP" true (contains_substr output "return XDP_DROP")
 
 (** Test map operations generation *)
 let test_map_operations () =
@@ -94,8 +95,8 @@ let test_map_operations () =
   generate_map_load ctx map_val key_val dest_val MapLookup;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "map lookup contains bpf_map_lookup_elem" true (contains_substr output "bpf_map_lookup_elem");
-  Alcotest.(check bool) "map lookup contains map name" true (contains_substr output "test_map")
+  check bool "map lookup contains bpf_map_lookup_elem" true (contains_substr output "bpf_map_lookup_elem");
+  check bool "map lookup contains map name" true (contains_substr output "test_map")
 
 (** Test literal keys and values in map operations *)
 let test_literal_map_operations () =
@@ -111,16 +112,16 @@ let test_literal_map_operations () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Verify that temporary variables are created for literals *)
-  Alcotest.(check bool) "key temp variable created" true (contains_substr output "__u32 key_");
-  Alcotest.(check bool) "value temp variable created" true (contains_substr output "__u64 value_");
-  Alcotest.(check bool) "key literal assigned" true (contains_substr output "= 42;");
-  Alcotest.(check bool) "value literal assigned" true (contains_substr output "= 100;");
-  Alcotest.(check bool) "map update uses temp variables" true (contains_substr output "bpf_map_update_elem(&test_map, &key_");
-  Alcotest.(check bool) "map update uses value temp" true (contains_substr output ", &value_");
+  check bool "key temp variable created" true (contains_substr output "__u32 key_");
+  check bool "value temp variable created" true (contains_substr output "__u64 value_");
+  check bool "key literal assigned" true (contains_substr output "= 42;");
+  check bool "value literal assigned" true (contains_substr output "= 100;");
+  check bool "map update uses temp variables" true (contains_substr output "bpf_map_update_elem(&test_map, &key_");
+  check bool "map update uses value temp" true (contains_substr output ", &value_");
   
   (* Verify literals are NOT directly addressed (no &42 or &100) *)
-  Alcotest.(check bool) "no direct key literal addressing" false (contains_substr output "&42");
-  Alcotest.(check bool) "no direct value literal addressing" false (contains_substr output "&100");
+  check bool "no direct key literal addressing" false (contains_substr output "&42");
+  check bool "no direct value literal addressing" false (contains_substr output "&100");
   
   (* Test map load with literal key *)
   let ctx2 = create_c_context () in
@@ -131,10 +132,10 @@ let test_literal_map_operations () =
   let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
   
   (* Verify key temp variable for lookup *)
-  Alcotest.(check bool) "lookup key temp variable created" true (contains_substr output2 "__u32 key_");
-  Alcotest.(check bool) "lookup key literal assigned" true (contains_substr output2 "= 42;");
-  Alcotest.(check bool) "lookup uses temp key variable" true (contains_substr output2 "bpf_map_lookup_elem(&test_map, &key_");
-  Alcotest.(check bool) "lookup no direct key addressing" false (contains_substr output2 "&42");
+  check bool "lookup key temp variable created" true (contains_substr output2 "__u32 key_");
+  check bool "lookup key literal assigned" true (contains_substr output2 "= 42;");
+  check bool "lookup uses temp key variable" true (contains_substr output2 "bpf_map_lookup_elem(&test_map, &key_");
+  check bool "lookup no direct key addressing" false (contains_substr output2 "&42");
   
   (* Test map delete with literal key *)
   let ctx3 = create_c_context () in
@@ -145,10 +146,10 @@ let test_literal_map_operations () =
   let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
   
   (* Verify key temp variable for delete *)
-  Alcotest.(check bool) "delete key temp variable created" true (contains_substr output3 "__u32 key_");
-  Alcotest.(check bool) "delete key literal assigned" true (contains_substr output3 "= 42;");
-  Alcotest.(check bool) "delete uses temp key variable" true (contains_substr output3 "bpf_map_delete_elem(&test_map, &key_");
-  Alcotest.(check bool) "delete no direct key addressing" false (contains_substr output3 "&42");
+  check bool "delete key temp variable created" true (contains_substr output3 "__u32 key_");
+  check bool "delete key literal assigned" true (contains_substr output3 "= 42;");
+  check bool "delete uses temp key variable" true (contains_substr output3 "bpf_map_delete_elem(&test_map, &key_");
+  check bool "delete no direct key addressing" false (contains_substr output3 "&42");
   
   (* Test with non-literal (variable) keys and values - should not create temp vars *)
   let ctx4 = create_c_context () in
@@ -160,9 +161,9 @@ let test_literal_map_operations () =
   let output4 = String.concat "\n" (List.rev ctx4.output_lines) in
   
   (* Verify variables are used directly without temp vars *)
-  Alcotest.(check bool) "variable key used directly" true (contains_substr output4 "bpf_map_update_elem(&test_map, &my_key, &my_value");
-  Alcotest.(check bool) "no temp vars for variable keys" false (contains_substr output4 "__u32 key_");
-  Alcotest.(check bool) "no temp vars for variable values" false (contains_substr output4 "__u64 value_")
+  check bool "variable key used directly" true (contains_substr output4 "bpf_map_update_elem(&test_map, &my_key, &my_value");
+  check bool "no temp vars for variable keys" false (contains_substr output4 "__u32 key_");
+  check bool "no temp vars for variable values" false (contains_substr output4 "__u64 value_")
 
 (** Test simple function generation *)
 let test_function_generation () =
@@ -180,10 +181,10 @@ let test_function_generation () =
   generate_c_function ctx main_func;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "function contains SEC annotation" true (contains_substr output "SEC(\"xdp\")");
-  Alcotest.(check bool) "function contains function name" true (contains_substr output "test_main");
-  Alcotest.(check bool) "function contains parameter" true (contains_substr output "struct xdp_md* ctx");
-  Alcotest.(check bool) "function contains return statement" true (contains_substr output "return 42")
+  check bool "function contains SEC annotation" true (contains_substr output "SEC(\"xdp\")");
+  check bool "function contains function name" true (contains_substr output "test_main");
+  check bool "function contains parameter" true (contains_substr output "struct xdp_md* ctx");
+  check bool "function contains return statement" true (contains_substr output "return 42")
 
 (** Test complete program generation *)
 let test_complete_program () =
@@ -204,12 +205,12 @@ let test_complete_program () =
   let c_code = compile_to_c ir_prog in
   
   (* Verify the generated C code contains expected elements *)
-  Alcotest.(check bool) "program contains linux/bpf.h include" true (contains_substr c_code "#include <linux/bpf.h>");
-  Alcotest.(check bool) "program contains map name" true (contains_substr c_code "packet_count");
-  Alcotest.(check bool) "program contains maps section" true (contains_substr c_code "SEC(\".maps\")");
-  Alcotest.(check bool) "program contains xdp section" true (contains_substr c_code "SEC(\"xdp\")");
-  Alcotest.(check bool) "program contains function name" true (contains_substr c_code "xdp_prog");
-  Alcotest.(check bool) "program contains GPL license" true (contains_substr c_code "GPL")
+  check bool "program contains linux/bpf.h include" true (contains_substr c_code "#include <linux/bpf.h>");
+  check bool "program contains map name" true (contains_substr c_code "packet_count");
+  check bool "program contains maps section" true (contains_substr c_code "SEC(\".maps\")");
+  check bool "program contains xdp section" true (contains_substr c_code "SEC(\"xdp\")");
+  check bool "program contains function name" true (contains_substr c_code "xdp_prog");
+  check bool "program contains GPL license" true (contains_substr c_code "GPL")
 
 (** Test helper function calls *)
 let test_helper_calls () =
@@ -219,8 +220,8 @@ let test_helper_calls () =
   generate_helper_call ctx "get_current_pid_tgid" [] (Some pid_var);
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "helper call contains bpf function name" true (contains_substr output "bpf_get_current_pid_tgid");
-  Alcotest.(check bool) "helper call contains assignment" true (contains_substr output "pid =")
+  check bool "helper call contains bpf function name" true (contains_substr output "bpf_get_current_pid_tgid");
+  check bool "helper call contains assignment" true (contains_substr output "pid =")
 
 (** Test advanced control flow *)
 let test_control_flow () =
@@ -233,9 +234,9 @@ let test_control_flow () =
   generate_c_instruction ctx cond_jump;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "control flow contains if statement" true (contains_substr output "if (1)");
-  Alcotest.(check bool) "control flow contains true branch goto" true (contains_substr output "goto true_branch");
-  Alcotest.(check bool) "control flow contains false branch goto" true (contains_substr output "goto false_branch")
+  check bool "control flow contains if statement" true (contains_substr output "if (1)");
+  check bool "control flow contains true branch goto" true (contains_substr output "goto true_branch");
+  check bool "control flow contains false branch goto" true (contains_substr output "goto false_branch")
 
 (** Test file writing functionality *)
 let test_file_writing () =
@@ -249,13 +250,13 @@ let test_file_writing () =
   let c_code = write_c_to_file ir_prog test_filename in
   
   (* Verify file exists and has content *)
-  Alcotest.(check bool) "output file exists" true (Sys.file_exists test_filename);
+  check bool "output file exists" true (Sys.file_exists test_filename);
   let ic = open_in test_filename in
   let file_content = really_input_string ic (in_channel_length ic) in
   close_in ic;
   
-  Alcotest.(check string) "file content matches generated code" c_code file_content;
-  Alcotest.(check bool) "file contains SEC annotation" true (contains_substr file_content "SEC(\"xdp\")");
+  check string "file content matches generated code" c_code file_content;
+  check bool "file contains SEC annotation" true (contains_substr file_content "SEC(\"xdp\")");
   
   (* Clean up *)
   Sys.remove test_filename
@@ -273,16 +274,16 @@ let test_string_literal_generation () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Verify the string is not truncated *)
-  Alcotest.(check bool) "string literal contains full text" true (contains_substr output "\"Hello world\"");
-  Alcotest.(check bool) "string literal not truncated" false (contains_substr output "\"Hello worl\"");
+  check bool "string literal contains full text" true (contains_substr output "\"Hello world\"");
+  check bool "string literal not truncated" false (contains_substr output "\"Hello worl\"");
   
   (* Verify correct length is set *)
-  Alcotest.(check bool) "string literal has correct length" true (contains_substr output ".len = 11");
-  Alcotest.(check bool) "string literal not wrong length" false (contains_substr output ".len = 10");
+  check bool "string literal has correct length" true (contains_substr output ".len = 11");
+  check bool "string literal not wrong length" false (contains_substr output ".len = 10");
   
   (* Verify struct definition is generated *)
-  Alcotest.(check bool) "string struct variable created" true (contains_substr result "str_lit_");
-  Alcotest.(check bool) "struct contains data field" true (contains_substr output ".data =")
+  check bool "string struct variable created" true (contains_substr result "str_lit_");
+  check bool "struct contains data field" true (contains_substr output ".data =")
 
 (** Test string literal edge cases - empty, single char, exact buffer size *)
 let test_string_literal_edge_cases () =
@@ -292,24 +293,24 @@ let test_string_literal_edge_cases () =
   let empty_val = make_ir_value (IRLiteral (StringLit "")) (IRStr 1) test_pos in
   let _ = generate_c_value ctx empty_val in
   let output1 = String.concat "\n" (List.rev ctx.output_lines) in
-  Alcotest.(check bool) "empty string has zero length" true (contains_substr output1 ".len = 0");
-  Alcotest.(check bool) "empty string has empty data" true (contains_substr output1 ".data = \"\"");
+  check bool "empty string has zero length" true (contains_substr output1 ".len = 0");
+  check bool "empty string has empty data" true (contains_substr output1 ".data = \"\"");
   
   (* Test single character *)
   let ctx2 = create_c_context () in
   let single_val = make_ir_value (IRLiteral (StringLit "X")) (IRStr 1) test_pos in
   let _ = generate_c_value ctx2 single_val in
   let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
-  Alcotest.(check bool) "single char has length 1" true (contains_substr output2 ".len = 1");
-  Alcotest.(check bool) "single char has correct data" true (contains_substr output2 ".data = \"X\"");
+  check bool "single char has length 1" true (contains_substr output2 ".len = 1");
+  check bool "single char has correct data" true (contains_substr output2 ".data = \"X\"");
   
   (* Test string that exactly fits buffer *)
   let ctx3 = create_c_context () in
   let exact_val = make_ir_value (IRLiteral (StringLit "12345")) (IRStr 5) test_pos in
   let _ = generate_c_value ctx3 exact_val in
   let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
-  Alcotest.(check bool) "exact fit has correct length" true (contains_substr output3 ".len = 5");
-  Alcotest.(check bool) "exact fit has full string" true (contains_substr output3 ".data = \"12345\"")
+  check bool "exact fit has correct length" true (contains_substr output3 ".len = 5");
+  check bool "exact fit has full string" true (contains_substr output3 ".data = \"12345\"")
 
 (** Test string literal truncation behavior when string is too long *)
 let test_string_literal_truncation () =
@@ -321,9 +322,9 @@ let test_string_literal_truncation () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Should be truncated to first 8 characters *)
-  Alcotest.(check bool) "long string is truncated" true (contains_substr output ".data = \"This is \"");
-  Alcotest.(check bool) "truncated length is correct" true (contains_substr output ".len = 8");
-  Alcotest.(check bool) "full string not present" false (contains_substr output "\"This is too long\"")
+  check bool "long string is truncated" true (contains_substr output ".data = \"This is \"");
+  check bool "truncated length is correct" true (contains_substr output ".len = 8");
+  check bool "full string not present" false (contains_substr output "\"This is too long\"")
 
 (** Test string literals in function calls - critical for bpf_printk *)
 let test_string_literal_in_function_calls () =
@@ -339,14 +340,14 @@ let test_string_literal_in_function_calls () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Critical fix: should use .data field, not the struct directly *)
-  Alcotest.(check bool) "function call uses .data field" true (contains_substr output "str_lit_1.data");
-  Alcotest.(check bool) "function call not using struct directly" false (contains_substr output "bpf_printk(\"%s\", str_lit_1);");
+  check bool "function call uses .data field" true (contains_substr output "str_lit_1.data");
+  check bool "function call not using struct directly" false (contains_substr output "bpf_printk(\"%s\", str_lit_1);");
   
   (* Should generate bpf_printk call *)
-  Alcotest.(check bool) "generates bpf_printk" true (contains_substr output "bpf_printk");
+  check bool "generates bpf_printk" true (contains_substr output "bpf_printk");
   
   (* Should have proper format string *)
-  Alcotest.(check bool) "has format string" true (contains_substr output "\"%s\"")
+  check bool "has format string" true (contains_substr output "\"%s\"")
 
 (** Test string literals in multi-argument function calls *)
 let test_string_literal_multi_arg_calls () =
@@ -363,9 +364,9 @@ let test_string_literal_multi_arg_calls () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Should use .data field for string argument *)
-  Alcotest.(check bool) "multi-arg uses .data field" true (contains_substr output "str_lit_1.data");
-  Alcotest.(check bool) "includes integer argument" true (contains_substr output "42");
-  Alcotest.(check bool) "has proper format specifiers" true (contains_substr output "\"%s%d\"")
+  check bool "multi-arg uses .data field" true (contains_substr output "str_lit_1.data");
+  check bool "includes integer argument" true (contains_substr output "42");
+  check bool "has proper format specifiers" true (contains_substr output "\"%s%d\"")
 
 (** Test string type definition generation *)
 let test_string_typedef_generation () =
@@ -378,11 +379,11 @@ let test_string_typedef_generation () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Should generate str_5_t variable reference *)
-  Alcotest.(check bool) "generates str_5_t variable" true (contains_substr result "str_lit_");
-  Alcotest.(check bool) "generates struct initialization" true (contains_substr output ".data =");
-  Alcotest.(check bool) "generates length field" true (contains_substr output ".len =");
-  Alcotest.(check bool) "has correct string content" true (contains_substr output "\"test\"");
-  Alcotest.(check bool) "has correct length value" true (contains_substr output ".len = 4")
+  check bool "generates str_5_t variable" true (contains_substr result "str_lit_");
+  check bool "generates struct initialization" true (contains_substr output ".data =");
+  check bool "generates length field" true (contains_substr output ".len =");
+  check bool "has correct string content" true (contains_substr output "\"test\"");
+  check bool "has correct length value" true (contains_substr output ".len = 4")
 
 (** Test string literals with special characters *)
 let test_string_literal_special_chars () =
@@ -394,9 +395,9 @@ let test_string_literal_special_chars () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Basic test - ensure string is properly generated *)
-  Alcotest.(check bool) "generates string literal" true (contains_substr output "str_lit_");
-  Alcotest.(check bool) "has correct content" true (contains_substr output "\"Hello World\"");
-  Alcotest.(check bool) "has correct length" true (contains_substr output ".len = 11")
+  check bool "generates string literal" true (contains_substr output "str_lit_");
+  check bool "has correct content" true (contains_substr output "\"Hello World\"");
+  check bool "has correct length" true (contains_substr output ".len = 11")
 
 (** Test string assignment vs literal generation *)
 let test_string_assignment_vs_literal () =
@@ -412,9 +413,9 @@ let test_string_assignment_vs_literal () =
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
   (* Should generate both the literal and the assignment *)
-  Alcotest.(check bool) "generates string literal" true (contains_substr output "str_lit_");
-  Alcotest.(check bool) "generates assignment" true (contains_substr output "my_string =");
-  Alcotest.(check bool) "assigns to variable" true (contains_substr output "= str_lit_")
+  check bool "generates string literal" true (contains_substr output "str_lit_");
+  check bool "generates assignment" true (contains_substr output "my_string =");
+  check bool "assigns to variable" true (contains_substr output "= str_lit_")
 
 (** Test suite definition *)
 let suite =
@@ -445,6 +446,6 @@ let suite =
 
 (** Run all tests *)
 let () =
-  Alcotest.run "eBPF C Code Generation" [
+  run "eBPF C Code Generation" [
     ("ebpf_c_codegen", suite);
   ] 
