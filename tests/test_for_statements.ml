@@ -9,7 +9,7 @@ let test_for_constant_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..5 {
+    for (i in 0..5) {
       let x = i * 2
     }
     return 2
@@ -30,7 +30,7 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let start = 1
     let endval = 10
-    for i in start..endval {
+    for (i in start..endval) {
       let x = i
     }
     return 2
@@ -49,7 +49,7 @@ let test_for_empty_body () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 1..10 {
+    for (i in 1..10) {
     }
     return 0
   }
@@ -67,7 +67,7 @@ let test_for_single_iteration () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 5..5 {
+    for (i in 5..5) {
       let y = 42
     }
     return 0
@@ -86,7 +86,7 @@ let test_for_simple_arithmetic () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 1..3 {
+    for (i in 1..3) {
       let temp = i * 2
     }
     return 1
@@ -105,7 +105,7 @@ let test_for_with_break () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..10 {
+    for (i in 0..10) {
       if (i == 5) {
         break
       }
@@ -127,7 +127,7 @@ let test_for_with_continue () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..10 {
+    for (i in 0..10) {
       if (i % 2 == 0) {
         continue
       }
@@ -151,7 +151,7 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let base = 5
     let multiplier = 2
-    for i in (base - 1)..(base + multiplier) {
+    for (i in (base - 1)..(base + multiplier)) {
       let result = i * base
     }
     return 2
@@ -181,7 +181,7 @@ program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let start: %s = 1
     let end_val: %s = 5
-    for i in start..end_val {
+    for (i in start..end_val) {
       let x = i
     }
     return 2
@@ -201,7 +201,7 @@ let test_for_large_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..1000000 {
+    for (i in 0..1000000) {
       let large = i
     }
     return 2
@@ -220,7 +220,7 @@ let test_for_reverse_bounds () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 10..5 {
+    for (i in 10..5) {
       let never_executed = i
     }
     return 2
@@ -240,7 +240,7 @@ let test_for_variable_scoping () =
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let i = 100
-    for i in 0..5 {
+    for (i in 0..5) {
       let x = i * 2
     }
     let after_loop = i
@@ -265,7 +265,7 @@ program test : xdp {
 }
 
 fn helper() -> u32 {
-  for i in 1..3 {
+  for (i in 1..3) {
     let helper_var = i + 10
   }
   return 0

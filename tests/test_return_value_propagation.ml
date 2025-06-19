@@ -113,10 +113,10 @@ program test : xdp {
 }
 
 fn main() -> i32 {
-  for i in 0..10 {
+  for (i in 0..10) {
     if (i == 5) {
-      return 42
-    }
+        return 42
+      }
   }
   return 0
 }

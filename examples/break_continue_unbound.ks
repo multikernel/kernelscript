@@ -8,7 +8,7 @@ program packet_filter : xdp {
     let end_value = 1000 // Large value to make it unbound
     
     // This should be treated as unbound due to large range
-    for i in 0..end_value {
+    for (i in 0..end_value) {
       // Skip even numbers
       if (i % 2 == 0) {
         continue
@@ -35,7 +35,7 @@ fn main() -> i32 {
   let count = 0
   
   // This should also be unbound
-  for i in 0..limit {
+  for (i in 0..limit) {
     if (i % 2 == 0) {
       continue
     }

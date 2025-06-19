@@ -118,7 +118,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for i in 0..10 {
+  for (i in 0..10) {
     if (i == 5) {
       break
     }
@@ -148,7 +148,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for i in 0..10 {
+  for (i in 0..10) {
     if (i % 2 == 0) {
       continue
     }
@@ -179,7 +179,7 @@ program test : xdp {
 
 fn test_func() -> u32 {
   let count = 0
-  for i in 0..10 {
+  for (i in 0..10) {
     if (i == 5) {
       break
     }
@@ -213,7 +213,7 @@ program test : xdp {
 
 fn test_func() -> u32 {
   let sum = 0
-  for i in 1..10 {
+  for (i in 1..10) {
     if (i % 2 == 0) {
       continue
     }
@@ -341,7 +341,7 @@ fn main() -> i32 {
     let total: u32 = 0
     let count: u32 = 0
     
-    for i in 0..20 {
+    for (i in 0..20) {
         if (i < 3) {
             continue
         }

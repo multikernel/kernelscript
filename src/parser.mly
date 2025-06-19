@@ -285,9 +285,9 @@ while_statement:
     { make_stmt (While ($3, $6)) (make_pos ()) }
 
 for_statement:
-  | FOR IDENTIFIER IN range_expression LBRACE statement_list RBRACE
-    { let (start_expr, end_expr) = $4 in
-      make_stmt (For ($2, start_expr, end_expr, $6)) (make_pos ()) }
+  | FOR LPAREN IDENTIFIER IN range_expression RPAREN LBRACE statement_list RBRACE
+    { let (start_expr, end_expr) = $5 in
+      make_stmt (For ($3, start_expr, end_expr, $8)) (make_pos ()) }
   | FOR LPAREN IDENTIFIER COMMA IDENTIFIER RPAREN IN expression DOT IDENTIFIER LPAREN RPAREN LBRACE statement_list RBRACE
     { match $10 with
       | "iter" -> make_stmt (ForIter ($3, $5, $8, $14)) (make_pos ())

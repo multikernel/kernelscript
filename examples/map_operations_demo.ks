@@ -55,7 +55,7 @@ program traffic_monitor : xdp {
         let counter = global_counter[key]
         if (counter != null) {
             // High-frequency lookup pattern - will generate optimization suggestions
-            for i in 0..100 {
+            for (i in 0..100) {
                 let _ = global_counter[key + i]
             }
         } else {
@@ -110,7 +110,7 @@ program stats_updater : tc {
         shared_stats[ifindex] = stats;
         
         // Batch operation pattern - will be detected as batch access
-        for i in 0..20 {
+        for (i in 0..20) {
             let batch_key = ifindex + i
             let entry = shared_stats[batch_key]
             if (entry != null) {
@@ -149,7 +149,7 @@ program event_logger : tracepoint {
 program data_processor : kprobe {
     fn main(ctx: KprobeContext) -> i32 {
         // Sequential access pattern - will be detected and optimized
-        for i in 0..32 {
+        for (i in 0..32) {
             let element = sequential_data[i]
             if (element != null) {
                 if (!element.processed) {

@@ -18,7 +18,7 @@ let test_break_statement_parsing () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..10 {
+    for (i in 0..10) {
       if (i == 5) {
         break
       }
@@ -37,7 +37,7 @@ let test_continue_statement_parsing () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..10 {
+    for (i in 0..10) {
       if (i == 5) {
         continue
       }
@@ -151,7 +151,7 @@ let test_break_continue_in_nested_conditional () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..20 {
+    for (i in 0..20) {
       if (i < 5) {
         continue
       } else {
@@ -174,7 +174,7 @@ let test_multiple_break_continue_statements () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..100 {
+    for (i in 0..100) {
       if (i < 10) {
         continue
       }
@@ -199,7 +199,7 @@ let test_break_evaluation () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 1..3 {
+    for (i in 1..3) {
       if (i == 2) {
         break
       }

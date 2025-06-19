@@ -48,7 +48,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for i in 0..10 {
+  for (i in 0..10) {
     let x = 42
   }
   return 0
@@ -88,7 +88,7 @@ program test : xdp {
 fn main() -> i32 {
   let start = 1
   let end_val = 5
-  for i in start..end_val {
+  for (i in start..end_val) {
     let temp = i * 2
   }
   return 0
@@ -142,7 +142,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for i in 0..10 {
+  for (i in 0..10) {
     let doubled = i * 2
     let squared = i * i
   }
@@ -179,7 +179,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for k in 5..5 {
+  for (k in 5..5) {
     let single = 99
   }
   return 0
@@ -210,7 +210,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for big in 0..1000000 {
+  for (big in 0..1000000) {
     let large = 1
   }
   return 0
@@ -242,7 +242,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for empty in 10..5 {
+  for (empty in 10..5) {
     let never = 0
   }
   return 0
@@ -274,7 +274,7 @@ program test : xdp {
 }
 
 fn helper() -> u32 {
-  for i in 1..3 {
+  for (i in 1..3) {
     let helper_var = i + 10
   }
   return 42
@@ -330,7 +330,7 @@ program test : xdp {
 }
 
 fn test_func() -> u32 {
-  for i in 0..100 {
+  for (i in 0..100) {
     let test = 1
   }
   return 0

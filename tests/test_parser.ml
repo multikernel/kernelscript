@@ -614,7 +614,7 @@ let test_simple_for_loop () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..10 {
+    for (i in 0..10) {
       return 1
     }
     return 2
@@ -641,7 +641,7 @@ let test_for_loop_with_expressions () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..5 {
+    for (i in 0..5) {
       let x = i * 2
     }
     return 2
@@ -668,7 +668,7 @@ let test_for_iter_syntax () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..3 {
+    for (i in 0..3) {
       let v = i
       return v
     }
@@ -696,8 +696,8 @@ let test_nested_for_loops () =
   let program_text = {|
 program test : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
-    for i in 0..3 {
-      for j in 0..2 {
+    for (i in 0..3) {
+      for (j in 0..2) {
         return 1
       }
     }
@@ -729,11 +729,11 @@ program test : xdp {
 let test_for_loop_edge_cases () =
   let test_cases = [
     (* Zero range - should work *)
-    ("for i in 5..5 { let x = i }", 
+    ("for (i in 5..5) { let x = i }", 
      [make_for_stmt "i" (make_int_lit 5) (make_int_lit 5) [make_decl "x" (make_id "i")]]);
     
     (* Variable bounds - use simple constants *)
-    ("for j in 2..8 { let y = j }", 
+    ("for (j in 2..8) { let y = j }", 
      [make_for_stmt "j" (make_int_lit 2) (make_int_lit 8) [make_decl "y" (make_id "j")]]);
   ] in
   List.iter (fun (input, expected) ->
@@ -741,7 +741,7 @@ let test_for_loop_edge_cases () =
   ) test_cases
 
 let test_for_comprehensive () =
-  let input = "for i in 0..3 { let x = i } for j in 1..5 { let y = j }" in
+  let input = "for (i in 0..3) { let x = i } for (j in 1..5) { let y = j }" in
   let expected = [
     make_for_stmt "i" (make_int_lit 0) (make_int_lit 3) [make_decl "x" (make_id "i")];
     make_for_stmt "j" (make_int_lit 1) (make_int_lit 5) [make_decl "y" (make_id "j")];
@@ -750,7 +750,7 @@ let test_for_comprehensive () =
 
 let test_loop_bounds_analysis () =
   (* Test that we can parse different kinds of loop bounds *)
-  let input = "for i in 0..5 { let x = i } for j in 2..8 { let y = j }" in
+  let input = "for (i in 0..5) { let x = i } for (j in 2..8) { let y = j }" in
   let expected = [
     make_for_stmt "i" (make_int_lit 0) (make_int_lit 5) [make_decl "x" (make_id "i")];
     make_for_stmt "j" (make_int_lit 2) (make_int_lit 8) [make_decl "y" (make_id "j")];
