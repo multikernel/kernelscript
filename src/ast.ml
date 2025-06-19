@@ -138,6 +138,7 @@ and expr_desc =
   | FieldAccess of expr * string
   | BinaryOp of expr * binary_op * expr
   | UnaryOp of unary_op * expr
+  | StructLiteral of string * (string * expr) list  (* struct_name, field_assignments *)
 
 (** Statements with position tracking *)
 type statement = {
@@ -450,6 +451,11 @@ let rec string_of_expr expr =
         (string_of_expr left) (string_of_binary_op op) (string_of_expr right)
   | UnaryOp (op, expr) ->
       Printf.sprintf "(%s%s)" (string_of_unary_op op) (string_of_expr expr)
+  | StructLiteral (struct_name, field_assignments) ->
+      let field_strs = List.map (fun (field_name, expr) ->
+        Printf.sprintf "%s = %s" field_name (string_of_expr expr)
+      ) field_assignments in
+      Printf.sprintf "struct %s {\n  %s\n}" struct_name (String.concat ",\n  " field_strs)
 
 let rec string_of_stmt stmt =
   match stmt.stmt_desc with

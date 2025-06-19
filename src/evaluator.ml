@@ -410,6 +410,14 @@ and eval_expression ctx expr =
       (* For evaluation purposes, return a mock value *)
       (* In real execution, this would access the config map *)
       IntValue 1500  (* Mock value for testing *)
+      
+  | StructLiteral (_struct_name, field_assignments) ->
+      (* For evaluation, create a struct value *)
+      let field_values = List.map (fun (field_name, field_expr) ->
+        let field_value = eval_expression ctx field_expr in
+        (field_name, field_value)
+      ) field_assignments in
+      StructValue field_values
 
 (** Evaluate statements *)
 and eval_statements ctx stmts =

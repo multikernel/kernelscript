@@ -193,6 +193,7 @@ and ir_expr_desc =
   | IRUnOp of ir_unary_op * ir_value
   | IRCast of ir_value * ir_type
   | IRFieldAccess of ir_value * string
+  | IRStructLiteral of string * (string * ir_value) list  (* struct_name, field_assignments *)
 
 and ir_binary_op =
   | IRAdd | IRSub | IRMul | IRDiv | IRMod
@@ -623,6 +624,11 @@ let string_of_ir_expr expr =
       Printf.sprintf "(%s as %s)" (string_of_ir_value value) (string_of_ir_type typ)
   | IRFieldAccess (obj, field) ->
       Printf.sprintf "(%s.%s)" (string_of_ir_value obj) field
+  | IRStructLiteral (struct_name, field_assignments) ->
+      let field_strs = List.map (fun (field_name, value) ->
+        Printf.sprintf "%s = %s" field_name (string_of_ir_value value)) field_assignments
+      in
+      Printf.sprintf "%s { %s }" struct_name (String.concat ", " field_strs)
 
 let rec string_of_ir_instruction instr =
   match instr.instr_desc with

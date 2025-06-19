@@ -105,6 +105,9 @@
 %type <Ast.expr> field_access
 %type <Ast.expr> array_access
 %type <Ast.literal list> literal_list
+%type <(string * Ast.expr) list> struct_literal_fields
+%type <string * Ast.expr> struct_literal_field
+%type <Ast.expr> struct_literal
 
 /* Start symbol */
 %start program
@@ -338,6 +341,7 @@ expression:
   | function_call { $1 }
   | field_access { $1 }
   | array_access { $1 }
+  | struct_literal { $1 }
 
 primary_expression:
   | literal { make_expr (Literal $1) (make_pos ()) }
@@ -392,6 +396,19 @@ field_access:
 
 array_access:
   | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }
+
+struct_literal:
+  | IDENTIFIER LBRACE struct_literal_fields RBRACE
+    { make_expr (StructLiteral ($1, $3)) (make_pos ()) }
+
+struct_literal_fields:
+  | /* empty */ { [] }
+  | struct_literal_field { [$1] }
+  | struct_literal_field COMMA struct_literal_fields { $1 :: $3 }
+  | struct_literal_field COMMA { [$1] }  /* Allow trailing comma */
+
+struct_literal_field:
+  | IDENTIFIER COLON expression { ($1, $3) }
 
 /* Map Declarations */
 map_declaration:

@@ -68,6 +68,7 @@ and typed_expr_desc =
   | TFieldAccess of typed_expr * string
   | TBinaryOp of typed_expr * binary_op * typed_expr
   | TUnaryOp of unary_op * typed_expr
+  | TStructLiteral of string * (string * typed_expr) list
 
 type typed_statement = {
   tstmt_desc: typed_stmt_desc;
@@ -629,6 +630,63 @@ and type_check_unary_op ctx op expr pos =
   
   { texpr_desc = TUnaryOp (op, typed_expr); texpr_type = result_type; texpr_pos = pos }
 
+(** Type check struct literal *)
+and type_check_struct_literal ctx struct_name field_assignments pos =
+  (* Look up the struct definition *)
+  try
+    let type_def = Hashtbl.find ctx.types struct_name in
+    match type_def with
+    | StructDef (_, struct_fields) ->
+        (* Type check each field assignment *)
+        let typed_field_assignments = List.map (fun (field_name, field_expr) ->
+          let typed_field_expr = type_check_expression ctx field_expr in
+          (field_name, typed_field_expr)
+        ) field_assignments in
+        
+        (* Verify all struct fields are provided *)
+        let provided_fields = List.map fst field_assignments in
+        let expected_fields = List.map fst struct_fields in
+        
+        (* Check for missing fields *)
+        let missing_fields = List.filter (fun expected_field ->
+          not (List.mem expected_field provided_fields)
+        ) expected_fields in
+        
+        if missing_fields <> [] then
+          type_error ("Missing fields in struct literal: " ^ String.concat ", " missing_fields) pos;
+        
+        (* Check for unknown fields *)
+        let unknown_fields = List.filter (fun provided_field ->
+          not (List.mem provided_field expected_fields)
+        ) provided_fields in
+        
+        if unknown_fields <> [] then
+          type_error ("Unknown fields in struct literal: " ^ String.concat ", " unknown_fields) pos;
+        
+        (* Check field types match *)
+        List.iter (fun (field_name, typed_field_expr) ->
+          try
+            let expected_field_type = List.assoc field_name struct_fields in
+            match unify_types expected_field_type typed_field_expr.texpr_type with
+            | Some _ -> () (* Type matches *)
+            | None -> 
+                type_error ("Type mismatch for field '" ^ field_name ^ "': expected " ^ 
+                           string_of_bpf_type expected_field_type ^ " but got " ^ 
+                           string_of_bpf_type typed_field_expr.texpr_type) pos
+          with Not_found ->
+            (* This should not happen as we already checked for unknown fields *)
+            type_error ("Internal error: field '" ^ field_name ^ "' not found in struct definition") pos
+        ) typed_field_assignments;
+        
+        (* Return the typed struct literal *)
+        { texpr_desc = TStructLiteral (struct_name, typed_field_assignments); 
+          texpr_type = Struct struct_name; 
+          texpr_pos = pos }
+    | _ ->
+        type_error (struct_name ^ " is not a struct") pos
+  with Not_found ->
+    type_error ("Undefined struct: " ^ struct_name) pos
+
 (** Type check expression *)
 and type_check_expression ctx expr =
   match expr.expr_desc with
@@ -652,6 +710,7 @@ and type_check_expression ctx expr =
   | FieldAccess (obj, field) -> type_check_field_access ctx obj field expr.expr_pos
   | BinaryOp (left, op, right) -> type_check_binary_op ctx left op right expr.expr_pos
   | UnaryOp (op, expr) -> type_check_unary_op ctx op expr expr.expr_pos
+  | StructLiteral (struct_name, field_assignments) -> type_check_struct_literal ctx struct_name field_assignments expr.expr_pos
 
 (** Type check statement *)
 let rec type_check_statement ctx stmt =
@@ -1137,6 +1196,11 @@ let rec typed_expr_to_expr texpr =
     | TFieldAccess (obj, field) -> FieldAccess (typed_expr_to_expr obj, field)
     | TBinaryOp (left, op, right) -> BinaryOp (typed_expr_to_expr left, op, typed_expr_to_expr right)
     | TUnaryOp (op, expr) -> UnaryOp (op, typed_expr_to_expr expr)
+    | TStructLiteral (struct_name, field_assignments) -> 
+        let converted_field_assignments = List.map (fun (field_name, typed_field_expr) ->
+          (field_name, typed_expr_to_expr typed_field_expr)
+        ) field_assignments in
+        StructLiteral (struct_name, converted_field_assignments)
   in
   (* Handle special cases for type annotations *)
   let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with

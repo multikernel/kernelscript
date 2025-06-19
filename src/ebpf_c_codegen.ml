@@ -143,6 +143,10 @@ let collect_string_sizes_from_expr ir_expr =
   | IRCast (ir_val, target_type) -> 
       (collect_string_sizes_from_value ir_val) @ (collect_string_sizes_from_type target_type)
   | IRFieldAccess (obj_val, _) -> collect_string_sizes_from_value obj_val
+  | IRStructLiteral (_, field_assignments) ->
+      List.fold_left (fun acc (_, field_val) ->
+        acc @ (collect_string_sizes_from_value field_val)
+      ) [] field_assignments
 
 let rec collect_string_sizes_from_instr ir_instr =
   match ir_instr.instr_desc with
@@ -167,10 +171,19 @@ let rec collect_string_sizes_from_instr ir_instr =
   | IRMapDelete (map_val, key_val) ->
       (collect_string_sizes_from_value map_val) @ 
       (collect_string_sizes_from_value key_val)
-  | IRReturn ret_opt ->
-      (match ret_opt with
-       | Some ret_val -> collect_string_sizes_from_value ret_val
-       | None -> [])
+  | IRConfigFieldUpdate (map_val, key_val, _field, value_val) ->
+      (collect_string_sizes_from_value map_val) @ 
+      (collect_string_sizes_from_value key_val) @ 
+      (collect_string_sizes_from_value value_val)
+  | IRConfigAccess (_config_name, _field_name, result_val) ->
+      collect_string_sizes_from_value result_val
+  | IRContextAccess (dest_val, _access_type) -> 
+      collect_string_sizes_from_value dest_val
+  | IRBoundsCheck (ir_val, _, _) -> 
+      collect_string_sizes_from_value ir_val
+  | IRJump _ -> []
+  | IRCondJump (cond_val, _, _) -> 
+      collect_string_sizes_from_value cond_val
   | IRIf (cond_val, then_instrs, else_instrs_opt) ->
       let cond_sizes = collect_string_sizes_from_value cond_val in
       let then_sizes = List.fold_left (fun acc instr -> 
@@ -181,7 +194,39 @@ let rec collect_string_sizes_from_instr ir_instr =
         | None -> []
       in
       cond_sizes @ then_sizes @ else_sizes
-  | _ -> []
+  | IRReturn ret_opt ->
+      (match ret_opt with
+       | Some ret_val -> collect_string_sizes_from_value ret_val
+       | None -> [])
+  | IRComment _ -> [] (* Comments don't contain values *)
+  | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->
+      (collect_string_sizes_from_value start_val) @ 
+      (collect_string_sizes_from_value end_val) @ 
+      (collect_string_sizes_from_value counter_val) @ 
+      (collect_string_sizes_from_value ctx_val) @
+      (List.fold_left (fun acc instr -> 
+        acc @ (collect_string_sizes_from_instr instr)) [] body_instructions)
+  | IRBreak -> []
+  | IRContinue -> []
+  | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
+      let cond_sizes = collect_string_sizes_from_value cond_val in
+      let true_sizes = match ret_if_true with
+        | Some ret_val -> collect_string_sizes_from_value ret_val
+        | None -> []
+      in
+      let false_sizes = match ret_if_false with
+        | Some ret_val -> collect_string_sizes_from_value ret_val
+        | None -> []
+      in
+      cond_sizes @ true_sizes @ false_sizes
+  | IRTry (try_instructions, _catch_clauses) ->
+      List.fold_left (fun acc instr -> 
+        acc @ (collect_string_sizes_from_instr instr)) [] try_instructions
+  | IRThrow _error_code ->
+      [] (* Throw statements don't contain values to collect *)
+  | IRDefer defer_instructions ->
+      List.fold_left (fun acc instr -> 
+        acc @ (collect_string_sizes_from_instr instr)) [] defer_instructions
 
 let collect_string_sizes_from_function ir_func =
   List.fold_left (fun acc block ->
@@ -231,6 +276,8 @@ let collect_enum_definitions ir_multi_prog =
     | IRCast (ir_val, target_type) -> 
         collect_from_value ir_val; collect_from_type target_type
     | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+    | IRStructLiteral (_, field_assignments) ->
+        List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
   in
   
   let rec collect_from_instr ir_instr =
@@ -306,6 +353,116 @@ let generate_string_typedefs ctx ir_multi_prog =
     List.iter (fun size ->
       emit_line ctx (sprintf "typedef struct { char data[%d]; __u16 len; } str_%d_t;" (size + 1) size)
     ) unique_sizes;
+    emit_blank_line ctx
+  )
+
+(** Collect struct definitions from IR multi-program *)
+let collect_struct_definitions_from_multi_program ir_multi_prog =
+  let struct_defs = ref [] in
+  
+  (* Helper function to extract struct definition from symbol table or program definitions *)
+  let find_struct_definition struct_name =
+    (* First try to find from the first program's symbol table if available *)
+    if List.length ir_multi_prog.programs > 0 then (
+      (* For now, create a simple struct with u64 size and u32 action fields for PacketInfo *)
+      (* This is a simplified approach until full symbol table integration *)
+      if struct_name = "PacketInfo" then
+        Some [("size", IRU64); ("action", IRU32)]
+      else
+        None
+    ) else
+      None
+  in
+  
+  let collect_from_type ir_type =
+    match ir_type with
+    | IRStruct (name, fields) ->
+        if not (List.mem_assoc name !struct_defs) then (
+          let actual_fields = if fields = [] then (
+            (* If fields are empty, try to find the actual definition *)
+            match find_struct_definition name with
+            | Some real_fields -> real_fields
+            | None -> fields  (* Keep empty if we can't find definition *)
+          ) else fields in
+          struct_defs := (name, actual_fields) :: !struct_defs
+        )
+    | _ -> ()
+  in
+  
+  let rec collect_from_value ir_val =
+    collect_from_type ir_val.val_type
+  and collect_from_expr ir_expr =
+    collect_from_type ir_expr.expr_type;
+    match ir_expr.expr_desc with
+    | IRStructLiteral (_struct_name, field_assignments) ->
+        (* Also collect struct type from the literal itself *)
+        List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
+    | IRValue ir_val -> collect_from_value ir_val
+    | IRBinOp (left, _, right) -> collect_from_value left; collect_from_value right
+    | IRUnOp (_, ir_val) -> collect_from_value ir_val
+    | IRCast (ir_val, _) -> collect_from_value ir_val
+    | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+  and collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRAssign (dest_val, expr) -> 
+        collect_from_value dest_val; collect_from_expr expr
+    | IRCall (_, args, ret_opt) ->
+        List.iter collect_from_value args;
+        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+    | IRMapLoad (map_val, key_val, dest_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
+    | IRMapStore (map_val, key_val, value_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
+    | IRMapDelete (map_val, key_val) ->
+        collect_from_value map_val; collect_from_value key_val
+    | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+        collect_from_value cond_val;
+        List.iter collect_from_instr then_instrs;
+        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | _ -> ()
+  in
+  
+  let collect_from_map_def map_def =
+    collect_from_type map_def.map_key_type;
+    collect_from_type map_def.map_value_type
+  in
+  
+  let collect_from_function ir_func =
+    List.iter (fun block ->
+      List.iter collect_from_instr block.instructions
+    ) ir_func.basic_blocks;
+    (* Also collect from function parameters and return type *)
+    List.iter (fun (_, param_type) -> collect_from_type param_type) ir_func.parameters;
+    (match ir_func.return_type with Some ret_type -> collect_from_type ret_type | None -> ())
+  in
+  
+  (* Collect from global maps *)
+  List.iter collect_from_map_def ir_multi_prog.global_maps;
+  
+  (* Collect from all programs *)
+  List.iter (fun ir_prog ->
+    List.iter collect_from_map_def ir_prog.local_maps;
+    collect_from_function ir_prog.main_function;
+    List.iter collect_from_function ir_prog.functions
+  ) ir_multi_prog.programs;
+  
+  List.rev !struct_defs
+
+(** Generate struct definitions *)
+let generate_struct_definitions ctx struct_defs =
+  if struct_defs <> [] then (
+    emit_line ctx "/* Struct definitions */";
+    List.iter (fun (struct_name, fields) ->
+      emit_line ctx (sprintf "struct %s {" struct_name);
+      increase_indent ctx;
+      List.iter (fun (field_name, field_type) ->
+        let c_type = ebpf_type_from_ir_type field_type in
+        emit_line ctx (sprintf "%s %s;" c_type field_name)
+      ) fields;
+      decrease_indent ctx;
+      emit_line ctx "};"
+    ) struct_defs;
     emit_blank_line ctx
   )
 
@@ -716,6 +873,14 @@ let generate_c_expression ctx ir_expr =
   | IRFieldAccess (obj_val, field) ->
       let obj_str = generate_c_value ctx obj_val in
       sprintf "%s.%s" obj_str field
+      
+  | IRStructLiteral (_struct_name, field_assignments) ->
+      (* Generate C struct literal: {.field1 = value1, .field2 = value2} *)
+      let field_strs = List.map (fun (field_name, field_val) ->
+        let field_value_str = generate_c_value ctx field_val in
+        sprintf ".%s = %s" field_name field_value_str
+      ) field_assignments in
+      sprintf "{%s}" (String.concat ", " field_strs)
 
 (** Generate helper function calls *)
 
@@ -879,10 +1044,21 @@ let rec generate_c_instruction ctx ir_instr =
            let expr_str = generate_c_expression ctx expr in
            emit_line ctx (sprintf "%s = %s;" dest_str expr_str)
        | _ ->
-           (* Regular assignment *)
+           (* Regular assignment - handle struct literals specially *)
            let dest_str = generate_c_value ctx dest_val in
-           let expr_str = generate_c_expression ctx expr in
-           emit_line ctx (sprintf "%s = %s;" dest_str expr_str))
+           (match expr.expr_desc with
+            | IRStructLiteral (struct_name, field_assignments) ->
+                (* For struct literal assignments, use compound literal syntax *)
+                let field_strs = List.map (fun (field_name, field_val) ->
+                  let field_value_str = generate_c_value ctx field_val in
+                  sprintf ".%s = %s" field_name field_value_str
+                ) field_assignments in
+                let struct_type = sprintf "struct %s" struct_name in
+                emit_line ctx (sprintf "%s = (%s){%s};" dest_str struct_type (String.concat ", " field_strs))
+            | _ ->
+                (* Other expressions *)
+                let expr_str = generate_c_expression ctx expr in
+                emit_line ctx (sprintf "%s = %s;" dest_str expr_str)))
 
   | IRCall (name, args, ret_opt) ->
       (* Check if this is a built-in function that needs context-specific translation *)
@@ -1076,6 +1252,8 @@ let rec generate_c_instruction ctx ir_instr =
           | IRUnOp (_, ir_val) -> collect_in_value ir_val
           | IRCast (ir_val, _) -> collect_in_value ir_val
           | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
+          | IRStructLiteral (_, field_assignments) ->
+              List.iter (fun (_, field_val) -> collect_in_value field_val) field_assignments
         in
                  let collect_in_instr ir_instr =
            match ir_instr.instr_desc with
@@ -1306,6 +1484,8 @@ let collect_registers_in_function ir_func =
     | IRUnOp (_, ir_val) -> collect_in_value ir_val
     | IRCast (ir_val, _) -> collect_in_value ir_val
     | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
+    | IRStructLiteral (_, field_assignments) ->
+        List.iter (fun (_, field_val) -> collect_in_value field_val) field_assignments
   in
   let rec collect_in_instr ir_instr =
     match ir_instr.instr_desc with
@@ -1440,6 +1620,10 @@ let generate_c_program ?config_declarations ir_prog =
   (* Generate enum definitions *)
   generate_enum_definitions ctx temp_multi_prog;
   
+  (* Generate struct definitions *)
+  let struct_defs = collect_struct_definitions_from_multi_program temp_multi_prog in
+  generate_struct_definitions ctx struct_defs;
+  
   (* Generate type alias definitions *)
   let type_aliases = collect_type_aliases_from_multi_program temp_multi_prog in
   generate_type_alias_definitions ctx type_aliases;
@@ -1499,6 +1683,10 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   
   (* Generate enum definitions *)
   generate_enum_definitions ctx ir_multi_program;
+  
+  (* Generate struct definitions *)
+  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
+  generate_struct_definitions ctx struct_defs;
   
   (* Generate type alias definitions from AST *)
   generate_ast_type_alias_definitions ctx type_aliases;
@@ -1568,6 +1756,10 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
   
   (* Generate enum definitions *)
   generate_enum_definitions ctx ir_multi_program;
+  
+  (* Generate struct definitions *)
+  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
+  generate_struct_definitions ctx struct_defs;
   
   (* Generate type alias definitions from AST *)
   generate_ast_type_alias_definitions ctx type_aliases;

@@ -138,6 +138,10 @@ let collect_string_sizes_from_ir_expr ir_expr =
   | IRCast (value, target_type) -> 
       (collect_string_sizes_from_ir_value value) @ (collect_string_sizes_from_ir_type target_type)
   | IRFieldAccess (obj, _) -> collect_string_sizes_from_ir_value obj
+  | IRStructLiteral (_, field_assignments) ->
+      List.fold_left (fun acc (_, field_val) ->
+        acc @ (collect_string_sizes_from_ir_value field_val)
+      ) [] field_assignments
 
 let collect_string_sizes_from_ir_instruction ir_instr =
   match ir_instr.instr_desc with
@@ -210,6 +214,8 @@ let collect_enum_definitions_from_userspace userspace_prog =
     | IRCast (ir_val, target_type) -> 
         collect_from_value ir_val; collect_from_type target_type
     | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+    | IRStructLiteral (_, field_assignments) ->
+        List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
   in
   
   let rec collect_from_instr ir_instr =
@@ -517,6 +523,14 @@ let generate_c_expression_from_ir ctx ir_expr =
   | IRFieldAccess (obj_val, field) ->
       let obj_str = generate_c_value_from_ir ctx obj_val in
       sprintf "%s.%s" obj_str field
+  
+  | IRStructLiteral (_struct_name, field_assignments) ->
+      (* Generate C struct literal: {.field1 = value1, .field2 = value2} *)
+      let field_strs = List.map (fun (field_name, field_val) ->
+        let field_value_str = generate_c_value_from_ir ctx field_val in
+        sprintf ".%s = %s" field_name field_value_str
+      ) field_assignments in
+      sprintf "{%s}" (String.concat ", " field_strs)
 
 (** Generate map operations from IR *)
 let generate_map_load_from_ir ctx map_val key_val dest_val load_type =

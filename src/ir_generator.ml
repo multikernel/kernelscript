@@ -470,6 +470,26 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let instr = make_ir_instruction (IRAssign (result_val, un_expr)) expr.expr_pos in
       emit_instruction ctx instr;
       result_val
+      
+  | Ast.StructLiteral (struct_name, field_assignments) ->
+      let result_reg = allocate_register ctx in
+      let result_type = match expr.expr_type with
+        | Some ast_type -> ast_type_to_ir_type ast_type
+        | None -> IRStruct (struct_name, [])
+      in
+      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      
+      (* Lower each field assignment expression *)
+      let lowered_field_assignments = List.map (fun (field_name, field_expr) ->
+        let field_val = lower_expression ctx field_expr in
+        (field_name, field_val)
+      ) field_assignments in
+      
+      (* Generate struct literal instruction *)
+      let struct_expr = make_ir_expr (IRStructLiteral (struct_name, lowered_field_assignments)) result_type expr.expr_pos in
+      let instr = make_ir_instruction (IRAssign (result_val, struct_expr)) expr.expr_pos in
+      emit_instruction ctx instr;
+      result_val
 
 (** Lower AST statements to IR instructions *)
 let rec lower_statement ctx stmt =
@@ -557,9 +577,9 @@ let rec lower_statement ctx stmt =
                            Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
                            (* Create IRTypeAlias to preserve the alias name *)
                            IRTypeAlias (alias_name, underlying_ir_type)
-                       | _ -> ast_type_to_ir_type ast_type)
-                  | None -> ast_type_to_ir_type ast_type)
-             | _ -> ast_type_to_ir_type ast_type)
+                                               | _ -> ast_type_to_ir_type ast_type)
+                   | None -> ast_type_to_ir_type ast_type)
+              | _ -> ast_type_to_ir_type ast_type)
         | None -> value.val_type
       in
       
@@ -1060,7 +1080,7 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   (* Allocate registers for parameters *)
   let ir_params = List.map (fun (name, ast_type) ->
     let _reg = get_variable_register ctx name in
-    let ir_type = ast_type_to_ir_type_with_context ctx.symbol_table ast_type in
+    let ir_type = ast_type_to_ir_type ast_type in
     (name, ir_type)
   ) func_def.func_params in
   
@@ -1094,7 +1114,7 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   
   (* Convert return type *)
   let ir_return_type = match func_def.func_return_type with
-    | Some ast_type -> Some (ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
+    | Some ast_type -> Some (ast_type_to_ir_type ast_type)
     | None -> None
   in
   
@@ -1146,6 +1166,58 @@ let lower_map_declaration (map_decl : Ast.map_declaration) =
     ~is_global:map_decl.Ast.is_global
     ?pin_path:pin_path
     map_decl.Ast.map_pos
+
+(** Convert AST types to IR types *)
+let rec ast_type_to_ir_type = function
+  | Ast.U8 -> IRU8 | Ast.U16 -> IRU16 | Ast.U32 -> IRU32 | Ast.U64 -> IRU64
+  | Ast.I8 -> IRI8 | Ast.I16 -> IRU16 | Ast.I32 -> IRU32 | Ast.I64 -> IRU64  (* Note: I16/I32/I64 map to unsigned in simple case *)
+  | Ast.Bool -> IRBool | Ast.Char -> IRChar
+  | Ast.Str size -> IRStr size
+  | Ast.Array (elem_type, size) -> IRArray (ast_type_to_ir_type elem_type, size, make_bounds_info ())
+  | Ast.Pointer elem_type -> IRPointer (ast_type_to_ir_type elem_type, make_bounds_info ())
+  | Ast.UserType type_name -> IRStruct (type_name, [])  (* Simplified *)
+  | Ast.Struct struct_name -> IRStruct (struct_name, [])
+  | Ast.Enum enum_name -> IREnum (enum_name, [])
+  | Ast.Option inner_type -> IROption (ast_type_to_ir_type inner_type)
+  | Ast.Result (ok_type, err_type) -> IRResult (ast_type_to_ir_type ok_type, ast_type_to_ir_type err_type)
+  | Ast.Function (_param_types, return_type) -> 
+      (* Functions are represented as pointers to function *)
+      let return_ir_type = ast_type_to_ir_type return_type in
+      IRPointer (return_ir_type, make_bounds_info ())
+  | Ast.Map (key_type, value_type, _map_type) ->
+      let ir_key_type = ast_type_to_ir_type key_type in
+      let ir_value_type = ast_type_to_ir_type value_type in
+      IRPointer (IRStruct ("map", [("key", ir_key_type); ("value", ir_value_type)]), make_bounds_info ())
+  | Ast.XdpContext -> IRContext XdpCtx
+  | Ast.TcContext -> IRContext TcCtx
+  | Ast.KprobeContext -> IRContext KprobeCtx
+  | Ast.UprobeContext -> IRContext UprobeCtx
+  | Ast.TracepointContext -> IRContext TracepointCtx
+  | Ast.LsmContext -> IRContext LsmCtx
+  | Ast.CgroupSkbContext -> IRContext CgroupSkbCtx
+  | Ast.XdpAction -> IRAction XdpActionType
+  | Ast.TcAction -> IRAction TcActionType
+  | Ast.ProgramRef _prog_type -> IRU32  (* Program refs become integers *)
+  | Ast.ProgramHandle -> IRU64  (* Program handles are pointers represented as 64-bit ints *)
+
+(** Convert AST types to IR types with symbol table lookup for struct field resolution *)
+let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
+  match ast_type with
+  | Ast.UserType name | Ast.Struct name ->
+      let struct_name = name in
+             (match Symbol_table.lookup_symbol symbol_table struct_name with
+        | Some symbol ->
+            (match symbol.kind with
+             | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
+                 let ir_fields = List.map (fun (field_name, field_type) ->
+                   (field_name, ast_type_to_ir_type field_type)
+                 ) fields in
+                 IRStruct (struct_name, ir_fields)
+             | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) ->
+                 ast_type_to_ir_type underlying_type
+             | _ -> IRStruct (struct_name, []))  (* Fallback for other symbol kinds *)
+        | None -> IRStruct (struct_name, []))  (* Fallback when symbol not found *)
+  | _ -> ast_type_to_ir_type ast_type  (* For all other types, use regular conversion *)
 
 (** Convert AST function to IR function for userspace context *)
 let lower_userspace_function ctx func_def =

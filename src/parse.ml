@@ -74,6 +74,8 @@ let validate_ast ast =
     | FieldAccess (obj, _) -> validate_expr obj
     | BinaryOp (left, _, right) -> validate_expr left && validate_expr right
     | UnaryOp (_, expr) -> validate_expr expr
+    | StructLiteral (_, field_assignments) -> 
+        List.for_all (fun (_, field_expr) -> validate_expr field_expr) field_assignments
   in
   
   let rec validate_stmt stmt =

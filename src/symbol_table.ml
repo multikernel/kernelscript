@@ -646,8 +646,17 @@ and process_expression table expr =
            symbol_error (config_name ^ " is not a config") expr.expr_pos
        | None -> 
            symbol_error ("Undefined config: " ^ config_name) expr.expr_pos)
-      
-
+           
+  | StructLiteral (struct_name, field_assignments) ->
+      (* Validate that struct exists *)
+      (match lookup_symbol table struct_name with
+       | Some { kind = TypeDef (StructDef (_, _)); _ } ->
+           (* Process field assignment expressions *)
+           List.iter (fun (_, field_expr) -> process_expression table field_expr) field_assignments
+       | Some _ -> 
+           symbol_error (struct_name ^ " is not a struct") expr.expr_pos
+       | None -> 
+           symbol_error ("Undefined struct: " ^ struct_name) expr.expr_pos)
 
 (** Query functions for symbol table *)
 

@@ -4,6 +4,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_ir_patterns)
+ (modules test_ir_patterns)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_ast)
  (modules test_ast)
  (libraries kernelscript alcotest))
@@ -161,6 +166,11 @@
  (name test_struct_field_access)
  (modules test_struct_field_access)
  (libraries kernelscript alcotest))
+
+(executable
+ (name test_struct_initialization)
+ (modules test_struct_initialization)
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_program_ref)
@@ -351,6 +361,10 @@
  (action (run ./test_struct_field_access.exe)))
 
 (rule
+ (alias runtest_struct_initialization)
+ (action (run ./test_struct_initialization.exe)))
+
+(rule
  (alias runtest_program_ref)
  (action (run ./test_program_ref.exe)))
 
@@ -454,6 +468,7 @@
   test_config_validation.exe
   test_stdlib.exe
   test_struct_field_access.exe
+  test_struct_initialization.exe
   test_error_handling.exe
   test_enum.exe
   test_type_alias.exe
@@ -477,6 +492,7 @@
    (run ./test_config_validation.exe)
    (run ./test_stdlib.exe)
    (run ./test_struct_field_access.exe)
+   (run ./test_struct_initialization.exe)
    (run ./test_error_handling.exe)
    (run ./test_enum.exe)
    (run ./test_type_alias.exe)
