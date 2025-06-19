@@ -34,6 +34,22 @@ map<u32, u8> event_log : RingBuffer(65536) {
 
 // XDP program demonstrating map usage
 program packet_analyzer : xdp {
+  // Helper functions (would be implemented in stdlib)
+  fn get_src_ip(ctx: XdpContext) -> IpAddress {
+    return 0x7f000001 // 127.0.0.1 for demo
+  }
+  
+  fn get_packet_len(ctx: XdpContext) -> PacketSize {
+    return 64 // Demo packet size
+  }
+  
+  fn get_cpu_id() -> u32 {
+    return 0 // Demo CPU ID
+  }
+  
+  fn get_timestamp() -> u64 {
+    return 1234567890 // Demo timestamp
+  }
 
   // Local map for program-specific data
   map<u32, u32> local_state : HashMap(100)
@@ -75,23 +91,6 @@ program packet_analyzer : xdp {
     
     return XDP_PASS
   }
-  
-  // Helper functions (would be implemented in stdlib)
-  fn get_src_ip(ctx: XdpContext) -> IpAddress {
-    return 0x7f000001 // 127.0.0.1 for demo
-  }
-  
-  fn get_packet_len(ctx: XdpContext) -> PacketSize {
-    return 64 // Demo packet size
-  }
-  
-  fn get_cpu_id() -> u32 {
-    return 0 // Demo CPU ID
-  }
-  
-  fn get_timestamp() -> u64 {
-    return 1234567890 // Demo timestamp
-  }
 }
 
 // TC program demonstrating different map usage patterns
@@ -107,7 +106,7 @@ program traffic_shaper : tc {
     let bytes = get_packet_len(ctx)
     
     // Update bandwidth usage
-    bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes;
+    bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes
     
     // Simple rate limiting logic
     if (bandwidth_usage[cpu] > 1000000) {
