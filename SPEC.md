@@ -131,25 +131,25 @@ program network_monitor : xdp {
         let packet = ctx.packet()
         
         // Use named configuration values
-        if packet.size > network.max_packet_size {
-            if network.enable_logging {
+        if (packet.size > network.max_packet_size) {
+            if (network.enable_logging) {
                 bpf_printk("Packet too large: %d", packet.size)
             }
             return XDP_DROP
         }
         
         // Check blocked ports from network config
-        if packet.is_tcp() {
+        if (packet.is_tcp()) {
             let tcp = packet.tcp_header()
-            for i in 0..5 {
-                if tcp.dst_port == network.blocked_ports[i] {
+            for (i in 0..5) {
+                if (tcp.dst_port == network.blocked_ports[i]) {
                     return XDP_DROP
                 }
             }
         }
         
         // Use security config for additional checks
-        if security.enable_strict_mode && security.current_threat_level > security.threat_threshold {
+        if (security.enable_strict_mode && security.current_threat_level > security.threat_threshold) {
             return XDP_DROP
         }
         
@@ -190,7 +190,7 @@ struct Args {
 // Kernel programs (inside program blocks)
 program packet_analyzer : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if monitoring.enable_stats {
+        if (monitoring.enable_stats) {
             // Process packet and update statistics
             monitoring.packets_processed += 1
             update_stats(ctx)
@@ -208,7 +208,7 @@ program packet_analyzer : xdp {
 program flow_tracker : tc {
     fn main(ctx: TcContext) -> TcAction {
         // Track flow information using shared config
-        if monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0) {
+        if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
             // Sample this flow
             let key = ctx.hash() % 1024
             global_stats[key].bytes += ctx.packet_size()
@@ -231,11 +231,11 @@ fn main(args: Args) -> i32 {
     attach_program(analyzer_handle, interface_index, 0)
     attach_program(tracker_handle, interface_index, 1)
     
-    if args.enable_verbose == 1 {
+    if (args.enable_verbose == 1) {
         print("Multi-program system started on interface: ", interface_index)
     }
     
-    while true {
+    while (true) {
         let stats = get_combined_stats()
         print("Total packets: ", stats.packets)
         print("Total bytes: ", stats.bytes)
@@ -248,7 +248,7 @@ fn main(args: Args) -> i32 {
 // Userspace helper functions
 fn get_combined_stats() -> PacketStats {
     let mut total = PacketStats { packets: 0, bytes: 0, drops: 0 }
-    for i in 0..1024 {
+    for (i in 0..1024) {
         total.packets += global_stats[i].packets
         total.bytes += global_stats[i].bytes
         total.drops += global_stats[i].drops
@@ -330,7 +330,7 @@ config network {
 
 program adaptive_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if network.enable_filtering && ctx.packet_size() > network.max_packet_size {
+        if (network.enable_filtering && ctx.packet_size() > network.max_packet_size) {
             return XDP_DROP
         }
         return XDP_PASS
@@ -349,14 +349,14 @@ fn main(args: Args) -> i32 {
     
     // Configure parameters based on command line
     network.enable_filtering = args.strict_mode
-    if args.strict_mode {
+    if (args.strict_mode) {
         network.max_packet_size = 1000  // Stricter limit
     }
     
     // Now attach with configured parameters
     let result = attach_program(prog_handle, args.interface, 0)
     
-    if result == 0 {
+    if (result == 0) {
         print("Filter attached successfully")
     } else {
         print("Failed to attach filter")
@@ -396,7 +396,7 @@ fn main() -> i32 {
     print("Multi-program monitoring system active")
     
     // Event processing loop
-    while true {
+    while (true) {
         process_events()
         sleep(1000)
     }
@@ -509,11 +509,11 @@ let greeting: str<20> = "Hello " + name  // "Hello John"
 let custom_msg: str<100> = small_buffer + " and " + custom_size  // Arbitrary sizes work
 
 // String comparison
-if name == "John" {             // Equality comparison
+if (name == "John") {             // Equality comparison
     print("Name matches")
 }
 
-if surname != "Smith" {         // Inequality comparison
+if (surname != "Smith") {         // Inequality comparison
     print("Surname is not Smith")
 }
 
@@ -531,7 +531,7 @@ program user_monitor : kprobe("sys_open") {
         let file_path: FilePath = get_file_path(ctx)
         
         // String operations work the same in kernel space
-        if process_name == "malware" {
+        if (process_name == "malware") {
             let log_msg: LogMessage = "Blocked process: " + process_name
             bpf_printk(log_msg)
             return -1
@@ -549,7 +549,7 @@ struct Args {
 
 fn main(args: Args) -> i32 {
     // Same string operations in userspace
-    if args.interface == "eth0" {
+    if (args.interface == "eth0") {
         let status_msg: str<64> = "Using interface: " + args.interface
         print(status_msg)
     }
@@ -605,7 +605,7 @@ program ingress_monitor : xdp {
         let flow_key = extract_flow_key(ctx)?
         
         // Access global map directly
-        if global_flows[flow_key] == null {
+        if (global_flows[flow_key] == null) {
             global_flows[flow_key] = FlowStats::new()
         }
         global_flows[flow_key].ingress_packets += 1
@@ -627,19 +627,19 @@ program egress_monitor : tc {
         let flow_key = extract_flow_key(ctx)?
         
         // Same global map, no import needed
-        if global_flows[flow_key] != null {
+        if (global_flows[flow_key] != null) {
             global_flows[flow_key].egress_packets += 1
             global_flows[flow_key].egress_bytes += ctx.packet_size()
         }
         
         // Check global configuration
-        let enable_filtering = if global_config[CONFIG_KEY_ENABLE_FILTERING] != null {
+        let enable_filtering = if (global_config[CONFIG_KEY_ENABLE_FILTERING] != null) {
             global_config[CONFIG_KEY_ENABLE_FILTERING]
         } else {
             CONFIG_VALUE_BOOL_FALSE
         }
         
-        if enable_filtering.as_bool() && should_drop(flow_key) {
+        if (enable_filtering.as_bool() && should_drop(flow_key)) {
             // Log to global security events
             security_events.submit(SecurityEvent {
                 event_type: EVENT_TYPE_PACKET_DROPPED,
@@ -659,9 +659,9 @@ program security_analyzer : lsm("socket_connect") {
         let flow_key = extract_flow_key_from_socket(ctx)?
         
         // Check global flow statistics
-        if global_flows[flow_key] != null {
+        if (global_flows[flow_key] != null) {
             let flow_stats = global_flows[flow_key]
-            if flow_stats.is_suspicious() {
+            if (flow_stats.is_suspicious()) {
                 security_events.submit(SecurityEvent {
                     event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
                     flow_key: flow_key,
@@ -810,10 +810,10 @@ priv fn validate_packet(packet: *PacketHeader) -> bool {
 // Public function (can be called from other programs)
 pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
     let mut sum: u32 = 0
-    for i in 0..(len / 2) {
+    for (i in 0..(len / 2)) {
         sum += data[i * 2] + (data[i * 2 + 1] << 8)
     }
-    while sum >> 16 != 0 {
+    while (sum >> 16 != 0) {
         sum = (sum & 0xFFFF) + (sum >> 16)
     }
     return !(sum as u16)
@@ -823,9 +823,9 @@ pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
 ### 6.4 Control Flow Statements
 ```kernelscript
 // Conditional statements
-if condition {
+if (condition) {
     // statements
-} else if other_condition {
+} else if (other_condition) {
     // statements
 } else {
     // statements
@@ -833,19 +833,19 @@ if condition {
 
 // Pattern matching (simplified)
 let protocol = packet.protocol()
-if protocol == PROTOCOL_TCP {
+if (protocol == PROTOCOL_TCP) {
     handle_tcp(packet)
-} else if protocol == PROTOCOL_UDP {
+} else if (protocol == PROTOCOL_UDP) {
     handle_udp(packet)
-} else if protocol == PROTOCOL_ICMP {
+} else if (protocol == PROTOCOL_ICMP) {
     handle_icmp(packet)
 } else {
     // default case
 }
 
 // Loops with automatic bounds checking
-for i in 0..MAX_ITERATIONS {
-    if should_break() {
+for (i in 0..MAX_ITERATIONS) {
+    if (should_break()) {
         break
     }
     process_item(i)
@@ -853,7 +853,7 @@ for i in 0..MAX_ITERATIONS {
 
 // While loops (compiler ensures termination)
 let iterations = 0
-while condition && iterations < MAX_ITERATIONS {
+while (condition && iterations < MAX_ITERATIONS) {
     do_work()
     iterations = iterations + 1
 }
@@ -885,12 +885,12 @@ const ERROR_RATE_LIMITED = 101
 
 // Functions can throw integer error codes
 fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
-    if len < 20 {
+    if (len < 20) {
         throw PARSE_ERROR_TOO_SHORT  // Throws integer value 1
     }
     
     let header = cast_to_ip_header(packet)
-    if header.version != 4 {
+    if (header.version != 4) {
         throw PARSE_ERROR_INVALID_VERSION  // Throws integer value 2
     }
     
@@ -901,7 +901,7 @@ fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
 fn process_packet(ctx: XdpContext) -> XdpAction {
     try {
         let packet = get_packet(ctx)
-        if packet == null {
+        if (packet == null) {
             throw NETWORK_ERROR_ALLOCATION_FAILED  // Throws integer value 10
         }
         
@@ -926,12 +926,12 @@ fn process_packet(ctx: XdpContext) -> XdpAction {
 
 // You can also throw literal integers or variables
 fn validate_input(value: i32) {
-    if value < 0 {
+    if (value < 0) {
         throw 42  // Direct integer throw
     }
     
     let error_code = compute_error_code(value)
-    if error_code != 0 {
+    if (error_code != 0) {
         throw error_code  // Variable throw
     }
 }
@@ -945,7 +945,7 @@ The `defer` statement ensures cleanup code runs automatically at function exit, 
 // Resource management with automatic cleanup
 fn update_shared_counter(index: u32) -> bool {
     let data = shared_counters[index]
-    if data == null {
+    if (data == null) {
         return false
     }
     
@@ -956,7 +956,7 @@ fn update_shared_counter(index: u32) -> bool {
     // Critical section
     data.counter += 1
     
-    if data.counter > 1000000 {
+    if (data.counter > 1000000) {
         throw NETWORK_ERROR_RATE_LIMITED  // defer still executes (throws 12)
     }
     
@@ -994,7 +994,7 @@ fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
         defer release_flow_lock(lock)        // Always executes
         
         let flow_data = process_flow(packet_buffer)
-        if flow_data.is_suspicious() {
+        if (flow_data.is_suspicious()) {
             throw NETWORK_ERROR_RATE_LIMITED  // Throws 12
         }
         
@@ -1095,7 +1095,7 @@ For unrecoverable errors, KernelScript provides panic and assert macros:
 ```kernelscript
 // Panic for unrecoverable errors
 fn critical_operation() {
-    if unsafe_condition() {
+    if (unsafe_condition()) {
         panic("Critical system state violated")
     }
 }
@@ -1125,7 +1125,7 @@ fn main(args: Args) -> i32 {
     // Arguments automatically parsed from command line
     // Usage: program --interface_id=1 --enable_debug=1 --packet_limit=1000 --timeout_ms=5000
     
-    if args.enable_debug == 1 {
+    if (args.enable_debug == 1) {
         print("Debug mode enabled for interface: ", args.interface_id)
         print("Packet limit: ", args.packet_limit)
         print("Timeout: ", args.timeout_ms, " ms")
@@ -1196,9 +1196,9 @@ program security_filter : lsm("socket_connect") {
         let flow_key = extract_flow_key_from_socket(ctx)?
         
         // Check global flow statistics for threat detection
-        if global_flows[flow_key] != null {
+        if (global_flows[flow_key] != null) {
             let flow_stats = global_flows[flow_key]
-            if flow_stats.is_suspicious() {
+            if (flow_stats.is_suspicious()) {
                 global_events.submit(EVENT_THREAT_DETECTED { flow_key })
                 return -EPERM  // Block connection
             }
@@ -1241,10 +1241,10 @@ impl SystemCoordinator {
     fn process_events(&self) {
         // Process events from all programs
         let event = self.global_events.read()
-        if event != null {
-            if event.event_type == EVENT_PACKET_PROCESSED {
+        if (event != null) {
+            if (event.event_type == EVENT_PACKET_PROCESSED) {
                 print("Processed packet for flow: ", event.flow_key)
-            } else if event.event_type == EVENT_THREAT_DETECTED {
+            } else if (event.event_type == EVENT_THREAT_DETECTED) {
                 print("THREAT DETECTED: ", event.flow_key)
                 self.handle_threat(event.flow_key)
             }
@@ -1269,7 +1269,7 @@ fn main(args: Args) -> i32 {
     let mut coordinator = SystemCoordinator::new().unwrap()
     coordinator.start_on_interface_by_id(args.interface_id).unwrap()
     
-    if args.monitoring_enabled == 1 {
+    if (args.monitoring_enabled == 1) {
         print("Multi-program eBPF system started on interface: ", args.interface_id)
     }
     
@@ -1292,7 +1292,7 @@ config runtime {
 
 program network_monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        if runtime.enable_logging {
+        if (runtime.enable_logging) {
             print("Processing packet")
         }
         return XDP_PASS
@@ -1325,7 +1325,7 @@ fn main(args: Args) -> i32 {
     // Update runtime config based on command line
     runtime.verbose_mode = (args.verbose_mode == 1)
     
-    if runtime.verbose_mode {
+    if (runtime.verbose_mode) {
         print("Multi-program system loaded on interface: ", args.interface_id)
         print("Verbose mode enabled")
     }
@@ -1337,9 +1337,9 @@ fn main(args: Args) -> i32 {
 }
 
 fn handle_system_events(verbose: bool) {
-    while true {
+    while (true) {
         // Process events from all programs
-        if runtime.verbose_mode {
+        if (runtime.verbose_mode) {
             print("Processing system events...")
         }
         sleep(1000)
@@ -1354,7 +1354,7 @@ fn handle_system_events(verbose: bool) {
 ```kernelscript
 fn safe_packet_access(packet: &Packet, offset: usize, size: usize) -> *u8 {
     // Compiler automatically inserts bounds checks
-    if offset + size <= packet.len() {
+    if (offset + size <= packet.len()) {
         &packet.data()[offset]
     } else {
         null
@@ -1517,17 +1517,17 @@ config system {
 program simple_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         let packet = ctx.packet()
-        if packet == null {
+        if (packet == null) {
             return XDP_PASS
         }
         
         system.packets_processed += 1
         
-        if packet.is_tcp() {
+        if (packet.is_tcp()) {
             let tcp = packet.tcp_header()
-            for i in 0..4 {
-                if tcp.dst_port == filtering.blocked_ports[i] {
-                    if filtering.enable_logging {
+            for (i in 0..4) {
+                if (tcp.dst_port == filtering.blocked_ports[i]) {
+                    if (filtering.enable_logging) {
                         bpf_printk("Blocked port %d", tcp.dst_port)
                     }
                     system.packets_dropped += 1
@@ -1553,7 +1553,7 @@ fn main(args: Args) -> i32 {
     
     // Configure system before loading program
     filtering.enable_logging = !args.quiet_mode
-    if args.strict_mode {
+    if (args.strict_mode) {
         filtering.max_packet_size = 1000  // Stricter filtering
     }
     
@@ -1561,22 +1561,22 @@ fn main(args: Args) -> i32 {
     let prog_handle = load_program(simple_filter)
     
     let attach_result = attach_program(prog_handle, args.interface, 0)
-    if attach_result != 0 {
+    if (attach_result != 0) {
         print("Failed to attach program to interface: ", args.interface)
         return 1
     }
     
-    if !args.quiet_mode {
+    if (!args.quiet_mode) {
         print("Packet filter started on interface: ", args.interface)
         print("Blocking ports: 22, 23, 135, 445")
-        if args.strict_mode {
+        if (args.strict_mode) {
             print("Strict mode enabled - max packet size: 1000")
         }
     }
     
     // Monitor system health using config stats
-    while true {
-        if system.packets_dropped > 1000 && !args.quiet_mode {
+    while (true) {
+        if (system.packets_dropped > 1000 && !args.quiet_mode) {
             print("High drop rate detected: ", system.packets_dropped)
         }
         sleep(10000)
@@ -1614,7 +1614,7 @@ program perf_monitor : kprobe("sys_read") {
         let pid = bpf_get_current_pid_tgid() as u32
         
         let call_info = active_calls[pid]
-        if call_info != null {
+        if (call_info != null) {
             let duration = bpf_ktime_get_ns() - call_info.start_time
             read_stats[pid % 1024] += duration
             delete active_calls[pid]
@@ -1644,13 +1644,13 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interval-ms=5000 --show-details=1 --help-mode=0
     
-    if args.help_mode == 1 {
+    if (args.help_mode == 1) {
         print("Performance monitoring system")
         print("Options: --interval-ms = <ms> --show-details=0/1 --help-mode=0/1")
         return 0
     }
     
-    let interval = if args.interval_ms == 0 { 5000 } else { args.interval_ms }
+    let interval = if (args.interval_ms == 0) { 5000 } else { args.interval_ms }
     let show_details = (args.show_details == 1)
     
     // Explicit program lifecycle management for multiple programs
@@ -1661,15 +1661,15 @@ fn main(args: Args) -> i32 {
     let read_attach = attach_program(read_handle, "sys_read", 0)
     let write_attach = attach_program(write_handle, "sys_write", 0)
     
-    if read_attach != 0 || write_attach != 0 {
+    if (read_attach != 0 || write_attach != 0) {
         print("Failed to attach monitoring programs")
         return 1
     }
     
     print("Performance monitoring active - read and write syscalls")
     
-    while true {
-        if show_details {
+    while (true) {
+        if (show_details) {
             print_detailed_stats()
         } else {
             print_summary_stats()
@@ -1682,11 +1682,11 @@ fn main(args: Args) -> i32 {
 
 fn print_detailed_stats() {
     // Access global maps to show detailed performance data
-    for i in 0..1024 {
-        if read_stats[i] > 0 {
+    for (i in 0..1024) {
+        if (read_stats[i] > 0) {
             print("PID bucket ", i, " read time: ", read_stats[i])
         }
-        if write_stats[i] > 0 {
+        if (write_stats[i] > 0) {
             print("PID bucket ", i, " write time: ", write_stats[i])
         }
     }
@@ -1696,7 +1696,7 @@ fn print_summary_stats() {
     let total_read_time = 0u64
     let total_write_time = 0u64
     
-    for i in 0..1024 {
+    for (i in 0..1024) {
         total_read_time += read_stats[i]
         total_write_time += write_stats[i]
     }
@@ -1794,14 +1794,14 @@ assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%="
 
 declaration_statement = "let" [ "mut" ] identifier [ ":" type_annotation ] "=" expression 
 
-if_statement = "if" expression "{" statement_list "}" 
-               { "else" "if" expression "{" statement_list "}" }
+if_statement = "if" "(" expression ")" "{" statement_list "}" 
+               { "else" "if" "(" expression ")" "{" statement_list "}" }
                [ "else" "{" statement_list "}" ] 
 
-for_statement = "for" identifier "in" expression ".." expression "{" statement_list "}" |
+for_statement = "for" "(" identifier "in" expression ".." expression ")" "{" statement_list "}" |
                 "for" "(" identifier "," identifier ")" "in" expression ".iter()" "{" statement_list "}" 
 
-while_statement = "while" expression "{" statement_list "}" 
+while_statement = "while" "(" expression ")" "{" statement_list "}" 
 
 return_statement = "return" [ expression ] 
 break_statement = "break" 
