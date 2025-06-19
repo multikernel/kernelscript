@@ -124,43 +124,15 @@ fn main() -> i32 {
 |} in
   
   try
-    Printf.printf "DEBUG: Program text length: %d\n" (String.length program_text);
-    Printf.printf "DEBUG: First 100 chars: %S\n" (String.sub program_text 0 (min 100 (String.length program_text)));
-    
-    (* Check for any unusual characters *)
-    let has_unusual_chars = ref false in
-    String.iteri (fun i c ->
-      let code = Char.code c in
-      if code < 32 && code <> 9 && code <> 10 && code <> 13 then (
-        Printf.printf "DEBUG: Unusual character at position %d: code %d\n" i code;
-        has_unusual_chars := true
-      )
-    ) program_text;
-    
-    if not !has_unusual_chars then
-      Printf.printf "DEBUG: No unusual characters found\n";
-    
-    Printf.printf "DEBUG: About to parse string comparison program...\n";
     let ast = parse_string program_text in
-    Printf.printf "DEBUG: Parsing successful, AST has %d declarations\n" (List.length ast);
-    
-    Printf.printf "DEBUG: Building symbol table...\n";
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    Printf.printf "DEBUG: Symbol table built successfully\n";
-    
-    Printf.printf "DEBUG: Type checking and annotating AST...\n";
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    Printf.printf "DEBUG: Type checking successful\n";
-    
-    Printf.printf "DEBUG: Generating IR...\n";
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test_string_compare" in
-    Printf.printf "DEBUG: IR generation successful\n";
     
     let temp_dir = Filename.temp_file "test_string_codegen" "" in
     Unix.unlink temp_dir;
     Unix.mkdir temp_dir 0o755;
     
-    Printf.printf "DEBUG: Generating userspace code...\n";
     let _output_file = Kernelscript.Userspace_codegen.generate_userspace_code_from_ir 
       ir ~output_dir:temp_dir "test_string_compare" in
     let generated_file = Filename.concat temp_dir ("test_string_compare" ^ ".c") in
@@ -175,7 +147,6 @@ fn main() -> i32 {
       Unix.rmdir temp_dir;
       
       let result = content in
-      Printf.printf "DEBUG: Code generation successful\n";
       
       (* Should generate strcmp for equality with variable assignment *)
       check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*==.*0");
@@ -191,7 +162,6 @@ fn main() -> i32 {
     )
   with
   | exn -> 
-    Printf.printf "DEBUG: Exception caught: %s\n" (Printexc.to_string exn);
     fail ("String comparison test failed: " ^ Printexc.to_string exn)
 
 (** Test 4: String indexing generates array access *)
