@@ -80,6 +80,12 @@ let track_function_usage ctx instr =
            if not (List.mem map_name ctx.function_usage.used_maps) then
              ctx.function_usage.used_maps <- map_name :: ctx.function_usage.used_maps
        | _ -> ())
+  | IRConfigAccess (config_name, _, _) ->
+      (* Track config access as map operations since configs are implemented as maps *)
+      ctx.function_usage.uses_map_operations <- true;
+      let config_map_name = config_name ^ "_config" in
+      if not (List.mem config_map_name ctx.function_usage.used_maps) then
+        ctx.function_usage.used_maps <- config_map_name :: ctx.function_usage.used_maps
   | _ -> ()
 
 (** Recursively track usage in all instructions *)
@@ -1286,14 +1292,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     generate_map_fd_declarations used_global_maps
   else "" in
   
-  (* Generate config map file descriptors only if needed *)
-  let config_fd_declarations = if all_usage.uses_map_operations then
+  (* Generate config map file descriptors if there are config declarations *)
+  let config_fd_declarations = if List.length config_declarations > 0 then
     List.map (fun config_decl ->
       sprintf "int %s_config_map_fd = -1;" config_decl.Ast.config_name
     ) config_declarations
   else [] in
   
-  let all_fd_declarations = if all_usage.uses_map_operations then
+  let all_fd_declarations = if all_usage.uses_map_operations || List.length config_declarations > 0 then
     map_fd_declarations :: config_fd_declarations |> String.concat "\n"
   else "" in
   
@@ -1306,7 +1312,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   else "" in
   
   (* Generate config map setup code - load from eBPF object and initialize with defaults *)
-  let config_setup_code = if all_usage.uses_map_operations then
+  (* Always generate config setup if there are config declarations, since eBPF programs may use them *)
+  let config_setup_code = if List.length config_declarations > 0 then
     List.map (fun config_decl ->
       let config_name = config_decl.Ast.config_name in
       let load_code = sprintf {|    /* Load %s config map from eBPF object */

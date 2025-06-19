@@ -11,7 +11,7 @@ program simple_logger : xdp {
         if demo.enable_logging {
             print("eBPF: Processing packet")
         }
-        return 2 // XDP_PASS
+        return XDP_PASS
     }
 }
 
@@ -19,5 +19,7 @@ program simple_logger : xdp {
 fn main() -> i32 {
     print("Userspace: Starting packet logger")
     print("Userspace: Logger initialized successfully")
+    let prog = load_program(simple_logger)
+    attach_program(prog, "lo", 0)
     return 0
 } 
