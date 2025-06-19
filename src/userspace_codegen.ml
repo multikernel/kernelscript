@@ -1000,18 +1000,18 @@ struct %s parse_arguments(int argc, char **argv) {
         switch (c) {
 %s
         case 'h':
-            printf("Usage: %%s [options]\\n", argv[0]);
-            printf("Options:\\n");
+            printf("Usage: %%s [options]\n", argv[0]);
+            printf("Options:\n");
 %s
-            printf("  --help           Show this help message\\n");
+            printf("  --help           Show this help message\n");
             exit(0);
             break;
         case '?':
-            fprintf(stderr, "Unknown option. Use --help for usage information.\\n");
+            fprintf(stderr, "Unknown option. Use --help for usage information.\n");
             exit(1);
             break;
         default:
-            fprintf(stderr, "Error parsing arguments\\n");
+            fprintf(stderr, "Error parsing arguments\n");
             exit(1);
         }
     }
