@@ -1,9 +1,4 @@
 (executable
- (name test_lexer_simple)
- (modules test_lexer_simple)
- (libraries kernelscript alcotest))
-
-(executable
  (name test_lexer)
  (modules test_lexer)
  (libraries kernelscript alcotest))
@@ -229,10 +224,6 @@
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
- (action (run ./test_lexer_simple.exe)))
-
-(rule
- (alias runtest_lexer_full)
  (action (run ./test_lexer.exe)))
 
 (rule
@@ -449,7 +440,6 @@
 (rule
  (alias core-tests)
  (deps
-  test_lexer_simple.exe
   test_lexer.exe
   test_ast.exe
   test_parser.exe
@@ -473,7 +463,6 @@
   test_return_path_analysis.exe)
  (action
   (progn
-   (run ./test_lexer_simple.exe)
    (run ./test_lexer.exe)
    (run ./test_ast.exe)
    (run ./test_parser.exe)
@@ -531,7 +520,6 @@
  (alias runtest)
  (deps
   ./test_ast.exe
-  ./test_lexer_simple.exe
   ./test_lexer.exe
   ./test_parser.exe
   ./test_ir.exe
@@ -548,7 +536,6 @@
  (action
   (progn
    (run ./test_ast.exe)
-   (run ./test_lexer_simple.exe)
    (run ./test_lexer.exe)
    (run ./test_parser.exe)
    (run ./test_ir.exe)

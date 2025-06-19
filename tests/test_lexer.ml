@@ -59,7 +59,7 @@ let token_testable = testable (fun fmt -> function
   | Parser.PRIV -> Format.fprintf fmt "PRIV"
   | Parser.CONFIG -> Format.fprintf fmt "CONFIG"
   | Parser.EOF -> Format.fprintf fmt "EOF"
-  | _ -> Format.fprintf fmt "UNKNOWN"
+  | _ -> Format.fprintf fmt "OTHER_TOKEN"
 ) (=)
 
 let test_keywords () =
@@ -133,8 +133,8 @@ let test_complex_program () =
   let code = {|
     program test : xdp {
       fn main() {
-        let x = 42;
-        return x;
+        let x = 42
+        return x
       }
     }
   |} in
@@ -142,8 +142,8 @@ let test_complex_program () =
   let expected = [
     Parser.PROGRAM; Parser.IDENTIFIER "test"; Parser.COLON; Parser.IDENTIFIER "xdp"; Parser.LBRACE;
     Parser.FN; Parser.IDENTIFIER "main"; Parser.LPAREN; Parser.RPAREN; Parser.LBRACE;
-    Parser.LET; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None); Parser.SEMICOLON;
-    Parser.RETURN; Parser.IDENTIFIER "x"; Parser.SEMICOLON;
+    Parser.LET; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None);
+    Parser.RETURN; Parser.IDENTIFIER "x";
     Parser.RBRACE;
     Parser.RBRACE
   ] in
