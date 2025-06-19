@@ -4,6 +4,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_lexer)
+ (modules test_lexer)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_ast)
  (modules test_ast)
  (libraries kernelscript alcotest))
@@ -227,6 +232,10 @@
  (action (run ./test_lexer_simple.exe)))
 
 (rule
+ (alias runtest_lexer_full)
+ (action (run ./test_lexer.exe)))
+
+(rule
  (alias runtest_ast)
  (action (run ./test_ast.exe)))
 
@@ -441,6 +450,7 @@
  (alias core-tests)
  (deps
   test_lexer_simple.exe
+  test_lexer.exe
   test_ast.exe
   test_parser.exe
   test_type_checker.exe
@@ -464,6 +474,7 @@
  (action
   (progn
    (run ./test_lexer_simple.exe)
+   (run ./test_lexer.exe)
    (run ./test_ast.exe)
    (run ./test_parser.exe)
    (run ./test_type_checker.exe)
@@ -521,6 +532,7 @@
  (deps
   ./test_ast.exe
   ./test_lexer_simple.exe
+  ./test_lexer.exe
   ./test_parser.exe
   ./test_ir.exe
   ./test_ir_analysis.exe
@@ -537,6 +549,7 @@
   (progn
    (run ./test_ast.exe)
    (run ./test_lexer_simple.exe)
+   (run ./test_lexer.exe)
    (run ./test_parser.exe)
    (run ./test_ir.exe)
    (run ./test_ir_analysis.exe)
