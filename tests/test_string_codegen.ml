@@ -329,6 +329,46 @@ fn main() -> i32 {
   with
   | exn -> fail ("String variable declarations test failed: " ^ Printexc.to_string exn)
 
+(** Test 9: String literal and mixed comparisons *)
+let test_string_literal_and_mixed_comparisons () =
+  let program_text = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return 2
+  }
+}
+
+fn main() -> i32 {
+  let name: str<20> = "Alice"
+  let other: str<20> = "Bob"
+  
+  if (name == "Alice") {
+    return 1
+  }
+  
+  if (name != other) {
+    return 2
+  }
+  
+  return 0
+}
+|} in
+  
+  try
+    let result = generate_userspace_code_from_program program_text "test_string_literal_compare" in
+    
+    (* Should generate strcmp for equality with string literals *)
+    check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*\"Alice\".*==.*0");
+    check bool "inequality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*!=.*0");
+    check bool "has string literal comparison" true (contains_pattern result "strcmp.*var_.*\"Alice\"");
+    check bool "has variable comparison" true (contains_pattern result "strcmp.*var_.*var_");
+    
+    (* Should be stored in variables then used in conditionals *)
+    check bool "assigns comparison result" true (contains_pattern result "var_.*=.*strcmp");
+    check bool "uses comparison variable in if" true (contains_pattern result "if.*var_");
+  with
+  | exn -> fail ("String literal and mixed comparisons test failed: " ^ Printexc.to_string exn)
+
 (** Test suite for string code generation *)
 let tests = [
   test_case "String assignment code generation" `Quick test_string_assignment_codegen;
@@ -339,6 +379,7 @@ let tests = [
   test_case "Complex string operations" `Quick test_complex_string_operations;
   test_case "Empty and single character strings" `Quick test_empty_and_single_char_strings;
   test_case "String variable declarations" `Quick test_string_variable_declarations;
+  test_case "String literal and mixed comparisons" `Quick test_string_literal_and_mixed_comparisons;
 ]
 
 (** Main test runner *)
