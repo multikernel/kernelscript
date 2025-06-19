@@ -113,14 +113,10 @@ program test : xdp {
 
 fn main() -> i32 {
   let name: str<20> = "Alice"
-  let other: str<20> = "Bob"
+  let second: str<20> = "Bob"
   
-  if name == "Alice" {
+  if name == second {
     return 1
-  }
-  
-  if name != other {
-    return 2
   }
   
   return 0
@@ -128,19 +124,75 @@ fn main() -> i32 {
 |} in
   
   try
-    let result = generate_userspace_code_from_program program_text "test_string_compare" in
+    Printf.printf "DEBUG: Program text length: %d\n" (String.length program_text);
+    Printf.printf "DEBUG: First 100 chars: %S\n" (String.sub program_text 0 (min 100 (String.length program_text)));
     
-    (* Should generate strcmp for equality *)
-    check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*\"Alice\".*==.*0");
-    check bool "inequality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*!=.*0");
-    check bool "has string literal comparison" true (contains_pattern result "strcmp.*var_.*\"Alice\"");
-    check bool "has variable comparison" true (contains_pattern result "strcmp.*var_.*var_");
+    (* Check for any unusual characters *)
+    let has_unusual_chars = ref false in
+    String.iteri (fun i c ->
+      let code = Char.code c in
+      if code < 32 && code <> 9 && code <> 10 && code <> 13 then (
+        Printf.printf "DEBUG: Unusual character at position %d: code %d\n" i code;
+        has_unusual_chars := true
+      )
+    ) program_text;
     
-    (* Should be stored in variables then used in conditionals *)
-    check bool "assigns comparison result" true (contains_pattern result "var_.*=.*strcmp");
-    check bool "uses comparison variable in if" true (contains_pattern result "if.*var_");
+    if not !has_unusual_chars then
+      Printf.printf "DEBUG: No unusual characters found\n";
+    
+    Printf.printf "DEBUG: About to parse string comparison program...\n";
+    let ast = parse_string program_text in
+    Printf.printf "DEBUG: Parsing successful, AST has %d declarations\n" (List.length ast);
+    
+    Printf.printf "DEBUG: Building symbol table...\n";
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    Printf.printf "DEBUG: Symbol table built successfully\n";
+    
+    Printf.printf "DEBUG: Type checking and annotating AST...\n";
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    Printf.printf "DEBUG: Type checking successful\n";
+    
+    Printf.printf "DEBUG: Generating IR...\n";
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test_string_compare" in
+    Printf.printf "DEBUG: IR generation successful\n";
+    
+    let temp_dir = Filename.temp_file "test_string_codegen" "" in
+    Unix.unlink temp_dir;
+    Unix.mkdir temp_dir 0o755;
+    
+    Printf.printf "DEBUG: Generating userspace code...\n";
+    let _output_file = Kernelscript.Userspace_codegen.generate_userspace_code_from_ir 
+      ir ~output_dir:temp_dir "test_string_compare" in
+    let generated_file = Filename.concat temp_dir ("test_string_compare" ^ ".c") in
+    
+    if Sys.file_exists generated_file then (
+      let ic = open_in generated_file in
+      let content = really_input_string ic (in_channel_length ic) in
+      close_in ic;
+      
+      (* Cleanup *)
+      Unix.unlink generated_file;
+      Unix.rmdir temp_dir;
+      
+      let result = content in
+      Printf.printf "DEBUG: Code generation successful\n";
+      
+      (* Should generate strcmp for equality *)
+      check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*\"Alice\".*==.*0");
+      check bool "inequality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*!=.*0");
+      check bool "has string literal comparison" true (contains_pattern result "strcmp.*var_.*\"Alice\"");
+      check bool "has variable comparison" true (contains_pattern result "strcmp.*var_.*var_");
+      
+      (* Should be stored in variables then used in conditionals *)
+      check bool "assigns comparison result" true (contains_pattern result "var_.*=.*strcmp");
+      check bool "uses comparison variable in if" true (contains_pattern result "if.*var_");
+    ) else (
+      failwith "Failed to generate userspace code file"
+    )
   with
-  | exn -> fail ("String comparison test failed: " ^ Printexc.to_string exn)
+  | exn -> 
+    Printf.printf "DEBUG: Exception caught: %s\n" (Printexc.to_string exn);
+    fail ("String comparison test failed: " ^ Printexc.to_string exn)
 
 (** Test 4: String indexing generates array access *)
 let test_string_indexing_codegen () =
@@ -310,9 +362,9 @@ fn main() -> i32 {
 (** Test suite for string code generation *)
 let tests = [
   test_case "String assignment code generation" `Quick test_string_assignment_codegen;
-  test_case "String concatenation code generation" `Quick test_string_concatenation_codegen;
-  test_case "String comparison code generation" `Quick test_string_comparison_codegen;
   test_case "String indexing code generation" `Quick test_string_indexing_codegen;
+  test_case "String comparison code generation" `Quick test_string_comparison_codegen;
+  test_case "String concatenation code generation" `Quick test_string_concatenation_codegen;
   test_case "String truncation edge cases" `Quick test_string_truncation_edge_cases;
   test_case "Complex string operations" `Quick test_complex_string_operations;
   test_case "Empty and single character strings" `Quick test_empty_and_single_char_strings;
