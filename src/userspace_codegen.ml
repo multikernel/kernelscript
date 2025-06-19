@@ -1191,7 +1191,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
     }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
 
 (** Generate necessary headers based on maps used *)
-let generate_headers_for_maps maps =
+let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   let has_maps = List.length maps > 0 in
   let has_pinned_maps = List.exists (fun map -> map.pin_path <> None) maps in
   let has_perf_events = List.exists (fun map -> map.map_type = IRPerfEvent) maps in
@@ -1206,7 +1206,7 @@ let generate_headers_for_maps maps =
     "#include <signal.h>";
   ] in
   
-  let bpf_headers = if has_maps then [
+  let bpf_headers = if has_maps || uses_bpf_functions then [
     "#include <bpf/bpf.h>";
     "#include <bpf/libbpf.h>";
   ] else [] in
@@ -1224,7 +1224,21 @@ let generate_headers_for_maps maps =
 
 (** Generate complete userspace program from IR *)
 let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
-  let base_includes = generate_headers_for_maps global_maps in
+  (* Collect function usage information from all functions first to determine if we need BPF headers *)
+  let all_usage = List.fold_left (fun acc_usage func ->
+    let func_usage = collect_function_usage_from_ir_function func in
+    {
+      uses_load_program = acc_usage.uses_load_program || func_usage.uses_load_program;
+      uses_attach_program = acc_usage.uses_attach_program || func_usage.uses_attach_program;
+      uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
+      used_maps = List.fold_left (fun acc map_name ->
+        if List.mem map_name acc then acc else map_name :: acc
+      ) acc_usage.used_maps func_usage.used_maps;
+    }
+  ) (create_function_usage ()) userspace_prog.userspace_functions in
+
+  let uses_bpf_functions = all_usage.uses_load_program || all_usage.uses_attach_program in
+  let base_includes = generate_headers_for_maps ~uses_bpf_functions global_maps in
   let additional_includes = {|#include <stdbool.h>
 #include <stdint.h>
 #include <getopt.h>
@@ -1268,19 +1282,6 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Generate type alias definitions from AST *)
   let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
-  
-  (* Collect function usage information from all functions *)
-  let all_usage = List.fold_left (fun acc_usage func ->
-    let func_usage = collect_function_usage_from_ir_function func in
-    {
-      uses_load_program = acc_usage.uses_load_program || func_usage.uses_load_program;
-      uses_attach_program = acc_usage.uses_attach_program || func_usage.uses_attach_program;
-      uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
-      used_maps = List.fold_left (fun acc map_name ->
-        if List.mem map_name acc then acc else map_name :: acc
-      ) acc_usage.used_maps func_usage.used_maps;
-    }
-  ) (create_function_usage ()) userspace_prog.userspace_functions in
 
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
