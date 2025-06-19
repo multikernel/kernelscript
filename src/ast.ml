@@ -87,7 +87,7 @@ type map_declaration = {
 
 (** Literal values *)
 type literal =
-  | IntLit of int 
+  | IntLit of int * string option  (* value * original_representation *)
   | StringLit of string 
   | CharLit of char 
   | BoolLit of bool
@@ -403,7 +403,10 @@ let rec string_of_bpf_type = function
   | ProgramHandle -> "ProgramHandle"
 
 let rec string_of_literal = function
-  | IntLit i -> string_of_int i
+  | IntLit (i, original_opt) -> 
+      (match original_opt with
+       | Some orig -> orig  (* Use original format if available *)
+       | None -> string_of_int i)
   | StringLit s -> Printf.sprintf "\"%s\"" s
   | CharLit c -> Printf.sprintf "'%c'" c
   | BoolLit b -> string_of_bool b

@@ -114,9 +114,9 @@ rule token = parse
   | "//" [^ '\r' '\n']* { token lexbuf }
   
   (* Literals *)
-  | decimal_literal as lit { INT (int_of_string lit) }
-  | hex_literal as lit { INT (parse_hex_literal lit) }
-  | binary_literal as lit { INT (parse_binary_literal lit) }
+  | decimal_literal as lit { INT (int_of_string lit, None) }
+  | hex_literal as lit { INT (parse_hex_literal lit, Some lit) }
+  | binary_literal as lit { INT (parse_binary_literal lit, Some lit) }
   
   (* String literals *)
   | '"' { string_literal (Buffer.create 256) lexbuf }

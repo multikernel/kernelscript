@@ -111,7 +111,7 @@ let generate_bounds_info ast_type = match ast_type with
 let lower_literal lit pos =
   let ir_lit = IRLiteral lit in
   let ir_type = match lit with
-    | IntLit _ -> IRU32  (* Default integer type *)
+    | IntLit (_, _) -> IRU32  (* Default integer type *)
     | StringLit s -> IRStr (max 1 (String.length s))  (* String literals get IRStr type *)
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
@@ -221,7 +221,7 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
       in
       emit_instruction ctx instr;
       (* Return success value *)
-      make_ir_value (IRLiteral (IntLit 0)) IRU32 pos
+      make_ir_value (IRLiteral (IntLit (0, None))) IRU32 pos
   | "delete" ->
       let instr = make_ir_instruction
         (IRMapDelete (map_val, key_val))
@@ -229,7 +229,7 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
         pos
       in
       emit_instruction ctx instr;
-      make_ir_value (IRLiteral (IntLit 0)) IRU32 pos
+      make_ir_value (IRLiteral (IntLit (0, None))) IRU32 pos
   | _ -> failwith ("Unknown map operation: " ^ operation)
 
 (** Lower AST expressions to IR values *)
@@ -261,7 +261,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                          | Some ast_type -> ast_type_to_ir_type ast_type
                          | None -> IRU32
                        in
-                       make_ir_value (IRLiteral (IntLit value)) ir_type expr.expr_pos
+                       make_ir_value (IRLiteral (IntLit (value, None))) ir_type expr.expr_pos
                    | Symbol_table.EnumConstant (_, None) ->
                        (* Enum constant without value - treat as variable *)
                        let reg = get_variable_register ctx name in
@@ -608,8 +608,8 @@ let rec lower_statement ctx stmt =
         let check_for_break_continue stmts =
           List.fold_left (fun acc stmt ->
             match stmt.Ast.stmt_desc with
-            | Ast.Break -> Some (make_ir_value (IRLiteral (IntLit 1)) IRU32 stmt.stmt_pos)
-            | Ast.Continue -> Some (make_ir_value (IRLiteral (IntLit 0)) IRU32 stmt.stmt_pos)
+            | Ast.Break -> Some (make_ir_value (IRLiteral (IntLit (1, None))) IRU32 stmt.stmt_pos)
+            | Ast.Continue -> Some (make_ir_value (IRLiteral (IntLit (0, None))) IRU32 stmt.stmt_pos)
             | _ -> acc
           ) None stmts
         in
@@ -751,7 +751,7 @@ let rec lower_statement ctx stmt =
            (match loop_analysis.bound_info with
             | Loop_analysis.Bounded (start_int, end_int) ->
                 for i = start_int to end_int - 1 do
-                  let iter_val = make_ir_value (IRLiteral (IntLit i)) IRU32 stmt.stmt_pos in
+                  let iter_val = make_ir_value (IRLiteral (IntLit (i, None))) IRU32 stmt.stmt_pos in
                   let assign_iter = make_ir_instruction (IRAssign (counter_val, make_ir_expr (IRValue iter_val) IRU32 stmt.stmt_pos)) stmt.stmt_pos in
                   emit_instruction ctx assign_iter;
                   List.iter (lower_statement ctx) body_stmts;
@@ -828,7 +828,7 @@ let rec lower_statement ctx stmt =
            List.iter (lower_statement ctx) body_stmts;
            
            (* Increment counter *)
-           let one_val = make_ir_value (IRLiteral (IntLit 1)) IRU32 stmt.stmt_pos in
+           let one_val = make_ir_value (IRLiteral (IntLit (1, None))) IRU32 stmt.stmt_pos in
            let inc_expr = make_ir_expr (IRBinOp (counter_val, IRAdd, one_val)) IRU32 stmt.stmt_pos in
            let inc_instr = make_ir_instruction (IRAssign (counter_val, inc_expr)) stmt.stmt_pos in
            emit_instruction ctx inc_instr;
@@ -879,8 +879,8 @@ let rec lower_statement ctx stmt =
       let body_instructions = List.rev body_ctx.current_block in
       
       (* Mark as iterator bpf_loop *)
-      let start_val = make_ir_value (IRLiteral (IntLit 0)) IRU32 stmt.stmt_pos in
-      let end_val = make_ir_value (IRLiteral (IntLit 100)) IRU32 stmt.stmt_pos in (* Placeholder *)
+      let start_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 stmt.stmt_pos in
+      let end_val = make_ir_value (IRLiteral (IntLit (100, None))) IRU32 stmt.stmt_pos in (* Placeholder *)
       let bpf_iter_instr = make_ir_instruction 
         (IRBpfLoop (start_val, end_val, index_val, loop_ctx_val, body_instructions))
         stmt.stmt_pos in
@@ -943,7 +943,7 @@ let rec lower_statement ctx stmt =
             (string_of_position stmt.stmt_pos))
         else (
           (* We're in userspace - config field assignment is allowed *)
-          let key_val = make_ir_value (IRLiteral (IntLit 0)) (IRU32) stmt.stmt_pos in
+          let key_val = make_ir_value (IRLiteral (IntLit (0, None))) (IRU32) stmt.stmt_pos in
           let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
           let value_val = lower_expression ctx value_expr in
           let instr = make_ir_instruction 
@@ -1015,7 +1015,7 @@ let rec lower_statement ctx stmt =
       (* For now, assume it's an integer literal - in a full implementation, 
          we'd need to evaluate the expression at compile time *)
       let error_code = match expr.expr_desc with
-        | Ast.Literal (Ast.IntLit code) -> Ir.IntErrorCode code
+        | Ast.Literal (Ast.IntLit (code, _)) -> Ir.IntErrorCode code
         | Ast.Identifier _ -> 
             (* For identifiers (like enum values), we'd need to resolve them *)
             (* For now, use a default error code *)
@@ -1489,13 +1489,13 @@ let lower_multi_program ast symbol_table source_name =
       match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
       | Literal key_lit, Literal value_lit ->
           let key_str =           match key_lit with
-            | IntLit i -> string_of_int i
+            | IntLit (i, _) -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
             | ArrayLit literals -> 
                 "[" ^ (String.concat ", " (List.map (function
-                  | IntLit i -> string_of_int i
+                  | IntLit (i, _) -> string_of_int i
                   | StringLit s -> "\"" ^ s ^ "\""
                   | CharLit c -> "'" ^ String.make 1 c ^ "'"
                   | BoolLit b -> string_of_bool b
@@ -1503,18 +1503,11 @@ let lower_multi_program ast symbol_table source_name =
                 ) literals)) ^ "]"
           in
                       let value_str = match value_lit with
-            | IntLit i -> string_of_int i
+            | IntLit (i, _) -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
-            | ArrayLit literals -> 
-                "[" ^ (String.concat ", " (List.map (function
-                  | IntLit i -> string_of_int i
-                  | StringLit s -> "\"" ^ s ^ "\""
-                  | CharLit c -> "'" ^ String.make 1 c ^ "'"
-                  | BoolLit b -> string_of_bool b
-                  | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
-                ) literals)) ^ "]"
+            | ArrayLit _ -> "{...}"
           in
           Some (key_str ^ ":" ^ value_str)
       | _ -> None

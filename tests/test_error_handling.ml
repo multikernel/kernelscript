@@ -77,7 +77,7 @@ let test_throw_parsing () =
         (match first_stmt.stmt_desc with
          | Throw expr ->
              (match expr.expr_desc with
-              | Literal (IntLit code) ->
+              | Literal (IntLit (code, _)) ->
                   check int "throw code" 123 code
               | _ -> fail "Expected integer literal in throw")
          | _ -> fail "Expected Throw statement")

@@ -7,7 +7,7 @@
 %}
 
 /* Token declarations */
-%token <int> INT
+%token <int * string option> INT
 %token <string> STRING IDENTIFIER
 %token <char> CHAR_LIT
 %token <bool> BOOL_LIT
@@ -207,7 +207,7 @@ bpf_type:
   | I64 { I64 }
   | BOOL { Bool }
   | CHAR { Char }
-  | STR LT INT GT { Str $3 }
+  | STR LT INT GT { Str (fst $3) }
   | IDENTIFIER { UserType $1 }
   | array_type { $1 }
   | MULTIPLY bpf_type { Pointer $2 }
@@ -215,17 +215,17 @@ bpf_type:
 
 /* Array types: type[size] */
 array_type:
-  | U8 LBRACKET INT RBRACKET { Array (U8, $3) }
-  | U16 LBRACKET INT RBRACKET { Array (U16, $3) }
-  | U32 LBRACKET INT RBRACKET { Array (U32, $3) }
-  | U64 LBRACKET INT RBRACKET { Array (U64, $3) }
-  | I8 LBRACKET INT RBRACKET { Array (I8, $3) }
-  | I16 LBRACKET INT RBRACKET { Array (I16, $3) }
-  | I32 LBRACKET INT RBRACKET { Array (I32, $3) }
-  | I64 LBRACKET INT RBRACKET { Array (I64, $3) }
-  | BOOL LBRACKET INT RBRACKET { Array (Bool, $3) }
-  | CHAR LBRACKET INT RBRACKET { Array (Char, $3) }
-  | IDENTIFIER LBRACKET INT RBRACKET { Array (UserType $1, $3) }
+  | U8 LBRACKET INT RBRACKET { Array (U8, fst $3) }
+| U16 LBRACKET INT RBRACKET { Array (U16, fst $3) }
+| U32 LBRACKET INT RBRACKET { Array (U32, fst $3) }
+| U64 LBRACKET INT RBRACKET { Array (U64, fst $3) }
+| I8 LBRACKET INT RBRACKET { Array (I8, fst $3) }
+| I16 LBRACKET INT RBRACKET { Array (I16, fst $3) }
+| I32 LBRACKET INT RBRACKET { Array (I32, fst $3) }
+| I64 LBRACKET INT RBRACKET { Array (I64, fst $3) }
+| BOOL LBRACKET INT RBRACKET { Array (Bool, fst $3) }
+| CHAR LBRACKET INT RBRACKET { Array (Char, fst $3) }
+| IDENTIFIER LBRACKET INT RBRACKET { Array (UserType $1, fst $3) }
 
 /* Statements */
 statement_list:
@@ -318,7 +318,7 @@ catch_clause:
 
 catch_pattern:
   | INT
-    { IntPattern $1 }
+    { IntPattern (fst $1) }
   | IDENTIFIER
     { if $1 = "_" then WildcardPattern else failwith ("Invalid catch pattern: " ^ $1) }
 
@@ -345,7 +345,7 @@ primary_expression:
   | LPAREN expression RPAREN { $2 }
 
 literal:
-  | INT { IntLit $1 }
+  | INT { let (value, original) = $1 in IntLit (value, original) }
   | STRING { StringLit $1 }
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
@@ -396,19 +396,19 @@ array_access:
 /* Map Declarations */
 map_declaration:
   | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
-    { let config = make_map_config $11 [] in
+    { let config = make_map_config (fst $11) [] in
       make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
   | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
-    { let config = make_map_config $11 $14 in
+    { let config = make_map_config (fst $11) $14 in
       make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
 
 /* Local Map Declarations (inside program blocks) */
 local_map_declaration:
   | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
-    { let config = make_map_config $11 [] in
+    { let config = make_map_config (fst $11) [] in
       make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
   | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
-    { let config = make_map_config $11 $14 in
+    { let config = make_map_config (fst $11) $14 in
       make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
 
 map_type:
@@ -467,7 +467,7 @@ flag_item:
     }
   | IDENTIFIER LPAREN INT RPAREN {
       match $1 with
-      | "numa_node" -> NumaNode $3
+      | "numa_node" -> NumaNode (fst $3)
       | unknown -> failwith ("Unknown parameterized map flag: " ^ unknown)
     }
 
@@ -498,7 +498,7 @@ enum_variants:
 
 enum_variant:
   | IDENTIFIER { ($1, None) }  /* Auto-assigned value */
-  | IDENTIFIER ASSIGN INT { ($1, Some $3) }  /* Explicit value */
+  | IDENTIFIER ASSIGN INT { ($1, Some (fst $3)) }  /* Explicit value */
 
 /* Type alias declaration: type name = type */
 type_alias_declaration:

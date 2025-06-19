@@ -86,7 +86,7 @@ let test_multi_arg_printk_data_field_bug () =
   
   (* Test multi-argument print call *)
   let format_val = make_ir_value (IRLiteral (StringLit "Count: %d")) (IRStr 9) test_pos in
-  let count_val = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
+  let count_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let print_instr = make_ir_instruction (IRCall ("print", [format_val; count_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
@@ -148,7 +148,7 @@ let test_combined_bugs_integration () =
  *)
 let test_null_terminator_buffer_bug () =
   (* Test that typedefs allocate enough space for null terminator *)
-  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let string_val = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
   let assign_instr = make_ir_instruction (IRAssign (make_ir_value (IRVariable "test_str") (IRStr 5) test_pos, make_ir_expr (IRValue string_val) (IRStr 5) test_pos)) test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
@@ -179,7 +179,7 @@ let test_null_terminator_buffer_bug () =
  *)
 let test_string_concat_bounds_bug () =
   (* Create string concatenation that should use full 11-character capacity *)
-  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let left_str = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
   let right_str = make_ir_value (IRLiteral (StringLit " world")) (IRStr 6) test_pos in
   let concat_expr = make_ir_expr (IRBinOp (left_str, IRAdd, right_str)) (IRStr 11) test_pos in
@@ -217,7 +217,7 @@ let test_string_concat_bounds_bug () =
  *)
 let test_function_call_string_arg_bug () =
   (* Create string concatenation result passed to function call *)
-  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let left_str = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
   let right_str = make_ir_value (IRLiteral (StringLit " world")) (IRStr 6) test_pos in
   let concat_expr = make_ir_expr (IRBinOp (left_str, IRAdd, right_str)) (IRStr 11) test_pos in
@@ -252,7 +252,7 @@ let test_function_call_string_arg_bug () =
  *)
 let test_string_concat_loop_bounds_bug () =
   (* Create exact "Hello" + " world" test case that was failing *)
-  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let hello_str = make_ir_value (IRLiteral (StringLit "Hello")) (IRStr 5) test_pos in
   let world_str = make_ir_value (IRLiteral (StringLit " world")) (IRStr 6) test_pos in
   let concat_expr = make_ir_expr (IRBinOp (hello_str, IRAdd, world_str)) (IRStr 11) test_pos in

@@ -558,7 +558,12 @@ let generate_config_map_definition ctx config_decl =
 
 let generate_c_value ctx ir_val =
   match ir_val.value_desc with
-  | IRLiteral (IntLit i) -> string_of_int i
+  | IRLiteral (IntLit (i, original_opt)) -> 
+      (* Use original format if available, otherwise use decimal *)
+      (match original_opt with
+       | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
+       | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
+       | _ -> string_of_int i)
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (StringLit s) -> 
@@ -828,7 +833,7 @@ let generate_map_delete ctx map_val key_val =
 (** Helper function to convert AST expressions to C code for bpf_loop callbacks *)
 let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
   match expr.Ast.expr_desc with
-  | Ast.Literal (Ast.IntLit i) -> string_of_int i
+  | Ast.Literal (Ast.IntLit (i, _)) -> string_of_int i
   | Ast.Literal (Ast.BoolLit b) -> if b then "true" else "false"
   | Ast.Identifier name when name = "i" -> counter_var (* Map loop variable to counter *)
   | Ast.Identifier name -> name
@@ -1013,11 +1018,11 @@ let rec generate_c_instruction ctx ir_instr =
       | Some ret_val ->
           let ret_str = match ret_val.value_desc with
             (* Use context-specific action constant mapping *)
-            | IRLiteral (IntLit i) when ret_val.val_type = IRAction XdpActionType ->
+            | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction XdpActionType ->
                 (match Kernelscript_context.Context_codegen.map_context_action_constant "xdp" i with
                  | Some action -> action
                  | None -> string_of_int i)
-            | IRLiteral (IntLit i) when ret_val.val_type = IRAction TcActionType ->
+            | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction TcActionType ->
                 (match Kernelscript_context.Context_codegen.map_context_action_constant "tc" i with
                  | Some action -> action
                  | None -> string_of_int i)

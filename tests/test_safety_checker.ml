@@ -14,7 +14,7 @@ let make_test_function name params body =
 (** Test basic safety checks *)
 let test_basic_safety_checks () =
   let pos = make_position 1 1 "test.ks" in
-  let simple_stmt = make_stmt (Return (Some (make_expr (Literal (IntLit 0)) pos))) pos in
+  let simple_stmt = make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) pos))) pos in
   let func = make_test_function "main" [] [simple_stmt] in
   let program = make_test_program "test" [func] in
   
@@ -24,7 +24,7 @@ let test_basic_safety_checks () =
 (** Test null pointer access *)
 let test_null_pointer_access () =
   let pos = make_position 1 1 "test.ks" in
-  let null_access = make_expr (FieldAccess (make_expr (Literal (IntLit 0)) pos, "data")) pos in
+  let null_access = make_expr (FieldAccess (make_expr (Literal (IntLit (0, None))) pos, "data")) pos in
   let stmt = make_stmt (ExprStmt null_access) pos in
   let func = make_test_function "main" [] [stmt] in
   let program = make_test_program "test" [func] in
@@ -36,8 +36,8 @@ let test_null_pointer_access () =
 let test_bounds_checking () =
   let pos = make_position 1 1 "test.ks" in
   let array_type = Array (U32, 10) in
-  let array_decl = make_stmt (Declaration ("arr", Some array_type, make_expr (Literal (IntLit 0)) pos)) pos in
-  let out_of_bounds = make_expr (ArrayAccess (make_expr (Identifier "arr") pos, make_expr (Literal (IntLit 15)) pos)) pos in
+  let array_decl = make_stmt (Declaration ("arr", Some array_type, make_expr (Literal (IntLit (0, None))) pos)) pos in
+  let out_of_bounds = make_expr (ArrayAccess (make_expr (Identifier "arr") pos, make_expr (Literal (IntLit (15, None))) pos)) pos in
   let access_stmt = make_stmt (ExprStmt out_of_bounds) pos in
   let func = make_test_function "main" [] [array_decl; access_stmt] in
   let program = make_test_program "test" [func] in
@@ -50,7 +50,7 @@ let test_packet_bounds_checking () =
   let pos = make_position 1 1 "test.ks" in
   let ctx_param = ("ctx", Pointer XdpContext) in
   let packet_access = make_expr (FieldAccess (make_expr (Identifier "ctx") pos, "data")) pos in
-  let unsafe_access = make_expr (ArrayAccess (packet_access, make_expr (Literal (IntLit 1500)) pos)) pos in
+  let unsafe_access = make_expr (ArrayAccess (packet_access, make_expr (Literal (IntLit (1500, None))) pos)) pos in
   let stmt = make_stmt (ExprStmt unsafe_access) pos in
   let func = make_test_function "main" [ctx_param] [stmt] in
   let program = make_test_program "test" [func] in
@@ -75,7 +75,7 @@ let test_unsafe_packet_access () =
 let test_infinite_loop_detection () =
   let pos = make_position 1 1 "test.ks" in
   let infinite_condition = make_expr (Literal (BoolLit true)) pos in
-  let loop_body = [make_stmt (ExprStmt (make_expr (Literal (IntLit 1)) pos)) pos] in
+  let loop_body = [make_stmt (ExprStmt (make_expr (Literal (IntLit (1, None))) pos)) pos] in
   let infinite_loop = make_stmt (While (infinite_condition, loop_body)) pos in
   let func = make_test_function "main" [] [infinite_loop] in
   let program = make_test_program "test" [func] in
@@ -87,7 +87,7 @@ let test_infinite_loop_detection () =
 let test_stack_overflow_prevention () =
   let pos = make_position 1 1 "test.ks" in
   let large_array = Array (U32, 10000) in
-  let large_decl = make_stmt (Declaration ("large_arr", Some large_array, make_expr (Literal (IntLit 0)) pos)) pos in
+  let large_decl = make_stmt (Declaration ("large_arr", Some large_array, make_expr (Literal (IntLit (0, None))) pos)) pos in
   let func = make_test_function "main" [] [large_decl] in
   let program = make_test_program "test" [func] in
   
@@ -97,7 +97,7 @@ let test_stack_overflow_prevention () =
 (** Test map access safety *)
 let test_map_access_safety () =
   let pos = make_position 1 1 "test.ks" in
-  let map_lookup = make_expr (FunctionCall ("map_lookup", [make_expr (Literal (IntLit 42)) pos])) pos in
+  let map_lookup = make_expr (FunctionCall ("map_lookup", [make_expr (Literal (IntLit (42, None))) pos])) pos in
   let stmt = make_stmt (ExprStmt map_lookup) pos in
   let func = make_test_function "main" [] [stmt] in
   let program = make_test_program "test" [func] in
@@ -108,8 +108,8 @@ let test_map_access_safety () =
 (** Test integer overflow checking *)
 let test_integer_overflow_checking () =
   let pos = make_position 1 1 "test.ks" in
-  let max_int = make_expr (Literal (IntLit max_int)) pos in
-  let overflow_expr = make_expr (BinaryOp (max_int, Add, make_expr (Literal (IntLit 1)) pos)) pos in
+  let max_int = make_expr (Literal (IntLit (max_int, None))) pos in
+  let overflow_expr = make_expr (BinaryOp (max_int, Add, make_expr (Literal (IntLit (1, None))) pos)) pos in
   let stmt = make_stmt (ExprStmt overflow_expr) pos in
   let func = make_test_function "main" [] [stmt] in
   let program = make_test_program "test" [func] in
@@ -120,7 +120,7 @@ let test_integer_overflow_checking () =
 (** Test division by zero *)
 let test_division_by_zero () =
   let pos = make_position 1 1 "test.ks" in
-  let div_by_zero = make_expr (BinaryOp (make_expr (Literal (IntLit 10)) pos, Div, make_expr (Literal (IntLit 0)) pos)) pos in
+  let div_by_zero = make_expr (BinaryOp (make_expr (Literal (IntLit (10, None))) pos, Div, make_expr (Literal (IntLit (0, None))) pos)) pos in
   let stmt = make_stmt (ExprStmt div_by_zero) pos in
   let func = make_test_function "main" [] [stmt] in
   let program = make_test_program "test" [func] in
@@ -131,7 +131,7 @@ let test_division_by_zero () =
 (** Test memory access patterns *)
 let test_memory_access_patterns () =
   let pos = make_position 1 1 "test.ks" in
-  let ptr_decl = make_stmt (Declaration ("ptr", Some (Pointer U32), make_expr (Literal (IntLit 0)) pos)) pos in
+  let ptr_decl = make_stmt (Declaration ("ptr", Some (Pointer U32), make_expr (Literal (IntLit (0, None))) pos)) pos in
   let ptr_access = make_expr (FieldAccess (make_expr (Identifier "ptr") pos, "value")) pos in
   let stmt = make_stmt (ExprStmt ptr_access) pos in
   let func = make_test_function "main" [] [ptr_decl; stmt] in
@@ -144,7 +144,7 @@ let test_memory_access_patterns () =
 let test_comprehensive_safety_analysis () =
   let pos = make_position 1 1 "test.ks" in
   let complex_expr = make_expr (BinaryOp (
-    make_expr (ArrayAccess (make_expr (Identifier "arr") pos, make_expr (Literal (IntLit 5)) pos)) pos,
+    make_expr (ArrayAccess (make_expr (Identifier "arr") pos, make_expr (Literal (IntLit (5, None))) pos)) pos,
     Add,
     make_expr (FunctionCall ("unsafe_func", [])) pos
   )) pos in

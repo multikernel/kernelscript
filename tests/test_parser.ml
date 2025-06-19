@@ -11,7 +11,7 @@ let dummy_loc = {
 }
 
 let make_int_lit value =   {
-  expr_desc = Literal (IntLit value);
+  expr_desc = Literal (IntLit (value, None));
   expr_type = Some U32;
   expr_pos = dummy_loc;
   type_checked = false;

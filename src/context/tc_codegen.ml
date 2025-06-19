@@ -9,16 +9,16 @@ open Context_codegen
 let tc_field_mappings = [
   ("data", {
     field_name = "data";
-    c_expression = (fun ctx_var -> sprintf "(void*)(long)%s->data" ctx_var);
+    c_expression = (fun ctx_var -> sprintf "(__u64)(long)%s->data" ctx_var);
     requires_cast = true;
-    field_type = "void*";
+    field_type = "__u64";
   });
   
   ("data_end", {
     field_name = "data_end";
-    c_expression = (fun ctx_var -> sprintf "(void*)(long)%s->data_end" ctx_var);
+    c_expression = (fun ctx_var -> sprintf "(__u64)(long)%s->data_end" ctx_var);
     requires_cast = true;
-    field_type = "void*";
+    field_type = "__u64";
   });
   
   ("len", {

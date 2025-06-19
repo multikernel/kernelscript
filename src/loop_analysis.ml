@@ -35,7 +35,7 @@ let rec is_compile_time_constant_with_env const_env expr =
 (** Extract integer value from compile-time constant expression *)
 let rec evaluate_constant_expr_with_env const_env expr =
   match expr.expr_desc with
-  | Literal (IntLit i) -> Some i
+  | Literal (IntLit (i, _)) -> Some i
   | Identifier name ->
       (* Look up the identifier in our constant environment *)
       (try Some (List.assoc name const_env) with Not_found -> None)

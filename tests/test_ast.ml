@@ -12,12 +12,12 @@ let test_position_tracking () =
 
 (** Test literals *)
 let test_literals () =
-  let int_lit = IntLit 42 in
+  let int_lit = IntLit (42, None) in
   let str_lit = StringLit "hello" in
   let bool_lit = BoolLit true in
   let char_lit = CharLit 'a' in
   
-  check bool "int literal creation" true (match int_lit with IntLit 42 -> true | _ -> false);
+  check bool "int literal creation" true (match int_lit with IntLit (42, _) -> true | _ -> false);
   check bool "string literal creation" true (match str_lit with StringLit "hello" -> true | _ -> false);
   check bool "bool literal creation" true (match bool_lit with BoolLit true -> true | _ -> false);
   check bool "char literal creation" true (match char_lit with CharLit 'a' -> true | _ -> false)
@@ -36,7 +36,7 @@ let test_bpf_types () =
 
 (** Test expressions *)
 let test_expressions () =
-  let literal_expr = make_expr (Literal (IntLit 42)) test_position in
+  let literal_expr = make_expr (Literal (IntLit (42, None))) test_position in
   let id_expr = make_expr (Identifier "x") test_position in
   let binary_expr = make_expr (BinaryOp (literal_expr, Add, id_expr)) test_position in
   
@@ -46,7 +46,7 @@ let test_expressions () =
 
 (** Test statements *)
 let test_statements () =
-  let expr = make_expr (Literal (IntLit 42)) test_position in
+  let expr = make_expr (Literal (IntLit (42, None))) test_position in
   let decl_stmt = make_stmt (Declaration ("x", Some U32, expr)) test_position in
   let return_stmt = make_stmt (Return (Some expr)) test_position in
   
@@ -56,7 +56,7 @@ let test_statements () =
 (** Test function definition *)
 let test_function_definition () =
   let param = ("ctx", XdpContext) in
-  let body = [make_stmt (Return (Some (make_expr (Literal (IntLit 0)) test_position))) test_position] in
+  let body = [make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) test_position))) test_position] in
   let func = make_function "main" [param] (Some XdpAction) body test_position in
   
   check string "function name" "main" func.func_name;
@@ -75,7 +75,7 @@ let test_program_definition () =
 
 (** Test complete AST *)
 let test_complete_ast () =
-  let return_stmt = make_stmt (Return (Some (make_expr (Literal (IntLit 2)) test_position))) test_position in
+  let return_stmt = make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) test_position))) test_position in
   let func = make_function "main" [("ctx", XdpContext)] (Some XdpAction) [return_stmt] test_position in
   let prog = make_program "xdp_prog" Xdp [func] test_position in
   let ast = [Program prog] in

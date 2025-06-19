@@ -39,7 +39,7 @@ let test_c_value_generation () =
   let ctx = create_c_context () in
   
   (* Test literals *)
-  let int_val = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
+  let int_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   Alcotest.(check string) "integer literal" "42" (generate_c_value ctx int_val);
   
   let bool_val = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
@@ -53,8 +53,8 @@ let test_c_expression_generation () =
   let ctx = create_c_context () in
   
   (* Test binary operation: 10 + 20 *)
-  let left_val = make_ir_value (IRLiteral (IntLit 10)) IRU32 test_pos in
-  let right_val = make_ir_value (IRLiteral (IntLit 20)) IRU32 test_pos in
+  let left_val = make_ir_value (IRLiteral (IntLit (10, None))) IRU32 test_pos in
+  let right_val = make_ir_value (IRLiteral (IntLit (20, None))) IRU32 test_pos in
   let add_expr = make_ir_expr (IRBinOp (left_val, IRAdd, right_val)) IRU32 test_pos in
   
   let result = generate_c_expression ctx add_expr in
@@ -69,13 +69,13 @@ let test_context_access () =
   
   let data_field = make_ir_value (IRContextField (XdpCtx, "data")) (IRPointer (IRU8, make_bounds_info ())) test_pos in
   let result = generate_c_value ctx data_field in
-  Alcotest.(check string) "context data field access" "(void*)(long)ctx->data" result
+  Alcotest.(check string) "context data field access" "(__u64)(long)ctx->data" result
 
 (** Test bounds checking generation *)
 let test_bounds_checking () =
   let ctx = create_c_context () in
   
-  let index_val = make_ir_value (IRLiteral (IntLit 5)) IRU32 test_pos in
+  let index_val = make_ir_value (IRLiteral (IntLit (5, None))) IRU32 test_pos in
   generate_bounds_check ctx index_val 0 9;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
@@ -88,7 +88,7 @@ let test_map_operations () =
   
   (* Test map lookup *)
   let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
-  let key_val = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
+  let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let dest_val = make_ir_value (IRVariable "result") (IRPointer (IRU64, make_bounds_info ())) test_pos in
   
   generate_map_load ctx map_val key_val dest_val MapLookup;
@@ -103,8 +103,8 @@ let test_literal_map_operations () =
   
   (* Test map store with literal key and value *)
   let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
-  let literal_key = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
-  let literal_value = make_ir_value (IRLiteral (IntLit 100)) IRU64 test_pos in
+  let literal_key = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
+  let literal_value = make_ir_value (IRLiteral (IntLit (100, None))) IRU64 test_pos in
   
   generate_map_store ctx map_val literal_key literal_value MapUpdate;
   
@@ -172,7 +172,7 @@ let test_function_generation () =
   let ctx = create_c_context () in
   
   (* Create a simple function: return 42 *)
-  let return_val = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
@@ -191,7 +191,7 @@ let test_complete_program () =
   Kernelscript_context.Xdp_codegen.register ();
   
   (* Create a simple XDP program *)
-  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in (* XDP_PASS *)
+  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "xdp_prog" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
@@ -227,7 +227,7 @@ let test_control_flow () =
   let ctx = create_c_context () in
   
   (* Test conditional jump *)
-  let cond_val = make_ir_value (IRLiteral (IntLit 1)) IRBool test_pos in
+  let cond_val = make_ir_value (IRLiteral (IntLit (1, None))) IRBool test_pos in
   let cond_jump = make_ir_instruction (IRCondJump (cond_val, "true_branch", "false_branch")) test_pos in
   
   generate_c_instruction ctx cond_jump;
@@ -239,7 +239,7 @@ let test_control_flow () =
 
 (** Test file writing functionality *)
 let test_file_writing () =
-  let return_val = make_ir_value (IRLiteral (IntLit 2)) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test_prog" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
@@ -354,7 +354,7 @@ let test_string_literal_multi_arg_calls () =
   
   (* Create string literal and other arguments *)
   let string_val = make_ir_value (IRLiteral (StringLit "Test: %d")) (IRStr 8) test_pos in
-  let int_val = make_ir_value (IRLiteral (IntLit 42)) IRU32 test_pos in
+  let int_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   
   (* Test print function call with multiple arguments *)
   let print_instr = make_ir_instruction (IRCall ("print", [string_val; int_val], None)) test_pos in

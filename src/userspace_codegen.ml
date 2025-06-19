@@ -405,7 +405,12 @@ let get_register_var_name ctx reg_id ir_type =
 (** Generate C value from IR value *)
 let generate_c_value_from_ir ctx ir_value =
   match ir_value.value_desc with
-  | IRLiteral (IntLit i) -> string_of_int i
+  | IRLiteral (IntLit (i, original_opt)) -> 
+      (* Use original format if available, otherwise use decimal *)
+      (match original_opt with
+       | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
+       | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
+       | _ -> string_of_int i)
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (StringLit s) -> 
@@ -413,7 +418,7 @@ let generate_c_value_from_ir ctx ir_value =
       sprintf "\"%s\"" s
   | IRLiteral (ArrayLit elems) -> 
       let elem_strs = List.map (function
-        | Ast.IntLit i -> string_of_int i
+        | Ast.IntLit (i, _) -> string_of_int i
         | Ast.CharLit c -> sprintf "'%c'" c
         | Ast.BoolLit b -> if b then "true" else "false"
         | Ast.StringLit s -> sprintf "\"%s\"" s
@@ -680,13 +685,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
        | Some result -> sprintf "%s = %s(%s);" (generate_c_value_from_ir ctx result) actual_name args_str
        | None -> sprintf "%s(%s);" actual_name args_str)
   
-  | IRReturn (Some value) ->
-      (* Generate direct return - no more cleanup logic *)
-      sprintf "return %s;" (generate_c_value_from_ir ctx value)
-  
-  | IRReturn None ->
-      (* Generate direct return - no more cleanup logic *)
-      "return;"
+  | IRReturn value_opt ->
+      (match value_opt with
+       | Some value -> sprintf "return %s;" (generate_c_value_from_ir ctx value)
+       | None -> "return;")
   
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
       track_function_usage ctx instruction;
@@ -1143,13 +1145,13 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
     let initialization = match field.Ast.field_default with
       | Some default_value -> 
           (match default_value with
-           | Ast.IntLit i -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
+           | Ast.IntLit (i, _) -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
            | Ast.BoolLit b -> sprintf "    init_config.%s = %s;" field.Ast.field_name (if b then "true" else "false")
            | Ast.ArrayLit elements ->
                (* Handle array initialization *)
                let elements_str = List.mapi (fun i element ->
                  match element with
-                 | Ast.IntLit value -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
+                 | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
                  | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
                ) elements in
                String.concat "\n" elements_str

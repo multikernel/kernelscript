@@ -135,7 +135,7 @@ let test_map_size_validation () =
 (** Test map access patterns *)
 let test_map_access_patterns () =
   let pos = make_position 1 1 "test.ks" in
-  let key_expr = make_expr (Literal (IntLit 42)) pos in
+  let key_expr = make_expr (Literal (IntLit (42, None))) pos in
   
   (* Test access pattern analysis *)
   let pattern = analyze_expr_access_pattern key_expr in

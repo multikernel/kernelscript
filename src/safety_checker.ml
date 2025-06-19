@@ -134,7 +134,7 @@ let check_array_bounds expr =
     match e.expr_desc with
     | ArrayAccess (arr_expr, idx_expr) ->
         (match arr_expr.expr_desc, idx_expr.expr_desc with
-         | Identifier arr_name, Literal (IntLit idx) ->
+         | Identifier arr_name, Literal (IntLit (idx, _)) ->
              (* Check if we can determine array size from type *)
              (match arr_expr.expr_type with
               | Some (Ast.Array (_, size)) ->
@@ -146,7 +146,7 @@ let check_array_bounds expr =
          | Identifier arr_name, _ ->
              (* Runtime bounds check needed *)
              UnknownBounds arr_name :: errors
-         | FieldAccess (_, "data"), Literal (IntLit idx) when idx >= 1500 ->
+         | FieldAccess (_, "data"), Literal (IntLit (idx, _)) when idx >= 1500 ->
              (* Unsafe packet access - large index into packet data *)
              PointerOutOfBounds ("packet_data") :: errors
          | _ -> 
@@ -155,7 +155,7 @@ let check_array_bounds expr =
              check_expr idx_expr errors')
     | FieldAccess (ptr_expr, field) ->
         (match ptr_expr.expr_desc with
-         | Literal (IntLit 0) ->
+         | Literal (IntLit (0, _)) ->
              (* Null pointer field access *)
              NullPointerDereference field :: errors
          | FieldAccess (_, "data") ->
@@ -226,7 +226,7 @@ let check_pointer_safety expr =
     match e.expr_desc with
     | FieldAccess (ptr_expr, _field) ->
         (match ptr_expr.expr_desc with
-         | Literal (IntLit 0) ->
+         | Literal (IntLit (0, _)) ->
              (* Direct null pointer dereference *)
              (valid_ptrs, ("null", "Null pointer dereference") :: invalid_ptrs)
          | Identifier ptr_name ->
@@ -246,13 +246,13 @@ let check_pointer_safety expr =
     | BinaryOp (left, op, right) ->
         (* Check for division by zero *)
         let invalid_ptrs' = match op, right.expr_desc with
-          | Div, Literal (IntLit 0) -> ("division", "Division by zero") :: invalid_ptrs
-          | Mod, Literal (IntLit 0) -> ("modulo", "Modulo by zero") :: invalid_ptrs
+          | Div, Literal (IntLit (0, _)) -> ("division", "Division by zero") :: invalid_ptrs
+          | Mod, Literal (IntLit (0, _)) -> ("modulo", "Modulo by zero") :: invalid_ptrs
           | _ -> invalid_ptrs
         in
         (* Check for integer overflow *)
         let invalid_ptrs'' = match op, left.expr_desc, right.expr_desc with
-          | Add, Literal (IntLit a), Literal (IntLit b) when a > 0 && b > 0 && a > max_int - b ->
+          | Add, Literal (IntLit (a, _)), Literal (IntLit (b, _)) when a > 0 && b > 0 && a > max_int - b ->
               ("overflow", "Integer overflow in addition") :: invalid_ptrs'
           | _ -> invalid_ptrs'
         in
@@ -475,7 +475,7 @@ let check_infinite_loops program =
     | For (_, start, end_, _body) ->
         (* Check for infinite for loops *)
         (match start.expr_desc, end_.expr_desc with
-         | Literal (IntLit s), Literal (IntLit e) when s >= e -> has_infinite_loop := true
+         | Literal (IntLit (s, _)), Literal (IntLit (e, _)) when s >= e -> has_infinite_loop := true
          | _ -> ())
     | If (_, then_stmts, else_opt) ->
         List.iter check_stmt then_stmts;

@@ -42,7 +42,7 @@ let make_simple_basic_block label instructions =
 
 (** Test function with explicit return in all paths *)
 let test_all_paths_return _ =
-  let const_42 = make_simple_ir_value (IRLiteral (IntLit 42)) IRU32 in
+  let const_42 = make_simple_ir_value (IRLiteral (IntLit (42, None))) IRU32 in
   let return_instr = make_simple_instruction (IRReturn (Some const_42)) in
   let entry_block = make_simple_basic_block "entry" [return_instr] in
   
@@ -66,8 +66,8 @@ let test_all_paths_return _ =
 (** Test function with missing return in one branch *)
 let test_missing_return_branch _ =
   let var_x = make_simple_ir_value (IRVariable "x") IRU32 in
-  let const_10 = make_simple_ir_value (IRLiteral (IntLit 10)) IRU32 in
-  let const_1 = make_simple_ir_value (IRLiteral (IntLit 1)) IRU32 in
+  let const_10 = make_simple_ir_value (IRLiteral (IntLit (10, None))) IRU32 in
+  let const_1 = make_simple_ir_value (IRLiteral (IntLit (1, None))) IRU32 in
   let condition = make_simple_ir_value (IRVariable "condition") IRBool in
   
   (* Entry block: if (x > 10) goto then_block else goto else_block *)
@@ -125,10 +125,10 @@ let test_no_return _ =
 (** Test function with multiple exit blocks all returning *)
 let test_multiple_exit_blocks_all_return _ =
   let var_x = make_simple_ir_value (IRVariable "x") IRU32 in
-  let const_5 = make_simple_ir_value (IRLiteral (IntLit 5)) IRU32 in
-  let const_10 = make_simple_ir_value (IRLiteral (IntLit 10)) IRU32 in
-  let const_42 = make_simple_ir_value (IRLiteral (IntLit 42)) IRU32 in
-  let const_99 = make_simple_ir_value (IRLiteral (IntLit 99)) IRU32 in
+  let const_5 = make_simple_ir_value (IRLiteral (IntLit (5, None))) IRU32 in
+  let const_10 = make_simple_ir_value (IRLiteral (IntLit (10, None))) IRU32 in
+  let const_42 = make_simple_ir_value (IRLiteral (IntLit (42, None))) IRU32 in
+  let const_99 = make_simple_ir_value (IRLiteral (IntLit (99, None))) IRU32 in
   let condition1 = make_simple_ir_value (IRVariable "condition1") IRBool in
   let condition2 = make_simple_ir_value (IRVariable "condition2") IRBool in
   
@@ -151,7 +151,7 @@ let test_multiple_exit_blocks_all_return _ =
   let path2_block = make_simple_basic_block "path2" [return2] in
   
   (* Path3: return 0 *)
-  let const_0 = make_simple_ir_value (IRLiteral (IntLit 0)) IRU32 in
+  let const_0 = make_simple_ir_value (IRLiteral (IntLit (0, None))) IRU32 in
   let return3 = make_simple_instruction (IRReturn (Some const_0)) in
   let path3_block = make_simple_basic_block "path3" [return3] in
   

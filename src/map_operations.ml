@@ -218,7 +218,7 @@ let analyze_access_pattern map_name expressions =
     | ArrayAccess (arr_expr, idx_expr) when arr_expr.expr_desc = Identifier map_name ->
         incr access_count;
         (match idx_expr.expr_desc with
-         | Literal (IntLit idx) -> 
+         | Literal (IntLit (idx, _)) -> 
              sequential_accesses := idx :: !sequential_accesses
          | _ -> incr random_accesses)
     | FunctionCall (name, _) when String.contains name '.' ->

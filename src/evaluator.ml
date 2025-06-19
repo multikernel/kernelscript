@@ -113,7 +113,7 @@ let rec string_of_runtime_value = function
 
 (** Convert literal to runtime value *)
 let runtime_value_of_literal = function
-  | IntLit i -> IntValue i
+  | IntLit (i, _) -> IntValue i
   | StringLit s -> StringValue s
   | CharLit c -> CharValue c
   | BoolLit b -> BoolValue b

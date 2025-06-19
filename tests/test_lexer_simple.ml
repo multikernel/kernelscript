@@ -6,7 +6,7 @@ let pp_token fmt = function
   | Parser.PROGRAM -> Format.fprintf fmt "PROGRAM"
   | Parser.FN -> Format.fprintf fmt "FN"
   | Parser.MAP -> Format.fprintf fmt "MAP"
-  | Parser.INT i -> Format.fprintf fmt "INT(%d)" i
+  | Parser.INT (i, _) -> Format.fprintf fmt "INT(%d)" i
   | Parser.STRING s -> Format.fprintf fmt "STRING(%s)" s
   | Parser.BOOL_LIT b -> Format.fprintf fmt "BOOL_LIT(%b)" b
   | Parser.PLUS -> Format.fprintf fmt "PLUS"
@@ -53,12 +53,12 @@ let test_keywords () =
 
 let test_literals () =
   let tokens = Lexer.tokenize_string "42 \"hello\" true" in
-  let expected = [Parser.INT 42; Parser.STRING "hello"; Parser.BOOL_LIT true] in
+  let expected = [Parser.INT (42, None); Parser.STRING "hello"; Parser.BOOL_LIT true] in
   check (list token_testable) "literals parsing" expected tokens
 
 let test_hex_literals () =
   let tokens = Lexer.tokenize_string "0xFF" in
-  let expected = [Parser.INT 255] in
+  let expected = [Parser.INT (255, Some "0xFF")] in
   check (list token_testable) "hex literals parsing" expected tokens
 
 let test_operators () =
