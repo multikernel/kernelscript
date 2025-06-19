@@ -8,11 +8,11 @@
 // Global maps shared across programs
 map<u32, u64> global_counter : HashMap(1000) {
     pinned: "/sys/fs/bpf/global_counter"
-};
+}
 
 map<u32, Statistics> shared_stats : LruHash(500) {
     pinned: "/sys/fs/bpf/shared_stats"
-};
+}
 
 // Per-CPU map for high-performance scenarios (using new block-less syntax)
 map<u32, PerCpuData> percpu_data : PercpuHash(256)
@@ -60,21 +60,21 @@ program traffic_monitor : xdp {
             }
         } else {
             // Initialize counter for new interface
-            global_counter[key] = 1;
+            global_counter[key] = 1
         }
         
         // Per-CPU access for maximum performance
         let cpu_id = bpf_get_smp_processor_id()
         let data = percpu_data[cpu_id]
         if (data != null) {
-            data.local_counter += 1;
-            percpu_data[cpu_id] = data;
+            data.local_counter += 1
+            percpu_data[cpu_id] = data
         } else {
             let new_data = PerCpuData {
                 local_counter: 1,
                 temp_storage: [0; 64],
-            };
-            percpu_data[cpu_id] = new_data;
+            }
+            percpu_data[cpu_id] = new_data
         }
         
         return XDP_PASS
@@ -94,28 +94,28 @@ program stats_updater : tc {
                 byte_count: 0,
                 last_seen: 0,
                 error_rate: 0,
-            };
+            }
         }
         
         // Update statistics - this creates a write operation
-        stats.packet_count += 1;
+        stats.packet_count += 1
         stats.byte_count += ctx.data_len()
         stats.last_seen = bpf_ktime_get_ns()
         
         // Calculate error rate (simplified)
         if (ctx.protocol() == 0) {
-            stats.error_rate += 1;
+            stats.error_rate += 1
         }
         
-        shared_stats[ifindex] = stats;
+        shared_stats[ifindex] = stats
         
         // Batch operation pattern - will be detected as batch access
         for (i in 0..20) {
             let batch_key = ifindex + i
             let entry = shared_stats[batch_key]
             if (entry != null) {
-                entry.packet_count += 1;
-                shared_stats[batch_key] = entry;
+                entry.packet_count += 1
+                shared_stats[batch_key] = entry
             }
         }
         
@@ -155,14 +155,14 @@ program data_processor : kprobe {
                 if (!element.processed) {
                     element.value = element.value * 2
                     element.processed = true
-                    sequential_data[i] = element;
+                    sequential_data[i] = element
                 }
             } else {
                 let new_element = ArrayElement {
                     value: i as u64,
                     processed: false,
-                };
-                sequential_data[i] = new_element;
+                }
+                sequential_data[i] = new_element
             }
         }
         

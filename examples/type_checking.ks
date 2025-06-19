@@ -25,7 +25,7 @@ enum FilterDecision {
 
 // Global map for demonstration
 map<IpAddress, u64> connection_stats : hash_map(1024) {
-  max_entries = 1024
+  max_entries = 1024,
   pinned = "/sys/fs/bpf/stats"
 }
 
@@ -49,7 +49,7 @@ program packet_analyzer : xdp {
       dst_ip: 0xC0A80002,    // Type checked as u32 (IpAddress)
       protocol: 6,           // Type checked as u8
       length: packet_len     // Type promoted from arithmetic to u16
-    };
+    }
     
     return 2
   }
@@ -72,10 +72,10 @@ program packet_analyzer : xdp {
     
     if (current_count != null) {
       // Type checker ensures arithmetic on compatible types
-      connection_stats[header.src_ip] = current_count + 1;
+      connection_stats[header.src_ip] = current_count + 1
     } else {
       // Type checker validates map insert operation
-      connection_stats[header.src_ip] = 1;
+      connection_stats[header.src_ip] = 1
     }
   }
   

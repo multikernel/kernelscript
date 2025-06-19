@@ -18,21 +18,20 @@ enum XdpAction {
 }
 
 // Global map (accessible from all programs)
-map<u32, u64> global_stats : hash_map(1024) {
+map<u32, u64> global_stats : HashMap(1024) {
     pinned: "/sys/fs/bpf/global_stats",
-    permissions: "0644",
 }
 
 // Global function (public visibility)
 pub fn log_packet(info: PacketInfo) -> u32 {
-    global_stats[info.protocol] = global_stats[info.protocol] + 1;
+    global_stats[info.protocol] = global_stats[info.protocol] + 1
     return info.size
 }
 
 // First program with local scope
 program packet_filter : xdp {
     // Local map (only visible within this program)
-    map<u32, PacketInfo> local_cache : lru_hash(256)
+    map<u32, PacketInfo> local_cache : LruHash(256)
     
     // Private function (only visible within this program)
     fn process_packet(ctx: XdpContext) -> XdpAction {
@@ -42,22 +41,22 @@ program packet_filter : xdp {
             protocol: packet.protocol(),
             src_ip: packet.src_ip(),
             dst_ip: packet.dst_ip(),
-        };
+        }
         
         // Access global map (visible from here)
-        global_stats[0] = global_stats[0] + 1;
+        global_stats[0] = global_stats[0] + 1
         
         // Access local map (visible within this program)
-        local_cache[info.src_ip] = info;
+        local_cache[info.src_ip] = info
         
         // Call global function (visible from here)
         let logged_size = log_packet(info)
         
         // Use global enum (visible from here)
         if (info.protocol == 6) {
-                    return XDP_PASS
-    } else {
-        return XDP_DROP
+            return XDP_PASS
+        } else {
+            return XDP_DROP
         }
     }
     
@@ -72,7 +71,7 @@ program packet_filter : xdp {
         // Block scope demonstration
         if (result == XDP_PASS) {
             let block_var: u32 = local_var + 1
-            global_stats[1] = block_var;
+            global_stats[1] = block_var
         }
         // block_var is not accessible here
         
@@ -83,13 +82,13 @@ program packet_filter : xdp {
 // Second program with separate local scope
 program traffic_monitor : tc {
     // Different local map with same name (no conflict due to scoping)
-    map<u32, u32> local_cache : array(128)
+    map<u32, u32> local_cache : Array(128)
     
     fn analyze_traffic(ctx: TcContext) -> TcAction {
         let packet = ctx.packet()
         
         // Access global map (visible from here)
-        global_stats[packet.protocol()] = global_stats[packet.protocol()] + 1;
+        global_stats[packet.protocol()] = global_stats[packet.protocol()] + 1
         
         // Access this program's local map
         local_cache[0] = packet.len()
@@ -104,7 +103,7 @@ program traffic_monitor : tc {
             protocol: packet.protocol(),
             src_ip: packet.src_ip(),
             dst_ip: packet.dst_ip(),
-        };
+        }
         log_packet(info)
         
         return TC_ACT_OK

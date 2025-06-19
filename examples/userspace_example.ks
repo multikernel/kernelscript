@@ -1,6 +1,6 @@
 program packet_monitor : xdp {
     fn main(ctx: u32) -> u32 {
-        return 2 // XDP_PASS
+        return XDP_PASS
     }
 }
 

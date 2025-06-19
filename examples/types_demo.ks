@@ -33,24 +33,20 @@ enum Protocol {
 // Global map declarations with different types
 map<IpAddress, Counter> connection_count : HashMap(1024) {
   pinned: "/sys/fs/bpf/connection_count"
-};
+}
 
-map<PacketInfo, FilterAction> packet_filter : LruHash(512) {
-};
+map<PacketInfo, FilterAction> packet_filter : LruHash(512)
 
-map<u32, option PacketInfo> recent_packets : Array(256) {
-};
+map<u32, option PacketInfo> recent_packets : Array(256)
 
 // Result type for error handling
-map<u32, result PacketInfo u8> packet_cache : PercpuHash(128) {
-};
+map<u32, result PacketInfo u8> packet_cache : PercpuHash(128)
 
 // Program using all the new types
 program packet_inspector : xdp {
-  
+
   // Local map within the program
-  map<Protocol, Counter> protocol_stats : PercpuArray(32) {
-  };
+  map<Protocol, Counter> protocol_stats : PercpuArray(32)
   
   fn extract_packet_info(ctx: XdpContext) -> option PacketInfo {
     // This would contain actual packet parsing logic
@@ -62,7 +58,7 @@ program packet_inspector : xdp {
       src_port: 80,
       dst_port: 8080,
       payload_size: 1024
-    };
+    }
     return some info
   }
   
@@ -90,9 +86,9 @@ program packet_inspector : xdp {
     if (proto != null) {
       let stats = protocol_stats[proto]
       if (stats != null) {
-        protocol_stats[proto] = stats + 1;
+        protocol_stats[proto] = stats + 1
       } else {
-        protocol_stats[proto] = 1;
+        protocol_stats[proto] = 1
       }
     }
   }
@@ -111,7 +107,7 @@ program packet_inspector : xdp {
         
         // Store in recent packets for userspace inspection
         let packet_id = ctx.get_packet_id()
-        recent_packets[packet_id] = info;
+        recent_packets[packet_id] = info
         
         // Apply filtering action
         match action {

@@ -22,10 +22,10 @@ program packet_filter : xdp {
       // Count odd numbers up to threshold
       let key = 0
       let current = counter_map[key]
-      counter_map[key] = current + 1;
+      counter_map[key] = current + 1
     }
     
-    return 2 // XDP_PASS
+    return XDP_PASS
   }
 }
 
