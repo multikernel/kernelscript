@@ -183,9 +183,16 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
+ (public_name test_error_handling)
  (name test_error_handling)
- (modules test_error_handling)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest)
+ (modules test_error_handling))
+
+(executable
+ (public_name test_integer_literal_codegen)
+ (name test_integer_literal_codegen)
+ (libraries kernelscript alcotest str)
+ (modules test_integer_literal_codegen))
 
 (executable
  (name test_string_literal_bugs)
@@ -211,6 +218,8 @@
  (name test_type_alias)
  (modules test_type_alias)
  (libraries kernelscript ounit2))
+
+
 
 ; Test rules for individual execution
 (rule
@@ -358,10 +367,6 @@
  (action (run ./test_string_struct_fixes.exe)))
 
 (rule
- (alias runtest_error_handling)
- (action (run ./test_error_handling.exe)))
-
-(rule
  (alias runtest_string_literal_bugs)
  (action (run ./test_string_literal_bugs.exe)))
 
@@ -382,6 +387,10 @@
  (action (run ./test_type_alias.exe)))
 
 
+
+(rule
+ (alias runtest_integer_literal_codegen)
+ (action (run ./test_integer_literal_codegen.exe)))
 
 ; Test aliases for organized execution
 (rule
@@ -490,11 +499,12 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe)
+ (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
-   (run ./test_nested_if_codegen.exe))))
+   (run ./test_nested_if_codegen.exe)
+   (run ./test_integer_literal_codegen.exe))))
 
 ; Top-level alias to run all tests
 (alias
@@ -504,4 +514,38 @@
   (alias map-tests)
   (alias ir-tests)
   (alias codegen-tests)
-  (alias userspace-tests))) 
+  (alias userspace-tests)))
+
+(rule
+ (alias runtest)
+ (deps
+  ./test_ast.exe
+  ./test_lexer_simple.exe
+  ./test_parser.exe
+  ./test_ir.exe
+  ./test_ir_analysis.exe
+  ./test_ebpf_c_codegen.exe
+  ./test_maps.exe
+  ./test_map_operations.exe
+  ./test_return_path_analysis.exe
+  ./test_safety_checker.exe
+  ./test_string_literal_bugs.exe
+  ./test_nested_if_codegen.exe
+  ./test_error_handling.exe
+  ./test_integer_literal_codegen.exe)
+ (action
+  (progn
+   (run ./test_ast.exe)
+   (run ./test_lexer_simple.exe)
+   (run ./test_parser.exe)
+   (run ./test_ir.exe)
+   (run ./test_ir_analysis.exe)
+   (run ./test_ebpf_c_codegen.exe)
+   (run ./test_maps.exe)
+   (run ./test_map_operations.exe)
+   (run ./test_return_path_analysis.exe)
+   (run ./test_safety_checker.exe)
+   (run ./test_string_literal_bugs.exe)
+   (run ./test_nested_if_codegen.exe)
+   (run ./test_error_handling.exe)
+   (run ./test_integer_literal_codegen.exe)))) 
