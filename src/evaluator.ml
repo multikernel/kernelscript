@@ -117,6 +117,7 @@ let runtime_value_of_literal = function
   | StringLit s -> StringValue s
   | CharLit c -> CharValue c
   | BoolLit b -> BoolValue b
+  | NullLit -> StructValue [("None", UnitValue)]  (* null is represented as Option::None *)
   | ArrayLit _literals -> 
       (* TODO: Implement array literal evaluation *)
       failwith "Array literal evaluation not implemented yet"

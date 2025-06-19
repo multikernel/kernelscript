@@ -90,6 +90,7 @@
     | "defer" -> DEFER
     | "true" -> BOOL_LIT true
     | "false" -> BOOL_LIT false
+    | "null" -> NULL
     | id -> IDENTIFIER id
 }
 

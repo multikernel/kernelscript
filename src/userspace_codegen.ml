@@ -425,6 +425,7 @@ let generate_c_value_from_ir ctx ir_value =
        | _ -> string_of_int i)
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
+  | IRLiteral (NullLit) -> "NULL"
   | IRLiteral (StringLit s) -> 
       (* Generate simple string literal for userspace *)
       sprintf "\"%s\"" s
@@ -434,6 +435,7 @@ let generate_c_value_from_ir ctx ir_value =
         | Ast.CharLit c -> sprintf "'%c'" c
         | Ast.BoolLit b -> if b then "true" else "false"
         | Ast.StringLit s -> sprintf "\"%s\"" s
+        | Ast.NullLit -> "NULL"
         | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
       ) elems in
       sprintf "{%s}" (String.concat ", " elem_strs)

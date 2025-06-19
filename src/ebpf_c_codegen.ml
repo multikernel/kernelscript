@@ -723,6 +723,7 @@ let generate_c_value ctx ir_val =
        | _ -> string_of_int i)
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
+  | IRLiteral (NullLit) -> "NULL"
   | IRLiteral (StringLit s) -> 
       (* Generate string literal as struct initialization *)
       (match ir_val.val_type with

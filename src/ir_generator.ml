@@ -115,6 +115,7 @@ let lower_literal lit pos =
     | StringLit s -> IRStr (max 1 (String.length s))  (* String literals get IRStr type *)
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
+    | NullLit -> IROption IRU32  (* null literal defaults to Option<u32> *)
     | ArrayLit literals -> 
         (* Implement proper array literal lowering *)
         let element_count = List.length literals in
@@ -130,6 +131,7 @@ let lower_literal lit pos =
             | CharLit _ -> IRChar
             | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
             | ArrayLit _ -> IRU32  (* Nested arrays default to u32 for now *)
+            | NullLit -> IROption IRU32  (* null in arrays defaults to Option<u32> *)
           in
           let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
           IRArray (element_ir_type, element_count, bounds_info)
@@ -1560,25 +1562,28 @@ let lower_multi_program ast symbol_table source_name =
     let initial_values = List.filter_map (fun assignment ->
       match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
       | Literal key_lit, Literal value_lit ->
-          let key_str =           match key_lit with
+          let key_str = match key_lit with
             | IntLit (i, _) -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
+            | NullLit -> "null"
             | ArrayLit literals -> 
                 "[" ^ (String.concat ", " (List.map (function
                   | IntLit (i, _) -> string_of_int i
                   | StringLit s -> "\"" ^ s ^ "\""
                   | CharLit c -> "'" ^ String.make 1 c ^ "'"
                   | BoolLit b -> string_of_bool b
+                  | NullLit -> "null"
                   | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
                 ) literals)) ^ "]"
           in
-                      let value_str = match value_lit with
+          let value_str = match value_lit with
             | IntLit (i, _) -> string_of_int i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
+            | NullLit -> "null"
             | ArrayLit _ -> "{...}"
           in
           Some (key_str ^ ":" ^ value_str)

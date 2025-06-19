@@ -261,6 +261,7 @@ let type_check_literal lit pos =
         Str (max 1 len)  (* At least size 1 to handle empty strings *)
     | CharLit _ -> Char
     | BoolLit _ -> Bool
+    | NullLit -> Option U32  (* null literal defaults to Option<u32> but can be unified with any Option type *)
     | ArrayLit literals ->
         (* Implement proper array literal type checking *)
         (match literals with
@@ -272,6 +273,7 @@ let type_check_literal lit pos =
                | CharLit _ -> Char
                | StringLit s -> Str (max 1 (String.length s))
                | ArrayLit _ -> U32  (* Nested arrays default to u32 for now *)
+               | NullLit -> Option U32  (* null in arrays defaults to Option<u32> *)
              in
              (* Verify all elements have the same type *)
              let all_same_type = List.for_all (fun lit ->
@@ -281,6 +283,7 @@ let type_check_literal lit pos =
                  | CharLit _ -> Char
                  | StringLit s -> Str (max 1 (String.length s))
                  | ArrayLit _ -> U32
+                 | NullLit -> Option U32
                in
                lit_type = first_type
              ) rest_lits in

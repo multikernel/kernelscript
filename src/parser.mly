@@ -11,6 +11,7 @@
 %token <string> STRING IDENTIFIER
 %token <char> CHAR_LIT
 %token <bool> BOOL_LIT
+%token NULL
 
 /* Keywords */
 %token PROGRAM FN MAP TYPE STRUCT ENUM
@@ -381,6 +382,7 @@ literal:
   | STRING { StringLit $1 }
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
+  | NULL { NullLit }
   | LBRACKET literal_list RBRACKET { ArrayLit $2 }
 
 literal_list:

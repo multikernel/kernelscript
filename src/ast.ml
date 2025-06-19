@@ -92,6 +92,7 @@ type literal =
   | CharLit of char 
   | BoolLit of bool
   | ArrayLit of literal list
+  | NullLit
 
 (** Binary operators *)
 type binary_op =
@@ -413,6 +414,7 @@ let rec string_of_literal = function
   | BoolLit b -> string_of_bool b
   | ArrayLit literals -> 
       Printf.sprintf "[%s]" (String.concat ", " (List.map string_of_literal literals))
+  | NullLit -> "null"
 
 let string_of_binary_op = function
   | Add -> "+"
