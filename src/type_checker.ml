@@ -199,16 +199,10 @@ let rec unify_types t1 t2 =
        | Some unified -> Some (Array (unified, s1))
        | None -> None)
   
-  (* Pointer types *)
+  (* Pointer types - any pointer can be null *)
   | Pointer t1, Pointer t2 ->
       (match unify_types t1 t2 with
        | Some unified -> Some (Pointer unified)
-       | None -> None)
-  
-  (* Option types *)
-  | Option t1, Option t2 ->
-      (match unify_types t1 t2 with
-       | Some unified -> Some (Option unified)
        | None -> None)
   
   (* Result types *)
@@ -271,14 +265,14 @@ let get_builtin_function_signature name =
       | name when String.contains name '.' ->
           let parts = String.split_on_char '.' name in
           (match parts with
-           | [_map_name; "lookup"] -> Some ([Pointer U8], Option (Pointer U8))
+           | [_map_name; "lookup"] -> Some ([Pointer U8], Pointer U8)
            | [_map_name; "insert"] -> Some ([Pointer U8; Pointer U8], U32)
            | [_map_name; "update"] -> Some ([Pointer U8; Pointer U8], U32)
            | [_map_name; "delete"] -> Some ([Pointer U8], U32)
            | _ -> None)
       
       (* Type conversion functions *)
-      | "Protocol.from_u8" -> Some ([U8], Option (Enum "Protocol"))
+      | "Protocol.from_u8" -> Some ([U8], Pointer (Enum "Protocol"))
       
       | _ -> None
 
@@ -296,7 +290,7 @@ let type_check_literal lit pos =
         Str (max 1 len)  (* At least size 1 to handle empty strings *)
     | CharLit _ -> Char
     | BoolLit _ -> Bool
-    | NullLit -> Option U32  (* null literal defaults to Option<u32> but can be unified with any Option type *)
+    | NullLit -> Pointer U32  (* null literal as nullable pointer, can be unified with any pointer type *)
     | ArrayLit literals ->
         (* Implement proper array literal type checking *)
         (match literals with
@@ -308,7 +302,7 @@ let type_check_literal lit pos =
                | CharLit _ -> Char
                | StringLit s -> Str (max 1 (String.length s))
                | ArrayLit _ -> U32  (* Nested arrays default to u32 for now *)
-               | NullLit -> Option U32  (* null in arrays defaults to Option<u32> *)
+               | NullLit -> Pointer U32  (* null in arrays as nullable pointer *)
              in
              (* Verify all elements have the same type *)
              let all_same_type = List.for_all (fun lit ->
@@ -318,7 +312,7 @@ let type_check_literal lit pos =
                  | CharLit _ -> Char
                  | StringLit s -> Str (max 1 (String.length s))
                  | ArrayLit _ -> U32
-                 | NullLit -> Option U32
+                 | NullLit -> Pointer U32
                in
                lit_type = first_type
              ) rest_lits in
@@ -471,6 +465,7 @@ and type_check_array_access ctx arr idx pos =
         | Some _ -> 
             (* Create a synthetic map type for the result *)
             let typed_arr = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = arr.expr_pos } in
+            (* Map access returns the value type directly, but can be null at runtime *)
             { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = map_decl.value_type; texpr_pos = pos }
         | None -> type_error ("Map key type mismatch") pos)
    | _ ->
@@ -595,6 +590,8 @@ and type_check_binary_op ctx left op right pos =
         (* String equality/inequality comparison *)
         (match resolved_left_type, resolved_right_type with
          | Str _, Str _ -> Bool  (* Allow string comparison regardless of size *)
+         (* Null comparisons - any type can be compared with null *)
+         | _, Pointer _ | Pointer _, _ -> Bool
          | _ ->
              (match unify_types resolved_left_type resolved_right_type with
               | Some _ -> Bool

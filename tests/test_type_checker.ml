@@ -707,6 +707,295 @@ program test : xdp {
       check bool ("edge case promotion: " ^ desc) false true
   ) edge_case_tests
 
+(** Test null literal typing *)
+let test_null_literal_typing () =
+  let null_tests = [
+    (* Basic null literal *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let x = null
+    return 0
+  }
+}
+|}, "basic null literal");
+    
+    (* Null comparison with typed variable *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let x: u32 = 42
+    if (x == null) {
+      return 1
+    }
+    return 0
+  }
+}
+|}, "null comparison with u32");
+    
+    (* Null assignment in variable declaration *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let ptr = null
+    return 0
+  }
+}
+|}, "null assignment in declaration");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("null literal typing: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed null literal test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("null literal typing: " ^ desc) false true
+  ) null_tests
+
+(** Test null comparisons with different types *)
+let test_null_comparisons () =
+  let comparison_tests = [
+    (* Comparisons with different numeric types *)
+    ("let x: u8 = 10\n    let result = x == null", "u8 == null");
+    ("let x: u16 = 100\n    let result = x != null", "u16 != null");
+    ("let x: u32 = 1000\n    let result = x == null", "u32 == null");
+    ("let x: u64 = 10000\n    let result = x != null", "u64 != null");
+    ("let x: i8 = -5\n    let result = x == null", "i8 == null");
+    ("let x: i16 = -100\n    let result = x != null", "i16 != null");
+    ("let x: i32 = -1000\n    let result = x == null", "i32 == null");
+    ("let x: i64 = -10000\n    let result = x != null", "i64 != null");
+    
+    (* Basic null comparisons *)
+    ("let ptr = null\n    let result = ptr == null", "null variable == null");
+    ("let ptr = null\n    let result = ptr != null", "null variable != null");
+    
+    (* Double null comparison *)
+    ("let result = null == null", "null == null");
+    ("let result = null != null", "null != null");
+  ] in
+  
+  List.iter (fun (stmt, desc) ->
+    let program_text = Printf.sprintf {|
+program test : xdp {
+  fn main() -> u32 {
+    %s
+    return 0
+  }
+}
+|} stmt in
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("null comparison: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed null comparison test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("null comparison: " ^ desc) false true
+  ) comparison_tests
+
+(** Test map operations with null semantics *)
+let test_map_null_semantics () =
+  let map_null_tests = [
+    (* Map access returning nullable value *)
+    ({|
+map<u32, u64> test_map : HashMap(100)
+
+program test : xdp {
+  fn main() -> u32 {
+    let value = test_map[42]
+    if (value == null) {
+      return 1
+    }
+    return 0
+  }
+}
+|}, "map access null check");
+    
+    (* Null initialization pattern *)
+    ({|
+map<u32, u32> counters : HashMap(100)
+
+program test : xdp {
+  fn main() -> u32 {
+    let count = counters[1]
+    if (count == null) {
+      counters[1] = 1
+    } else {
+      counters[1] = count + 1
+    }
+    return 0
+  }
+}
+|}, "null initialization pattern");
+    
+    (* Multiple map null checks *)
+    ({|
+map<u32, u64> flows : HashMap(100)
+map<u32, u32> packets : HashMap(100)
+
+program test : xdp {
+  fn main() -> u32 {
+    let flow = flows[123]
+    let packet_count = packets[123]
+    
+    if (flow == null || packet_count == null) {
+      return 1
+    }
+    
+    return 0
+  }
+}
+|}, "multiple map null checks");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("map null semantics: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed map null test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("map null semantics: " ^ desc) false true
+  ) map_null_tests
+
+(** Test null vs throw pattern adherence *)
+let test_null_vs_throw_pattern () =
+  let pattern_tests = [
+    (* Correct: null for expected absence *)
+    ({|
+map<u32, u64> cache : HashMap(100)
+
+program test : xdp {
+  fn main() -> u32 {
+    let cached_value = cache[42]
+    if (cached_value == null) {
+      // Key doesn't exist - expected case
+      cache[42] = 100
+      return 100
+    }
+    return cached_value
+  }
+}
+|}, "null for expected absence");
+    
+    (* Correct: error checking (simplified without throw) *)
+    ({|
+program test : xdp {
+  fn validate_input(value: u32) -> u32 {
+    if (value > 1000) {
+      return 0  // Error case
+    }
+    return value * 2
+  }
+  
+  fn main() -> u32 {
+    let result = validate_input(500)
+    return result
+  }
+}
+|}, "error validation pattern");
+    
+    (* Function returning nullable value *)
+    ({|
+map<u32, u32> data : HashMap(100)
+
+program test : xdp {
+  fn lookup_value(key: u32) -> u32 {
+    let value = data[key]
+    if (value == null) {
+      return 0  // Default value for missing key
+    }
+    return value
+  }
+  
+  fn main() -> u32 {
+    let result = lookup_value(42)
+    return result
+  }
+}
+|}, "function with nullable return pattern");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("null vs throw pattern: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed pattern test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("null vs throw pattern: " ^ desc) false true
+  ) pattern_tests
+
+(** Test comprehensive null semantics *)
+let test_null_semantics () =
+  let comprehensive_tests = [
+    (* Null in conditional expressions *)
+    ({|
+map<u32, u32> test_map : HashMap(100)
+
+program test : xdp {
+  fn main() -> u32 {
+    let value = test_map[1]
+    let result = 0
+    if (value == null) {
+      result = 0
+    } else {
+      result = value
+    }
+    return result
+  }
+}
+|}, "null in if-else expression");
+    
+    (* Null in logical operations *)
+    ({|
+map<u32, u32> map1 : HashMap(100)
+map<u32, u32> map2 : HashMap(100)
+
+program test : xdp {
+  fn main() -> u32 {
+    let val1 = map1[1]
+    let val2 = map2[1]
+    
+    if (val1 != null && val2 != null) {
+      return val1 + val2
+    }
+    
+    return 0
+  }
+}
+|}, "null in logical AND");
+    
+    (* Basic null assignments *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let x = null
+    if (x == null) {
+      return 1
+    }
+    return 0
+  }
+}
+|}, "basic null assignment and check");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("comprehensive null: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed comprehensive null test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("comprehensive null: " ^ desc) false true
+  ) comprehensive_tests
+
 let type_checker_tests = [
   "type_unification", `Quick, test_type_unification;
   "basic_type_inference", `Quick, test_basic_type_inference;
@@ -733,6 +1022,11 @@ let type_checker_tests = [
   "comparison_promotion", `Quick, test_comparison_promotion;
   "map_operations_promotion", `Quick, test_map_operations_promotion;
   "type_promotion_edge_cases", `Quick, test_type_promotion_edge_cases;
+  "null_semantics", `Quick, test_null_semantics;
+  "null_literal_typing", `Quick, test_null_literal_typing;
+  "null_comparisons", `Quick, test_null_comparisons;
+  "map_null_semantics", `Quick, test_map_null_semantics;
+  "null_vs_throw_pattern", `Quick, test_null_vs_throw_pattern;
 ]
 
 let () =

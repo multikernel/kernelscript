@@ -123,7 +123,9 @@ let lower_literal lit pos =
     | StringLit s -> IRStr (max 1 (String.length s))  (* String literals get IRStr type *)
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
-    | NullLit -> IROption IRU32  (* null literal defaults to Option<u32> *)
+    | NullLit -> 
+        let bounds = make_bounds_info ~nullable:true () in
+        IRPointer (IRU32, bounds)  (* null literal as nullable pointer to u32 *)
     | ArrayLit literals -> 
         (* Implement proper array literal lowering *)
         let element_count = List.length literals in
@@ -139,7 +141,9 @@ let lower_literal lit pos =
             | CharLit _ -> IRChar
             | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
             | ArrayLit _ -> IRU32  (* Nested arrays default to u32 for now *)
-            | NullLit -> IROption IRU32  (* null in arrays defaults to Option<u32> *)
+            | NullLit -> 
+                let bounds = make_bounds_info ~nullable:true () in
+                IRPointer (IRU32, bounds)  (* null in arrays as nullable pointer *)
           in
           let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
           IRArray (element_ir_type, element_count, bounds_info)
@@ -1198,7 +1202,9 @@ let rec ast_type_to_ir_type = function
   | Ast.UserType type_name -> IRStruct (type_name, [])  (* Simplified *)
   | Ast.Struct struct_name -> IRStruct (struct_name, [])
   | Ast.Enum enum_name -> IREnum (enum_name, [])
-  | Ast.Option inner_type -> IROption (ast_type_to_ir_type inner_type)
+  | Ast.Option inner_type -> 
+    let bounds = make_bounds_info ~nullable:true () in
+    IRPointer (ast_type_to_ir_type inner_type, bounds)
   | Ast.Result (ok_type, err_type) -> IRResult (ast_type_to_ir_type ok_type, ast_type_to_ir_type err_type)
   | Ast.Function (_param_types, return_type) -> 
       (* Functions are represented as pointers to function *)

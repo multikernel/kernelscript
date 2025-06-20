@@ -116,7 +116,6 @@ and ir_type =
   | IRArray of ir_type * int * bounds_info
   | IRStruct of string * (string * ir_type) list
   | IREnum of string * (string * int) list
-  | IROption of ir_type
   | IRResult of ir_type * ir_type
   | IRContext of context_type
   | IRAction of action_type
@@ -512,7 +511,9 @@ let rec ast_type_to_ir_type = function
       IRPointer (ast_type_to_ir_type t, bounds)
   | Struct name -> IRStruct (name, []) (* Fields filled by symbol table *)
   | Enum name -> IREnum (name, [])     (* Values filled by symbol table *)
-  | Option t -> IROption (ast_type_to_ir_type t)
+  | Option t -> 
+      let bounds = make_bounds_info ~nullable:true () in
+      IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
   | XdpContext -> IRContext XdpCtx
   | TcContext -> IRContext TcCtx
@@ -578,7 +579,6 @@ let rec string_of_ir_type = function
   | IRArray (t, size, _) -> Printf.sprintf "[%s; %d]" (string_of_ir_type t) size
   | IRStruct (name, _) -> Printf.sprintf "struct %s" name
   | IREnum (name, _) -> Printf.sprintf "enum %s" name
-  | IROption t -> Printf.sprintf "option %s" (string_of_ir_type t)
   | IRResult (t1, t2) -> Printf.sprintf "result (%s, %s)" (string_of_ir_type t1) (string_of_ir_type t2)
   | IRTypeAlias (name, _) -> Printf.sprintf "type %s" name
   | IRStructOps (name, _) -> Printf.sprintf "struct_ops %s" name

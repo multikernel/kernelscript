@@ -19,6 +19,7 @@ type runtime_value =
   | EnumValue of string * int
   | MapHandle of string  (* Map identifier *)
   | ContextValue of string * (string * runtime_value) list
+  | NullValue  (* Simple null value representation *)
   | UnitValue
 
 (** Additional exceptions that depend on runtime_value *)
@@ -109,6 +110,7 @@ let rec string_of_runtime_value = function
       Printf.sprintf "%s_context{%s}" ctx_type
         (String.concat "; " (List.map (fun (name, value) ->
           name ^ " = " ^ string_of_runtime_value value) fields))
+  | NullValue -> "null"
   | UnitValue -> "()"
 
 (** Convert literal to runtime value *)
@@ -117,7 +119,7 @@ let runtime_value_of_literal = function
   | StringLit s -> StringValue s
   | CharLit c -> CharValue c
   | BoolLit b -> BoolValue b
-  | NullLit -> StructValue [("None", UnitValue)]  (* null is represented as Option::None *)
+  | NullLit -> NullValue  (* null is represented as simple null value *)
   | ArrayLit _literals -> 
       (* TODO: Implement array literal evaluation *)
       failwith "Array literal evaluation not implemented yet"
@@ -162,6 +164,14 @@ let eval_binary_op left_val op right_val pos =
   
   | Eq, StringValue l, StringValue r -> BoolValue (String.equal l r)
   | Ne, StringValue l, StringValue r -> BoolValue (not (String.equal l r))
+  
+  (* Null comparisons *)
+  | Eq, NullValue, NullValue -> BoolValue true
+  | Ne, NullValue, NullValue -> BoolValue false
+  | Eq, NullValue, _ -> BoolValue false
+  | Ne, NullValue, _ -> BoolValue true
+  | Eq, _, NullValue -> BoolValue false
+  | Ne, _, NullValue -> BoolValue true
   
   (* Logical operations *)
   | And, BoolValue l, BoolValue r -> BoolValue (l && r)

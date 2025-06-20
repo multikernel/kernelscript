@@ -414,6 +414,7 @@ u8, u16, u32, u64      // Unsigned integers
 i8, i16, i32, i64      // Signed integers
 bool                   // Boolean
 char                   // 8-bit character
+null                   // Represents expected absence of value
 
 // Fixed-size string types (same syntax for both kernel and userspace)
 str<N>                 // Fixed-size string with capacity N characters (N can be any positive integer)
@@ -424,6 +425,99 @@ str<N>                 // Fixed-size string with capacity N characters (N can be
 // Program reference types (for explicit program lifecycle control)
 ProgramRef             // Reference to an eBPF program for loading/attachment
 ProgramHandle          // Handle returned by load_program() for safe attachment
+```
+
+### 4.1.1 Null Semantics and Usage Guidelines
+
+KernelScript uses `null` to represent **expected absence** of values, not error conditions. The same null semantics apply uniformly across both eBPF and userspace code.
+
+#### When to Use `null`:
+```kernelscript
+// ✅ Map key lookups - absence is expected and normal
+let flow_data = global_flows[flow_key]
+if (flow_data == null) {
+    // Key doesn't exist - create new entry
+    global_flows[flow_key] = FlowData::new()
+}
+
+// ✅ Optional function return values - when no data is available
+let packet = ctx.packet()  // Returns null if no packet available
+if (packet == null) {
+    return XDP_PASS
+}
+
+// ✅ Event polling - when no events are available
+let event = event_queue.read()  // Returns null if queue is empty
+if (event == null) {
+    // No events to process
+    return
+}
+
+// ✅ Optional configuration values
+let timeout = config.optional_timeout  // Could be null if not set
+let actual_timeout = if (timeout == null) { 5000 } else { timeout }
+```
+
+#### When to Use `throw` (NOT `null`):
+```kernelscript
+// ✅ Parse errors - unexpected failure conditions
+fn parse_ip_header(data: *u8, len: u32) -> IpHeader {
+    if (len < 20) {
+        throw PARSE_ERROR_TOO_SHORT  // Error, not absence
+    }
+    if (data[0] >> 4 != 4) {
+        throw PARSE_ERROR_INVALID_VERSION  // Error, not absence
+    }
+    return cast_to_ip_header(data)
+}
+
+// ✅ Resource allocation failures
+fn allocate_buffer(size: u32) -> *u8 {
+    let buffer = bpf_malloc(size)
+    if (buffer == null) {
+        throw ALLOCATION_ERROR_OUT_OF_MEMORY  // Error, not absence
+    }
+    return buffer
+}
+
+// ✅ Invalid input or state violations
+fn update_counter(index: u32) {
+    if (index >= MAX_COUNTERS) {
+        throw VALIDATION_ERROR_INDEX_OUT_OF_BOUNDS  // Error, not absence
+    }
+    counters[index] += 1
+}
+```
+
+#### Unified Pattern Across eBPF and Userspace:
+```kernelscript
+// Same null handling works identically in both contexts
+
+// eBPF program
+program packet_filter : xdp {
+    fn main(ctx: XdpContext) -> XdpAction {
+        let cached_decision = decision_cache[ctx.hash()]
+        if (cached_decision == null) {
+            // Cache miss - compute decision
+            let decision = compute_decision(ctx)
+            decision_cache[ctx.hash()] = decision
+            return decision
+        }
+        return cached_decision  // Cache hit
+    }
+}
+
+// Userspace code
+fn load_config(path: string) -> Config {
+    let cached_config = config_cache[path]
+    if (cached_config == null) {
+        // Cache miss - load from disk
+        let loaded = read_config_file(path)  // May throw on file errors
+        config_cache[path] = loaded
+        return loaded
+    }
+    return cached_config  // Cache hit
+}
 ```
 
 ### 4.2 Compound Types

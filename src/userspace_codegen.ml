@@ -113,7 +113,7 @@ let rec collect_string_sizes_from_ir_type = function
   | IRStr size -> [size]
   | IRPointer (inner_type, _) -> collect_string_sizes_from_ir_type inner_type
   | IRArray (inner_type, _, _) -> collect_string_sizes_from_ir_type inner_type
-  | IROption inner_type -> collect_string_sizes_from_ir_type inner_type
+
   | IRResult (ok_type, err_type) -> 
       (collect_string_sizes_from_ir_type ok_type) @ (collect_string_sizes_from_ir_type err_type)
   | _ -> []
@@ -195,7 +195,7 @@ let collect_enum_definitions_from_userspace userspace_prog =
     | IREnum (name, values) -> Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
-    | IROption inner_type -> collect_from_type inner_type
+  
     | IRResult (ok_type, err_type) -> 
         collect_from_type ok_type; collect_from_type err_type
     | _ -> ()
@@ -343,7 +343,7 @@ let rec c_type_from_ir_type = function
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
   | IRStruct (name, _) -> sprintf "struct %s" name
   | IREnum (name, _) -> sprintf "enum %s" name
-  | IROption inner_type -> sprintf "%s*" (c_type_from_ir_type inner_type) (* nullable pointer *)
+
   | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
