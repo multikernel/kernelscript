@@ -214,7 +214,7 @@
 (executable
  (name test_return_path_analysis)
  (modules test_return_path_analysis)
- (libraries kernelscript ounit2))
+ (libraries kernelscript alcotest))
 
 (executable
  (name test_enum)

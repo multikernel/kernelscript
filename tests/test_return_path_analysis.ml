@@ -1,4 +1,4 @@
-open OUnit2
+open Alcotest
 open Kernelscript.Ir
 open Kernelscript.Ir_analysis
 
@@ -41,7 +41,7 @@ let make_simple_basic_block label instructions =
   }
 
 (** Test function with explicit return in all paths *)
-let test_all_paths_return _ =
+let test_all_paths_return () =
   let const_42 = make_simple_ir_value (IRLiteral (IntLit (42, None))) IRU32 in
   let return_instr = make_simple_instruction (IRReturn (Some const_42)) in
   let entry_block = make_simple_basic_block "entry" [return_instr] in
@@ -60,11 +60,11 @@ let test_all_paths_return _ =
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
-  assert_bool "Function should have return" return_info.has_return;
-  assert_bool "All paths should return" return_info.all_paths_return
+  check bool "Function should have return" true return_info.has_return;
+  check bool "All paths should return" true return_info.all_paths_return
 
 (** Test function with missing return in one branch *)
-let test_missing_return_branch _ =
+let test_missing_return_branch () =
   let var_x = make_simple_ir_value (IRVariable "x") IRU32 in
   let const_10 = make_simple_ir_value (IRLiteral (IntLit (10, None))) IRU32 in
   let const_1 = make_simple_ir_value (IRLiteral (IntLit (1, None))) IRU32 in
@@ -97,11 +97,11 @@ let test_missing_return_branch _ =
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
-  assert_bool "Function should have return" return_info.has_return;
-  assert_bool "Not all paths should return" (not return_info.all_paths_return)
+  check bool "Function should have return" true return_info.has_return;
+  check bool "Not all paths should return" false return_info.all_paths_return
 
 (** Test function with no return statements *)
-let test_no_return _ =
+let test_no_return () =
   let assign_instr = make_simple_instruction (IRCall ("some_operation", [], None)) in
   let entry_block = make_simple_basic_block "entry" [assign_instr] in
   
@@ -119,11 +119,11 @@ let test_no_return _ =
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
-  assert_bool "Function should not have return" (not return_info.has_return);
-  assert_bool "Not all paths should return" (not return_info.all_paths_return)
+  check bool "Function should not have return" false return_info.has_return;
+  check bool "Not all paths should return" false return_info.all_paths_return
 
 (** Test function with multiple exit blocks all returning *)
-let test_multiple_exit_blocks_all_return _ =
+let test_multiple_exit_blocks_all_return () =
   let var_x = make_simple_ir_value (IRVariable "x") IRU32 in
   let const_5 = make_simple_ir_value (IRLiteral (IntLit (5, None))) IRU32 in
   let const_10 = make_simple_ir_value (IRLiteral (IntLit (10, None))) IRU32 in
@@ -169,17 +169,16 @@ let test_multiple_exit_blocks_all_return _ =
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
-  assert_bool "Function should have return" return_info.has_return;
-  assert_bool "All paths should return" return_info.all_paths_return
+  check bool "Function should have return" true return_info.has_return;
+  check bool "All paths should return" true return_info.all_paths_return
 
 (** Test suite *)
-let suite =
-  "Return Path Analysis Tests" >::: [
-    "test_all_paths_return" >:: test_all_paths_return;
-    "test_missing_return_branch" >:: test_missing_return_branch;
-    "test_no_return" >:: test_no_return;
-    "test_multiple_exit_blocks_all_return" >:: test_multiple_exit_blocks_all_return;
-  ]
-
 let () =
-  run_test_tt_main suite 
+  run "Return Path Analysis Tests" [
+    "return_analysis", [
+      test_case "all_paths_return" `Quick test_all_paths_return;
+      test_case "missing_return_branch" `Quick test_missing_return_branch;
+      test_case "no_return" `Quick test_no_return;
+      test_case "multiple_exit_blocks_all_return" `Quick test_multiple_exit_blocks_all_return;
+    ]
+  ] 
