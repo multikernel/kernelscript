@@ -100,6 +100,10 @@ program traffic_shaper : tc {
   map<u32, u64> bandwidth_usage : PercpuArray(256) {
     pinned: "/sys/fs/bpf/bandwidth"
   }
+
+  fn get_cpu_id() -> u32 {
+    return 0 // Demo CPU ID
+  }
   
   fn main(ctx: TcContext) -> TcAction {
     let cpu = get_cpu_id()
