@@ -980,7 +980,7 @@ let rec type_check_statement ctx stmt =
       { tstmt_desc = TDefer typed_expr; tstmt_pos = stmt.stmt_pos }
 
 (** Type check function *)
-let type_check_function ctx func =
+let type_check_function ?(register_signature=true) ctx func =
   (* Save current state *)
   let old_variables = Hashtbl.copy ctx.variables in
   let old_function = ctx.current_function in
@@ -1015,9 +1015,11 @@ let type_check_function ctx func =
     tfunc_pos = func.func_pos;
   } in
   
-  (* Register function signature *)
-  let param_types = List.map snd func.func_params in
-  Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
+  (* Only register function signature if requested (for global functions) *)
+  if register_signature then (
+    let param_types = List.map snd func.func_params in
+    Hashtbl.replace ctx.functions func.func_name (param_types, return_type)
+  );
   
   typed_func
 
@@ -1037,8 +1039,18 @@ let type_check_program ctx prog =
     Hashtbl.replace ctx.types struct_def.struct_name type_def
   ) prog.prog_structs;
   
-  (* Type check all functions *)
-  let typed_functions = List.map (type_check_function ctx) prog.prog_functions in
+  (* FIRST PASS: Register all function signatures so they can call each other *)
+  List.iter (fun func ->
+    let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
+    let return_type = match func.func_return_type with
+      | Some t -> resolve_user_type ctx t
+      | None -> U32  (* default return type *)
+    in
+    Hashtbl.replace ctx.functions func.func_name (param_types, return_type)
+  ) prog.prog_functions;
+  
+  (* SECOND PASS: Type check all function bodies *)
+  let typed_functions = List.map (type_check_function ~register_signature:false ctx) prog.prog_functions in
   
   (* Remove program-scoped maps from context (restore scope) *)
   List.iter (fun map_decl ->
@@ -1049,6 +1061,11 @@ let type_check_program ctx prog =
   List.iter (fun struct_def ->
     Hashtbl.remove ctx.types struct_def.struct_name
   ) prog.prog_structs;
+  
+  (* Remove program function signatures from context (restore scope) *)
+  List.iter (fun func ->
+    Hashtbl.remove ctx.functions func.func_name
+  ) prog.prog_functions;
   
   ctx.current_program <- old_program;
   

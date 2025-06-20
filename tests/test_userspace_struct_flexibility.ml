@@ -225,15 +225,15 @@ fn main(args: Args) -> i32 {
     check bool "args variable declared correctly" true 
       (contains_pattern result "struct Args args = parse_arguments");
     
-    (* 2. Check that parsed arguments are assigned to IR variables *)
-    check bool "parsed args assigned to var_0" true 
+    (* 2. Check that function parameters are used directly (no unnecessary copying) *)
+    check bool "no unnecessary struct assignment to var_0" false 
       (contains_pattern result "var_0 = args;");
     
-    (* 3. Check that IR variables use the struct fields correctly *)
-    check bool "var_0.interface used for attach_program" true 
-      (contains_pattern result "var_0\\.interface");
-    check bool "var_0.enable_debug accessible" true 
-      (contains_pattern result "var_0\\.enable_debug");
+    (* 3. Check that function parameter fields are used directly *)
+    check bool "args.interface used for attach_program" true 
+      (contains_pattern result "args\\.interface");
+    check bool "args.enable_debug used directly" true 
+      (contains_pattern result "args\\.enable_debug");
     
     (* 4. Check that string argument parsing uses strncpy (not atoi) *)
     check bool "interface uses strncpy not atoi" true 
@@ -241,22 +241,22 @@ fn main(args: Args) -> i32 {
     check bool "interface does not use atoi" false 
       (contains_pattern result "args\\.interface.*atoi");
     
-    (* 5. Check the assignment bridge exists (critical for the bug fix) *)
-    check bool "assignment from args to var_0 exists" true 
+    (* 5. Check that no unnecessary assignment bridge exists (cleaner approach) *)
+    check bool "no assignment bridge from args to var_0" false 
       (contains_pattern result "// Copy parsed arguments to function variable");
     
-    (* 6. Ensure no orphaned uninitialized var_0 usage *)
-    let var_0_usage_count = 
+    (* 6. Ensure function parameters are used appropriately *)
+    let args_usage_count = 
       let rec count_matches pattern text start acc =
         try
           let pos = Str.search_forward (Str.regexp pattern) text start in
           count_matches pattern text (pos + 1) (acc + 1)
         with Not_found -> acc
       in
-      count_matches "var_0\\." result 0 0
+      count_matches "args\\." result 0 0
     in
-    check bool "var_0 is used at least twice (enable_debug and interface)" true 
-      (var_0_usage_count >= 2);
+    check bool "args parameter is used at least twice (enable_debug and interface)" true 
+      (args_usage_count >= 2);
     
   with
   | exn -> fail ("Argument parsing assignment test failed: " ^ Printexc.to_string exn)

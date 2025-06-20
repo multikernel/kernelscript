@@ -411,7 +411,9 @@ let get_register_var_name ctx reg_id ir_type =
         | _ -> c_type_from_ir_type ir_type
       in
       Hashtbl.add ctx.register_vars reg_id var_name;
-      Hashtbl.add ctx.var_declarations var_name c_type;
+      (* Only add variable declaration if it doesn't already exist *)
+      if not (Hashtbl.mem ctx.var_declarations var_name) then
+        Hashtbl.add ctx.var_declarations var_name c_type;
       var_name
 
 (** Generate C value from IR value *)
@@ -439,7 +441,7 @@ let generate_c_value_from_ir ctx ir_value =
         | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
       ) elems in
       sprintf "{%s}" (String.concat ", " elem_strs)
-  | IRVariable name -> name
+  | IRVariable name -> name  (* Function parameters and regular variables use their names directly *)
   | IRRegister reg_id -> get_register_var_name ctx reg_id ir_value.val_type
   | IRContextField (_ctx_type, field) -> sprintf "ctx->%s" field
   | IRMapRef map_name -> sprintf "%s_fd" map_name
@@ -898,6 +900,8 @@ let generate_c_function_from_ir (ir_func : ir_function) =
   let ctx = if ir_func.func_name = "main" then create_main_context () else 
     { (create_userspace_context ()) with function_name = ir_func.func_name } in
   
+  (* Function parameters are used directly, no need for local variable copies *)
+  
   (* Generate function body from basic blocks *)
   let body_parts = List.map (fun block ->
     let label_part = if block.label <> "entry" then [sprintf "%s:" block.label] else [] in
@@ -931,17 +935,8 @@ let generate_c_function_from_ir (ir_func : ir_function) =
         "    // No arguments to parse"
     in
     
-    (* Generate assignment from parsed args to IR variables *)
-    let args_assignment_code = 
-      if List.length ir_func.parameters > 0 then
-        let (param_name, param_type) = List.hd ir_func.parameters in
-        (match param_type with
-         | IRStruct (_, _) ->
-           sprintf "    // Copy parsed arguments to function variable\n    var_0 = %s;" param_name
-         | _ -> "")
-      else
-        ""
-    in
+    (* No need to copy function parameters to local variables - use them directly *)
+    let args_assignment_code = "" in
     
     (* Check if this main function uses maps and needs auto-initialization *)
     let func_usage = collect_function_usage_from_ir_function ir_func in

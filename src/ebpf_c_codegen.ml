@@ -753,8 +753,8 @@ let generate_c_value ctx ir_val =
               config_name config_name field_name
         | _ -> name
       else
-        name
-  | IRRegister reg -> sprintf "tmp_%d" reg (* Convert registers to C variables *)
+        name  (* Function parameters and regular variables use their names directly *)
+  | IRRegister reg -> sprintf "tmp_%d" reg  (* Registers are always temporary variables *)
   | IRMapRef map_name -> sprintf "&%s" map_name
   | IRContextField (ctx_type, field) ->
       let ctx_var = "ctx" in (* Standard context parameter name *)
@@ -1521,6 +1521,9 @@ let collect_registers_in_function ir_func =
 (** Generate C function from IR function with type alias support *)
 
 let generate_c_function ctx ir_func =
+  (* Clear parameter register map for this function *)
+  (* param_register_map reset removed *)
+  
   let return_type_str = match ir_func.return_type with
     | Some ret_type -> ebpf_type_from_ir_type ret_type
     | None -> "void"
@@ -1546,8 +1549,12 @@ let generate_c_function ctx ir_func =
   emit_line ctx (sprintf "%s %s(%s) {" return_type_str ir_func.func_name params_str);
   increase_indent ctx;
   
-  (* Declare temporary variables for all registers used *)
-  let registers = collect_registers_in_function ir_func in
+  (* Function parameters are handled directly via IRVariable - no register mapping needed *)
+  
+  (* Collect all registers used (parameters use IRVariable, not registers) *)
+  let all_registers = collect_registers_in_function ir_func in
+  
+  (* Declare temporary variables for all registers *)
   let register_variable_map = collect_register_variable_mapping ir_func in
   List.iter (fun (reg, reg_type) ->
     let c_type = match reg_type with
@@ -1562,8 +1569,8 @@ let generate_c_function ctx ir_func =
            | None -> ebpf_type_from_ir_type reg_type)
     in
     emit_line ctx (sprintf "%s tmp_%d;" c_type reg)
-  ) registers;
-  if registers <> [] then emit_blank_line ctx;
+  ) all_registers;
+  if all_registers <> [] then emit_blank_line ctx;
   
   (* Generate basic blocks *)
   List.iter (generate_c_basic_block ctx) ir_func.basic_blocks;

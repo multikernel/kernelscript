@@ -43,6 +43,8 @@ type ir_context = {
   register_aliases: (int, string * ir_type) Hashtbl.t; (* register -> (alias_name, underlying_type) *)
   (* Track variable names to their original declared type names *)
   variable_declared_types: (string, string) Hashtbl.t; (* variable_name -> original_type_name *)
+  (* Track function parameters to avoid allocating registers for them *)
+  function_parameters: (string, ir_type) Hashtbl.t; (* param_name -> param_type *)
 }
 
 (** Create new IR generation context *)
@@ -63,6 +65,7 @@ let create_context symbol_table = {
   in_try_block = false;
   register_aliases = Hashtbl.create 32;
   variable_declared_types = Hashtbl.create 32;
+  function_parameters = Hashtbl.create 32;
 }
 
 (** Register allocation *)
@@ -73,12 +76,17 @@ let allocate_register ctx =
 
 (** Get or allocate register for variable *)
 let get_variable_register ctx name =
-  match Hashtbl.find_opt ctx.variables name with
-  | Some reg -> reg
-  | None ->
-      let reg = allocate_register ctx in
-      Hashtbl.add ctx.variables name reg;
-      reg
+  (* Check if this is a function parameter - if so, don't allocate a register *)
+  if Hashtbl.mem ctx.function_parameters name then
+    (* Function parameters don't get registers - they are accessed by name *)
+    failwith ("Function parameter " ^ name ^ " should not be accessed via register")
+  else
+    match Hashtbl.find_opt ctx.variables name with
+    | Some reg -> reg
+    | None ->
+        let reg = allocate_register ctx in
+        Hashtbl.add ctx.variables name reg;
+        reg
 
 (** Create new basic block *)
 let create_basic_block ctx label =
@@ -253,41 +261,47 @@ let rec lower_expression ctx (expr : Ast.expr) =
              (* Program references should be converted to string literals containing the program name *)
              make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
          | _ ->
-             (* Check if this is a constant from the symbol table *)
-             (match Symbol_table.lookup_symbol ctx.symbol_table name with
-              | Some symbol -> 
-                  (match symbol.kind with
-                   | Symbol_table.EnumConstant (_, Some value) ->
-                       (* Enum constants are treated as constants *)
-                       let ir_type = match expr.expr_type with
-                         | Some ast_type -> ast_type_to_ir_type ast_type
-                         | None -> IRU32
-                       in
-                       make_ir_value (IRLiteral (IntLit (value, None))) ir_type expr.expr_pos
-                   | Symbol_table.EnumConstant (_, None) ->
-                       (* Enum constant without value - treat as variable *)
-                       let reg = get_variable_register ctx name in
-                       let ir_type = match expr.expr_type with
-                         | Some ast_type -> ast_type_to_ir_type ast_type
-                         | None -> failwith ("Untyped identifier: " ^ name)
-                       in
-                       make_ir_value (IRRegister reg) ir_type expr.expr_pos
-                   | _ ->
-                       (* Regular variable *)
-                       let reg = get_variable_register ctx name in
-                       let ir_type = match expr.expr_type with
-                         | Some ast_type -> ast_type_to_ir_type ast_type
-                         | None -> failwith ("Untyped identifier: " ^ name)
-                       in
-                       make_ir_value (IRRegister reg) ir_type expr.expr_pos)
-              | None ->
-                  (* Regular variable *)
-                  let reg = get_variable_register ctx name in
-                  let ir_type = match expr.expr_type with
-                    | Some ast_type -> ast_type_to_ir_type ast_type
-                    | None -> failwith ("Untyped identifier: " ^ name)
-                  in
-                  make_ir_value (IRRegister reg) ir_type expr.expr_pos))
+             (* Check if this is a function parameter *)
+             if Hashtbl.mem ctx.function_parameters name then
+               (* Function parameters use IRVariable with their original names *)
+               let param_type = Hashtbl.find ctx.function_parameters name in
+               make_ir_value (IRVariable name) param_type expr.expr_pos
+             else
+               (* Check if this is a constant from the symbol table *)
+               (match Symbol_table.lookup_symbol ctx.symbol_table name with
+                | Some symbol -> 
+                    (match symbol.kind with
+                     | Symbol_table.EnumConstant (_, Some value) ->
+                         (* Enum constants are treated as constants *)
+                         let ir_type = match expr.expr_type with
+                           | Some ast_type -> ast_type_to_ir_type ast_type
+                           | None -> IRU32
+                         in
+                         make_ir_value (IRLiteral (IntLit (value, None))) ir_type expr.expr_pos
+                     | Symbol_table.EnumConstant (_, None) ->
+                         (* Enum constant without value - treat as variable *)
+                         let reg = get_variable_register ctx name in
+                         let ir_type = match expr.expr_type with
+                           | Some ast_type -> ast_type_to_ir_type ast_type
+                           | None -> failwith ("Untyped identifier: " ^ name)
+                         in
+                         make_ir_value (IRRegister reg) ir_type expr.expr_pos
+                     | _ ->
+                         (* Regular variable *)
+                         let reg = get_variable_register ctx name in
+                         let ir_type = match expr.expr_type with
+                           | Some ast_type -> ast_type_to_ir_type ast_type
+                           | None -> failwith ("Untyped identifier: " ^ name)
+                         in
+                         make_ir_value (IRRegister reg) ir_type expr.expr_pos)
+                | None ->
+                    (* Regular variable *)
+                    let reg = get_variable_register ctx name in
+                    let ir_type = match expr.expr_type with
+                      | Some ast_type -> ast_type_to_ir_type ast_type
+                      | None -> failwith ("Untyped identifier: " ^ name)
+                    in
+                    make_ir_value (IRRegister reg) ir_type expr.expr_pos))
       
   | Ast.ConfigAccess (config_name, field_name) ->
       (* Handle config access like config.field_name *)
@@ -1074,15 +1088,16 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   
   (* Reset for new function *)
   Hashtbl.clear ctx.variables;
+  Hashtbl.clear ctx.function_parameters;
   ctx.next_register <- 0;
   ctx.current_block <- [];
   ctx.blocks <- [];
   ctx.stack_usage <- 0;
   
-  (* Allocate registers for parameters *)
+  (* Store function parameters (don't allocate registers for them) *)
   let ir_params = List.map (fun (name, ast_type) ->
-    let _reg = get_variable_register ctx name in
     let ir_type = ast_type_to_ir_type ast_type in
+    Hashtbl.add ctx.function_parameters name ir_type;
     (name, ir_type)
   ) func_def.func_params in
   
@@ -1126,6 +1141,9 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   
   (* Use program name for main function, regular function names for others *)
   let ir_func_name = if is_main then prog_name else func_def.func_name in
+  
+  (* Clear function parameters for next function *)
+  Hashtbl.clear ctx.function_parameters;
   
   make_ir_function 
     ir_func_name 
