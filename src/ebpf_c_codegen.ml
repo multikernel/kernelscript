@@ -177,6 +177,9 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value map_val) @ 
       (collect_string_sizes_from_value key_val) @ 
       (collect_string_sizes_from_value value_val)
+  | IRStructFieldAssignment (obj_val, _field, value_val) ->
+      (collect_string_sizes_from_value obj_val) @ 
+      (collect_string_sizes_from_value value_val)
   | IRConfigAccess (_config_name, _field_name, result_val) ->
       collect_string_sizes_from_value result_val
   | IRContextAccess (dest_val, _access_type) -> 
@@ -1121,6 +1124,12 @@ let rec generate_c_instruction ctx ir_instr =
   | IRConfigFieldUpdate (_map_val, _key_val, _field, _value_val) ->
       (* Config field updates should never occur in eBPF programs - they are read-only *)
       failwith "Internal error: Config field updates in eBPF programs should have been caught during type checking - configs are read-only in kernel space"
+
+  | IRStructFieldAssignment (obj_val, field_name, value_val) ->
+      (* Generate struct field assignment: obj.field = value *)
+      let obj_str = generate_c_value ctx obj_val in
+      let value_str = generate_c_value ctx value_val in
+      emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str)
       
   | IRConfigAccess (config_name, field_name, result_val) ->
       (* For eBPF, config access goes through global maps *)
@@ -1495,6 +1504,8 @@ let collect_registers_in_function ir_func =
         collect_in_value map_val; collect_in_value key_val
     | IRConfigFieldUpdate (map_val, key_val, _field, value_val) ->
         collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
+    | IRStructFieldAssignment (obj_val, _field, value_val) ->
+        collect_in_value obj_val; collect_in_value value_val
     | IRConfigAccess (_config_name, _field_name, result_val) ->
         collect_in_value result_val
     | IRContextAccess (dest_val, _access_type) -> collect_in_value dest_val

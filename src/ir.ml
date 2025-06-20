@@ -220,6 +220,7 @@ and ir_instr_desc =
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
   | IRMapDelete of ir_value * ir_value
   | IRConfigFieldUpdate of ir_value * ir_value * string * ir_value (* map, key, field, value *)
+  | IRStructFieldAssignment of ir_value * string * ir_value (* object, field, value *)
   | IRConfigAccess of string * string * ir_value (* config_name, field_name, result_val *)
   | IRContextAccess of ir_value * context_access_type
   | IRBoundsCheck of ir_value * int * int (* value, min, max *)
@@ -661,6 +662,9 @@ let rec string_of_ir_instruction instr =
   | IRConfigFieldUpdate (map, key, field, value) ->
       Printf.sprintf "config_update(%s, %s, %s, %s)" 
         (string_of_ir_value map) (string_of_ir_value key) field (string_of_ir_value value)
+  | IRStructFieldAssignment (obj, field, value) ->
+      Printf.sprintf "%s.%s = %s" 
+        (string_of_ir_value obj) field (string_of_ir_value value)
   | IRConfigAccess (config_name, field_name, result_val) ->
       Printf.sprintf "config_access(%s, %s, %s)" config_name field_name (string_of_ir_value result_val)
   | IRContextAccess (dest, access_type) ->

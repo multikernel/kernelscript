@@ -999,18 +999,21 @@ let rec lower_statement ctx stmt =
   
   | Ast.FieldAssignment (object_expr, field_name, value_expr) ->
       (* Check if we're trying to assign to a config field *)
-      let map_name = match object_expr.expr_desc with
-        | Ast.Identifier var_name -> var_name
-        | _ -> failwith "Config field assignment must reference a config variable"
-      in
-      
-      (* Check if this is a config assignment by looking up in symbol table *)
-      let is_config = match Symbol_table.lookup_symbol ctx.symbol_table map_name with
-        | Some { kind = Config _; _ } -> true
+      let is_config = match object_expr.expr_desc with
+        | Ast.Identifier var_name ->
+            (match Symbol_table.lookup_symbol ctx.symbol_table var_name with
+             | Some { kind = Config _; _ } -> true
+             | _ -> false)
         | _ -> false
       in
+      
       if is_config then (
         (* This is a config field assignment *)
+        let map_name = match object_expr.expr_desc with
+          | Ast.Identifier var_name -> var_name
+          | _ -> failwith "Config field assignment must reference a config variable"
+        in
+        
         if not ctx.is_userspace then
           (* We're in eBPF kernel space - config fields are read-only *)
           failwith (Printf.sprintf 
@@ -1028,8 +1031,14 @@ let rec lower_statement ctx stmt =
           emit_instruction ctx instr
         )
       ) else (
-        (* This is regular field assignment (not config) - not implemented yet *)
-        failwith "Regular field assignment not implemented yet"
+        (* This is regular struct field assignment *)
+        let obj_val = lower_expression ctx object_expr in
+        let value_val = lower_expression ctx value_expr in
+        let instr = make_ir_instruction 
+          (IRStructFieldAssignment (obj_val, field_name, value_val)) 
+          stmt.stmt_pos 
+        in
+        emit_instruction ctx instr
       )
       
   | Ast.Continue ->

@@ -759,10 +759,36 @@ let rec type_check_statement ctx stmt =
                   type_error ("Config '" ^ config_name ^ "' has no field '" ^ field ^ "'") stmt.stmt_pos))
        | _ ->
            (* Try to type check the object expression first *)
-           let _ = type_check_expression ctx obj_expr in
-           (* For now, only support config field assignments *)
-           type_error ("Field assignment is currently only supported for config objects") stmt.stmt_pos)
-
+           let typed_obj = type_check_expression ctx obj_expr in
+           
+           (* Check if this is regular struct field assignment *)
+           (match typed_obj.texpr_type with
+            | Struct struct_name | UserType struct_name ->
+                (* Look up struct definition and field type *)
+                (try
+                   let type_def = Hashtbl.find ctx.types struct_name in
+                   match type_def with
+                   | StructDef (_, fields) ->
+                       (try
+                          let field_type = List.assoc field fields in
+                          let resolved_field_type = resolve_user_type ctx field_type in
+                          let resolved_value_type = resolve_user_type ctx typed_value.texpr_type in
+                          (* Check if the value type is compatible with the field type *)
+                          (match unify_types resolved_field_type resolved_value_type with
+                           | Some _ ->
+                               { tstmt_desc = TFieldAssignment (typed_obj, field, typed_value); tstmt_pos = stmt.stmt_pos }
+                           | None ->
+                               type_error ("Cannot assign " ^ string_of_bpf_type resolved_value_type ^ 
+                                          " to field of type " ^ string_of_bpf_type resolved_field_type) stmt.stmt_pos)
+                        with Not_found ->
+                          type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) stmt.stmt_pos)
+                   | _ ->
+                       type_error (struct_name ^ " is not a struct") stmt.stmt_pos
+                 with Not_found ->
+                   type_error ("Undefined struct: " ^ struct_name) stmt.stmt_pos)
+            | _ ->
+                type_error ("Field assignment can only be used on struct objects or config objects") stmt.stmt_pos))
+  
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       let typed_key = type_check_expression ctx key_expr in
       let typed_value = type_check_expression ctx value_expr in

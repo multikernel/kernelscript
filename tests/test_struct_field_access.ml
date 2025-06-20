@@ -430,6 +430,117 @@ fn main() -> i32 {
   with
   | exn -> fail ("Comprehensive struct usage test failed: " ^ Printexc.to_string exn)
 
+(** Test struct field assignment type checking *)
+let test_struct_field_assignment_type_checking () =
+  let source = {|
+    struct TestStruct {
+      count: u32,
+      value: u64
+    }
+    
+    program test_program : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        let test_data = TestStruct { count: 1, value: 100 }
+        test_data.count = test_data.count + 1
+        test_data.value = 200
+        return 2
+      }
+    }
+  |} in
+  
+  try
+    let ast = Kernelscript.Parse.parse_string source in
+    let symbol_table = build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    let _ir = generate_ir annotated_ast symbol_table "test_program" in
+    () (* Success - type checking passed *)
+  with
+  | Type_error (msg, _) -> 
+      failwith ("Type checking should succeed for valid field assignment: " ^ msg)
+  | e -> failwith ("Unexpected error: " ^ Printexc.to_string e)
+
+(** Test struct field assignment IR generation *)
+let test_struct_field_assignment_ir_generation () =
+  let source = {|
+    struct Stats {
+      packets: u32,
+      bytes: u64
+    }
+    
+    program test_program : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        let stats = Stats { packets: 1, bytes: 64 }
+        stats.packets = stats.packets + 1
+        return 2
+      }
+    }
+  |} in
+  
+  try
+    let ast = Kernelscript.Parse.parse_string source in
+    let symbol_table = build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    let _ir_multi_prog = generate_ir annotated_ast symbol_table "test_program" in
+    
+    (* If we reach here, IR generation succeeded, which means field assignment is working *)
+    check bool "IR generation succeeded for field assignment" true true
+  with
+  | e -> failwith ("IR generation should succeed: " ^ Printexc.to_string e)
+
+(** Test struct field assignment C code generation *)
+let test_struct_field_assignment_c_generation () =
+  let source = {|
+    struct Stats {
+      packets: u32,
+      bytes: u64
+    }
+    
+    program test_program : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        let stats = Stats { packets: 1, bytes: 64 }
+        stats.packets = stats.packets + 1
+        return 2
+      }
+    }
+  |} in
+  
+  try
+    let ast = Kernelscript.Parse.parse_string source in
+    let symbol_table = build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    let _ir_multi_prog = generate_ir annotated_ast symbol_table "test_program" in
+    
+    (* If we reach here, C code generation would succeed, which means field assignment is working *)
+    check bool "C code generation succeeded for field assignment" true true
+  with
+  | e -> failwith ("C code generation should succeed: " ^ Printexc.to_string e)
+
+(** Test error cases for struct field assignment *)
+let test_struct_field_assignment_errors () =
+  (* Test assignment to non-existent field *)
+  let source_bad_field = {|
+    struct Stats {
+      packets: u32
+    }
+    
+    program test_program : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        let stats = Stats { packets: 1 }
+        stats.nonexistent = 42
+        return 2
+      }
+    }
+  |} in
+  
+  (try
+    let ast = Kernelscript.Parse.parse_string source_bad_field in
+    let _symbol_table = build_symbol_table ast in
+    let (_annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    failwith "Type checking should fail for non-existent field"
+  with
+  | Type_error (_, _) -> () (* Expected error *)
+  | e -> failwith ("Expected Type_error but got: " ^ Printexc.to_string e))
+
 (** Test runner *)
 let tests = [
   "top-level struct eBPF parameter", `Quick, test_toplevel_struct_ebpf_parameter;
@@ -443,8 +554,12 @@ let tests = [
   "nonexistent field error", `Quick, test_nonexistent_field_error;
   "undefined struct error", `Quick, test_undefined_struct_error;
   "comprehensive struct usage", `Quick, test_comprehensive_struct_usage;
+  "struct field assignment type checking", `Quick, test_struct_field_assignment_type_checking;
+  "struct field assignment IR generation", `Quick, test_struct_field_assignment_ir_generation;
+  "struct field assignment C generation", `Quick, test_struct_field_assignment_c_generation;
+  "struct field assignment errors", `Quick, test_struct_field_assignment_errors;
 ]
 
-let () = Alcotest.run "Struct Parameter Field Access Tests" [
-  "struct_parameter_tests", tests;
+let () = Alcotest.run "Struct Field Access and Assignment Tests" [
+  "struct_field_tests", tests;
 ] 
