@@ -1203,9 +1203,9 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
     func_def.func_pos
 
 (** Lower AST map declaration to IR map definition *)
-let lower_map_declaration (map_decl : Ast.map_declaration) =
-  let ir_key_type = ast_type_to_ir_type map_decl.Ast.key_type in
-  let ir_value_type = ast_type_to_ir_type map_decl.Ast.value_type in
+let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
+  let ir_key_type = ast_type_to_ir_type_with_context symbol_table map_decl.Ast.key_type in
+  let ir_value_type = ast_type_to_ir_type_with_context symbol_table map_decl.Ast.value_type in
   let ir_map_type = ast_map_type_to_ir_map_type map_decl.Ast.map_type in
   
   let ir_attributes = List.filter_map (fun attr ->
@@ -1477,7 +1477,7 @@ let lower_single_program ctx prog_def _global_ir_maps =
   let program_scoped_maps = prog_def.prog_maps in
   
   (* Lower program-scoped maps *)
-  let ir_program_maps = List.map (fun map_decl -> lower_map_declaration map_decl) program_scoped_maps in
+  let ir_program_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) program_scoped_maps in
   
   (* Add all maps to context for this program *)
   List.iter (fun (map_def : ir_map_def) -> 
@@ -1552,7 +1552,7 @@ let lower_multi_program ast symbol_table source_name =
   ) ast in
   
   (* Lower global maps *)
-  let ir_global_maps = List.map (fun map_decl -> lower_map_declaration map_decl) global_map_decls in
+  let ir_global_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) global_map_decls in
   
   (* Add global maps to main context for userspace processing *)
   List.iter (fun (map_def : ir_map_def) -> 
@@ -1562,7 +1562,7 @@ let lower_multi_program ast symbol_table source_name =
   (* Also add all program-scoped maps to main context for userspace processing *)
   List.iter (fun prog_def ->
     let program_scoped_maps = prog_def.prog_maps in
-    let ir_program_maps = List.map (fun map_decl -> lower_map_declaration map_decl) program_scoped_maps in
+    let ir_program_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) program_scoped_maps in
     List.iter (fun (map_def : ir_map_def) -> 
       Hashtbl.add ctx.maps map_def.map_name map_def
     ) ir_program_maps

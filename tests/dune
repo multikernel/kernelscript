@@ -229,7 +229,7 @@
 (executable
  (name test_type_alias)
  (modules test_type_alias)
- (libraries kernelscript ounit2))
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_const_variables)
