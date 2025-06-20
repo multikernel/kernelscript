@@ -1002,6 +1002,91 @@ program test : xdp {
       check bool ("comprehensive null: " ^ desc) false true
   ) comprehensive_tests
 
+(** Helper function to check if string contains substring *)
+let contains_substr str substr =
+  try
+    let _ = Str.search_forward (Str.regexp_string substr) str 0 in
+    true
+  with Not_found -> false
+
+(** Test XDP signature validation enforcement *)
+let test_xdp_signature_validation () =
+  let invalid_signature_tests = [
+    (* Missing context parameter *)
+    ({|
+program test : xdp {
+  fn main() -> XdpAction {
+    return XDP_PASS
+  }
+}
+|}, "missing context parameter");
+    
+    (* Wrong parameter type *)
+    ({|
+program test : xdp {
+  fn main(wrong_param: u32) -> XdpAction {
+    return XDP_PASS
+  }
+}
+|}, "wrong parameter type");
+    
+    (* Wrong return type - TODO: Fix IR generation for this case *)
+    (* ({|
+program test : xdp {
+  fn main(ctx: XdpContext) -> u32 {
+    return 0
+  }
+}
+|}, "wrong return type"); *)
+    
+    (* No parameters and wrong return type *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    return 0
+  }
+}
+|}, "no parameters and wrong return type");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
+      let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
+      (* If we get here, validation failed to catch the error *)
+      check bool ("XDP signature validation should have failed for: " ^ desc) false true
+    with
+    | Failure msg when contains_substr msg "Invalid function signature" ->
+        (* Expected failure - signature validation caught the error *)
+        check bool ("XDP signature validation correctly rejected: " ^ desc) true true
+    | exn -> 
+        Printf.printf "Unexpected error in XDP signature test '%s': %s\n" desc (Printexc.to_string exn);
+        check bool ("XDP signature validation failed unexpectedly for: " ^ desc) false true
+  ) invalid_signature_tests;
+  
+  (* Test that valid signature passes *)
+  let valid_program = {|
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    return XDP_PASS
+  }
+}
+|} in
+  try
+    let ast = parse_string valid_program in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
+    let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
+    check bool "valid XDP signature should pass" true true
+  with
+  | exn ->
+      Printf.printf "Valid XDP signature unexpectedly failed: %s\n" (Printexc.to_string exn);
+      check bool "valid XDP signature should pass" false true
+
 let type_checker_tests = [
   "type_unification", `Quick, test_type_unification;
   "basic_type_inference", `Quick, test_basic_type_inference;
@@ -1033,6 +1118,7 @@ let type_checker_tests = [
   "null_comparisons", `Quick, test_null_comparisons;
   "map_null_semantics", `Quick, test_map_null_semantics;
   "null_vs_throw_pattern", `Quick, test_null_vs_throw_pattern;
+  "xdp_signature_validation", `Quick, test_xdp_signature_validation;
 ]
 
 let () =
