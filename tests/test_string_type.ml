@@ -6,7 +6,8 @@ open Kernelscript.Type_checker
 let parse_and_type_check source =
   let lexbuf = Lexing.from_string source in
   let ast = Kernelscript.Parser.program Kernelscript.Lexer.token lexbuf in
-  let ctx = create_context () in
+  let empty_symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
+  let ctx = create_context empty_symbol_table in
   (* For basic tests, we'll test individual expressions *)
   match ast with
   | [Program prog] ->

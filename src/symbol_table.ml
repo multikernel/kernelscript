@@ -5,6 +5,7 @@ open Ast
 (** Symbol kinds *)
 type symbol_kind =
   | Variable of bpf_type
+  | ConstVariable of bpf_type * literal  (* type and value *)
   | Function of bpf_type list * bpf_type  (* params, return *)
   | TypeDef of type_def
   | GlobalMap of map_declaration
@@ -198,6 +199,18 @@ let is_visible table symbol =
       | [], _ -> true  (* global private symbols are visible *)
       | _ -> false
 
+(** Check if a symbol is a const variable *)
+let is_const_variable symbol =
+  match symbol.kind with
+  | ConstVariable _ -> true
+  | _ -> false
+
+(** Get the value of a const variable *)
+let get_const_value symbol =
+  match symbol.kind with
+  | ConstVariable (_, value) -> Some value
+  | _ -> None
+
 (** Process enum values with automatic numbering *)
 let process_enum_values values =
   let rec process_values acc current_value = function
@@ -321,27 +334,13 @@ let get_global_symbols table =
     global_symbols @ acc
   ) table.symbols []
 
-(** Build symbol table from AST *)
-let rec build_symbol_table ?builtin_path ast =
+(** Build symbol table from AST with optional builtins *)
+let rec build_symbol_table ?builtin_asts ast =
   let table = create_symbol_table () in
   
-  (* Load builtin definitions from KernelScript files *)
-  (* Load XDP builtins *)
-  (match Type_checker.load_builtin_ast ?builtin_path "xdp.ks" with
-   | Some builtin_ast ->
-       List.iter (process_declaration table) builtin_ast
-   | None -> ());
-  
-  (* Load TC builtins *)
-  (match Type_checker.load_builtin_ast ?builtin_path "tc.ks" with
-   | Some builtin_ast ->
-       List.iter (process_declaration table) builtin_ast
-   | None -> ());
-  
-  (* Load Kprobe builtins *)
-  (match Type_checker.load_builtin_ast ?builtin_path "kprobe.ks" with
-   | Some builtin_ast ->
-       List.iter (process_declaration table) builtin_ast
+  (* Load builtin definitions if provided *)
+  (match builtin_asts with
+   | Some builtins -> List.iter (List.iter (process_declaration table)) builtins
    | None -> ());
   
   List.iter (process_declaration table) ast;
@@ -488,6 +487,20 @@ and process_statement table stmt =
         | None -> U32  (* TODO: implement expression type inference *)
       in
       add_variable table name var_type stmt.stmt_pos;
+      process_expression table expr
+      
+  | ConstDeclaration (name, type_opt, expr) ->
+      (* Const declarations handled similarly but with const symbol kind *)
+      let var_type = match type_opt with
+        | Some t -> t
+        | None -> U32  (* TODO: implement expression type inference *)
+      in
+      (* We'll need to extract the literal value from expr for const declarations *)
+      let const_value = match expr.expr_desc with
+        | Literal lit -> lit
+        | _ -> IntLit (0, None) (* Default fallback *)
+      in
+      add_symbol table name (ConstVariable (var_type, const_value)) Private stmt.stmt_pos;
       process_expression table expr
       
   | Assignment (_name, expr) ->
@@ -713,6 +726,7 @@ let get_accessible_maps table =
 (** Pretty printing for debugging *)
 let string_of_symbol_kind = function
   | Variable t -> "variable:" ^ string_of_bpf_type t
+  | ConstVariable (t, value) -> "const_variable:" ^ string_of_bpf_type t ^ "=" ^ string_of_literal value
   | Function (params, ret) ->
       "function:(" ^ String.concat "," (List.map string_of_bpf_type params) ^ ")->" ^ string_of_bpf_type ret
   | TypeDef (StructDef (name, _)) -> "struct:" ^ name

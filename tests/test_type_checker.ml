@@ -3,6 +3,51 @@ open Kernelscript.Type_checker
 open Kernelscript.Parse
 open Alcotest
 
+
+(** Helper function to create symbol table with builtin loading *)
+let create_symbol_table_with_builtins ast =
+  let find_builtin_dir () =
+    let candidates = [
+      "builtin";              (* Current directory *)
+      "../builtin";           (* From subdirectory like tests/ *)
+      "../../builtin";        (* From _build/default/ *)
+      "../../../builtin";     (* From _build/default/tests/ *)
+    ] in
+    List.find_opt (fun dir -> Sys.file_exists dir && Sys.is_directory dir) candidates
+  in
+  
+  let load_builtin_ast builtin_file =
+    match find_builtin_dir () with
+    | Some builtin_dir ->
+        let full_path = builtin_dir ^ "/" ^ builtin_file in
+        if Sys.file_exists full_path then
+          try
+            let content = 
+              let ic = open_in full_path in
+              let content = really_input_string ic (in_channel_length ic) in
+              close_in ic;
+              content
+            in
+            Some (Kernelscript.Parse.parse_string content)
+          with _ -> None
+        else None
+    | None -> None
+  in
+  let builtin_asts = ref [] in
+  (match load_builtin_ast "xdp.ks" with
+   | Some ast -> builtin_asts := ast :: !builtin_asts
+   | None -> ());
+  (match load_builtin_ast "tc.ks" with
+   | Some ast -> builtin_asts := ast :: !builtin_asts
+   | None -> ());
+  (match load_builtin_ast "kprobe.ks" with
+   | Some ast -> builtin_asts := ast :: !builtin_asts
+   | None -> ());
+  if !builtin_asts = [] then
+    Kernelscript.Symbol_table.build_symbol_table ast
+  else
+    Kernelscript.Symbol_table.build_symbol_table ~builtin_asts:(List.rev !builtin_asts) ast
+
 (** Helper function to check if two types can unify *)
 let can_unify t1 t2 =
   match unify_types t1 t2 with
@@ -747,7 +792,7 @@ program test : xdp {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let symbol_table = create_symbol_table_with_builtins ast in
       let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
       let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("null literal typing: " ^ desc) true true
@@ -790,7 +835,7 @@ program test : xdp {
 |} stmt in
     try
       let ast = parse_string program_text in
-      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let symbol_table = create_symbol_table_with_builtins ast in
       let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
       let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("null comparison: " ^ desc) true true
@@ -858,7 +903,7 @@ program test : xdp {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let symbol_table = create_symbol_table_with_builtins ast in
       let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
       let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("map null semantics: " ^ desc) true true
@@ -1052,7 +1097,7 @@ program test : xdp {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let symbol_table = create_symbol_table_with_builtins ast in
       let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
       let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
       let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
@@ -1077,7 +1122,7 @@ program test : xdp {
 |} in
   try
     let ast = parse_string valid_program in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let symbol_table = create_symbol_table_with_builtins ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
     let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in

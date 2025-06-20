@@ -161,6 +161,8 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         analyze_expr_for_maps prog_name value_expr
     | Declaration (_, _, expr) ->
         analyze_expr_for_maps prog_name expr
+    | ConstDeclaration (_, _, expr) ->
+        analyze_expr_for_maps prog_name expr
     | Return (Some expr) ->
         analyze_expr_for_maps prog_name expr
     | If (cond_expr, then_stmts, else_stmts_opt) ->

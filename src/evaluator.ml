@@ -478,6 +478,10 @@ and eval_statement ctx stmt =
       let value = eval_expression ctx expr in
       Hashtbl.add ctx.variables name value
   
+  | ConstDeclaration (name, _, expr) ->
+      let value = eval_expression ctx expr in
+      Hashtbl.add ctx.variables name value
+  
   | Return None ->
       raise (Return_value UnitValue)
   

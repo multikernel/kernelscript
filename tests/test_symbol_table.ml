@@ -137,6 +137,7 @@ let comprehensive_symbol_analysis symbol_table ast =
       match symbol.kind with
       | Function _ -> incr function_count
       | Variable _ | Parameter _ -> incr variable_count  
+      | ConstVariable _ -> incr variable_count  (* Count const variables as variables *)
       | TypeDef _ -> incr type_count
       | GlobalMap _ | LocalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count

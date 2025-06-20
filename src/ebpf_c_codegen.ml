@@ -1006,23 +1006,31 @@ let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
 let rec generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) ->
+      (* Check if this is a const variable declaration by looking for const comment *)
+      (* Since we don't have access to current_block in C codegen context, 
+         we'll disable const detection for now *)
+      let is_const_declaration = false in
+      
       (* Check if this is a string assignment *)
       (match dest_val.val_type, expr.expr_desc with
        | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
            (* String to string assignment - need to copy struct *)
            let dest_str = generate_c_value ctx dest_val in
            let src_str = generate_c_value ctx src_val in
-           emit_line ctx (sprintf "%s = %s;" dest_str src_str)
+           let assignment_prefix = if is_const_declaration then "const " else "" in
+           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
        | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
            (* String literal to string assignment - already handled in generate_c_value *)
            let dest_str = generate_c_value ctx dest_val in
            let src_str = generate_c_value ctx src_val in
-           emit_line ctx (sprintf "%s = %s;" dest_str src_str)
+           let assignment_prefix = if is_const_declaration then "const " else "" in
+           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
        | IRStr _, _ ->
            (* Other string expressions (concatenation, etc.) *)
            let dest_str = generate_c_value ctx dest_val in
            let expr_str = generate_c_expression ctx expr in
-           emit_line ctx (sprintf "%s = %s;" dest_str expr_str)
+           let assignment_prefix = if is_const_declaration then "const " else "" in
+           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
        | _ ->
            (* Regular assignment - handle struct literals specially *)
            let dest_str = generate_c_value ctx dest_val in
@@ -1034,11 +1042,14 @@ let rec generate_c_instruction ctx ir_instr =
                   sprintf ".%s = %s" field_name field_value_str
                 ) field_assignments in
                 let struct_type = sprintf "struct %s" struct_name in
-                emit_line ctx (sprintf "%s = (%s){%s};" dest_str struct_type (String.concat ", " field_strs))
+                let assignment_prefix = if is_const_declaration then "const " else "" in
+                emit_line ctx (sprintf "%s%s = (%s){%s};" assignment_prefix dest_str struct_type (String.concat ", " field_strs))
             | _ ->
                 (* Other expressions *)
                 let expr_str = generate_c_expression ctx expr in
-                emit_line ctx (sprintf "%s = %s;" dest_str expr_str)))
+                (* For const declarations with simple literals, use const keyword *)
+                let assignment_prefix = if is_const_declaration then "const " else "" in
+                emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)))
 
   | IRCall (name, args, ret_opt) ->
       (* Check if this is a built-in function that needs context-specific translation *)

@@ -81,6 +81,7 @@
     | "break" -> BREAK
     | "continue" -> CONTINUE
     | "let" -> LET
+    | "const" -> CONST
     | "config" -> CONFIG
     | "in" -> IN
     | "delete" -> DELETE

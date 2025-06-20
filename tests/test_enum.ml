@@ -75,7 +75,8 @@ let test_enum_symbol_table () =
 
 (** Test enum type checking and unification *)
 let test_enum_type_checking () =
-  let ctx = create_context () in
+  let empty_symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
+  let ctx = create_context empty_symbol_table in
   
   (* Add enum type to context *)
   let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in

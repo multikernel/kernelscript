@@ -10,9 +10,10 @@ let find_builtin_dir ?builtin_path () =
   | None ->
       let candidates = [
         "builtin";              (* Current directory *)
-        "../../../builtin";     (* From _build/default/tests/ *)
+        "../builtin";           (* From subdirectory like tests/ *)
         "../../builtin";        (* From _build/default/ *)
-        "../builtin";           (* From subdirectory *)
+        "../../../builtin";     (* From _build/default/tests/ *)
+        "../../../../builtin";  (* From deeper nested build dirs *)
       ] in
       List.find_opt (fun dir -> Sys.file_exists dir && Sys.is_directory dir) candidates
 
@@ -46,6 +47,7 @@ type type_context = {
   maps: (string, map_declaration) Hashtbl.t;
   configs: (string, config_declaration) Hashtbl.t;
   programs: (string, program_def) Hashtbl.t; (* Track program definitions *)
+  symbol_table: Symbol_table.symbol_table; (* Add symbol table reference *)
   mutable current_function: string option;
   mutable current_program: string option;
   mutable current_program_type: program_type option;
@@ -81,6 +83,7 @@ and typed_stmt_desc =
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
   | TDeclaration of string * bpf_type * typed_expr
+  | TConstDeclaration of string * bpf_type * typed_expr
   | TReturn of typed_expr option
   | TIf of typed_expr * typed_statement list * typed_statement list option
   | TFor of string * typed_expr * typed_expr * typed_statement list
@@ -110,13 +113,14 @@ type typed_program = {
 }
 
 (** Create type checking context *)
-let create_context () = {
+let create_context symbol_table = {
   variables = Hashtbl.create 32;
   functions = Hashtbl.create 16;
   types = Hashtbl.create 16;
   maps = Hashtbl.create 16;
   configs = Hashtbl.create 16;
   programs = Hashtbl.create 16;
+  symbol_table = symbol_table;
   current_function = None;
   current_program = None;
   current_program_type = None;
@@ -739,18 +743,23 @@ let rec type_check_statement ctx stmt =
   
     | Assignment (name, expr) ->
       let typed_expr = type_check_expression ctx expr in
-      (try
-         let var_type = Hashtbl.find ctx.variables name in
-         let resolved_var_type = resolve_user_type ctx var_type in
-         let resolved_expr_type = resolve_user_type ctx typed_expr.texpr_type in
-         (match unify_types resolved_var_type resolved_expr_type with
-          | Some _ -> 
-              { tstmt_desc = TAssignment (name, typed_expr); tstmt_pos = stmt.stmt_pos }
-          | None ->
-              type_error ("Cannot assign " ^ string_of_bpf_type resolved_expr_type ^ 
-                         " to variable of type " ^ string_of_bpf_type resolved_var_type) stmt.stmt_pos)
-       with Not_found ->
-         type_error ("Undefined variable: " ^ name) stmt.stmt_pos)
+      (* Check if the variable is const by looking it up in the symbol table *)
+      (match Symbol_table.lookup_symbol ctx.symbol_table name with
+       | Some symbol when Symbol_table.is_const_variable symbol ->
+           type_error ("Cannot assign to const variable: " ^ name) stmt.stmt_pos
+       | _ ->
+           (try
+              let var_type = Hashtbl.find ctx.variables name in
+              let resolved_var_type = resolve_user_type ctx var_type in
+              let resolved_expr_type = resolve_user_type ctx typed_expr.texpr_type in
+              (match unify_types resolved_var_type resolved_expr_type with
+               | Some _ -> 
+                   { tstmt_desc = TAssignment (name, typed_expr); tstmt_pos = stmt.stmt_pos }
+               | None ->
+                   type_error ("Cannot assign " ^ string_of_bpf_type resolved_expr_type ^ 
+                              " to variable of type " ^ string_of_bpf_type resolved_var_type) stmt.stmt_pos)
+            with Not_found ->
+              type_error ("Undefined variable: " ^ name) stmt.stmt_pos))
 
   | FieldAssignment (obj_expr, field, value_expr) ->
       let typed_value = type_check_expression ctx value_expr in
@@ -853,6 +862,47 @@ let rec type_check_statement ctx stmt =
       in
       Hashtbl.replace ctx.variables name var_type;
       { tstmt_desc = TDeclaration (name, var_type, typed_expr); tstmt_pos = stmt.stmt_pos }
+  
+  | ConstDeclaration (name, type_opt, expr) ->
+      let typed_expr = type_check_expression ctx expr in
+      
+      (* Check if trying to assign a map to a const *)
+      (match typed_expr.texpr_type with
+       | Map (_, _, _) -> type_error ("Maps cannot be assigned to const variables") stmt.stmt_pos
+       | _ -> ());
+      
+      (* Validate that the expression is a compile-time constant (literals and negated literals) *)
+      let const_value = match typed_expr.texpr_desc with
+        | TLiteral lit -> lit
+        | TUnaryOp (Neg, {texpr_desc = TLiteral (IntLit (n, Some sign)); _}) -> 
+            IntLit (-n, Some sign)  (* Negated signed integer literal *)
+        | TUnaryOp (Neg, {texpr_desc = TLiteral (IntLit (n, None)); _}) -> 
+            IntLit (-n, None)  (* Negated integer literal *)
+        | _ -> type_error ("Const variable must be initialized with a literal value") stmt.stmt_pos
+      in
+      
+      (* Enforce that const variables can only hold integer types *)
+      let var_type = match type_opt with
+        | Some declared_type ->
+            let resolved_declared_type = resolve_user_type ctx declared_type in
+            (match resolved_declared_type with
+             | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 ->
+                 if can_assign resolved_declared_type typed_expr.texpr_type then
+                   resolved_declared_type
+                 else
+                   type_error ("Type mismatch in const declaration") stmt.stmt_pos
+             | _ -> type_error ("Const variables can only be integer types") stmt.stmt_pos)
+        | None -> 
+            (match typed_expr.texpr_type with
+             | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 as t -> t
+             | _ -> type_error ("Const variables can only be integer types") stmt.stmt_pos)
+      in
+      
+      (* Add to variables table and symbol table *)
+      Hashtbl.replace ctx.variables name var_type;
+      Symbol_table.add_symbol ctx.symbol_table name (Symbol_table.ConstVariable (var_type, const_value)) Symbol_table.Private stmt.stmt_pos;
+      
+      { tstmt_desc = TConstDeclaration (name, var_type, typed_expr); tstmt_pos = stmt.stmt_pos }
   
   | Return expr_opt ->
       let typed_expr_opt = Option.map (type_check_expression ctx) expr_opt in
@@ -1111,8 +1161,6 @@ let type_check_userspace _ctx _userspace_block =
 
 (** Main type checking entry point *)
 let type_check_ast ?builtin_path ast =
-  let ctx = create_context () in
-  
   (* Load builtin definitions from KernelScript files *)
   let _builtin_dir = "builtin" in
   let _load_builtin_ast builtin_file =
@@ -1129,41 +1177,39 @@ let type_check_ast ?builtin_path ast =
     else None
   in
   
+  (* Collect all builtin ASTs *)
+  let builtin_asts = ref [] in
+  
   (* Load XDP builtins *)
   (match load_builtin_ast ?builtin_path "xdp.ks" with
-   | Some builtin_ast ->
-       List.iter (function
-         | TypeDef type_def ->
-             (match type_def with
-              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-                  Hashtbl.replace ctx.types name type_def)
-         | _ -> ()
-       ) builtin_ast
+   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
    | None -> ());
   
   (* Load TC builtins *)
   (match load_builtin_ast ?builtin_path "tc.ks" with
-   | Some builtin_ast ->
-       List.iter (function
-         | TypeDef type_def ->
-             (match type_def with
-              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-                  Hashtbl.replace ctx.types name type_def)
-         | _ -> ()
-       ) builtin_ast
+   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
    | None -> ());
   
   (* Load Kprobe builtins *)
   (match load_builtin_ast ?builtin_path "kprobe.ks" with
-   | Some builtin_ast ->
-       List.iter (function
-         | TypeDef type_def ->
-             (match type_def with
-              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-                  Hashtbl.replace ctx.types name type_def)
-         | _ -> ()
-       ) builtin_ast
+   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
    | None -> ());
+  
+  (* Create symbol table with builtin definitions *)
+  let symbol_table = if !builtin_asts = [] then Symbol_table.build_symbol_table ast else Symbol_table.build_symbol_table 
+    ~builtin_asts:(List.rev !builtin_asts) ast in
+  let ctx = create_context symbol_table in
+  
+  (* Process builtin types into type context *)
+  List.iter (fun builtin_ast ->
+    List.iter (function
+      | TypeDef type_def ->
+          (match type_def with
+           | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+               Hashtbl.replace ctx.types name type_def)
+      | _ -> ()
+    ) builtin_ast
+  ) !builtin_asts;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
@@ -1268,6 +1314,7 @@ let rec typed_stmt_to_stmt tstmt =
     | TIndexAssignment (map_expr, key_expr, value_expr) -> 
         IndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, typed_expr_to_expr value_expr)
     | TDeclaration (name, typ, expr) -> Declaration (name, Some typ, typed_expr_to_expr expr)
+  | TConstDeclaration (name, typ, expr) -> ConstDeclaration (name, Some typ, typed_expr_to_expr expr)
     | TReturn expr_opt -> Return (Option.map typed_expr_to_expr expr_opt)
     | TIf (cond, then_stmts, else_opt) -> 
         If (typed_expr_to_expr cond, 
@@ -1376,8 +1423,6 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
     Multi_program_analyzer.print_analysis_results multi_prog_analysis;
   
   (* STEP 2: Type checking with multi-program context *)
-  let ctx = create_context () in
-  
   (* Load builtin definitions from KernelScript files *)
   let _builtin_dir = "builtin" in
   let _load_builtin_ast builtin_file =
@@ -1394,41 +1439,43 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
     else None
   in
   
+  (* Collect all builtin ASTs *)
+  let builtin_asts = ref [] in
+  
   (* Load XDP builtins *)
   (match load_builtin_ast ?builtin_path "xdp.ks" with
-   | Some builtin_ast ->
-       List.iter (function
-         | TypeDef type_def ->
-             (match type_def with
-              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-                  Hashtbl.replace ctx.types name type_def)
-         | _ -> ()
-       ) builtin_ast
+   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
    | None -> ());
   
   (* Load TC builtins *)
   (match load_builtin_ast ?builtin_path "tc.ks" with
-   | Some builtin_ast ->
-       List.iter (function
-         | TypeDef type_def ->
-             (match type_def with
-              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-                  Hashtbl.replace ctx.types name type_def)
-         | _ -> ()
-       ) builtin_ast
+   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
    | None -> ());
   
   (* Load Kprobe builtins *)
   (match load_builtin_ast ?builtin_path "kprobe.ks" with
-   | Some builtin_ast ->
-       List.iter (function
-         | TypeDef type_def ->
-             (match type_def with
-              | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-                  Hashtbl.replace ctx.types name type_def)
-         | _ -> ()
-       ) builtin_ast
+   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
    | None -> ());
+  
+  (* Create symbol table with builtin definitions *)
+  let symbol_table = 
+    if !builtin_asts = [] then
+      Symbol_table.build_symbol_table ast
+    else
+      Symbol_table.build_symbol_table ~builtin_asts:(List.rev !builtin_asts) ast
+  in
+  let ctx = create_context symbol_table in
+  
+  (* Process builtin types into type context *)
+  List.iter (fun builtin_ast ->
+    List.iter (function
+      | TypeDef type_def ->
+          (match type_def with
+           | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+               Hashtbl.replace ctx.types name type_def)
+      | _ -> ()
+    ) builtin_ast
+  ) !builtin_asts;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
@@ -1552,6 +1599,8 @@ and populate_multi_program_context ast multi_prog_analysis =
          | None -> ())
     | Declaration (_, _, expr) ->
         enhance_expr prog_type expr
+    | ConstDeclaration (_, _, expr) ->
+        enhance_expr prog_type expr
     | Return (Some expr) ->
         enhance_expr prog_type expr
     | If (cond_expr, then_stmts, else_stmts_opt) ->
@@ -1645,6 +1694,8 @@ and populate_multi_program_context ast multi_prog_analysis =
          | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
          | None -> ())
     | Declaration (_, _, expr) ->
+        enhance_userspace_expr expr
+    | ConstDeclaration (_, _, expr) ->
         enhance_userspace_expr expr
     | Return (Some expr) ->
         enhance_userspace_expr expr

@@ -87,6 +87,7 @@ let validate_ast ast =
     | IndexAssignment (map_expr, key_expr, value_expr) ->
         validate_expr map_expr && validate_expr key_expr && validate_expr value_expr
     | Declaration (_, _, expr) -> validate_expr expr
+    | ConstDeclaration (_, _, expr) -> validate_expr expr
     | Return None -> true
     | Return (Some expr) -> validate_expr expr
     | If (cond, then_stmts, else_opt) ->

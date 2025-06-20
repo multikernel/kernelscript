@@ -153,6 +153,7 @@ and stmt_desc =
   | FieldAssignment of expr * string * expr  (* object.field = value *)
   | IndexAssignment of expr * expr * expr  (* map[key] = value *)
   | Declaration of string * bpf_type option * expr
+  | ConstDeclaration of string * bpf_type option * expr  (* const name : type = value *)
   | Return of expr option
   | If of expr * statement list * statement list option
   | For of string * expr * expr * statement list
@@ -474,6 +475,12 @@ let rec string_of_stmt stmt =
         | None -> ""
       in
       Printf.sprintf "let %s%s = %s;" name typ_str (string_of_expr expr)
+  | ConstDeclaration (name, typ_opt, expr) ->
+      let typ_str = match typ_opt with
+        | Some t -> ": " ^ string_of_bpf_type t
+        | None -> ""
+      in
+      Printf.sprintf "const %s%s = %s;" name typ_str (string_of_expr expr)
   | Return None -> "return;"
   | Return (Some expr) -> Printf.sprintf "return %s;" (string_of_expr expr)
   | If (cond, then_stmts, else_opt) ->

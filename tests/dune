@@ -1,3 +1,5 @@
+
+
 (executable
  (name test_lexer)
  (modules test_lexer)
@@ -229,7 +231,10 @@
  (modules test_type_alias)
  (libraries kernelscript ounit2))
 
-
+(executable
+ (name test_const_variables)
+ (modules test_const_variables)
+ (libraries kernelscript alcotest))
 
 ; Test rules for individual execution
 (rule
@@ -246,6 +251,7 @@
 
 (rule
  (alias runtest_type_checker)
+ (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks)
  (action (run ./test_type_checker.exe)))
 
 (rule
@@ -306,6 +312,7 @@
 
 (rule
  (alias runtest_userspace_maps)
+ (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks)
  (action (run ./test_userspace_maps.exe)))
 
 (rule
@@ -400,7 +407,9 @@
  (alias runtest_type_alias)
  (action (run ./test_type_alias.exe)))
 
-
+(rule
+ (alias runtest_const_variables)
+ (action (run ./test_const_variables.exe)))
 
 (rule
  (alias runtest_integer_literal_codegen)
@@ -410,6 +419,7 @@
 (rule
  (alias map-tests)
  (deps
+  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_map_syntax.exe
   test_map_assignment.exe
   test_map_integration.exe
@@ -428,6 +438,7 @@
 (rule
  (alias userspace-tests)
  (deps
+  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_userspace.exe
   test_userspace_maps.exe
   test_userspace_for_codegen.exe
@@ -454,6 +465,7 @@
 (rule
  (alias core-tests)
  (deps
+  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_lexer.exe
   test_ast.exe
   test_parser.exe
@@ -504,6 +516,7 @@
 (rule
  (alias ir-tests)
  (deps
+  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_ir.exe
   test_ir_analysis.exe
   test_ir_function_system.exe)
@@ -515,7 +528,7 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe)
+ (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
@@ -535,6 +548,7 @@
 (rule
  (alias runtest)
  (deps
+  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   ./test_ast.exe
   ./test_lexer.exe
   ./test_parser.exe

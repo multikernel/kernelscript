@@ -17,7 +17,7 @@
 %token PROGRAM FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
-%token LET CONFIG
+%token LET CONST CONFIG
 %token IN DELETE TRY CATCH THROW DEFER
 
 /* Operators */
@@ -79,6 +79,7 @@
 %type <Ast.statement list> statement_list
 %type <Ast.statement> statement
 %type <Ast.statement> variable_declaration
+%type <Ast.statement> const_declaration
 %type <Ast.statement> assignment_or_expression_statement
 %type <Ast.statement> field_assignment_statement
 %type <Ast.statement> index_assignment_statement
@@ -236,6 +237,7 @@ statement_list:
 
 statement:
   | variable_declaration { $1 }
+  | const_declaration { $1 }
   | assignment_or_expression_statement { $1 }
   | field_assignment_statement { $1 }
   | index_assignment_statement { $1 }
@@ -255,6 +257,12 @@ variable_declaration:
     { make_stmt (Declaration ($2, None, $4)) (make_pos ()) }
   | LET IDENTIFIER COLON bpf_type ASSIGN expression
     { make_stmt (Declaration ($2, Some $4, $6)) (make_pos ()) }
+
+const_declaration:
+  | CONST IDENTIFIER ASSIGN expression
+    { make_stmt (ConstDeclaration ($2, None, $4)) (make_pos ()) }
+  | CONST IDENTIFIER COLON bpf_type ASSIGN expression
+    { make_stmt (ConstDeclaration ($2, Some $4, $6)) (make_pos ()) }
 
 assignment_or_expression_statement:
   | IDENTIFIER ASSIGN expression
