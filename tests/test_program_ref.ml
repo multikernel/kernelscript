@@ -83,6 +83,8 @@ fn main() -> i32 {
   with
   | Type_error _ -> 
       check bool "should fail for non-existent program" true true
+  | Kernelscript.Symbol_table.Symbol_error _ ->
+      check bool "should fail for non-existent program" true true
   | _ -> 
       check bool "should fail for non-existent program" false true
 

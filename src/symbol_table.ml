@@ -65,15 +65,17 @@ let visibility_error msg pos = raise (Visibility_error (msg, pos))
 
 (** Get current scope path *)
 let get_scope_path table =
-  let rec build_path scopes acc =
+  let rec build_path scopes acc block_depth =
     match scopes with
     | [] -> List.rev acc
-    | GlobalScope :: rest -> build_path rest acc
-    | ProgramScope name :: rest -> build_path rest (name :: acc)
-    | FunctionScope (prog, func) :: rest -> build_path rest (func :: prog :: acc)
-    | BlockScope :: rest -> build_path rest acc
+    | GlobalScope :: rest -> build_path rest acc block_depth
+    | ProgramScope name :: rest -> build_path rest (name :: acc) block_depth
+    | FunctionScope (prog, func) :: rest -> build_path rest (func :: prog :: acc) block_depth
+    | BlockScope :: rest -> 
+        let block_id = "block" ^ string_of_int block_depth in
+        build_path rest (block_id :: acc) (block_depth + 1)
   in
-  build_path table.scopes []
+  build_path table.scopes [] 0
 
 (** Add symbol to table *)
 let add_symbol table name kind visibility pos =
@@ -194,9 +196,13 @@ let is_visible table symbol =
   | Public -> true
   | Private ->
       (* Private symbols are visible within same program *)
-      match symbol.scope, current_path with
-      | prog :: _, current_prog :: _ -> prog = current_prog
-      | [], _ -> true  (* global private symbols are visible *)
+      (* Extract the program name from scope paths, ignoring block scopes *)
+      let extract_program_from_path path =
+        List.find_opt (fun scope -> not (String.starts_with ~prefix:"block" scope)) path
+      in
+      match extract_program_from_path symbol.scope, extract_program_from_path current_path with
+      | Some prog, Some current_prog -> prog = current_prog
+      | None, _ -> true  (* global private symbols are visible *)
       | _ -> false
 
 (** Check if a symbol is a const variable *)

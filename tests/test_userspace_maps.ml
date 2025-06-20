@@ -31,6 +31,13 @@ open Kernelscript.Parse
 open Kernelscript.Userspace_codegen
 open Alcotest
 
+(** Helper function to parse string with builtin constants loaded *)
+let parse_string_with_builtins code =
+  let ast = Kernelscript.Builtin_loader.parse_with_builtins code in
+  (* Also run type checking *)
+  let _ = Kernelscript.Type_checker.type_check_ast ast in
+  ast
+
 (** Helper function for position printing *)
 let _string_of_position pos =
   Printf.sprintf "line %d, column %d" pos.line pos.column
@@ -67,33 +74,7 @@ let get_generated_userspace_code ast source_filename =
   try
     (* Convert AST to IR properly for the new IR-based codegen *)
     (* Load builtin ASTs for symbol table *)
-              let load_builtin_ast builtin_file =
-       let full_path = "builtin/" ^ builtin_file in
-       if Sys.file_exists full_path then
-         try
-           let content = 
-             let ic = open_in full_path in
-             let content = really_input_string ic (in_channel_length ic) in
-             close_in ic;
-             content
-           in
-           Some (Kernelscript.Parse.parse_string content)
-         with _ -> None
-       else None
-     in
-    let builtin_asts = ref [] in
-    (match load_builtin_ast "xdp.ks" with
-     | Some ast -> builtin_asts := ast :: !builtin_asts
-     | None -> ());
-    (match load_builtin_ast "tc.ks" with
-     | Some ast -> builtin_asts := ast :: !builtin_asts
-     | None -> ());
-    let symbol_table = 
-      if !builtin_asts = [] then
-        Kernelscript.Symbol_table.build_symbol_table ast
-      else
-        Kernelscript.Symbol_table.build_symbol_table ~builtin_asts:(List.rev !builtin_asts) ast
-    in
+    let symbol_table = Kernelscript.Builtin_loader.build_symbol_table_with_builtins ast in
     let ir_multi_prog = Kernelscript.Ir_generator.generate_ir ast symbol_table source_filename in
     let _output_file = generate_userspace_code_from_ir ir_multi_prog ~output_dir:temp_dir source_filename in
     let generated_file = Filename.concat temp_dir (Filename.remove_extension source_filename ^ ".c") in
@@ -470,7 +451,7 @@ fn main() -> i32 {
 |} in
   
   try
-    let ast = parse_string code in
+    let ast = parse_string_with_builtins code in
     let maps = extract_maps_from_ast ast in
     
     check int "one shared counter map" 1 (List.length maps);

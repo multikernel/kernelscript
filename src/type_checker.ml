@@ -2,39 +2,6 @@
 
 open Ast
 
-(** Utility function to find builtin directory from various locations *)
-let find_builtin_dir ?builtin_path () =
-  match builtin_path with
-  | Some path when Sys.file_exists path && Sys.is_directory path -> Some path
-  | Some _ -> None  (* Invalid custom path *)
-  | None ->
-      let candidates = [
-        "builtin";              (* Current directory *)
-        "../builtin";           (* From subdirectory like tests/ *)
-        "../../builtin";        (* From _build/default/ *)
-        "../../../builtin";     (* From _build/default/tests/ *)
-        "../../../../builtin";  (* From deeper nested build dirs *)
-      ] in
-      List.find_opt (fun dir -> Sys.file_exists dir && Sys.is_directory dir) candidates
-
-(** Utility function to load builtin AST files *)
-let load_builtin_ast ?builtin_path builtin_name =
-  match find_builtin_dir ?builtin_path () with
-  | Some builtin_dir ->
-      let builtin_file = Filename.concat builtin_dir builtin_name in
-      if Sys.file_exists builtin_file then
-        try
-          let content = 
-            let ic = open_in builtin_file in
-            let content = really_input_string ic (in_channel_length ic) in
-            close_in ic;
-            content
-          in
-          Some (Parse.parse_string content)
-        with _ -> None
-      else None
-  | None -> None
-
 (** Type checking exceptions *)
 exception Type_error of string * position
 exception Unification_error of bpf_type * bpf_type * position
@@ -1162,42 +1129,9 @@ let type_check_userspace _ctx _userspace_block =
 (** Main type checking entry point *)
 let type_check_ast ?builtin_path ast =
   (* Load builtin definitions from KernelScript files *)
-  let _builtin_dir = "builtin" in
-  let _load_builtin_ast builtin_file =
-    if Sys.file_exists builtin_file then
-      try
-        let content = 
-          let ic = open_in builtin_file in
-          let content = really_input_string ic (in_channel_length ic) in
-          close_in ic;
-          content
-        in
-        Some (Parse.parse_string content)
-      with _ -> None
-    else None
-  in
-  
-  (* Collect all builtin ASTs *)
-  let builtin_asts = ref [] in
-  
-  (* Load XDP builtins *)
-  (match load_builtin_ast ?builtin_path "xdp.ks" with
-   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
-   | None -> ());
-  
-  (* Load TC builtins *)
-  (match load_builtin_ast ?builtin_path "tc.ks" with
-   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
-   | None -> ());
-  
-  (* Load Kprobe builtins *)
-  (match load_builtin_ast ?builtin_path "kprobe.ks" with
-   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
-   | None -> ());
-  
   (* Create symbol table with builtin definitions *)
-  let symbol_table = if !builtin_asts = [] then Symbol_table.build_symbol_table ast else Symbol_table.build_symbol_table 
-    ~builtin_asts:(List.rev !builtin_asts) ast in
+  let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
+  let builtin_asts = Builtin_loader.load_standard_builtins ?builtin_path () in
   let ctx = create_context symbol_table in
   
   (* Process builtin types into type context *)
@@ -1209,7 +1143,7 @@ let type_check_ast ?builtin_path ast =
                Hashtbl.replace ctx.types name type_def)
       | _ -> ()
     ) builtin_ast
-  ) !builtin_asts;
+  ) builtin_asts;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
@@ -1423,47 +1357,9 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
     Multi_program_analyzer.print_analysis_results multi_prog_analysis;
   
   (* STEP 2: Type checking with multi-program context *)
-  (* Load builtin definitions from KernelScript files *)
-  let _builtin_dir = "builtin" in
-  let _load_builtin_ast builtin_file =
-    if Sys.file_exists builtin_file then
-      try
-        let content = 
-          let ic = open_in builtin_file in
-          let content = really_input_string ic (in_channel_length ic) in
-          close_in ic;
-          content
-        in
-        Some (Parse.parse_string content)
-      with _ -> None
-    else None
-  in
-  
-  (* Collect all builtin ASTs *)
-  let builtin_asts = ref [] in
-  
-  (* Load XDP builtins *)
-  (match load_builtin_ast ?builtin_path "xdp.ks" with
-   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
-   | None -> ());
-  
-  (* Load TC builtins *)
-  (match load_builtin_ast ?builtin_path "tc.ks" with
-   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
-   | None -> ());
-  
-  (* Load Kprobe builtins *)
-  (match load_builtin_ast ?builtin_path "kprobe.ks" with
-   | Some builtin_ast -> builtin_asts := builtin_ast :: !builtin_asts
-   | None -> ());
-  
-  (* Create symbol table with builtin definitions *)
-  let symbol_table = 
-    if !builtin_asts = [] then
-      Symbol_table.build_symbol_table ast
-    else
-      Symbol_table.build_symbol_table ~builtin_asts:(List.rev !builtin_asts) ast
-  in
+  (* Load builtin definitions and create symbol table *)
+  let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
+  let builtin_asts = Builtin_loader.load_standard_builtins ?builtin_path () in
   let ctx = create_context symbol_table in
   
   (* Process builtin types into type context *)
@@ -1475,7 +1371,7 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
                Hashtbl.replace ctx.types name type_def)
       | _ -> ()
     ) builtin_ast
-  ) !builtin_asts;
+  ) builtin_asts;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->

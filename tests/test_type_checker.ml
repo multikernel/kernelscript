@@ -6,47 +6,7 @@ open Alcotest
 
 (** Helper function to create symbol table with builtin loading *)
 let create_symbol_table_with_builtins ast =
-  let find_builtin_dir () =
-    let candidates = [
-      "builtin";              (* Current directory *)
-      "../builtin";           (* From subdirectory like tests/ *)
-      "../../builtin";        (* From _build/default/ *)
-      "../../../builtin";     (* From _build/default/tests/ *)
-    ] in
-    List.find_opt (fun dir -> Sys.file_exists dir && Sys.is_directory dir) candidates
-  in
-  
-  let load_builtin_ast builtin_file =
-    match find_builtin_dir () with
-    | Some builtin_dir ->
-        let full_path = builtin_dir ^ "/" ^ builtin_file in
-        if Sys.file_exists full_path then
-          try
-            let content = 
-              let ic = open_in full_path in
-              let content = really_input_string ic (in_channel_length ic) in
-              close_in ic;
-              content
-            in
-            Some (Kernelscript.Parse.parse_string content)
-          with _ -> None
-        else None
-    | None -> None
-  in
-  let builtin_asts = ref [] in
-  (match load_builtin_ast "xdp.ks" with
-   | Some ast -> builtin_asts := ast :: !builtin_asts
-   | None -> ());
-  (match load_builtin_ast "tc.ks" with
-   | Some ast -> builtin_asts := ast :: !builtin_asts
-   | None -> ());
-  (match load_builtin_ast "kprobe.ks" with
-   | Some ast -> builtin_asts := ast :: !builtin_asts
-   | None -> ());
-  if !builtin_asts = [] then
-    Kernelscript.Symbol_table.build_symbol_table ast
-  else
-    Kernelscript.Symbol_table.build_symbol_table ~builtin_asts:(List.rev !builtin_asts) ast
+  Kernelscript.Builtin_loader.build_symbol_table_with_builtins ast
 
 (** Helper function to check if two types can unify *)
 let can_unify t1 t2 =

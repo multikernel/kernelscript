@@ -122,38 +122,8 @@ let compile opts source_file =
     current_phase := SymbolAnalysis;
     Printf.printf "Phase 2: %s\n" (string_of_phase !current_phase);
     
-    (* Load builtin ASTs if available *)
-    let load_builtin_ast builtin_file =
-      let full_path = match opts.builtin_path with
-        | Some path -> Filename.concat path builtin_file
-        | None -> builtin_file
-      in
-      if Sys.file_exists full_path then
-        try
-          let content = 
-            let ic = open_in full_path in
-            let content = really_input_string ic (in_channel_length ic) in
-            close_in ic;
-            content
-          in
-          Some (Parse.parse_string content)
-        with _ -> None
-      else None
-    in
-    
-    let builtin_asts = ref [] in
-    (match load_builtin_ast "xdp.ks" with
-     | Some ast -> builtin_asts := ast :: !builtin_asts
-     | None -> ());
-    (match load_builtin_ast "tc.ks" with
-     | Some ast -> builtin_asts := ast :: !builtin_asts
-     | None -> ());
-    (match load_builtin_ast "kprobe.ks" with
-     | Some ast -> builtin_asts := ast :: !builtin_asts
-     | None -> ());
-    
-    let symbol_table = Symbol_table.build_symbol_table 
-      ast in
+    (* Load builtin ASTs and build symbol table *)
+    let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path:opts.builtin_path ast in
     Printf.printf "✅ Symbol table created successfully\n\n";
     
     (* Phase 3: Multi-program analysis *)
