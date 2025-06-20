@@ -153,7 +153,30 @@ let rec resolve_user_type ctx = function
        with Not_found -> UserType name)
   | other_type -> other_type
 
-(** Type unification algorithm *)
+(** C-style integer promotion - promotes to the larger type *)
+let integer_promotion t1 t2 =
+  match t1, t2 with
+  (* Identical types *)
+  | t1, t2 when t1 = t2 -> Some t1
+  
+  (* Unsigned integer promotions - promote to larger type *)
+  | U8, U16 | U16, U8 -> Some U16
+  | U8, U32 | U16, U32 | U32, U8 | U32, U16 -> Some U32
+  | U8, U64 | U16, U64 | U32, U64 | U64, U8 | U64, U16 | U64, U32 -> Some U64
+  
+  (* Signed integer promotions - promote to larger type *)
+  | I8, I16 | I16, I8 -> Some I16
+  | I8, I32 | I16, I32 | I32, I8 | I32, I16 -> Some I32
+  | I8, I64 | I16, I64 | I32, I64 | I64, I8 | I64, I16 | I64, I32 -> Some I64
+  
+  (* Mixed signed/unsigned promotions - like C allows *)
+  | I8, U32 | I16, U32 | I32, U32 -> Some I32   (* U32 literals can be assigned to signed types if they fit *)
+  | I64, U32 -> Some I64   (* U32 can always fit in I64 *)
+  | I64, U64 -> Some I64   (* U64 literals to I64 (may truncate but allowed in C-style) *)
+  
+  (* No other unification possible *)
+  | _ -> None
+
 let rec unify_types t1 t2 =
   match t1, t2 with
   (* Identical types *)
@@ -163,13 +186,12 @@ let rec unify_types t1 t2 =
   | Str size1, Str size2 when size1 <= size2 -> Some (Str size2)
   | Str size1, Str size2 when size2 <= size1 -> Some (Str size1)
   
-  (* Conservative numeric type promotions - only allow explicit cases that are safe *)
-  | U8, U16 | U16, U8 -> Some U16
-  | U8, U32 | U32, U8 | U16, U32 | U32, U16 -> Some U32
-  | U8, U64 | U64, U8 | U16, U64 | U64, U16 | U32, U64 | U64, U32 -> Some U64
-  | I8, I16 | I16, I8 -> Some I16  
-  | I8, I32 | I32, I8 | I16, I32 | I32, I16 -> Some I32
-  | I8, I64 | I64, I8 | I16, I64 | I64, I16 | I32, I64 | I64, I32 -> Some I64
+  (* Integer type promotions using C-style rules *)
+  | t1, t2 when (match t1, t2 with 
+                  | (U8|U16|U32|U64), (U8|U16|U32|U64) -> true
+                  | (I8|I16|I32|I64), (I8|I16|I32|I64) -> true
+                  | _ -> false) ->
+      integer_promotion t1 t2
   
   (* Array types *)
   | Array (t1, s1), Array (t2, s2) when s1 = s2 ->
@@ -221,6 +243,16 @@ let rec unify_types t1 t2 =
   (* No unification possible *)
   | _ -> None
 
+(** Check if we can assign from_type to to_type (for variable declarations) *)
+let can_assign to_type from_type =
+  match unify_types to_type from_type with
+  | Some _ -> true
+  | None ->
+      (* Allow assignment if types can be promoted *)
+      (match integer_promotion to_type from_type with
+       | Some _ -> true
+       | None -> false)
+
 (** Get built-in function signatures *)
 let get_builtin_function_signature name =
   (* First check stdlib for built-in functions *)
@@ -253,7 +285,10 @@ let get_builtin_function_signature name =
 (** Type check literals *)
 let type_check_literal lit pos =
   let typ = match lit with
-    | IntLit _ -> U32  (* Default integer type *)
+    | IntLit (value, _) -> 
+        (* Choose appropriate integer type based on the value *)
+        if value < 0 then I32  (* Signed integers for negative values *)
+        else U32  (* Unsigned integers for positive values *)
     | StringLit s -> 
         (* String literals are polymorphic - they can unify with any string type *)
         (* For now, we'll use a default size but this will be refined during unification *)
@@ -268,7 +303,7 @@ let type_check_literal lit pos =
          | [] -> Array (U32, 0)  (* Empty array defaults to u32 *)
          | first_lit :: rest_lits ->
              let first_type = match first_lit with
-               | IntLit _ -> U32
+               | IntLit (value, _) -> if value < 0 then I32 else U32
                | BoolLit _ -> Bool
                | CharLit _ -> Char
                | StringLit s -> Str (max 1 (String.length s))
@@ -278,7 +313,7 @@ let type_check_literal lit pos =
              (* Verify all elements have the same type *)
              let all_same_type = List.for_all (fun lit ->
                let lit_type = match lit with
-                 | IntLit _ -> U32
+                 | IntLit (value, _) -> if value < 0 then I32 else U32
                  | BoolLit _ -> Bool
                  | CharLit _ -> Char
                  | StringLit s -> Str (max 1 (String.length s))
@@ -430,7 +465,9 @@ and type_check_array_access ctx arr idx pos =
        (* This is map access *)
        let map_decl = Hashtbl.find ctx.maps map_name in
        (* Check key type compatibility *)
-       (match unify_types map_decl.key_type typed_idx.texpr_type with
+       let resolved_map_key_type = resolve_user_type ctx map_decl.key_type in
+       let resolved_idx_type = resolve_user_type ctx typed_idx.texpr_type in
+       (match unify_types resolved_map_key_type resolved_idx_type with
         | Some _ -> 
             (* Create a synthetic map type for the result *)
             let typed_arr = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = arr.expr_pos } in
@@ -506,99 +543,83 @@ and type_check_binary_op ctx left op right pos =
   let typed_left = type_check_expression ctx left in
   let typed_right = type_check_expression ctx right in
   
+  (* Resolve user types for both operands *)
+  let resolved_left_type = resolve_user_type ctx typed_left.texpr_type in
+  let resolved_right_type = resolve_user_type ctx typed_right.texpr_type in
+  
   let result_type = match op with
     (* Arithmetic operations *)
     | Add ->
         (* Handle string concatenation *)
-        (match typed_left.texpr_type, typed_right.texpr_type with
+        (match resolved_left_type, resolved_right_type with
          | Str size1, Str size2 -> 
              (* String concatenation - we'll allow it and require explicit result sizing *)
              (* For now, return a placeholder size that will be refined by assignment context *)
              Str (size1 + size2)
          | _ ->
              (* Continue with regular arithmetic/pointer handling *)
-             (match typed_left.texpr_type, typed_right.texpr_type with
+             (match resolved_left_type, resolved_right_type with
               (* Pointer + Integer = Pointer (pointer offset) *)
               | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64) -> Pointer t
               (* Integer + Pointer = Pointer (pointer offset) *)
               | (U8|U16|U32|U64|I8|I16|I32|I64), Pointer t -> Pointer t
               (* Regular numeric arithmetic *)
               | _ ->
-                  (* Try standard unification first *)
-                  (match unify_types typed_left.texpr_type typed_right.texpr_type with
+                  (* Try integer promotion for Add operations *)
+                  (match integer_promotion resolved_left_type resolved_right_type with
                    | Some unified_type ->
                        (match unified_type with
                         | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
                         | _ -> type_error "Arithmetic operations require numeric types" pos)
-                   | None ->
-                       (* Special case: allow U32 literals to be promoted to U64 in arithmetic *)
-                       (match typed_left.texpr_type, typed_right.texpr_type with
-                        | U64, U32 -> U64  (* Promote U32 to U64 *)
-                        | U32, U64 -> U64  (* Promote U32 to U64 *)
-                        | I64, I32 -> I64  (* Promote I32 to I64 *)
-                        | I32, I64 -> I64  (* Promote I32 to I64 *)
-                        | _ -> type_error "Cannot unify types for arithmetic operation" pos))))
+                   | None -> type_error "Cannot unify types for arithmetic operation" pos)))
     
     | Sub | Mul | Div | Mod ->
         (* Handle pointer arithmetic for subtraction *)
-        (match typed_left.texpr_type, typed_right.texpr_type, op with
+        (match resolved_left_type, resolved_right_type, op with
          (* Pointer - Pointer = size (pointer subtraction) *)
          | Pointer _, Pointer _, Sub -> U64  (* Return size type for pointer difference *)
          (* Pointer - Integer = Pointer (pointer offset) *)
          | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64), Sub -> Pointer t
          (* Regular numeric arithmetic *)
          | _ ->
-             (* Try standard unification first *)
-             (match unify_types typed_left.texpr_type typed_right.texpr_type with
+             (* Try integer promotion for Sub/Mul/Div/Mod operations *)
+             (match integer_promotion resolved_left_type resolved_right_type with
               | Some unified_type ->
                   (match unified_type with
                    | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
                    | _ -> type_error "Arithmetic operations require numeric types" pos)
-              | None ->
-                  (* Special case: allow U32 literals to be promoted to U64 in arithmetic *)
-                  (match typed_left.texpr_type, typed_right.texpr_type with
-                   | U64, U32 -> U64  (* Promote U32 to U64 *)
-                   | U32, U64 -> U64  (* Promote U32 to U64 *)
-                   | I64, I32 -> I64  (* Promote I32 to I64 *)
-                   | I32, I64 -> I64  (* Promote I32 to I64 *)
-                   | _ -> type_error "Cannot unify types for arithmetic operation" pos)))
+              | None -> type_error "Cannot unify types for arithmetic operation" pos))
     
     (* Comparison operations *)
     | Eq | Ne ->
         (* String equality/inequality comparison *)
-        (match typed_left.texpr_type, typed_right.texpr_type with
+        (match resolved_left_type, resolved_right_type with
          | Str _, Str _ -> Bool  (* Allow string comparison regardless of size *)
          | _ ->
-             (match unify_types typed_left.texpr_type typed_right.texpr_type with
+             (match unify_types resolved_left_type resolved_right_type with
               | Some _ -> Bool
               | None ->
-                  (* Special case: allow U32 literals to be compared with U64 *)
-                  (match typed_left.texpr_type, typed_right.texpr_type with
-                   | U64, U32 -> Bool  (* Allow U64 == U32 comparisons *)
-                   | U32, U64 -> Bool  (* Allow U32 == U64 comparisons *)
-                   | I64, I32 -> Bool  (* Allow I64 == I32 comparisons *)
-                   | I32, I64 -> Bool  (* Allow I32 == I64 comparisons *)
-                   | _ -> type_error "Cannot compare incompatible types" pos)))
+                  (* Try integer promotion for comparisons *)
+                  (match integer_promotion resolved_left_type resolved_right_type with
+                   | Some _ -> Bool
+                   | None -> type_error "Cannot compare incompatible types" pos)))
     
     | Lt | Le | Gt | Ge ->
         (* Ordering comparisons - not supported for strings *)
-        (match typed_left.texpr_type, typed_right.texpr_type with
+        (match resolved_left_type, resolved_right_type with
          | Str _, Str _ -> type_error "Ordering comparisons (<, <=, >, >=) are not supported for strings" pos
          | _ ->
-             (match unify_types typed_left.texpr_type typed_right.texpr_type with
+             (match unify_types resolved_left_type resolved_right_type with
               | Some _ -> Bool
               | None ->
-                  (* Special case: allow U32 literals to be compared with U64 *)
-                  (match typed_left.texpr_type, typed_right.texpr_type with
-                   | U64, U32 -> Bool  (* Allow U64 > U32 comparisons *)
-                   | U32, U64 -> Bool  (* Allow U32 > U64 comparisons *)
-                   | I64, I32 -> Bool  (* Allow I64 > I32 comparisons *)
-                   | I32, I64 -> Bool  (* Allow I32 > I64 comparisons *)
-                   | _ -> type_error "Cannot compare incompatible types" pos)))
+                  (* Try integer promotion for ordering comparisons *)
+                  (match integer_promotion resolved_left_type resolved_right_type with
+                   | Some _ -> Bool
+                   | None -> type_error "Cannot compare incompatible types" pos)))
     
     (* Logical operations *)
     | And | Or ->
-        if typed_left.texpr_type = Bool && typed_right.texpr_type = Bool then
+        if resolved_left_type = Bool && resolved_right_type = Bool then
           Bool
         else
           type_error "Logical operations require boolean operands" pos
@@ -665,12 +686,14 @@ and type_check_struct_literal ctx struct_name field_assignments pos =
         List.iter (fun (field_name, typed_field_expr) ->
           try
             let expected_field_type = List.assoc field_name struct_fields in
-            match unify_types expected_field_type typed_field_expr.texpr_type with
+            let resolved_expected_type = resolve_user_type ctx expected_field_type in
+            let resolved_actual_type = resolve_user_type ctx typed_field_expr.texpr_type in
+            match unify_types resolved_expected_type resolved_actual_type with
             | Some _ -> () (* Type matches *)
             | None -> 
                 type_error ("Type mismatch for field '" ^ field_name ^ "': expected " ^ 
-                           string_of_bpf_type expected_field_type ^ " but got " ^ 
-                           string_of_bpf_type typed_field_expr.texpr_type) pos
+                           string_of_bpf_type resolved_expected_type ^ " but got " ^ 
+                           string_of_bpf_type resolved_actual_type) pos
           with Not_found ->
             (* This should not happen as we already checked for unknown fields *)
             type_error ("Internal error: field '" ^ field_name ^ "' not found in struct definition") pos
@@ -721,12 +744,14 @@ let rec type_check_statement ctx stmt =
       let typed_expr = type_check_expression ctx expr in
       (try
          let var_type = Hashtbl.find ctx.variables name in
-         (match unify_types var_type typed_expr.texpr_type with
+         let resolved_var_type = resolve_user_type ctx var_type in
+         let resolved_expr_type = resolve_user_type ctx typed_expr.texpr_type in
+         (match unify_types resolved_var_type resolved_expr_type with
           | Some _ -> 
               { tstmt_desc = TAssignment (name, typed_expr); tstmt_pos = stmt.stmt_pos }
           | None ->
-              type_error ("Cannot assign " ^ string_of_bpf_type typed_expr.texpr_type ^ 
-                         " to variable of type " ^ string_of_bpf_type var_type) stmt.stmt_pos)
+              type_error ("Cannot assign " ^ string_of_bpf_type resolved_expr_type ^ 
+                         " to variable of type " ^ string_of_bpf_type resolved_var_type) stmt.stmt_pos)
        with Not_found ->
          type_error ("Undefined variable: " ^ name) stmt.stmt_pos)
 
@@ -775,11 +800,15 @@ let rec type_check_statement ctx stmt =
            (* This is map assignment *)
            let map_decl = Hashtbl.find ctx.maps map_name in
            (* Check key type compatibility *)
-           (match unify_types map_decl.key_type typed_key.texpr_type with
+           let resolved_key_type = resolve_user_type ctx map_decl.key_type in
+           let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
+           (match unify_types resolved_key_type resolved_typed_key_type with
             | Some _ -> ()
             | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
            (* Check value type compatibility *)
-           (match unify_types map_decl.value_type typed_value.texpr_type with
+           let resolved_value_type = resolve_user_type ctx map_decl.value_type in
+           let resolved_typed_value_type = resolve_user_type ctx typed_value.texpr_type in
+           (match unify_types resolved_value_type resolved_typed_value_type with
             | Some _ -> ()
             | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
            (* Create a synthetic map type for the result *)
@@ -818,10 +847,11 @@ let rec type_check_statement ctx stmt =
         | Some declared_type ->
             let resolved_declared_type = resolve_user_type ctx declared_type in
             (* For variable declarations, we should enforce the declared type *)
-            (* and check if the expression type can be converted to it *)
-            (match unify_types resolved_declared_type typed_expr.texpr_type with
-             | Some _ -> resolved_declared_type  (* Use the declared type, not the unified type *)
-             | None -> type_error ("Type mismatch in declaration") stmt.stmt_pos)
+            (* and check if the expression type can be assigned to it *)
+            if can_assign resolved_declared_type typed_expr.texpr_type then
+              resolved_declared_type  (* Use the declared type, not the unified type *)
+            else
+              type_error ("Type mismatch in declaration") stmt.stmt_pos
         | None -> typed_expr.texpr_type
       in
       Hashtbl.replace ctx.variables name var_type;

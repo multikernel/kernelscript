@@ -442,6 +442,271 @@ program comprehensive_test : xdp {
   with
   | _ -> fail "Error occurred"
 
+(** Test comprehensive integer promotion *)
+let test_comprehensive_integer_promotion () =
+  (* Test all integer promotion combinations *)
+  let promotion_tests = [
+    (* U8 promotions *)
+    (U8, U16, "U8 promotes to U16");
+    (U8, U32, "U8 promotes to U32");
+    (U8, U64, "U8 promotes to U64");
+    (U16, U8, "U16 promotes to U16 (reverse)");
+    (U32, U8, "U32 promotes to U32 (reverse)");
+    (U64, U8, "U64 promotes to U64 (reverse)");
+    
+    (* U16 promotions *)
+    (U16, U32, "U16 promotes to U32");
+    (U16, U64, "U16 promotes to U64");
+    (U32, U16, "U32 promotes to U32 (reverse)");
+    (U64, U16, "U64 promotes to U64 (reverse)");
+    
+    (* U32 promotions *)
+    (U32, U64, "U32 promotes to U64");
+    (U64, U32, "U64 promotes to U64 (reverse)");
+    
+    (* I8 promotions *)
+    (I8, I16, "I8 promotes to I16");
+    (I8, I32, "I8 promotes to I32");
+    (I8, I64, "I8 promotes to I64");
+    (I16, I8, "I16 promotes to I16 (reverse)");
+    (I32, I8, "I32 promotes to I32 (reverse)");
+    (I64, I8, "I64 promotes to I64 (reverse)");
+    
+    (* I16 promotions *)
+    (I16, I32, "I16 promotes to I32");
+    (I16, I64, "I16 promotes to I64");
+    (I32, I16, "I32 promotes to I32 (reverse)");
+    (I64, I16, "I64 promotes to I64 (reverse)");
+    
+    (* I32 promotions *)
+    (I32, I64, "I32 promotes to I64");
+    (I64, I32, "I64 promotes to I64 (reverse)");
+  ] in
+  
+  List.iter (fun (t1, t2, desc) ->
+    check bool desc true (can_unify t1 t2)
+  ) promotion_tests;
+  
+  (* Test that incompatible types still don't unify *)
+  let incompatible_tests = [
+    (U32, I32, "U32 does not unify with I32");
+    (U64, I64, "U64 does not unify with I64");
+    (U8, Bool, "U8 does not unify with Bool");
+    (I16, Str 32, "I16 does not unify with Str");
+    (U32, Pointer U32, "U32 does not unify with Pointer U32");
+  ] in
+  
+  List.iter (fun (t1, t2, desc) ->
+    check bool desc false (can_unify t1 t2)
+  ) incompatible_tests
+
+(** Test arithmetic operations with integer promotion *)
+let test_arithmetic_promotion () =
+  let arithmetic_tests = [
+    (* Basic arithmetic with different sizes *)
+    ("let x: u8 = 10\n    let y: u64 = 1000\n    let result = x + y", "u8 + u64 addition");
+    ("let x: u16 = 100\n    let y: u32 = 2000\n    let result = x * y", "u16 * u32 multiplication");
+    ("let x: u32 = 500\n    let y: u64 = 1000\n    let result = y - x", "u64 - u32 subtraction");
+    ("let x: u8 = 5\n    let y: u16 = 10\n    let result = x / y", "u8 / u16 division");
+    ("let x: u16 = 17\n    let y: u32 = 5\n    let result = x % y", "u16 % u32 modulo");
+    
+    (* Signed arithmetic *)
+    ("let x: i8 = -10\n    let y: i64 = 1000\n    let result = x + y", "i8 + i64 addition");
+    ("let x: i16 = -100\n    let y: i32 = 2000\n    let result = x * y", "i16 * i32 multiplication");
+    ("let x: i32 = -500\n    let y: i64 = 1000\n    let result = y - x", "i64 - i32 subtraction");
+  ] in
+  
+  List.iter (fun (stmt, desc) ->
+    let program_text = Printf.sprintf {|
+program test : xdp {
+  fn main() -> u32 {
+    %s
+    return 0
+  }
+}
+|} stmt in
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("arithmetic promotion: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed arithmetic promotion test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("arithmetic promotion: " ^ desc) false true
+  ) arithmetic_tests
+
+(** Test comparison operations with integer promotion *)
+let test_comparison_promotion () =
+  let comparison_tests = [
+    (* Equality comparisons *)
+    ("let x: u8 = 10\n    let y: u64 = 10\n    let result = x == y", "u8 == u64 equality");
+    ("let x: u16 = 100\n    let y: u32 = 200\n    let result = x != y", "u16 != u32 inequality");
+    ("let x: i8 = -5\n    let y: i64 = -5\n    let result = x == y", "i8 == i64 equality");
+    
+    (* Ordering comparisons *)
+    ("let x: u8 = 10\n    let y: u64 = 100\n    let result = x < y", "u8 < u64 less than");
+    ("let x: u16 = 1000\n    let y: u32 = 500\n    let result = x > y", "u16 > u32 greater than");
+    ("let x: u32 = 100\n    let y: u64 = 100\n    let result = x <= y", "u32 <= u64 less equal");
+    ("let x: u8 = 50\n    let y: u16 = 30\n    let result = x >= y", "u8 >= u16 greater equal");
+    
+    (* Signed comparisons *)
+    ("let x: i8 = -10\n    let y: i64 = 100\n    let result = x < y", "i8 < i64 less than");
+    ("let x: i16 = -5\n    let y: i32 = -10\n    let result = x > y", "i16 > i32 greater than");
+  ] in
+  
+  List.iter (fun (stmt, desc) ->
+    let program_text = Printf.sprintf {|
+program test : xdp {
+  fn main() -> u32 {
+    %s
+    return 0
+  }
+}
+|} stmt in
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("comparison promotion: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed comparison promotion test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("comparison promotion: " ^ desc) false true
+  ) comparison_tests
+
+
+
+
+
+(** Test map operations with type promotion *)
+let test_map_operations_promotion () =
+  let map_tests = [
+    (* Map key promotion *)
+    ({|
+type IpAddress = u32
+map<IpAddress, u64> counters : HashMap(1000)
+
+program test : xdp {
+  fn main() -> u32 {
+    let ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
+    counters[ip] = 100
+    return 0
+  }
+}
+|}, "map key promotion");
+    
+    (* Map value promotion *)
+    ({|
+type Counter = u64
+map<u32, Counter> stats : HashMap(1000)
+
+program test : xdp {
+  fn main() -> u32 {
+    let value: u16 = 1500  // u16 should promote to u64 (Counter)
+    stats[1] = value
+    return 0
+  }
+}
+|}, "map value promotion");
+    
+    (* Map access with arithmetic *)
+    ({|
+type PacketSize = u16
+type Counter = u64
+map<u32, Counter> stats : HashMap(1000)
+
+program test : xdp {
+  fn main() -> u32 {
+    let size: PacketSize = 1500
+    let current = stats[1]  // u64
+    let new_value = current + size  // u64 + u16 -> u64
+    stats[1] = new_value
+    return 0
+  }
+}
+|}, "map access with arithmetic promotion");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("map promotion: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed map promotion test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("map promotion: " ^ desc) false true
+  ) map_tests
+
+(** Test edge cases for type promotion *)
+let test_type_promotion_edge_cases () =
+  let edge_case_tests = [
+    (* Nested arithmetic with multiple promotions *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let a: u8 = 10
+    let b: u16 = 100
+    let c: u32 = 1000
+    let d: u64 = 10000
+    let result = a + b + c + d  // Chain of promotions
+    return 0
+  }
+}
+|}, "nested arithmetic with multiple promotions");
+    
+    (* Function parameters with promotion *)
+    ({|
+program test : xdp {
+  fn process(value: u64) -> u64 {
+    return value * 2
+  }
+  
+  fn main() -> u32 {
+    let small: u16 = 100
+    let result = process(small)  // u16 -> u64 promotion in function call
+    return 0
+  }
+}
+|}, "function parameter promotion");
+    
+    (* Complex expression with promotions *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let a: u8 = 5
+    let b: u16 = 10
+    let c: u32 = 20
+    let d: u64 = 40
+    let result = (a + b) * (c + d)  // Mixed promotions in complex expression
+    return 0
+  }
+}
+|}, "complex expression with promotions");
+    
+    (* Assignment with promotion *)
+    ({|
+program test : xdp {
+  fn main() -> u32 {
+    let big: u64 = 1000
+    let small: u16 = 100
+    big = big + small  // u64 = u64 + u16
+    return 0
+  }
+}
+|}, "assignment with promotion");
+  ] in
+  
+  List.iter (fun (program_text, desc) ->
+    try
+      let ast = parse_string program_text in
+      let _ = type_check_ast ast in
+      check bool ("edge case promotion: " ^ desc) true true
+    with
+    | exn -> 
+      Printf.printf "Failed edge case promotion test '%s': %s\n" desc (Printexc.to_string exn);
+      check bool ("edge case promotion: " ^ desc) false true
+  ) edge_case_tests
+
 let type_checker_tests = [
   "type_unification", `Quick, test_type_unification;
   "basic_type_inference", `Quick, test_basic_type_inference;
@@ -462,6 +727,12 @@ let type_checker_tests = [
   "integer_type_promotion", `Quick, test_integer_type_promotion;
   "type_unification_enhanced", `Quick, test_type_unification_enhanced;
   "comprehensive_type_checking", `Quick, test_comprehensive_type_checking;
+
+  "comprehensive_integer_promotion", `Quick, test_comprehensive_integer_promotion;
+  "arithmetic_promotion", `Quick, test_arithmetic_promotion;
+  "comparison_promotion", `Quick, test_comparison_promotion;
+  "map_operations_promotion", `Quick, test_map_operations_promotion;
+  "type_promotion_edge_cases", `Quick, test_type_promotion_edge_cases;
 ]
 
 let () =
