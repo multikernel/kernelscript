@@ -633,18 +633,11 @@ let rec lower_statement ctx stmt =
       emit_instruction ctx instr
       
   | Ast.ConstDeclaration (name, typ_opt, expr) ->
-      (* For const declarations, we handle them similarly to regular declarations
-         but the value must be a compile-time constant *)
+      (* For const declarations, use dedicated IRConstAssign instruction *)
       let value = lower_expression ctx expr in
       let reg = get_variable_register ctx name in
       let target_type = match typ_opt with
-        | Some ast_type -> 
-            (* Generate comment for const variable name tracking *)
-            let debug_comment = make_ir_instruction 
-              (IRComment (Printf.sprintf "Const declaration %s" name))
-              stmt.stmt_pos in
-            emit_instruction ctx debug_comment;
-            ast_type_to_ir_type ast_type
+        | Some ast_type -> ast_type_to_ir_type ast_type
         | None -> value.val_type
       in
       
@@ -667,8 +660,9 @@ let rec lower_statement ctx stmt =
       in
       
       let value_expr = make_ir_expr (IRValue coerced_value) target_type stmt.stmt_pos in
+      (* Use IRConstAssign instead of IRAssign + comment *)
       let instr = make_ir_instruction 
-        (IRAssign (target_val, value_expr)) 
+        (IRConstAssign (target_val, value_expr)) 
         ~stack_usage:size
         stmt.stmt_pos in
       emit_instruction ctx instr

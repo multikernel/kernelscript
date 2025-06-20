@@ -152,6 +152,8 @@ let rec collect_string_sizes_from_instr ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) -> 
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
+  | IRConstAssign (dest_val, expr) -> 
+      (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
   | IRCall (_, args, ret_opt) ->
       let args_sizes = List.fold_left (fun acc arg -> 
         acc @ (collect_string_sizes_from_value arg)) [] args in
@@ -1003,54 +1005,54 @@ let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
       sprintf "(%s %s %s)" left_c op_c right_c
   | _ -> "/* complex expr */"
 
+(** Generate assignment instruction with optional const keyword *)
+and generate_assignment ctx dest_val expr is_const =
+  let assignment_prefix = if is_const then "const " else "" in
+  
+  (* Check if this is a string assignment *)
+  (match dest_val.val_type, expr.expr_desc with
+   | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
+       (* String to string assignment - need to copy struct *)
+       let dest_str = generate_c_value ctx dest_val in
+       let src_str = generate_c_value ctx src_val in
+       emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+   | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
+       (* String literal to string assignment - already handled in generate_c_value *)
+       let dest_str = generate_c_value ctx dest_val in
+       let src_str = generate_c_value ctx src_val in
+       emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+   | IRStr _, _ ->
+       (* Other string expressions (concatenation, etc.) *)
+       let dest_str = generate_c_value ctx dest_val in
+       let expr_str = generate_c_expression ctx expr in
+       emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+   | _ ->
+       (* Regular assignment - handle struct literals specially *)
+       let dest_str = generate_c_value ctx dest_val in
+       (match expr.expr_desc with
+        | IRStructLiteral (struct_name, field_assignments) ->
+            (* For struct literal assignments, use compound literal syntax *)
+            let field_strs = List.map (fun (field_name, field_val) ->
+              let field_value_str = generate_c_value ctx field_val in
+              sprintf ".%s = %s" field_name field_value_str
+            ) field_assignments in
+            let struct_type = sprintf "struct %s" struct_name in
+            emit_line ctx (sprintf "%s%s = (%s){%s};" assignment_prefix dest_str struct_type (String.concat ", " field_strs))
+        | _ ->
+            (* Other expressions *)
+            let expr_str = generate_c_expression ctx expr in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)))
+
 let rec generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) ->
-      (* Check if this is a const variable declaration by looking for const comment *)
-      (* Since we don't have access to current_block in C codegen context, 
-         we'll disable const detection for now *)
-      let is_const_declaration = false in
+      (* Regular assignment without const keyword *)
+      generate_assignment ctx dest_val expr false
       
-      (* Check if this is a string assignment *)
-      (match dest_val.val_type, expr.expr_desc with
-       | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
-           (* String to string assignment - need to copy struct *)
-           let dest_str = generate_c_value ctx dest_val in
-           let src_str = generate_c_value ctx src_val in
-           let assignment_prefix = if is_const_declaration then "const " else "" in
-           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-       | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
-           (* String literal to string assignment - already handled in generate_c_value *)
-           let dest_str = generate_c_value ctx dest_val in
-           let src_str = generate_c_value ctx src_val in
-           let assignment_prefix = if is_const_declaration then "const " else "" in
-           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-       | IRStr _, _ ->
-           (* Other string expressions (concatenation, etc.) *)
-           let dest_str = generate_c_value ctx dest_val in
-           let expr_str = generate_c_expression ctx expr in
-           let assignment_prefix = if is_const_declaration then "const " else "" in
-           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
-       | _ ->
-           (* Regular assignment - handle struct literals specially *)
-           let dest_str = generate_c_value ctx dest_val in
-           (match expr.expr_desc with
-            | IRStructLiteral (struct_name, field_assignments) ->
-                (* For struct literal assignments, use compound literal syntax *)
-                let field_strs = List.map (fun (field_name, field_val) ->
-                  let field_value_str = generate_c_value ctx field_val in
-                  sprintf ".%s = %s" field_name field_value_str
-                ) field_assignments in
-                let struct_type = sprintf "struct %s" struct_name in
-                let assignment_prefix = if is_const_declaration then "const " else "" in
-                emit_line ctx (sprintf "%s%s = (%s){%s};" assignment_prefix dest_str struct_type (String.concat ", " field_strs))
-            | _ ->
-                (* Other expressions *)
-                let expr_str = generate_c_expression ctx expr in
-                (* For const declarations with simple literals, use const keyword *)
-                let assignment_prefix = if is_const_declaration then "const " else "" in
-                emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)))
-
+  | IRConstAssign (dest_val, expr) ->
+      (* Const assignment with const keyword *)
+      generate_assignment ctx dest_val expr true
+      
   | IRCall (name, args, ret_opt) ->
       (* Check if this is a built-in function that needs context-specific translation *)
       let (actual_name, translated_args) = match Stdlib.get_ebpf_implementation name with
@@ -1481,6 +1483,7 @@ let collect_registers_in_function ir_func =
   let rec collect_in_instr ir_instr =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
+    | IRConstAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
     | IRCall (_, args, ret_opt) -> 
         List.iter collect_in_value args;
         Option.iter collect_in_value ret_opt

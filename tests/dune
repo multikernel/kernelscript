@@ -484,6 +484,7 @@
   test_error_handling.exe
   test_enum.exe
   test_type_alias.exe
+  test_const_variables.exe
   test_evaluator.exe
   test_safety_checker.exe
   test_program_ref.exe
@@ -508,6 +509,7 @@
    (run ./test_error_handling.exe)
    (run ./test_enum.exe)
    (run ./test_type_alias.exe)
+   (run ./test_const_variables.exe)
    (run ./test_evaluator.exe)
    (run ./test_safety_checker.exe)
    (run ./test_program_ref.exe)

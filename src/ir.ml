@@ -214,6 +214,7 @@ and ir_instruction = {
 
 and ir_instr_desc =
   | IRAssign of ir_value * ir_expr
+  | IRConstAssign of ir_value * ir_expr (* Dedicated const assignment instruction *)
   | IRCall of string * ir_value list * ir_value option
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
@@ -634,6 +635,8 @@ let rec string_of_ir_instruction instr =
   match instr.instr_desc with
   | IRAssign (dest, expr) ->
       Printf.sprintf "%s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
+  | IRConstAssign (dest, expr) ->
+      Printf.sprintf "const %s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
   | IRCall (name, args, ret_opt) ->
       let args_str = String.concat ", " (List.map string_of_ir_value args) in
       let ret_str = match ret_opt with

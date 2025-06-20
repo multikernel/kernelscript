@@ -30,8 +30,6 @@ type userspace_context = {
   register_vars: (int, string) Hashtbl.t;
   (* Track variable declarations needed *)
   var_declarations: (string, string) Hashtbl.t; (* var_name -> c_type *)
-  (* Track const variables *)
-  const_variables: (string, bool) Hashtbl.t; (* var_name -> is_const *)
   (* Track function usage for optimization *)
   function_usage: function_usage;
 }
@@ -42,7 +40,6 @@ let create_userspace_context () = {
   is_main = false;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
-  const_variables = Hashtbl.create 32;
   function_usage = create_function_usage ();
 }
 
@@ -52,7 +49,6 @@ let create_main_context () = {
   is_main = true;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
-  const_variables = Hashtbl.create 32;
   function_usage = create_function_usage ();
 }
 
@@ -652,83 +648,43 @@ let generate_config_field_update_from_ir ctx map_val key_val field value_val =
     config_name temp_struct temp_key key_str config_name temp_key temp_struct
     temp_struct field value_str config_name temp_key temp_struct
 
-(** Track const variable declarations based on comments *)
-let track_const_declaration ctx instruction =
-  match instruction.instr_desc with
-  | IRComment comment_text when String.contains comment_text 'C' ->
-      (* Check if this is a "Const declaration <name>" comment *)
-      if String.length comment_text > 15 && 
-         String.sub comment_text 0 15 = "Const declaration" then
-        let var_name = String.trim (String.sub comment_text 16 (String.length comment_text - 16)) in
-        Hashtbl.replace ctx.const_variables var_name true
-  | _ -> ()
 
-(** Check if a variable is const *)
-let is_const_variable ctx var_name =
-  Hashtbl.find_opt ctx.const_variables var_name = Some true
 
-(** Recursively track const declarations in all instructions *)
-let rec track_const_declarations_in_instructions ctx instrs =
-  List.iter (fun instr ->
-    track_const_declaration ctx instr;
-    match instr.instr_desc with
-    | IRIf (_, then_body, else_body) ->
-        track_const_declarations_in_instructions ctx then_body;
-        (match else_body with
-         | Some else_instrs -> track_const_declarations_in_instructions ctx else_instrs
-         | None -> ())
-    | IRBpfLoop (_, _, _, _, body_instrs) ->
-        track_const_declarations_in_instructions ctx body_instrs
-    | IRTry (try_instrs, catch_clauses) ->
-        track_const_declarations_in_instructions ctx try_instrs;
-        List.iter (fun clause ->
-          track_const_declarations_in_instructions ctx clause.catch_body
-        ) catch_clauses
-    | _ -> ()
-  ) instrs
+(** Generate variable assignment with optional const keyword *)
+and generate_variable_assignment ctx dest src is_const =
+  let assignment_prefix = if is_const then "const " else "" in
+  let dest_str = generate_c_value_from_ir ctx dest in
+  let src_str = generate_c_expression_from_ir ctx src in
+  
+  (* For string assignments, use safer approach to avoid truncation warnings *)
+  (match dest.val_type with
+   | IRStr size -> 
+       sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
+         assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+   | _ -> 
+       sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
 
 (** Generate C instruction from IR instruction *)
 let rec generate_c_instruction_from_ir ctx instruction =
-  (* Track const declarations in comments *)
-  track_const_declaration ctx instruction;
-  
   match instruction.instr_desc with
   | IRAssign (dest, src) ->
-      (* Check if this is a const variable declaration *)
-      let dest_var_name = match dest.value_desc with
-        | IRVariable name -> Some name
-        | IRRegister reg_id -> Some (get_register_var_name ctx reg_id dest.val_type)
-        | _ -> None
-      in
-      let is_const_declaration = match dest_var_name with
-        | Some var_name -> is_const_variable ctx var_name
-        | None -> false
-      in
+      (* Regular assignment without const keyword *)
+      generate_variable_assignment ctx dest src false
       
-      (* Simple assignment for userspace - strings are just char arrays *)
-      let dest_str = generate_c_value_from_ir ctx dest in
-      let src_str = generate_c_expression_from_ir ctx src in
+  | IRConstAssign (dest, src) ->
+      (* Const assignment with const keyword *)
+      generate_variable_assignment ctx dest src true
       
-      (* For string assignments, use safer approach to avoid truncation warnings *)
-      (match dest.val_type with
-       | IRStr size -> 
-           let assignment_prefix = if is_const_declaration then "const " else "" in
-           sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
-             assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
-       | _ -> 
-           let assignment_prefix = if is_const_declaration then "const " else "" in
-           sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-  
-  | IRCall (func_name, args, result_opt) ->
+  | IRCall (name, args, ret_opt) ->
       (* Track function usage for optimization *)
       track_function_usage ctx instruction;
       
       (* Check if this is a built-in function that needs context-specific translation *)
-      let (actual_name, translated_args) = match Stdlib.get_userspace_implementation func_name with
+      let (actual_name, translated_args) = match Stdlib.get_userspace_implementation name with
         | Some userspace_impl ->
             (* This is a built-in function - translate for userspace context *)
             let c_args = List.map (generate_c_value_from_ir ctx) args in
-            (match func_name with
+            (match name with
              | "print" -> 
                  (* Special handling for print: convert to printf format *)
                  (match c_args with
@@ -758,10 +714,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
         | None ->
             (* Regular function call *)
             let c_args = List.map (generate_c_value_from_ir ctx) args in
-            (func_name, c_args)
+            (name, c_args)
       in
       let args_str = String.concat ", " translated_args in
-      (match result_opt with
+      (match ret_opt with
        | Some result -> sprintf "%s = %s(%s);" (generate_c_value_from_ir ctx result) actual_name args_str
        | None -> sprintf "%s(%s);" actual_name args_str)
   
@@ -949,11 +905,6 @@ let generate_c_function_from_ir (ir_func : ir_function) =
   
   let ctx = if ir_func.func_name = "main" then create_main_context () else 
     { (create_userspace_context ()) with function_name = ir_func.func_name } in
-  
-  (* Pre-process all instructions to track const declarations *)
-  List.iter (fun block ->
-    track_const_declarations_in_instructions ctx block.instructions
-  ) ir_func.basic_blocks;
   
   (* Function parameters are used directly, no need for local variable copies *)
   
