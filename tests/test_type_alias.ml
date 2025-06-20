@@ -1,4 +1,3 @@
-[@@@warning "-27"] (* Disable unused variable warnings *)
 open Alcotest
 open Kernelscript.Ast
 open Kernelscript.Parser
@@ -124,7 +123,7 @@ program test : xdp {
   
   (* Check that nested type alias is resolved to the final type *)
   (match typed_func.tfunc_body with
-   | [decl; ret] ->
+   | [decl; _] ->
        (match decl.tstmt_desc with
         | TDeclaration ("size", U32, _) -> ()
         | _ -> fail "Expected size variable with u32 type")
