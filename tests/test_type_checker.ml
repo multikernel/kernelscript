@@ -22,7 +22,7 @@ let test_type_unification () =
 let test_basic_type_inference () =
   let program_text = {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let x = 42
     let y = true
     let z = "hello"
@@ -47,7 +47,7 @@ program test : xdp {
 let test_variable_type_checking () =
   let program_text = {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let x: u32 = 42
     let y: bool = true
     let z = x + 10
@@ -79,7 +79,7 @@ let test_binary_operations () =
   List.iter (fun (stmt, should_succeed) ->
     let program_text = Printf.sprintf {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     %s
     return 0
   }
@@ -101,7 +101,7 @@ program test : xdp {
     return x + y
   }
   
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let result = helper(10, 20)
     return result
   }
@@ -134,7 +134,7 @@ program test : xdp {
 let test_struct_field_access () =
   let program_text = {|
 program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let packet = ctx.data
     return 0
   }
@@ -151,7 +151,7 @@ program test : xdp {
 let test_statement_type_checking () =
   let program_text = {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let x: u32 = 42
     x = 50
     if (x > 0) {
@@ -177,7 +177,7 @@ program test : xdp {
     return result
   }
   
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let value = calculate(10, 20)
     return value
   }
@@ -222,7 +222,7 @@ let test_variadic_function_arguments () =
   List.iter (fun (call, should_succeed, desc) ->
     let program_text = Printf.sprintf {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     %s
     return 0
   }
@@ -240,7 +240,7 @@ program test : xdp {
 let test_builtin_function_return_types () =
   let program_text = {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let result: u32 = print("test message")
     return result
   }
@@ -261,7 +261,7 @@ program test : xdp {
     return x + 1
   }
   
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let user_result = my_function(10)
     print("User function result: ", user_result)
     return user_result
@@ -309,9 +309,9 @@ let test_error_handling () =
   List.iter (fun (stmt, description) ->
     let program_text = Printf.sprintf {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     %s
-    return 0
+    return XDP_PASS
   }
 }
 |} stmt in
@@ -334,9 +334,9 @@ program packet_filter : xdp {
   fn main(ctx: XdpContext) -> XdpAction {
     let protocol: u8 = 6
     if (is_tcp(protocol)) {
-      return 2
+      return XDP_PASS
     }
-    return 1
+    return XDP_DROP
   }
 }
 |} in
@@ -357,7 +357,7 @@ let test_integer_type_promotion () =
 map<u32, u64> counter : HashMap(1024) { }
 
 program test_promotion : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     // Test U32 literal assignment to U64 map value
     counter[1] = 100     // U32 literal should promote to U64
     counter[2] = 200     // U32 literal should promote to U64
@@ -371,7 +371,7 @@ program test_promotion : xdp {
     let val1 = counter[1] + 50  // U64 + U32 -> U64
     counter[3] = val1
     
-    return 0
+    return XDP_PASS
   }
 }
 |} in
@@ -424,9 +424,9 @@ program comprehensive_test : xdp {
     let is_large = process_packet(packet_size)
     
     if (is_large && counter_val > 100) {
-      return 1
+      return XDP_DROP
     } else {
-      return 2
+      return XDP_PASS
     }
   }
 }
@@ -519,9 +519,9 @@ let test_arithmetic_promotion () =
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     %s
-    return 0
+    return XDP_PASS
   }
 }
 |} stmt in
@@ -557,9 +557,9 @@ let test_comparison_promotion () =
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     %s
-    return 0
+    return XDP_PASS
   }
 }
 |} stmt in
@@ -586,10 +586,10 @@ type IpAddress = u32
 map<IpAddress, u64> counters : HashMap(1000)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
     counters[ip] = 100
-    return 0
+    return XDP_PASS
   }
 }
 |}, "map key promotion");
@@ -600,10 +600,10 @@ type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let value: u16 = 1500  // u16 should promote to u64 (Counter)
     stats[1] = value
-    return 0
+    return XDP_PASS
   }
 }
 |}, "map value promotion");
@@ -615,12 +615,12 @@ type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let size: PacketSize = 1500
     let current = stats[1]  // u64
     let new_value = current + size  // u64 + u16 -> u64
     stats[1] = new_value
-    return 0
+    return XDP_PASS
   }
 }
 |}, "map access with arithmetic promotion");
@@ -643,13 +643,13 @@ let test_type_promotion_edge_cases () =
     (* Nested arithmetic with multiple promotions *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let a: u8 = 10
     let b: u16 = 100
     let c: u32 = 1000
     let d: u64 = 10000
     let result = a + b + c + d  // Chain of promotions
-    return 0
+    return XDP_PASS
   }
 }
 |}, "nested arithmetic with multiple promotions");
@@ -661,10 +661,10 @@ program test : xdp {
     return value * 2
   }
   
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let small: u16 = 100
     let result = process(small)  // u16 -> u64 promotion in function call
-    return 0
+    return XDP_PASS
   }
 }
 |}, "function parameter promotion");
@@ -672,13 +672,13 @@ program test : xdp {
     (* Complex expression with promotions *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let a: u8 = 5
     let b: u16 = 10
     let c: u32 = 20
     let d: u64 = 40
     let result = (a + b) * (c + d)  // Mixed promotions in complex expression
-    return 0
+    return XDP_PASS
   }
 }
 |}, "complex expression with promotions");
@@ -686,11 +686,11 @@ program test : xdp {
     (* Assignment with promotion *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let big: u64 = 1000
     let small: u16 = 100
     big = big + small  // u64 = u64 + u16
-    return 0
+    return XDP_PASS
   }
 }
 |}, "assignment with promotion");
@@ -713,9 +713,9 @@ let test_null_literal_typing () =
     (* Basic null literal *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let x = null
-    return 0
+    return XDP_PASS
   }
 }
 |}, "basic null literal");
@@ -723,12 +723,12 @@ program test : xdp {
     (* Null comparison with typed variable *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let x: u32 = 42
     if (x == null) {
-      return 1
+      return XDP_DROP
     }
-    return 0
+    return XDP_PASS
   }
 }
 |}, "null comparison with u32");
@@ -736,9 +736,9 @@ program test : xdp {
     (* Null assignment in variable declaration *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let ptr = null
-    return 0
+    return XDP_PASS
   }
 }
 |}, "null assignment in declaration");
@@ -747,7 +747,9 @@ program test : xdp {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let _ = type_check_ast ast in
+      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("null literal typing: " ^ desc) true true
     with
     | exn -> 
@@ -780,15 +782,17 @@ let test_null_comparisons () =
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     %s
-    return 0
+    return XDP_PASS
   }
 }
 |} stmt in
     try
       let ast = parse_string program_text in
-      let _ = type_check_ast ast in
+      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("null comparison: " ^ desc) true true
     with
     | exn -> 
@@ -804,12 +808,12 @@ let test_map_null_semantics () =
 map<u32, u64> test_map : HashMap(100)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let value = test_map[42]
     if (value == null) {
-      return 1
+      return XDP_DROP
     }
-    return 0
+    return XDP_PASS
   }
 }
 |}, "map access null check");
@@ -819,14 +823,14 @@ program test : xdp {
 map<u32, u32> counters : HashMap(100)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let count = counters[1]
     if (count == null) {
       counters[1] = 1
     } else {
       counters[1] = count + 1
     }
-    return 0
+    return XDP_PASS
   }
 }
 |}, "null initialization pattern");
@@ -837,15 +841,15 @@ map<u32, u64> flows : HashMap(100)
 map<u32, u32> packets : HashMap(100)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let flow = flows[123]
     let packet_count = packets[123]
     
     if (flow == null || packet_count == null) {
-      return 1
+      return XDP_DROP
     }
     
-    return 0
+    return XDP_PASS
   }
 }
 |}, "multiple map null checks");
@@ -854,7 +858,9 @@ program test : xdp {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let _ = type_check_ast ast in
+      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("map null semantics: " ^ desc) true true
     with
     | exn -> 
@@ -870,12 +876,12 @@ let test_null_vs_throw_pattern () =
 map<u32, u64> cache : HashMap(100)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let cached_value = cache[42]
     if (cached_value == null) {
       // Key doesn't exist - expected case
       cache[42] = 100
-      return 100
+      return XDP_PASS
     }
     return cached_value
   }
@@ -939,7 +945,7 @@ let test_null_semantics () =
 map<u32, u32> test_map : HashMap(100)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let value = test_map[1]
     let result = 0
     if (value == null) {
@@ -958,15 +964,15 @@ map<u32, u32> map1 : HashMap(100)
 map<u32, u32> map2 : HashMap(100)
 
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let val1 = map1[1]
     let val2 = map2[1]
     
     if (val1 != null && val2 != null) {
-      return val1 + val2
+      return XDP_PASS
     }
     
-    return 0
+    return XDP_PASS
   }
 }
 |}, "null in logical AND");
@@ -974,12 +980,12 @@ program test : xdp {
     (* Basic null assignments *)
     ({|
 program test : xdp {
-  fn main() -> u32 {
+  fn main(ctx: XdpContext) -> XdpAction {
     let x = null
     if (x == null) {
-      return 1
+      return XDP_DROP
     }
-    return 0
+    return XDP_PASS
   }
 }
 |}, "basic null assignment and check");
