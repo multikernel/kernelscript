@@ -1695,9 +1695,9 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   (* First pass: collect all callbacks *)
   let temp_ctx = create_c_context () in
   List.iter (fun ir_prog ->
-    generate_c_function temp_ctx ir_prog.main_function;
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function temp_ctx) other_functions
+    List.iter (generate_c_function temp_ctx) other_functions;  (* Helper functions first *)
+    generate_c_function temp_ctx ir_prog.main_function  (* Main function last *)
   ) ir_multi_program.programs;
   
   (* Emit collected callbacks *)
@@ -1706,11 +1706,11 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
     emit_blank_line ctx;
   );
   
-  (* Second pass: generate actual functions *)
+  (* Second pass: generate actual functions (helper functions first, then main) *)
   List.iter (fun ir_prog ->
-    generate_c_function ctx ir_prog.main_function;
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function ctx) other_functions
+    List.iter (generate_c_function ctx) other_functions;  (* Helper functions first *)
+    generate_c_function ctx ir_prog.main_function  (* Main function last *)
   ) ir_multi_program.programs;
   
   (* Add license (required for eBPF) *)
@@ -1801,9 +1801,9 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
   (* First pass: collect all callbacks *)
   let temp_ctx = create_c_context () in
   List.iter (fun ir_prog ->
-    generate_c_function temp_ctx ir_prog.main_function;
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function temp_ctx) other_functions
+    List.iter (generate_c_function temp_ctx) other_functions;  (* Helper functions first *)
+    generate_c_function temp_ctx ir_prog.main_function  (* Main function last *)
   ) ir_multi_program.programs;
   
   (* Emit collected callbacks *)
@@ -1812,11 +1812,11 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
     emit_blank_line ctx;
   );
   
-  (* Second pass: generate actual functions *)
+  (* Second pass: generate actual functions (helper functions first, then main) *)
   List.iter (fun ir_prog ->
-    generate_c_function ctx ir_prog.main_function;
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function ctx) other_functions
+    List.iter (generate_c_function ctx) other_functions;  (* Helper functions first *)
+    generate_c_function ctx ir_prog.main_function  (* Main function last *)
   ) ir_multi_program.programs;
   
   (* Add license (required for eBPF) *)

@@ -875,12 +875,6 @@ let collect_function_usage_from_ir_function ir_func =
   ) ir_func.basic_blocks;
   ctx.function_usage
 
-(** Check if all execution paths in a function have explicit return statements *)
-let all_paths_have_return (ir_func : ir_function) : bool =
-  (* Use proper control flow analysis on IR instead of string scanning *)
-  let return_info = Ir_analysis.ReturnAnalysis.analyze_returns ir_func in
-  return_info.all_paths_return
-
 (** Generate C function from IR function *)
 let generate_c_function_from_ir (ir_func : ir_function) =
   let params_str = String.concat ", " 
@@ -946,20 +940,17 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     else "" in
     
     (* Generate ONLY what the user explicitly wrote with auto-initialization if needed *)
-    let default_return = if all_paths_have_return ir_func then "" else "\n    \n    return 0; /* Default return if no explicit return */" in
     sprintf {|%s %s(%s) {
 %s    
 %s%s
 %s
     
-    %s%s
-}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code auto_init_call body_c default_return
+    %s
+}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code auto_init_call body_c
   else
     sprintf {|%s %s(%s) {
 %s    %s
-    %s
 }|} adjusted_return_type ir_func.func_name adjusted_params var_decls body_c
-      (if return_type_str = "void" then "" else "return 0;")
 
 (** Generate command line argument parsing for struct parameter *)
 let generate_getopt_parsing (struct_name : string) (param_name : string) (struct_fields : (string * ir_type) list) =
