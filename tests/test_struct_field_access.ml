@@ -3,6 +3,13 @@ open Kernelscript.Symbol_table
 open Kernelscript.Type_checker
 open Kernelscript.Ir_generator
 
+(** Helper function to check if string contains substring *)
+let contains_substr str substr =
+  try
+    let _ = Str.search_forward (Str.regexp_string substr) str 0 in
+    true
+  with Not_found -> false
+
 (** Helper functions *)
 let parse_string s =
   let lexbuf = Lexing.from_string s in
@@ -541,6 +548,55 @@ let test_struct_field_assignment_errors () =
   | Type_error (_, _) -> () (* Expected error *)
   | e -> failwith ("Expected Type_error but got: " ^ Printexc.to_string e))
 
+(** Test type alias field access code generation *)
+let test_type_alias_field_access () =
+  let program_text = {|
+type Counter = u64
+
+struct PacketStats {
+  count: Counter,
+  bytes: u64
+}
+
+program test : xdp {
+  fn main(ctx: XdpContext) -> XdpAction {
+    let stats = PacketStats { count: 1, bytes: 100 }
+    let count_val = stats.count
+    return 2
+  }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let symbol_table = build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    let ir = generate_ir annotated_ast symbol_table "test" in
+    
+    (* Test C code generation to ensure struct Counter doesn't appear *)
+    let type_aliases = List.fold_left (fun acc decl ->
+      match decl with
+      | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ)) -> (name, typ) :: acc
+      | _ -> acc
+    ) [] ast in
+    
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases ir in
+    
+         (* Verify that type aliases generate typedef statements *)
+     check bool "typedef Counter generated" true (contains_substr c_code "typedef uint64_t Counter");
+     
+     (* Check that struct fields use the alias name correctly *)
+     check bool "struct uses Counter type for count field" true (contains_substr c_code "Counter count");
+     
+     (* Most importantly: Check that no "struct Counter" declarations exist *)
+     check bool "no struct Counter declarations" false (contains_substr c_code "struct Counter tmp_");
+     
+     (* Verify Counter type alias is used in variable declarations *)
+     check bool "Counter used in variable declarations" true (contains_substr c_code "Counter tmp_");
+    
+    check bool "type alias field access test passed" true true
+  with
+  | exn -> fail ("Type alias field access test failed: " ^ Printexc.to_string exn)
+
 (** Test runner *)
 let tests = [
   "top-level struct eBPF parameter", `Quick, test_toplevel_struct_ebpf_parameter;
@@ -558,6 +614,7 @@ let tests = [
   "struct field assignment IR generation", `Quick, test_struct_field_assignment_ir_generation;
   "struct field assignment C generation", `Quick, test_struct_field_assignment_c_generation;
   "struct field assignment errors", `Quick, test_struct_field_assignment_errors;
+  "type alias field access", `Quick, test_type_alias_field_access;
 ]
 
 let () = Alcotest.run "Struct Field Access and Assignment Tests" [
