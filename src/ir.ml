@@ -533,17 +533,22 @@ let rec ast_type_to_ir_type = function
   | ProgramHandle -> IRU32 (* Program handles are represented as file descriptors (u32) in IR *)
 
 (* Helper function that preserves type aliases when converting AST types to IR types *)
-let ast_type_to_ir_type_with_context symbol_table ast_type =
+let rec ast_type_to_ir_type_with_context symbol_table ast_type =
   match ast_type with
-  | UserType name ->
-      (* Check if this is a type alias by looking up the symbol *)
+  | UserType name | Struct name ->
+      (* Check if this is a type alias or struct by looking up the symbol *)
       (match Symbol_table.lookup_symbol symbol_table name with
          | Some symbol ->
              (match symbol.kind with
               | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
                   (* Create IRTypeAlias to preserve the alias name *)
                   IRTypeAlias (name, ast_type_to_ir_type underlying_type)
-              | Symbol_table.TypeDef (Ast.StructDef (_, _)) -> IRStruct (name, [])
+              | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
+                  (* Resolve struct fields properly with type aliases preserved *)
+                  let ir_fields = List.map (fun (field_name, field_type) ->
+                    (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
+                  ) fields in
+                  IRStruct (name, ir_fields)
               | Symbol_table.TypeDef (Ast.EnumDef (_, _)) -> IREnum (name, [])
               | _ -> ast_type_to_ir_type ast_type)
          | None -> 

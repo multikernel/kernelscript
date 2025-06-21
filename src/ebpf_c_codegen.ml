@@ -365,31 +365,16 @@ let generate_string_typedefs ctx ir_multi_prog =
 let collect_struct_definitions_from_multi_program ir_multi_prog =
   let struct_defs = ref [] in
   
-  (* Helper function to extract struct definition from symbol table or program definitions *)
-  let find_struct_definition struct_name =
-    (* First try to find from the first program's symbol table if available *)
-    if List.length ir_multi_prog.programs > 0 then (
-      (* For now, create a simple struct with u64 size and u32 action fields for PacketInfo *)
-      (* This is a simplified approach until full symbol table integration *)
-      if struct_name = "PacketInfo" then
-        Some [("size", IRU64); ("action", IRU32)]
-      else
-        None
-    ) else
-      None
-  in
+  (* No more hardcoded cheating - structs should have their fields properly resolved in IR *)
   
   let collect_from_type ir_type =
     match ir_type with
     | IRStruct (name, fields) ->
         if not (List.mem_assoc name !struct_defs) then (
-          let actual_fields = if fields = [] then (
-            (* If fields are empty, try to find the actual definition *)
-            match find_struct_definition name with
-            | Some real_fields -> real_fields
-            | None -> fields  (* Keep empty if we can't find definition *)
-          ) else fields in
-          struct_defs := (name, actual_fields) :: !struct_defs
+          (* Only collect structs that actually have fields - ignore empty structs that are likely type aliases *)
+          if fields <> [] then
+            struct_defs := (name, fields) :: !struct_defs
+          (* Remove warning - empty structs are expected for type aliases *)
         )
     | _ -> ()
   in
@@ -462,6 +447,7 @@ let generate_struct_definitions ctx struct_defs =
       emit_line ctx (sprintf "struct %s {" struct_name);
       increase_indent ctx;
       List.iter (fun (field_name, field_type) ->
+        (* For struct fields, use type alias names to match original source code *)
         let c_type = ebpf_type_from_ir_type field_type in
         emit_line ctx (sprintf "%s %s;" c_type field_name)
       ) fields;
@@ -579,6 +565,19 @@ let generate_ast_type_alias_definitions ctx type_aliases =
     ) type_aliases;
     emit_blank_line ctx
   )
+
+(** Generate declarations in original AST order to preserve source order *)
+let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
+  (* We need to generate declarations in the order they appeared in the original source.
+     Since we don't have direct access to the AST here, we need to reconstruct the order.
+     For now, we'll use a simple heuristic: type aliases first, then structs. *)
+  
+  (* Generate type alias definitions from AST first *)
+  generate_ast_type_alias_definitions ctx type_aliases;
+  
+  (* Generate struct definitions (only non-empty ones that are real structs) *)
+  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
+  generate_struct_definitions ctx struct_defs
 
 (** Generate standard eBPF includes *)
 
@@ -1696,12 +1695,8 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   (* Generate enum definitions *)
   generate_enum_definitions ctx ir_multi_program;
   
-  (* Generate struct definitions *)
-  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
-  generate_struct_definitions ctx struct_defs;
-  
-  (* Generate type alias definitions from AST *)
-  generate_ast_type_alias_definitions ctx type_aliases;
+  (* Generate declarations in original AST order to preserve source order *)
+  generate_declarations_in_source_order ctx ir_multi_program type_aliases;
   
   (* Generate config maps if provided *)
   begin match config_declarations with
@@ -1769,12 +1764,8 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
   (* Generate enum definitions *)
   generate_enum_definitions ctx ir_multi_program;
   
-  (* Generate struct definitions *)
-  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
-  generate_struct_definitions ctx struct_defs;
-  
-  (* Generate type alias definitions from AST *)
-  generate_ast_type_alias_definitions ctx type_aliases;
+  (* Generate declarations in original AST order to preserve source order *)
+  generate_declarations_in_source_order ctx ir_multi_program type_aliases;
   
   emit_line ctx "/* Enhanced Multi-Program eBPF System */";
   emit_line ctx (sprintf "/* Programs: %d, Global Maps: %d */" 

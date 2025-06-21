@@ -494,7 +494,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.StructLiteral (struct_name, field_assignments) ->
       let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
-        | Some ast_type -> ast_type_to_ir_type ast_type
+        | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
         | None -> IRStruct (struct_name, [])
       in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
@@ -1280,7 +1280,7 @@ let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
             (match symbol.kind with
              | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
                  let ir_fields = List.map (fun (field_name, field_type) ->
-                   (field_name, ast_type_to_ir_type field_type)
+                   (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                  ) fields in
                  IRStruct (struct_name, ir_fields)
              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) ->
