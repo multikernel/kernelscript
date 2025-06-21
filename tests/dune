@@ -1,5 +1,3 @@
-
-
 (executable
  (name test_lexer)
  (modules test_lexer)
@@ -239,6 +237,11 @@
 (executable
  (name test_const_variables)
  (modules test_const_variables)
+ (libraries kernelscript alcotest))
+
+(executable
+ (name test_function_validation)
+ (modules test_function_validation)
  (libraries kernelscript alcotest))
 
 ; Test rules for individual execution
@@ -488,6 +491,7 @@
   test_struct_initialization.exe
   test_error_handling.exe
   test_function_scope.exe
+  test_function_validation.exe
   test_enum.exe
   test_type_alias.exe
   test_const_variables.exe
@@ -514,6 +518,7 @@
    (run ./test_struct_initialization.exe)
    (run ./test_error_handling.exe)
    (run ./test_function_scope.exe)
+   (run ./test_function_validation.exe)
    (run ./test_enum.exe)
    (run ./test_type_alias.exe)
    (run ./test_const_variables.exe)

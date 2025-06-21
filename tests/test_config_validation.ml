@@ -217,7 +217,7 @@ config network {
     enable_logging: bool = true,
 }
 
-@xdp fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn config_test(ctx: XdpContext) -> XdpAction {
     let size: u32 = 1500  // Simple test without config access for now
     return 2
 }

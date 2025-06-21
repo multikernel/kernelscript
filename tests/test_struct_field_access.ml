@@ -217,7 +217,7 @@ kernel fn validate_packet(limits: PacketLimits) -> u32 {
   return 0  // Valid
 }
 
-@xdp fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn validate_packet(ctx: XdpContext) -> XdpAction {
   return 2
 }
 
@@ -229,7 +229,7 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let symbol_table = build_symbol_table ast in
     let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "main" in
+    let _ir = generate_ir annotated_ast symbol_table "validate_packet" in
     check bool "struct field access in expressions" true true
   with
   | exn -> fail ("Struct field access in expressions test failed: " ^ Printexc.to_string exn)

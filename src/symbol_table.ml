@@ -267,12 +267,28 @@ let add_map_decl table map_decl =
         symbol_error "Local maps must be declared inside a program" pos
   )
 
-(** Add function to symbol table *)
+(** Add function with enhanced validation *)
 let add_function table func visibility =
+  (* Special validation for main function *)
+  if func.func_name = "main" then (
+    (* Check if main function already exists *)
+    let existing_main = List.filter_map (fun s ->
+      match s.kind with
+      | Function _ when s.name = "main" -> Some s
+      | _ -> None
+    ) (try
+        let symbols = Hashtbl.find table.symbols "main" in
+        symbols
+      with Not_found -> []) in
+    
+    if List.length existing_main > 0 then
+      symbol_error ("Duplicate main function - only one main function allowed per program") func.func_pos
+  );
+  
   let param_types = List.map snd func.func_params in
   let return_type = match func.func_return_type with
     | Some t -> t
-    | None -> U32  (* default return type *)
+    | None -> U32  (* default return type for functions without explicit return *)
   in
   add_symbol table func.func_name (Function (param_types, return_type)) visibility func.func_pos
 
@@ -370,9 +386,11 @@ and process_declaration_accumulate table declaration =
       let _ = exit_scope table_with_func in
       table
       
-
-      
   | Ast.AttributedFunction attr_func ->
+      (* Validate that main function is not used with attributes *)
+      if attr_func.attr_function.func_name = "main" then
+        symbol_error ("main function cannot have attributes (like @xdp) - use a different function name for eBPF programs") attr_func.attr_pos;
+      
       (* Process attributed function as a global function *)
       add_function table attr_func.attr_function Public;
       
@@ -419,6 +437,10 @@ and process_declaration table = function
       let _ = exit_scope table_with_func in ()
       
   | Ast.AttributedFunction attr_func ->
+      (* Validate that main function is not used with attributes *)
+      if attr_func.attr_function.func_name = "main" then
+        symbol_error ("main function cannot have attributes (like @xdp) - use a different function name for eBPF programs") attr_func.attr_pos;
+      
       (* Process attributed function as a global function *)
       add_function table attr_func.attr_function Public;
       (* Enter function scope to process function body *)

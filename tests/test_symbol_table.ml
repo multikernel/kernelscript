@@ -512,8 +512,8 @@ let test_map_visibility_rules () =
 let test_build_symbol_table_from_ast () =
   let global_map = create_test_map_decl "global_counter" true in
   
-  let main_func = create_test_function "main" [("ctx", XdpContext)] XdpAction in
-  let attr_func = make_attributed_function [SimpleAttribute "xdp"] main_func dummy_pos in
+  let packet_filter_func = create_test_function "packet_filter" [("ctx", XdpContext)] XdpAction in
+  let attr_func = make_attributed_function [SimpleAttribute "xdp"] packet_filter_func dummy_pos in
   
   let ast = [
     MapDecl global_map;
@@ -526,14 +526,14 @@ let test_build_symbol_table_from_ast () =
   check bool "global map added" true (is_global_map symbol_table "global_counter");
   
   (* Verify attributed function was added as a global function *)
-  let main_symbol = lookup_symbol symbol_table "main" in
-  (match main_symbol with
+  let packet_filter_symbol = lookup_symbol symbol_table "packet_filter" in
+  (match packet_filter_symbol with
    | Some { kind = Function _; scope = []; _ } -> 
        check int "program function count" 1 1; (* Attributed function found globally *)
    | Some { kind = Function _; _ } -> 
        fail "attributed function should have global scope"
    | Some _ -> 
-       fail "main should be a function"
+       fail "packet_filter should be a function"
    | None -> 
        check int "program function count" 0 1); (* Function not found *)
   
