@@ -4,8 +4,6 @@
     including multi-program awareness for eBPF development.
 *)
 
-[@@@warning "-26-27"]  (* Disable unused function/variable warnings during refactor *)
-
 open Ast
 
 (** Type checking exceptions *)
@@ -190,7 +188,7 @@ let rec unify_types t1 t2 =
        | _ -> None)
   
   (* Function types - allow any function to unify with any other function for parameter passing *)
-  | Function (params1, ret1), Function (params2, ret2) ->
+  | Function (params1, ret1), Function (_, _) ->
       (* For function parameters, we're more flexible - any function can be passed as a function parameter *)
       (* This enables passing functions as parameters without strict signature matching *)
       Some (Function (params1, ret1))  (* Keep the original function type *)
