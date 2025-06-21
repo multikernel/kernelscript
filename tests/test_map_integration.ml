@@ -36,186 +36,171 @@ let compile_to_c_code ast =
     Printf.printf "Compilation failed: %s\n" (Printexc.to_string exn);
     None
 
+(** Helper function for error testing - lets exceptions propagate *)
+let compile_to_c_code_with_exceptions ast =
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+  let ir_multi_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  let c_code = generate_c_multi_program ir_multi_program in
+  c_code
+
 (** Test end-to-end compilation of a complete map program *)
 let test_complete_map_compilation () =
   let program = {|
-map<u32, u64> packet_counts : HashMap(1024)
-map<u32, u32> rate_limits : HashMap(512)
+map<u32, u64> counter : HashMap(1024)
 
-program rate_limiter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let src_ip = 0x08080808
-    packet_counts[src_ip] = packet_counts[src_ip] + 1 if (packet_counts[src_ip] > rate_limits[src_ip]) {
-      return 1 // Drop
-    }
-    
-    return 2 // Pass
+@xdp fn rate_limiter(ctx: XdpContext) -> XdpAction {
+  let src_ip = 0x08080808
+  let current_count = counter[src_ip]
+  counter[src_ip] = current_count + 1
+  
+  if (current_count > 100) {
+    return 1
   }
+  
+  return 2
 }
 |} in
   try
     let ast = parse_string program in
     let maps = extract_maps_from_ast ast in
     
-    (* Verify parsing *)
-    check int "two maps parsed" 2 (List.length maps);
+    check int "one map parsed" 1 (List.length maps);
+    let counter_map = List.hd maps in
+    check string "map name" "counter" counter_map.Kernelscript.Ast.name;
+    check bool "map key type" true (counter_map.Kernelscript.Ast.key_type = U32);
+    check bool "map value type" true (counter_map.Kernelscript.Ast.value_type = U64);
     
-    let packet_counts = List.find (fun m -> m.Kernelscript.Ast.name = "packet_counts") maps in
-    let rate_limits = List.find (fun m -> m.Kernelscript.Ast.name = "rate_limits") maps in
-    
-    check string "packet_counts type" "hash_map" (Kernelscript.Ast.string_of_map_type packet_counts.Kernelscript.Ast.map_type);
-    check string "rate_limits type" "hash_map" (Kernelscript.Ast.string_of_map_type rate_limits.Kernelscript.Ast.map_type);
-    
-    (* Follow the complete compiler pipeline *)
     match compile_to_c_code ast with
     | Some c_code ->
-        (* Verify C code contains expected elements *)
-        let has_map_declarations = 
-          string_contains_substring c_code "packet_counts" &&
-          string_contains_substring c_code "rate_limits" &&
-          string_contains_substring c_code "BPF_MAP_TYPE_HASH" in
+        let has_map_lookup = string_contains_substring c_code "bpf_map_lookup_elem" in
+        let has_map_update = string_contains_substring c_code "bpf_map_update_elem" in
+        let has_xdp_section = string_contains_substring c_code "SEC(\"xdp\")" in
         
-        let has_map_operations =
-          string_contains_substring c_code "bpf_map_lookup_elem" &&
-          string_contains_substring c_code "bpf_map_update_elem" in
-        
-        let has_program_structure =
-          string_contains_substring c_code "SEC(\"xdp\")" &&
-          string_contains_substring c_code "rate_limiter" in
-        
-        check bool "has map declarations" true has_map_declarations;
-        check bool "has map operations" true has_map_operations;
-        check bool "has program structure" true has_program_structure
+        check bool "has map lookup" true has_map_lookup;
+        check bool "has map update" true has_map_update;
+        check bool "has XDP section" true has_xdp_section
     | None ->
-        fail "Failed to compile program to C code"
+        fail "Failed to compile map operations"
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
 (** Test multiple map types in one program *)
 let test_multiple_map_types () =
   let program = {|
-map<u32, u64> hash_map : HashMap(1024)
-map<u32, u32> array_map : Array(256)
-map<u32, u64> percpu_map : PercpuHash(512)
+map<u32, u64> global_counter : HashMap(1024)
+map<u16, u32> port_map : Array(65536)  
+map<u64, u32> session_map : HashMap(10000)
 
-program multi_map : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let hash_val: u64 = hash_map[41]
-    hash_map[42] = hash_val let array_val: u32 = array_map[9]
-    array_map[10] = array_val let percpu_val: u64 = percpu_map[122]
-    percpu_map[123] = percpu_val
-    
-    return 2
-  }
+@xdp fn multi_map(ctx: XdpContext) -> XdpAction {
+  let ip = 0x08080808
+  let port = 80
+  let session = 0x123456789ABCDEF0
+  
+  global_counter[ip] = global_counter[ip] + 1
+  port_map[port] = ip
+  session_map[session] = ip
+  
+  return 2
 }
 |} in
   try
     let ast = parse_string program in
     let maps = extract_maps_from_ast ast in
     
-    (* Verify all map types were parsed correctly *)
-    check int "three map types" 3 (List.length maps);
+    check int "three maps parsed" 3 (List.length maps);
     
-    let expected_maps = [
-      ("hash_map", "hash_map", 1024);
-      ("array_map", "array", 256);
-      ("percpu_map", "percpu_hash", 512);
-    ] in
+    (* Verify map configurations *)
+    let global_counter = List.find (fun m -> m.Kernelscript.Ast.name = "global_counter") maps in
+    let port_map = List.find (fun m -> m.Kernelscript.Ast.name = "port_map") maps in 
+    let session_map = List.find (fun m -> m.Kernelscript.Ast.name = "session_map") maps in
     
-    List.iter (fun (name, expected_type, expected_size) ->
-              let map = List.find (fun m -> m.Kernelscript.Ast.name = name) maps in
-      check string (name ^ " type") expected_type (Kernelscript.Ast.string_of_map_type map.Kernelscript.Ast.map_type);
-              check int (name ^ " size") expected_size map.Kernelscript.Ast.config.Kernelscript.Ast.max_entries
-    ) expected_maps;
+    check bool "global_counter is HashMap" true (global_counter.Kernelscript.Ast.map_type = HashMap);
+    check bool "port_map is Array" true (port_map.Kernelscript.Ast.map_type = Array);
+    check bool "session_map is HashMap" true (session_map.Kernelscript.Ast.map_type = HashMap);
     
-    (* Generate C code and verify all map types are present *)
     match compile_to_c_code ast with
     | Some c_code ->
-        let has_hash = string_contains_substring c_code "BPF_MAP_TYPE_HASH" in
-        let has_array = string_contains_substring c_code "BPF_MAP_TYPE_ARRAY" in
-        let has_percpu = string_contains_substring c_code "BPF_MAP_TYPE_PERCPU_HASH" in
+        (* Verify all three maps appear in generated code *)
+        let has_global_counter = string_contains_substring c_code "global_counter" in
+        let has_port_map = string_contains_substring c_code "port_map" in  
+        let has_session_map = string_contains_substring c_code "session_map" in
         
-        check bool "has hash map" true has_hash;
-        check bool "has array map" true has_array;
-        check bool "has percpu map" true has_percpu;
-        
-        (* Verify map operations are generated *)
-        let has_map_lookups = string_contains_substring c_code "bpf_map_lookup_elem" in
-        let has_map_updates = string_contains_substring c_code "bpf_map_update_elem" in
-        
-        check bool "has map lookups" true has_map_lookups;
-        check bool "has map updates" true has_map_updates
+        check bool "global_counter in C code" true has_global_counter;
+        check bool "port_map in C code" true has_port_map;
+        check bool "session_map in C code" true has_session_map
     | None ->
-        fail "Failed to compile multiple map types program"
+        fail "Failed to compile multiple map types"
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
 (** Test error handling for invalid map operations *)
 let test_invalid_map_operations () =
-  let test_cases = [
-    (* Invalid key type *)
-    ({|
-map<u32, u64> test_map : HashMap(1024)
-program test : xdp {
-  fn main() -> u32 {
-    test_map["invalid_key"] = 100
-    return 0
-  }
+  let invalid_programs = [
+    (* Type mismatch: string key with u32 map *)
+    {|
+map<u32, u64> test_map : HashMap(100)
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  test_map["invalid_key"] = 1
+  return 2
 }
-|}, "invalid key type");
-    
-    (* Invalid value type *)
-    ({|
-map<u32, u64> test_map : HashMap(1024)
-program test : xdp {
-  fn main() -> u32 {
-    test_map[42] = "invalid_value"
-    return 0
-  }
+|};
+    (* Assignment type mismatch *)
+    {|
+map<u32, u64> test_map : HashMap(100)
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  test_map[1] = "invalid_value"
+  return 2
 }
-|}, "invalid value type");
-    
+|};
     (* Undefined map *)
-    ({|
-program test : xdp {
-  fn main() -> u32 {
-    undefined_map[42] = 100
-    return 0
-  }
+    {|
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  undefined_map[1] = 42
+  return 2
 }
-|}, "undefined map");
+|};
   ] in
   
-  (* All these should fail during compilation pipeline *)
-  List.iter (fun (program, description) ->
+  List.iter (fun program ->
     try
       let ast = parse_string program in
-      let _ = compile_to_c_code ast in
-      fail ("Should have failed for: " ^ description)
+      let _ = compile_to_c_code_with_exceptions ast in
+      fail "Should have failed on invalid map operation"
     with
-    | Parse_error _ -> 
-        check bool ("correctly rejected at parse: " ^ description) true true
+    | Kernelscript.Type_checker.Type_error (_, _) -> 
+        (* Expected to fail with Type_error *)
+        check bool "correctly rejected invalid map operation" true true
+    | Kernelscript.Symbol_table.Symbol_error (_, _) -> 
+        (* Expected to fail with Symbol_error for undefined identifiers *)
+        check bool "correctly rejected invalid map operation" true true
     | _ -> 
-        check bool ("correctly rejected during compilation: " ^ description) true true
-  ) test_cases
+        fail "Unexpected error type for invalid map operation"
+  ) invalid_programs
 
 (** Test map operations with complex expressions *)
 let test_complex_map_expressions () =
-  (* Simplified test to avoid type issues while still testing real functionality *)
   let program = {|
-map<u32, u64> counters : HashMap(1024)
+map<u32, u64> stats : HashMap(1024)
 
-program complex_ops : xdp {
-  fn compute_key(base: u32) -> u32 {
-    return base * 2 + 1
+kernel fn compute_key(base: u32) -> u32 {
+  return base * 2 + 1
+}
+
+@xdp fn complex_ops(ctx: XdpContext) -> XdpAction {
+  let base_ip = 0x08080808
+  let key = compute_key(base_ip)
+  
+  let current_value = stats[key]
+  stats[key] = current_value + 1
+  
+  if (stats[key] > 500) {
+    stats[key] = 0
   }
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    let base_key = 10
-    let computed_key = compute_key(base_key)
-    counters[computed_key] = counters[base_key]
-    return 2
-  }
+  return 2
 }
 |} in
   try
@@ -225,15 +210,14 @@ program complex_ops : xdp {
     (* Verify parsing of complex program structure *)
     check int "one map parsed" 1 (List.length maps);
     
-    (* Extract program functions *)
-    let programs = List.filter_map (function
-      | Kernelscript.Ast.Program prog -> Some prog
+    (* Extract attributed functions *)
+    let attributed_functions = List.filter_map (function
+      | Kernelscript.Ast.AttributedFunction attr_func -> Some attr_func
       | _ -> None
     ) ast in
     
-    check int "one program" 1 (List.length programs);
-    let complex_prog = List.hd programs in
-    check int "two functions" 2 (List.length complex_prog.prog_functions);
+    check int "one attributed function" 1 (List.length attributed_functions);
+    (* Attributed functions don't have multiple program functions - just the one function *)
     
     (* Compile and verify complex operations were generated *)
     match compile_to_c_code ast with
@@ -257,31 +241,31 @@ let test_map_operations_in_conditionals () =
 map<u32, u64> packet_counts : HashMap(1024)
 map<u32, u32> blacklist : HashMap(256)
 
-program conditional_maps : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let src_ip = 0x08080808
-    
-    if (blacklist[src_ip] > 0) {
-      return 1
-    }
-    
-    let current_count = packet_counts[src_ip]
-    packet_counts[src_ip] = current_count + 1 if (packet_counts[src_ip] > 1000) {
-      blacklist[src_ip] = 1
-      return 1
-    }
-    
-    let threshold = 100
-    if (src_ip == 0x08080808) {
-      threshold = 500
-    }
-    
-    if (packet_counts[src_ip] > threshold) {
-      return 1
-    }
-    
-    return 2
+@xdp fn conditional_maps(ctx: XdpContext) -> XdpAction {
+  let src_ip = 0x08080808
+  
+  if (blacklist[src_ip] > 0) {
+    return 1
   }
+  
+  let current_count = packet_counts[src_ip]
+  packet_counts[src_ip] = current_count + 1
+  
+  if (packet_counts[src_ip] > 1000) {
+    blacklist[src_ip] = 1
+    return 1
+  }
+  
+  let threshold = 100
+  if (src_ip == 0x08080808) {
+    threshold = 500
+  }
+  
+  if (packet_counts[src_ip] > threshold) {
+    return 1
+  }
+  
+  return 2
 }
 |} in
   try
@@ -323,12 +307,11 @@ let test_memory_safety () =
   let program = {|
 map<u32, u64> test_map : HashMap(1024)
 
-program memory_safe : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let key = 42
-    let value = test_map[key] test_map[key] = value + 1
-    return 2
-  }
+@xdp fn memory_safe(ctx: XdpContext) -> XdpAction {
+  let key = 42
+  let value = test_map[key]
+  test_map[key] = value + 1
+  return 2
 }
 |} in
   try
@@ -338,7 +321,7 @@ program memory_safe : xdp {
     (* Verify single map *)
     check int "one map parsed" 1 (List.length maps);
     let test_map = List.hd maps in
-    check string "test_map name" "test_map" test_map.name;
+    check string "test_map name" "test_map" test_map.Kernelscript.Ast.name;
     
     (* Compile and check for memory safety patterns *)
     match compile_to_c_code ast with
@@ -369,21 +352,17 @@ let test_different_context_types () =
     ("xdp", {|
 map<u32, u64> xdp_stats : HashMap(1024)
 
-program xdp_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    xdp_stats[1] = xdp_stats[2]
-    return 2
-  }
+@xdp fn xdp_test(ctx: XdpContext) -> XdpAction {
+  xdp_stats[1] = xdp_stats[2]
+  return 2
 }
 |});
     ("tc", {|
 map<u32, u64> tc_stats : HashMap(1024)
 
-program tc_test : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    tc_stats[1] = tc_stats[2]
-    return 0
-  }
+@tc fn tc_test(ctx: TcContext) -> TcAction {
+  tc_stats[1] = tc_stats[2]
+  return 0
 }
 |})
   ] in

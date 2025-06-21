@@ -64,26 +64,28 @@ let test_function_definition () =
   check bool "return type" true (match func.func_return_type with Some XdpAction -> true | _ -> false);
   check int "body statements" 1 (List.length func.func_body)
 
-(** Test program definition *)
-let test_program_definition () =
-  let func = make_function "main" [] (Some XdpAction) [] test_position in
-  let prog = make_program "test_prog" Xdp [func] test_position in
+(** Test attributed function definition *)
+let test_attributed_function_definition () =
+  let param = ("ctx", XdpContext) in
+  let func = make_function "packet_filter" [param] (Some XdpAction) [] test_position in
+  let attr_func = make_attributed_function [SimpleAttribute "xdp"] func test_position in
   
-  check string "program name" "test_prog" prog.prog_name;
-  check bool "program type" true (prog.prog_type = Xdp);
-  check int "function count" 1 (List.length prog.prog_functions)
+  check string "function name" "packet_filter" attr_func.attr_function.func_name;
+  check int "parameter count" 1 (List.length attr_func.attr_function.func_params);
+  check bool "return type" true (match attr_func.attr_function.func_return_type with Some XdpAction -> true | _ -> false);
+  check int "attributes" 1 (List.length attr_func.attr_list)
 
 (** Test complete AST *)
 let test_complete_ast () =
   let return_stmt = make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) test_position))) test_position in
-  let func = make_function "main" [("ctx", XdpContext)] (Some XdpAction) [return_stmt] test_position in
-  let prog = make_program "xdp_prog" Xdp [func] test_position in
-  let ast = [Program prog] in
+  let func = make_function "packet_filter" [("ctx", XdpContext)] (Some XdpAction) [return_stmt] test_position in
+  let attr_func = make_attributed_function [SimpleAttribute "xdp"] func test_position in
+  let ast = [AttributedFunction attr_func] in
   
   check int "AST declarations" 1 (List.length ast);
   match List.hd ast with
-  | Program p -> check string "program name in AST" "xdp_prog" p.prog_name
-  | _ -> fail "Expected program declaration"
+  | AttributedFunction af -> check string "function name in AST" "packet_filter" af.attr_function.func_name
+  | _ -> fail "Expected attributed function declaration"
 
 (** Test operators *)
 let test_operators () =
@@ -112,7 +114,7 @@ let ast_tests = [
   "expressions", `Quick, test_expressions;
   "statements", `Quick, test_statements;
   "function_definition", `Quick, test_function_definition;
-  "program_definition", `Quick, test_program_definition;
+  "attributed_function_definition", `Quick, test_attributed_function_definition;
   "complete_ast", `Quick, test_complete_ast;
   "operators", `Quick, test_operators;
   "extended_types", `Quick, test_extended_types;

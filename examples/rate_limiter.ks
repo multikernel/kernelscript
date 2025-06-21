@@ -42,7 +42,7 @@ struct Args {
 
 fn main(args: Args) -> i32 {
   network.limit = args.limit
-  let prog = load_program(rate_limiter)
-  attach_program(prog, args.interface, 0)
+  let prog = load(rate_limiter)
+  attach(prog, args.interface, 0)
   return 0
 }

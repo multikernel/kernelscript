@@ -2,18 +2,17 @@
 
 open Ast
 
-(** Symbol kinds *)
+(** Symbol kinds that can be stored in the symbol table *)
 type symbol_kind =
   | Variable of bpf_type
-  | ConstVariable of bpf_type * literal  (* type and value *)
-  | Function of bpf_type list * bpf_type  (* params, return *)
+  | ConstVariable of bpf_type * literal  (* Type and constant value *)
+  | Function of bpf_type list * bpf_type  (* Parameter types, return type *)
   | TypeDef of type_def
   | GlobalMap of map_declaration
   | LocalMap of map_declaration
   | Parameter of bpf_type
   | EnumConstant of string * int option  (* enum_name, value *)
   | Config of config_declaration
-  | Program of program_def
 
 (** Symbol information *)
 type symbol = {
@@ -291,11 +290,6 @@ let add_config_decl table config_decl =
   let pos = config_decl.config_pos in
   add_symbol table config_decl.config_name (Config config_decl) Public pos
 
-(** Add program declaration to symbol table *)
-let add_program_decl table prog_decl =
-  let pos = prog_decl.prog_pos in
-  add_symbol table prog_decl.prog_name (Program prog_decl) Public pos
-
 (** Check if map is global *)
 let is_global_map table name =
   Hashtbl.mem table.global_maps name
@@ -376,31 +370,22 @@ and process_declaration_accumulate table declaration =
       let _ = exit_scope table_with_func in
       table
       
-  | Ast.Program prog ->
-      (* Add program as a symbol first *)
-      add_program_decl table prog;
+
       
-      let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
+  | Ast.AttributedFunction attr_func ->
+      (* Process attributed function as a global function *)
+      add_function table attr_func.attr_function Public;
       
-      (* Process program maps *)
-      List.iter (fun map_decl ->
-        add_map_decl table_with_prog map_decl
-      ) prog.prog_maps;
+      let table_with_func = enter_scope table (FunctionScope ("global", attr_func.attr_function.func_name)) in
       
-      (* Process program functions and accumulate changes *)
-      let final_table_prog = List.fold_left (fun acc_table func ->
-        add_function acc_table func Private;
-        acc_table
-      ) table_with_prog prog.prog_functions in
+      (* Add function parameters to scope *)
+      List.iter (fun (param_name, param_type) ->
+        add_variable table_with_func param_name param_type attr_func.attr_function.func_pos
+      ) attr_func.attr_function.func_params;
       
-      (* Merge the program-level symbols back to the main table *)
-       Hashtbl.iter (fun name symbols ->
-         let existing = try Hashtbl.find table.symbols name with Not_found -> [] in
-         let prog_symbols = List.filter (fun s -> s.scope = [prog.prog_name]) symbols in
-         if prog_symbols <> [] then
-           Hashtbl.replace table.symbols name (existing @ prog_symbols)
-       ) final_table_prog.symbols;
-      
+      (* Process function body statements *)
+      List.iter (process_statement table_with_func) attr_func.attr_function.func_body;
+      let _ = exit_scope table_with_func in
       table
       
   | Ast.ConfigDecl config_decl ->
@@ -433,48 +418,18 @@ and process_declaration table = function
       List.iter (process_statement table_with_func) func.func_body;
       let _ = exit_scope table_with_func in ()
       
-  | Ast.Program prog ->
-      (* Add program as a symbol first *)
-      add_program_decl table prog;
-      
-      let table_with_prog = enter_scope table (ProgramScope prog.prog_name) in
-      
-      (* Process program maps *)
-      List.iter (fun map_decl ->
-        add_map_decl table_with_prog map_decl
-      ) prog.prog_maps;
-      
-      (* Process program structs *)
-      List.iter (fun struct_def ->
-        let pos = { line = 1; column = 1; filename = "" } in
-        let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
-        add_type_def table_with_prog type_def pos
-      ) prog.prog_structs;
-      
-      (* Process program functions *)
-      List.iter (fun func ->
-        add_function table_with_prog func Private;
-        (* Enter function scope to process function body *)
-        let table_with_func = enter_scope table_with_prog (FunctionScope (prog.prog_name, func.func_name)) in
-        (* Add function parameters to scope *)
-        List.iter (fun (param_name, param_type) ->
-          add_variable table_with_func param_name param_type func.func_pos
-        ) func.func_params;
-        (* Process function body statements *)
-        List.iter (process_statement table_with_func) func.func_body;
-        let _ = exit_scope table_with_func in ()
-      ) prog.prog_functions;
-      
-      (* Manually merge symbols from program scope back to main table *)
-      Hashtbl.iter (fun name symbols ->
-        let prog_scoped_symbols = List.filter (fun s -> 
-          s.scope = [prog.prog_name]
-        ) symbols in
-        if prog_scoped_symbols <> [] then (
-          let existing = try Hashtbl.find table.symbols name with Not_found -> [] in
-          Hashtbl.replace table.symbols name (existing @ prog_scoped_symbols)
-        )
-      ) table_with_prog.symbols
+  | Ast.AttributedFunction attr_func ->
+      (* Process attributed function as a global function *)
+      add_function table attr_func.attr_function Public;
+      (* Enter function scope to process function body *)
+      let table_with_func = enter_scope table (FunctionScope ("global", attr_func.attr_function.func_name)) in
+      (* Add function parameters to scope *)
+      List.iter (fun (param_name, param_type) ->
+        add_variable table_with_func param_name param_type attr_func.attr_function.func_pos
+      ) attr_func.attr_function.func_params;
+      (* Process function body statements *)
+      List.iter (process_statement table_with_func) attr_func.attr_function.func_body;
+      let _ = exit_scope table_with_func in ()
       
   | Ast.ConfigDecl config_decl ->
       add_config_decl table config_decl
@@ -744,7 +699,6 @@ let string_of_symbol_kind = function
   | EnumConstant (enum_name, value) ->
       "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")
   | Config config_decl -> "config:" ^ config_decl.config_name
-  | Program prog_decl -> "program:" ^ prog_decl.prog_name ^ ":" ^ string_of_program_type prog_decl.prog_type
 
 let string_of_visibility = function
   | Public -> "pub"

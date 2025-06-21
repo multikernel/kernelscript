@@ -256,14 +256,12 @@ let test_delete_statement_codegen_validation () =
 (** Test end-to-end delete statement functionality *)
 let test_delete_statement_end_to_end () =
   let program_code = {|
-    program test_delete : xdp {
-      map<u32, u64> test_map : HashMap(1024)
-      
-      fn main(ctx: XdpContext) -> u32 {
-        let key: u32 = 42
-        delete test_map[key]
-        return 0
-      }
+    map<u32, u64> test_map : HashMap(1024)
+    
+    @xdp fn test_delete(ctx: XdpContext) -> XdpAction {
+      let key: u32 = 42
+      delete test_map[key]
+      return 0
     }
   |} in
   
@@ -271,12 +269,9 @@ let test_delete_statement_end_to_end () =
     let ast = parse_string program_code in
     (* Verify that the AST contains a delete statement *)
     let has_delete = match ast with
-      | [Program prog] ->
-          (match prog.prog_functions with
-           | [func] ->
-                               (match func.func_body with
-                 | [_; { stmt_desc = Delete (_, _); _ }; _] -> true
-                 | _ -> false)
+      | [_; AttributedFunction attr_func] ->
+          (match attr_func.attr_function.func_body with
+           | [_; { stmt_desc = Delete (_, _); _ }; _] -> true
            | _ -> false)
       | _ -> false
     in

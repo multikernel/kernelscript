@@ -20,11 +20,9 @@ let contains_substr str substr =
 let make_simple_program_with_body body_text = {|
 map<u32, u32> test_map : HashMap(1024)
 
-program test_prog : xdp {
-    fn main(ctx: XdpContext) -> i32 {
+@xdp fn test_prog(ctx: XdpContext) -> i32 {
 |} ^ body_text ^ {|
-        return 2  // XDP_PASS
-    }
+    return 2  // XDP_PASS
 }
 
 fn main() -> i32 {
@@ -45,9 +43,9 @@ let test_try_catch_parsing () =
   
   try
     let ast = parse_string program_text in
-    match List.nth ast 1 with (* Skip map declaration, get program *)
-    | Program prog -> 
-        let main_func = List.hd prog.prog_functions in
+    match List.nth ast 1 with (* Skip map declaration, get attributed function *)
+    | AttributedFunction attr_func -> 
+        let main_func = attr_func.attr_function in
         let first_stmt = List.hd main_func.func_body in
         (match first_stmt.stmt_desc with
          | Try (try_stmts, catch_clauses) ->
@@ -59,7 +57,7 @@ let test_try_catch_parsing () =
                   check int "catch pattern code" 42 code
               | _ -> fail "Expected IntPattern")
          | _ -> fail "Expected Try statement")
-    | _ -> fail "Expected program declaration"
+    | _ -> fail "Expected attributed function declaration"
   with
   | e -> fail ("Failed to parse try/catch: " ^ Printexc.to_string e)
 
@@ -71,8 +69,8 @@ let test_throw_parsing () =
   try
     let ast = parse_string program_text in
     match List.nth ast 1 with
-    | Program prog -> 
-        let main_func = List.hd prog.prog_functions in
+    | AttributedFunction attr_func -> 
+        let main_func = attr_func.attr_function in
         let first_stmt = List.hd main_func.func_body in
         (match first_stmt.stmt_desc with
          | Throw expr ->
@@ -81,7 +79,7 @@ let test_throw_parsing () =
                   check int "throw code" 123 code
               | _ -> fail "Expected integer literal in throw")
          | _ -> fail "Expected Throw statement")
-    | _ -> fail "Expected program declaration"
+    | _ -> fail "Expected attributed function declaration"
   with
   | e -> fail ("Failed to parse throw: " ^ Printexc.to_string e)
 
@@ -93,8 +91,8 @@ let test_defer_parsing () =
   try
     let ast = parse_string program_text in
     match List.nth ast 1 with
-    | Program prog -> 
-        let main_func = List.hd prog.prog_functions in
+    | AttributedFunction attr_func -> 
+        let main_func = attr_func.attr_function in
         let first_stmt = List.hd main_func.func_body in
         (match first_stmt.stmt_desc with
          | Defer cleanup_expr ->
@@ -103,7 +101,7 @@ let test_defer_parsing () =
                   check string "defer function name" "cleanup_function" name
               | _ -> fail "Expected function call in defer")
          | _ -> fail "Expected Defer statement")
-    | _ -> fail "Expected program declaration"
+    | _ -> fail "Expected attributed function declaration"
   with
   | e -> fail ("Failed to parse defer: " ^ Printexc.to_string e)
 
@@ -126,8 +124,8 @@ let test_complex_error_handling_parsing () =
   try
     let ast = parse_string program_text in
     match List.nth ast 1 with
-    | Program prog -> 
-        let main_func = List.hd prog.prog_functions in
+    | AttributedFunction attr_func -> 
+        let main_func = attr_func.attr_function in
         let stmts = main_func.func_body in
         check int "total statements" 3 (List.length stmts); (* defer, try, return *)
         
@@ -148,7 +146,7 @@ let test_complex_error_handling_parsing () =
               | IntPattern 404 -> ()
               | _ -> fail "Expected first catch to be 404")
          | _ -> fail "Expected second statement to be try")
-    | _ -> fail "Expected program declaration"
+    | _ -> fail "Expected attributed function declaration"
   with
   | e -> fail ("Failed to parse complex error handling: " ^ Printexc.to_string e)
 
@@ -171,7 +169,7 @@ let test_try_catch_ir_generation () =
     
     (* Just verify that IR generation succeeds *)
     check bool "IR generation succeeds" true (ir_prog.name = "test_prog");
-    check bool "Main function exists" true (ir_prog.main_function.func_name = "test_prog")
+    check bool "Main function exists" true (ir_prog.entry_function.func_name = "test_prog")
   with
   | e -> fail ("Failed to generate IR for try/catch: " ^ Printexc.to_string e)
 
@@ -188,7 +186,7 @@ let test_throw_ir_generation () =
     
     (* Just verify that IR generation succeeds *)
     check bool "IR generation succeeds" true (ir_prog.name = "test_prog");
-    check bool "Main function exists" true (ir_prog.main_function.func_name = "test_prog")
+    check bool "Main function exists" true (ir_prog.entry_function.func_name = "test_prog")
   with
   | e -> fail ("Failed to generate IR for throw: " ^ Printexc.to_string e)
 
@@ -205,7 +203,7 @@ let test_defer_ir_generation () =
     
     (* Just verify that IR generation succeeds *)
     check bool "IR generation succeeds" true (ir_prog.name = "test_prog");
-    check bool "Main function exists" true (ir_prog.main_function.func_name = "test_prog")
+    check bool "Main function exists" true (ir_prog.entry_function.func_name = "test_prog")
   with
   | e -> fail ("Failed to generate IR for defer: " ^ Printexc.to_string e)
 

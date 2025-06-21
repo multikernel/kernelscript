@@ -9,13 +9,11 @@ let parse_program_string s =
 
 let test_valid_const_declaration () =
   let program_text = {|
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        const MAX_SIZE: u32 = 1500
-        const MIN_SIZE: u16 = 64
-        const THRESHOLD = 100
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      const MAX_SIZE: u32 = 1500
+      const MIN_SIZE: u16 = 64
+      const THRESHOLD = 100
+      return 2
     }
   |} in
   try
@@ -28,12 +26,10 @@ let test_valid_const_declaration () =
 
 let test_const_assignment_error () =
   let program_text = {|
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        const MAX_SIZE: u32 = 1500
-        MAX_SIZE = 2000
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      const MAX_SIZE: u32 = 1500
+      MAX_SIZE = 2000
+      return 2
     }
   |} in
   try
@@ -48,11 +44,9 @@ let test_const_assignment_error () =
 
 let test_const_integer_types_only () =
   let program_text = {|
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        const name: str<16> = "test"
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      const name: str<16> = "test"
+      return 2
     }
   |} in
   try
@@ -67,12 +61,10 @@ let test_const_integer_types_only () =
 
 let test_const_must_be_literal () =
   let program_text = {|
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let x = 10
-        const MAX_SIZE: u32 = x
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      let x = 10
+      const MAX_SIZE: u32 = x
+      return 2
     }
   |} in
   try
@@ -87,12 +79,10 @@ let test_const_must_be_literal () =
 
 let test_const_type_inference () =
   let program_text = {|
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        const SMALL_VALUE = 10  // Should infer u32
-        const BIG_VALUE = 0xFFFFFFFF  // Should infer u32
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      const SMALL_VALUE = 10  // Should infer u32
+      const BIG_VALUE = 0xFFFFFFFF  // Should infer u32
+      return 2
     }
   |} in
   try
@@ -121,18 +111,16 @@ let test_const_in_userspace () =
 
 let test_const_with_different_integer_types () =
   let program_text = {|
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        const BYTE_VAL: u8 = 255
-        const SHORT_VAL: u16 = 65535
-        const INT_VAL: u32 = 429496729
-        const LONG_VAL: u64 = 1844674407
-        const SIGNED_BYTE: i8 = -128
-        const SIGNED_SHORT: i16 = -32768
-        const SIGNED_INT: i32 = -214748364
-        const SIGNED_LONG: i64 = -92233720368
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      const BYTE_VAL: u8 = 255
+      const SHORT_VAL: u16 = 65535
+      const INT_VAL: u32 = 429496729
+      const LONG_VAL: u64 = 1844674407
+      const SIGNED_BYTE: i8 = -128
+      const SIGNED_SHORT: i16 = -32768
+      const SIGNED_INT: i32 = -214748364
+      const SIGNED_LONG: i64 = -92233720368
+      return 2
     }
   |} in
   try

@@ -41,10 +41,8 @@ let generate_userspace_code_from_program program_text filename =
 (** Test 1: Struct field declarations use correct C syntax *)
 let test_struct_field_string_syntax () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct Args {
@@ -89,10 +87,8 @@ fn main(args: Args) -> i32 {
 (** Test 2: Function parameter declarations use correct C syntax *)
 let test_function_parameter_string_syntax () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn process_message(msg: str<64>, target: str<32>) -> i32 {
@@ -128,10 +124,8 @@ fn main() -> i32 {
 (** Test 3: Variable declarations use correct C syntax *)
 let test_variable_declaration_string_syntax () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -166,10 +160,8 @@ fn main() -> i32 {
 (** Test 4: Command line argument parsing uses strncpy for strings *)
 let test_argument_parsing_string_handling () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct Args {
@@ -216,10 +208,8 @@ fn main(args: Args) -> i32 {
 (** Test 5: Help text shows correct type hints for strings *)
 let test_help_text_string_type_hints () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct Args {
@@ -260,10 +250,8 @@ fn main(args: Args) -> i32 {
 (** Test 6: Mixed struct with all the fixes working together *)
 let test_comprehensive_string_struct_fixes () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct Config {
@@ -333,10 +321,8 @@ fn main(config: Config) -> i32 {
 (** Test 7: Edge cases with different string sizes *)
 let test_string_size_edge_cases () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct EdgeCases {
@@ -394,14 +380,12 @@ config test_config {
     enable_logging: bool = true,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (test_config.enable_logging) {
-            print("Dropping big packets")
-            return 2
-        }
-        return 1
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    if (test_config.enable_logging) {
+        print("Dropping big packets")
+        return 2
     }
+    return 1
 }
 |} in
   

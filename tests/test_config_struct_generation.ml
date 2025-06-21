@@ -67,10 +67,8 @@ config network {
     port_number: u16 = 8080,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 fn main() -> i32 {
@@ -114,10 +112,8 @@ config security {
     max_connections: u64 = 1000,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 fn main() -> i32 {
@@ -159,10 +155,8 @@ config network {
     allowed_ips: u32[2] = [192168001001, 192168001002],
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 fn main() -> i32 {
@@ -188,14 +182,12 @@ config test_config {
     value: u32 = 42,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 fn main() -> i32 {
-    let prog_handle = load_program(test)  // This will cause BPF functions to be generated
+    let prog_handle = load(test)  // This will cause BPF functions to be generated
     return 0
 }
 |} in
@@ -220,10 +212,8 @@ config network {
     enable_logging: bool = true,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 struct Args {
@@ -258,11 +248,9 @@ config network {
     enable_logging: bool = true,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        network.enable_logging = false  // This should cause a type error
-        return 2
-    }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    network.enable_logging = false  // This should cause a type error
+    return 2
 }
 
 fn main() -> i32 {
@@ -291,13 +279,11 @@ config network {
     max_packet_size: u32 = 1500,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (network.enable_logging) {  // This should be allowed
-            return 2
-        }
-        return 1
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    if (network.enable_logging) {  // This should be allowed
+        return 2
     }
+    return 1
 }
 
 fn main() -> i32 {
@@ -323,19 +309,17 @@ config demo {
     timeout_ms: u16 = 5000,
 }
 
-program simple_logger : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (demo.enable_logging) {
-            print("eBPF: Processing packet")
-        }
-        return 2
+@xdp fn simple_logger(ctx: XdpContext) -> XdpAction {
+    if (demo.enable_logging) {
+        print("eBPF: Processing packet")
     }
+    return 2
 }
 
 fn main() -> i32 {
     print("Userspace: Starting packet logger")
-    let prog = load_program(simple_logger)
-    attach_program(prog, "lo", 0)
+    let prog = load(simple_logger)
+    attach(prog, "lo", 0)
     return 0
 }
 |} in
@@ -391,19 +375,17 @@ config settings {
     max_entries: u32 = 1024,
 }
 
-program packet_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (settings.debug_mode) {
-            print("Debug mode enabled")
-        }
-        return 2
+@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+    if (settings.debug_mode) {
+        print("Debug mode enabled")
     }
+    return 2
 }
 
 fn main() -> i32 {
     // No direct config access in userspace - only eBPF uses it
-    let prog = load_program(packet_filter)
-    attach_program(prog, "eth0", 0)
+    let prog = load(packet_filter)
+    attach(prog, "eth0", 0)
     return 0
 }
 |} in
@@ -439,17 +421,15 @@ config security {
     max_attempts: u32 = 5,
 }
 
-program test : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (network.enable_logging && security.strict_mode) {
-            print("Strict logging enabled")
-        }
-        return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+    if (network.enable_logging && security.strict_mode) {
+        print("Strict logging enabled")
     }
+    return 2
 }
 
 fn main() -> i32 {
-    let prog = load_program(test)
+    let prog = load(test)
     return 0
 }
 |} in

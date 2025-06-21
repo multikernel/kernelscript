@@ -168,20 +168,17 @@ let compile opts source_file =
     let extract_variable_declarations ast_nodes =
       List.fold_left (fun acc node ->
         match node with
-        | Ast.Program prog ->
-            let func_decls = List.fold_left (fun acc2 func ->
-              List.fold_left (fun acc3 stmt ->
-                match stmt.Ast.stmt_desc with
-                | Ast.Declaration (var_name, Some declared_type, _) ->
-                    (match declared_type with
-                     | Ast.UserType alias_name -> 
-                         (* Only store type alias declarations *)
-                         (var_name, alias_name) :: acc3
-                     | _ -> acc3)
-                | _ -> acc3
-              ) acc2 func.Ast.func_body
-            ) [] prog.Ast.prog_functions in
-            func_decls @ acc
+        | Ast.AttributedFunction attr_func ->
+            List.fold_left (fun acc2 stmt ->
+              match stmt.Ast.stmt_desc with
+              | Ast.Declaration (var_name, Some declared_type, _) ->
+                  (match declared_type with
+                   | Ast.UserType alias_name -> 
+                       (* Only store type alias declarations *)
+                       (var_name, alias_name) :: acc2
+                   | _ -> acc2)
+              | _ -> acc2
+            ) acc attr_func.attr_function.Ast.func_body
         | Ast.GlobalFunction func ->
             List.fold_left (fun acc2 stmt ->
               match stmt.Ast.stmt_desc with
@@ -241,7 +238,20 @@ let compile opts source_file =
     (* Compile required builtin headers based on program types *)
     let program_types = List.fold_left (fun acc decl ->
       match decl with
-      | Ast.Program prog -> prog.Ast.prog_type :: acc
+      | Ast.AttributedFunction attr_func ->
+          (* Extract program type from attribute *)
+          (match attr_func.attr_list with
+           | SimpleAttribute prog_type_str :: _ ->
+               (match prog_type_str with
+                | "xdp" -> Ast.Xdp :: acc
+                | "tc" -> Ast.Tc :: acc  
+                | "kprobe" -> Ast.Kprobe :: acc
+                | "uprobe" -> Ast.Uprobe :: acc
+                | "tracepoint" -> Ast.Tracepoint :: acc
+                | "lsm" -> Ast.Lsm :: acc
+                | "cgroup_skb" -> Ast.CgroupSkb :: acc
+                | _ -> acc)
+           | _ -> acc)
       | _ -> acc
     ) [] ast in
     

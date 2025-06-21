@@ -5,57 +5,54 @@ open Alcotest
 (** Test program reference type checking *)
 let test_program_reference_type () =
   let program_text = {|
-program packet_filter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XDP_PASS
-  }
+@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
-  let prog_handle = load_program(packet_filter)
-  let result = attach_program(prog_handle, "eth0", 0)
+  let prog_handle = load(packet_filter)
+  let result = attach(prog_handle, "eth0", 0)
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "program reference type checking" true true
   with
   | Type_error (msg, _) -> 
       Printf.printf "Type error: %s\n" msg;
       check bool "program reference type checking" true false
-  | _ -> 
+  | e -> 
+      Printf.printf "Other error: %s\n" (Printexc.to_string e);
       check bool "program reference type checking" true false
 
 (** Test program reference with different program types *)
 let test_different_program_types () =
   let program_text = {|
-program kprobe_tracer : kprobe {
-  fn main(ctx: KprobeContext) -> u32 {
-    return 0
-  }
+@kprobe fn kprobe_tracer(ctx: KprobeContext) -> u32 {
+  return 0
 }
 
-program tc_filter : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    return TC_ACT_OK
-  }
+@tc fn tc_filter(ctx: TcContext) -> TcAction {
+  return 0
 }
 
 fn main() -> i32 {
-  let kprobe_handle = load_program(kprobe_tracer)
-  let tc_handle = load_program(tc_filter)
+  let kprobe_handle = load(kprobe_tracer)
+  let tc_handle = load(tc_filter)
   
-  let kprobe_result = attach_program(kprobe_handle, "sys_read", 0)
-  let tc_result = attach_program(tc_handle, "eth0", 1)
+  let kprobe_result = attach(kprobe_handle, "sys_read", 0)
+  let tc_result = attach(tc_handle, "eth0", 1)
   
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "different program types" true true
   with
   | Type_error (msg, _) -> 
@@ -72,13 +69,14 @@ fn main() -> i32 {
 let test_invalid_program_reference () =
   let program_text = {|
 fn main() -> i32 {
-  let prog_handle = load_program(non_existent_program)
+  let prog_handle = load(non_existent_program)
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "should fail for non-existent program" false true
   with
   | Type_error _ -> 
@@ -91,21 +89,20 @@ fn main() -> i32 {
 (** Test program reference as variable *)
 let test_program_reference_as_variable () =
   let program_text = {|
-program my_xdp : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XDP_PASS
-  }
+@xdp fn my_xdp(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
   let prog_ref = my_xdp  // Should work - program reference as variable
-  let prog_handle = load_program(prog_ref)
+  let prog_handle = load(prog_ref)
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "program reference as variable" true true
   with
   | Type_error (msg, _) -> 
@@ -117,20 +114,19 @@ fn main() -> i32 {
 (** Test wrong argument types for program functions *)
 let test_wrong_argument_types () =
   let program_text = {|
-program my_xdp : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XDP_PASS
-  }
+@xdp fn my_xdp(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
-  let prog_handle = load_program("string_instead_of_program")  // Should fail
+  let prog_handle = load("string_instead_of_program")  // Should fail
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "should fail for wrong argument type" false true
   with
   | Type_error _ -> 
@@ -141,79 +137,75 @@ fn main() -> i32 {
 (** Test stdlib integration *)
 let test_stdlib_integration () =
   (* Test that the built-in functions are properly recognized *)
-  check bool "load_program is builtin" true (Kernelscript.Stdlib.is_builtin_function "load_program");
-  check bool "attach_program is builtin" true (Kernelscript.Stdlib.is_builtin_function "attach_program");
+  check bool "load is builtin" true (Kernelscript.Stdlib.is_builtin_function "load");
+  check bool "attach is builtin" true (Kernelscript.Stdlib.is_builtin_function "attach");
   
   (* Test getting function signatures *)
-  (match Kernelscript.Stdlib.get_builtin_function_signature "load_program" with
+  (match Kernelscript.Stdlib.get_builtin_function_signature "load" with
   | Some (params, return_type) ->
-      check int "load_program parameter count" 1 (List.length params);
-      check bool "load_program return type is ProgramHandle" true (return_type = Kernelscript.Ast.ProgramHandle)
-  | None -> check bool "load_program function signature should exist" false true);
+      check int "load parameter count" 1 (List.length params);
+      check bool "load return type is ProgramHandle" true (return_type = Kernelscript.Ast.ProgramHandle)
+  | None -> check bool "load function signature should exist" false true);
   
-  (match Kernelscript.Stdlib.get_builtin_function_signature "attach_program" with
+  (match Kernelscript.Stdlib.get_builtin_function_signature "attach" with
   | Some (params, return_type) ->
-      check int "attach_program parameter count" 3 (List.length params);
+      check int "attach parameter count" 3 (List.length params);
       (match params with
        | first_param :: _ ->
-           check bool "attach_program first parameter is ProgramHandle" true (first_param = Kernelscript.Ast.ProgramHandle)
-       | [] -> check bool "attach_program should have parameters" false true);
-      check bool "attach_program return type is U32" true (return_type = Kernelscript.Ast.U32)
-  | None -> check bool "attach_program function signature should exist" false true)
+           check bool "attach first parameter is ProgramHandle" true (first_param = Kernelscript.Ast.ProgramHandle)
+       | [] -> check bool "attach should have parameters" false true);
+      check bool "attach return type is U32" true (return_type = Kernelscript.Ast.U32)
+  | None -> check bool "attach function signature should exist" false true)
 
-(** Test that calling attach_program without load_program fails *)
+(** Test that calling attach without load fails *)
 let test_attach_without_load_fails () =
   let program_text = {|
-program simple_xdp : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XDP_PASS
-  }
+@xdp fn simple_xdp(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
-  let result = attach_program(simple_xdp, "eth0", 0)  // Should fail - program ref instead of handle
+  let result = attach(simple_xdp, "eth0", 0)  // Should fail - program ref instead of handle
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
-    check bool "should fail when attach_program called with program reference" false true
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "should fail when attach called with program reference" false true
   with
   | Type_error (msg, _) -> 
       check bool "should fail with type error" true (String.length msg > 0);
       check bool "error should mention type mismatch" true (String.contains msg 'm')
   | _ -> 
-      check bool "should fail when attach_program called with program reference" false true
+      check bool "should fail when attach called with program reference" false true
 
 (** Test multiple program handles with proper resource management *)
 let test_multiple_program_handles () =
   let program_text = {|
-program xdp_filter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XDP_PASS
-  }
+@xdp fn xdp_filter(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
-program tc_shaper : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    return TC_ACT_OK
-  }
+@tc fn tc_shaper(ctx: TcContext) -> TcAction {
+  return 0
 }
 
 fn main() -> i32 {
-  let xdp_handle = load_program(xdp_filter)
-  let tc_handle = load_program(tc_shaper)
+  let xdp_handle = load(xdp_filter)
+  let tc_handle = load(tc_shaper)
   
-  let xdp_result = attach_program(xdp_handle, "eth0", 0)
-  let tc_result = attach_program(tc_handle, "eth0", 1)
+  let xdp_result = attach(xdp_handle, "eth0", 0)
+  let tc_result = attach(tc_handle, "eth0", 1)
   
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "multiple program handles should work" true true
   with
   | Type_error (msg, _) -> 
@@ -225,25 +217,24 @@ fn main() -> i32 {
 (** Test that program handle variables can be named appropriately *)
 let test_program_handle_naming () =
   let program_text = {|
-program simple_xdp : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return XDP_PASS
-  }
+@xdp fn simple_xdp(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
-  let program_handle = load_program(simple_xdp)  // Clear, non-fd naming
-  let network_prog = load_program(simple_xdp)    // Alternative naming
+  let program_handle = load(simple_xdp)  // Clear, non-fd naming
+  let network_prog = load(simple_xdp)    // Alternative naming
   
-  let result1 = attach_program(program_handle, "eth0", 0)
-  let result2 = attach_program(network_prog, "lo", 0)
+  let result1 = attach(program_handle, "eth0", 0)
+  let result2 = attach(network_prog, "lo", 0)
   
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_ast ast in
+    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "program handle naming should work" true true
   with
   | Type_error (msg, _) -> 

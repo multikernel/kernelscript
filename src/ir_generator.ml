@@ -259,8 +259,12 @@ let rec lower_expression ctx (expr : Ast.expr) =
         let map_type = IRPointer (IRU8, make_bounds_info ()) in (* Maps are represented as pointers *)
         make_ir_value (IRMapRef name) map_type expr.expr_pos
       else
-        (* Check if this is a program reference *)
+        (* Check if this is a function reference *)
         (match expr.expr_type with
+         | Some (Function (_, _)) ->
+             (* Function references should be converted to string literals containing the function name *)
+             let str_type = IRStr (String.length name + 1) in
+             make_ir_value (IRLiteral (StringLit name)) str_type expr.expr_pos
          | Some (ProgramRef _) ->
              (* Program references should be converted to string literals containing the program name *)
              make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
@@ -1489,18 +1493,26 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
   ) (_global_ir_maps : ir_map_def list);
   
   (* Lower program-local functions only - kernel functions are handled separately *)
-  let ir_program_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
+  let ir_program_functions = List.mapi (fun index func -> 
+    (* For attributed functions (single function programs), the function IS the entry function *)
+    let is_attributed_entry = (List.length prog_def.prog_functions = 1 && index = 0) in
+    let temp_func = lower_function ctx prog_def.prog_name func in
+    if is_attributed_entry then
+      (* Mark the attributed function as entry by updating the is_main field *)
+      { temp_func with is_main = true }
+    else
+      temp_func
+  ) prog_def.prog_functions in
   
-  (* Find main function *)
-  let main_function = List.find (fun f -> f.is_main) ir_program_functions in
+  (* Find entry function - for attributed functions, it's the single function we just marked *)
+  let entry_function = List.find (fun f -> f.is_main) ir_program_functions in
   
-  (* Create IR program with only program-local functions *)
+  (* Create IR program with the entry function *)
   make_ir_program 
     prog_def.prog_name 
     prog_def.prog_type 
     ir_program_maps 
-    ir_program_functions 
-    main_function 
+    entry_function 
     prog_def.prog_pos
 
 (** Validate multiple programs for consistency *)
@@ -1517,13 +1529,14 @@ let validate_multiple_programs prog_defs =
   if List.length types <> List.length unique_types then
     failwith "Multiple programs cannot have the same type";
   
-  (* Each program must have exactly one main function *)
+  (* Each attributed function serves as the entry function for its program type *)
   List.iter (fun prog_def ->
-    let main_functions = List.filter (fun f -> f.Ast.func_name = "main") prog_def.prog_functions in
-    if List.length main_functions = 0 then
-      failwith (Printf.sprintf "Program '%s' must have a main function" prog_def.prog_name);
-    if List.length main_functions > 1 then
-      failwith (Printf.sprintf "Program '%s' cannot have multiple main functions" prog_def.prog_name)
+    (* For attributed functions, the single function IS the entry function *)
+    if List.length prog_def.prog_functions = 0 then
+      failwith (Printf.sprintf "Program '%s' has no functions" prog_def.prog_name);
+    (* Attributed functions convert to exactly one function which serves as entry *)
+    if List.length prog_def.prog_functions > 1 then
+      failwith (Printf.sprintf "Program '%s' was converted incorrectly - should have exactly one function" prog_def.prog_name)
   ) prog_defs
 
 (** Lower complete AST to multi-program IR *)
@@ -1533,9 +1546,31 @@ let lower_multi_program ast symbol_table source_name =
   (* Analyze assignment patterns for optimization early *)
   let _optimization_info = analyze_assignment_patterns ctx ast in
   
-  (* Find all program declarations *)
+  (* Find all program declarations by converting from attributed functions *)
   let prog_defs = List.filter_map (function
-    | Ast.Program p -> Some p
+    | Ast.AttributedFunction attr_func ->
+        (* Convert attributed function to program_def for compatibility *)
+        (match attr_func.attr_list with
+         | SimpleAttribute prog_type_str :: _ ->
+             let prog_type = match prog_type_str with
+               | "xdp" -> Ast.Xdp
+               | "tc" -> Ast.Tc  
+               | "kprobe" -> Ast.Kprobe
+               | "uprobe" -> Ast.Uprobe
+               | "tracepoint" -> Ast.Tracepoint
+               | "lsm" -> Ast.Lsm
+               | "cgroup_skb" -> Ast.CgroupSkb
+               | _ -> failwith ("Unknown program type: " ^ prog_type_str)
+             in
+             Some {
+               Ast.prog_name = attr_func.attr_function.func_name;
+               prog_type = prog_type;
+               prog_functions = [attr_func.attr_function];
+               prog_maps = [];
+               prog_structs = [];
+               prog_pos = attr_func.attr_pos;
+             }
+         | _ -> None)
     | _ -> None
   ) ast in
   

@@ -49,23 +49,42 @@ type simple_function_analysis = {
   analysis_summary: string;
 }
 
-let analyze_ir_program_simple (prog : ir_program) : simple_function_analysis =
-  let all_functions = prog.main_function :: prog.functions in
-  let signature_validations = List.map validate_function_signature all_functions in
+(** Analyze a single IR program including kernel functions from multi-program context *)
+let analyze_ir_program_with_kernel_functions (prog : ir_program) (kernel_functions : ir_function list) : simple_function_analysis =
+  let entry_func = prog.entry_function in
+  let entry_validation = validate_function_signature entry_func in
   
-  let valid_signatures = List.filter (fun sig_info -> sig_info.is_valid) signature_validations in
-  let invalid_signatures = List.filter (fun sig_info -> not sig_info.is_valid) signature_validations in
+  (* Analyze all kernel functions as well *)
+  let kernel_validations = List.map validate_function_signature kernel_functions in
+  
+  let all_validations = entry_validation :: kernel_validations in
+  
+  let valid_count = List.length (List.filter (fun sig_info -> sig_info.is_valid) all_validations) in
+  let total_count = List.length all_validations in
   
   let summary = Printf.sprintf
-    "Simple Function Analysis:\n\
+    "Function Analysis:\n\
+     - Entry function: %s\n\
+     - Kernel functions: %d\n\
      - Total functions: %d\n\
-     - Valid signatures: %d\n\
-     - Invalid signatures: %d"
-    (List.length all_functions)
-    (List.length valid_signatures)
-    (List.length invalid_signatures) in
+     - Valid signatures: %d/%d"
+    entry_func.func_name
+    (List.length kernel_functions)
+    total_count
+    valid_count
+    total_count in
   
   {
-    signature_validations;
+    signature_validations = all_validations;
     analysis_summary = summary;
-  } 
+  }
+
+(** Original simple analysis for backward compatibility *)
+let analyze_ir_program_simple (prog : ir_program) : simple_function_analysis =
+  analyze_ir_program_with_kernel_functions prog []
+
+(** Analyze multi-program structure to get all functions *)
+let analyze_ir_multi_program (multi_prog : ir_multi_program) : simple_function_analysis =
+  (* Get the first program as the main program to analyze *)
+  let main_program = List.hd multi_prog.programs in
+  analyze_ir_program_with_kernel_functions main_program multi_prog.kernel_functions 

@@ -6,13 +6,11 @@ open Alcotest
 (** Test basic expression evaluation *)
 let test_basic_evaluation () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let x = 5
-    let y = 10
-    let result = x + y
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let x = 5
+  let y = 10
+  let result = x + y
+  return 2
 }
 |} in
   try

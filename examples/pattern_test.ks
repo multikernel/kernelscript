@@ -26,7 +26,7 @@ program packet_filter : xdp {
 }
 
 fn main() -> i32 {
-    let prog = load_program(packet_filter)
-    attach_program(prog, "lo", 0)
+      let prog = load(packet_filter)
+  attach(prog, "lo", 0)
     return 0
 } 

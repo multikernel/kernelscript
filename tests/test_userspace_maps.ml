@@ -105,10 +105,8 @@ let test_global_map_accessibility () =
 map<u32, u64> global_counter : HashMap(1024)
 map<u32, u32> global_config : Array(256)
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn main() -> i32 {
@@ -161,13 +159,8 @@ let test_local_map_isolation () =
   let code = {|
 map<u32, u64> global_shared : HashMap(1024)
 
-program test : xdp {
-  map<u32, u32> local_state : Array(256)
-  map<u32, u64> local_cache : HashMap(512)
-  
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn main() -> i32 {
@@ -213,10 +206,8 @@ let test_map_operation_generation () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024)
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn main() -> i32 {
@@ -267,10 +258,8 @@ map<u32, u32> array_map : Array(256)
 map<u32, u64> lru_map : LruHash(512)
 map<u64, u32> percpu_map : PercpuHash(128)
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn main() -> i32 {
@@ -325,10 +314,8 @@ let test_global_function_code_structure () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024)
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn main() -> i32 {
@@ -373,10 +360,8 @@ let test_global_function_error_handling () =
     ({|
 map<u32, u64> test_map : HashMap(1024)
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn helper() -> i32 {
@@ -388,10 +373,8 @@ fn helper() -> i32 {
     ({|
 map<u32, u64> test_map : HashMap(1024)
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> u32 {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> u32 {
+  return 2
 }
 
 fn main(wrong_param: u32) -> i32 {
@@ -429,18 +412,14 @@ map<u32, u32> shared_counter : HashMap(1024) {
   pinned: "/sys/fs/bpf/shared_counter"
 }
 
-program packet_counter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    shared_counter[1] = 100
-    return XDP_PASS
-  }
+@xdp fn packet_counter(ctx: XdpContext) -> XdpAction {
+  shared_counter[1] = 100
+  return XDP_PASS
 }
 
-program packet_filter : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    shared_counter[2] = 200
-    return TC_ACT_OK
-  }
+@tc fn packet_filter(ctx: TcContext) -> TcAction {
+  shared_counter[2] = 200
+  return TC_ACT_OK
 }
 
 fn main() -> i32 {

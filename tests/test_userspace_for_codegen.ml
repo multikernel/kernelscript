@@ -41,10 +41,8 @@ let generate_userspace_code_from_program program_text filename =
 (** Test 1: Basic for loop with constant bounds generates ordinary C for loop *)
 let test_basic_for_loop_constant_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -79,10 +77,8 @@ fn main() -> i32 {
 (** Test 2: For loop with variable bounds generates ordinary C for loop *)
 let test_for_loop_variable_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -135,10 +131,8 @@ fn main() -> i32 {
 (** Test 3: For loop with complex expressions generates ordinary C *)
 let test_for_loop_complex_expressions () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -172,10 +166,8 @@ fn main() -> i32 {
 (** Test 4: For loop with single iteration still generates C for loop *)
 let test_for_loop_single_iteration () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -203,10 +195,8 @@ fn main() -> i32 {
 (** Test 5: Large bounds should not trigger special handling *)
 let test_for_loop_large_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -235,10 +225,8 @@ fn main() -> i32 {
 (** Test 6: Zero-iteration loop (start > end) generates valid C *)
 let test_for_loop_zero_iterations () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -267,10 +255,8 @@ fn main() -> i32 {
 (** Test 7: For loop in non-main function context *)
 let test_for_loop_in_helper_function () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn helper() -> u32 {
@@ -323,10 +309,8 @@ fn main() -> i32 {
 (** Test 8: Comparison with eBPF codegen - global functions should be different *)
 let test_global_functions_vs_ebpf_for_loop_differences () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {

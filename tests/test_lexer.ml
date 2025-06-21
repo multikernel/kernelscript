@@ -2,8 +2,8 @@ open Alcotest
 open Kernelscript
 
 let token_testable = testable (fun fmt -> function
-  | Parser.PROGRAM -> Format.fprintf fmt "PROGRAM"
   | Parser.FN -> Format.fprintf fmt "FN"
+  | Parser.AT -> Format.fprintf fmt "AT"
   | Parser.MAP -> Format.fprintf fmt "MAP"
   | Parser.INT (i, _) -> Format.fprintf fmt "INT(%d)" i
   | Parser.STRING s -> Format.fprintf fmt "STRING(%s)" s
@@ -59,8 +59,8 @@ let token_testable = testable (fun fmt -> function
 ) (=)
 
 let test_keywords () =
-  let tokens = Lexer.tokenize_string "program fn map" in
-  check (list token_testable) "keywords" [Parser.PROGRAM; Parser.FN; Parser.MAP] tokens
+  let tokens = Lexer.tokenize_string "fn map @" in
+  check (list token_testable) "keywords" [Parser.FN; Parser.MAP; Parser.AT] tokens
 
 let test_literals () =
   let tokens = Lexer.tokenize_string "42 \"hello\" true" in
@@ -111,12 +111,12 @@ let test_variable_keywords () =
   check (list token_testable) "variable keywords" [Parser.LET; Parser.CONFIG] tokens
 
 let test_line_comments () =
-  let tokens = Lexer.tokenize_string "program // this is a comment\nfn" in
-  check (list token_testable) "line comments" [Parser.PROGRAM; Parser.FN] tokens
+  let tokens = Lexer.tokenize_string "@ // this is a comment\nfn" in
+  check (list token_testable) "line comments" [Parser.AT; Parser.FN] tokens
 
 let test_whitespace_handling () =
-  let tokens = Lexer.tokenize_string "  program   \t\n  fn  " in
-  check (list token_testable) "whitespace handling" [Parser.PROGRAM; Parser.FN] tokens
+  let tokens = Lexer.tokenize_string "  @   \t\n  fn  " in
+  check (list token_testable) "whitespace handling" [Parser.AT; Parser.FN] tokens
 
 let test_program_types_as_identifiers () =
   let tokens = Lexer.tokenize_string "xdp tc kprobe uprobe tracepoint lsm" in
@@ -125,25 +125,23 @@ let test_program_types_as_identifiers () =
     Parser.IDENTIFIER "uprobe"; Parser.IDENTIFIER "tracepoint"; Parser.IDENTIFIER "lsm"
   ] tokens
 
-let test_complex_program () =
+let test_complex_attributed_function () =
   let code = {|
-    program test : xdp {
-      fn main() {
-        let x = 42
-        return x
-      }
+    @xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+      let x = 42
+      return x
     }
   |} in
   let tokens = Lexer.tokenize_string code in
   let expected = [
-    Parser.PROGRAM; Parser.IDENTIFIER "test"; Parser.COLON; Parser.IDENTIFIER "xdp"; Parser.LBRACE;
-    Parser.FN; Parser.IDENTIFIER "main"; Parser.LPAREN; Parser.RPAREN; Parser.LBRACE;
+    Parser.AT; Parser.IDENTIFIER "xdp"; Parser.FN; Parser.IDENTIFIER "packet_filter"; 
+    Parser.LPAREN; Parser.IDENTIFIER "ctx"; Parser.COLON; Parser.IDENTIFIER "XdpContext"; Parser.RPAREN;
+    Parser.ARROW; Parser.IDENTIFIER "XdpAction"; Parser.LBRACE;
     Parser.LET; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None);
     Parser.RETURN; Parser.IDENTIFIER "x";
-    Parser.RBRACE;
     Parser.RBRACE
   ] in
-  check (list token_testable) "complex program" expected tokens
+  check (list token_testable) "complex attributed function" expected tokens
 
 let test_mixed_literals () =
   let tokens = Lexer.tokenize_string "0xFF 255 0b11111111 true false \"test\" 'c'" in
@@ -154,7 +152,7 @@ let test_mixed_literals () =
 
 let test_error_handling () =
   let test_cases = [
-    ("@", "Unexpected character");
+    ("#", "Unexpected character");
     ("\"unterminated", "Unterminated string");
     ("''", "Empty character literal");
   ] in
@@ -187,7 +185,7 @@ let lexer_tests = [
   "program_types_as_identifiers", `Quick, test_program_types_as_identifiers;
   "line_comments", `Quick, test_line_comments;
   "whitespace_handling", `Quick, test_whitespace_handling;
-  "complex_program", `Quick, test_complex_program;
+  "complex_attributed_function", `Quick, test_complex_attributed_function;
   "mixed_literals", `Quick, test_mixed_literals;
   "error_handling", `Quick, test_error_handling;
 ]

@@ -127,20 +127,18 @@ let generate_optimized_ir (annotated_ast: declaration list)
   (* Step 1.5: Validate function signatures *)
   Printf.printf "Step 1.5: Validating function signatures...\n";
   List.iter (fun ir_program ->
-    let all_functions = ir_program.main_function :: ir_program.functions in
-    List.iter (fun ir_func ->
-      let validation = Ir_function_system.validate_function_signature ir_func in
-      if not validation.is_valid then (
-        let error_msg = Printf.sprintf 
-          "❌ Invalid function signature '%s' in program '%s':\n%s" 
-          validation.func_name 
-          ir_program.name
-          (String.concat "\n" (List.map (fun err -> "   • " ^ err) validation.validation_errors)) in
-        failwith error_msg
-      ) else if validation.is_main then (
-        Printf.printf "  ✅ Main function '%s' signature validated\n" validation.func_name
-      )
-    ) all_functions
+    let ir_func = ir_program.entry_function in
+    let validation = Ir_function_system.validate_function_signature ir_func in
+    if not validation.is_valid then (
+      let error_msg = Printf.sprintf 
+        "❌ Invalid function signature '%s' in program '%s':\n%s" 
+        validation.func_name 
+        ir_program.name
+        (String.concat "\n" (List.map (fun err -> "   • " ^ err) validation.validation_errors)) in
+      failwith error_msg
+    ) else if validation.is_main then (
+      Printf.printf "  ✅ Entry function '%s' signature validated\n" validation.func_name
+    )
   ) baseline_ir.programs;
   
   (* Step 2: Analyze optimization opportunities *)

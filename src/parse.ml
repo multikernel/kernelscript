@@ -52,12 +52,12 @@ let parse_expression_string ?(filename="<expr>") str =
     let lexbuf = Lexing.from_string str in
     Lexing.set_filename lexbuf filename;
     (* We need to modify our parser to support standalone expressions *)
-    (* For now, we'll wrap the expression in a minimal program *)
-    let wrapped = Printf.sprintf "program test : xdp { fn main() { return %s; } }" str in
+    (* For now, we'll wrap the expression in a minimal attributed function *)
+    let wrapped = Printf.sprintf "@xdp fn test() { return %s; }" str in
     let ast = parse_string ~filename wrapped in
     match ast with
-    | [Program { prog_functions = [{ func_body = [{ stmt_desc = Return (Some expr); _ }]; _ }]; _ }] -> expr
-    | _ -> failwith "Failed to extract expression from parsed program"
+    | [AttributedFunction { attr_function = { func_body = [{ stmt_desc = Return (Some expr); _ }]; _ }; _ }] -> expr
+    | _ -> failwith "Failed to extract expression from parsed attributed function"
   with
   | e -> 
       let pos = { line = 1; column = 1; filename } in
@@ -116,7 +116,7 @@ let validate_ast ast =
   in
   
   let validate_declaration =   function
-    | Program prog -> List.for_all validate_function prog.prog_functions
+    | AttributedFunction attr_func -> validate_function attr_func.attr_function
     | GlobalFunction func -> validate_function func
     | TypeDef _ -> true (* Type definitions are always valid once parsed *)
     | MapDecl _ -> true (* Map declarations are always valid once parsed *)

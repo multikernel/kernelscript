@@ -8,15 +8,15 @@ open Printf
 
 (** Function usage tracking for optimization *)
 type function_usage = {
-  mutable uses_load_program: bool;
-  mutable uses_attach_program: bool;
+  mutable uses_load: bool;
+  mutable uses_attach: bool;
   mutable uses_map_operations: bool;
   mutable used_maps: string list;
 }
 
 let create_function_usage () = {
-  uses_load_program = false;
-  uses_attach_program = false;
+  uses_load = false;
+  uses_attach = false;
   uses_map_operations = false;
   used_maps = [];
 }
@@ -61,8 +61,8 @@ let track_function_usage ctx instr =
   match instr.instr_desc with
   | IRCall (func_name, _, _) ->
       (match func_name with
-       | "load_program" -> ctx.function_usage.uses_load_program <- true
-       | "attach_program" -> ctx.function_usage.uses_attach_program <- true
+       | "load" -> ctx.function_usage.uses_load <- true
+      | "attach" -> ctx.function_usage.uses_attach <- true
        | _ -> ())
   | IRMapLoad (map_val, _, _, _) 
   | IRMapStore (map_val, _, _, _) 
@@ -691,9 +691,9 @@ let rec generate_c_instruction_from_ir ctx instruction =
                   | [] -> (userspace_impl, ["\"\\n\""])
                   | [first] -> (userspace_impl, [sprintf "%s \"\\n\"" first])
                   | args -> (userspace_impl, args @ ["\"\\n\""]))
-             | "load_program" ->
-                 (* Special handling for load_program: generate libbpf program loading code *)
-                 ctx.function_usage.uses_load_program <- true;
+             | "load" ->
+                 (* Special handling for load: generate libbpf program loading code *)
+                 ctx.function_usage.uses_load <- true;
                  (match c_args with
                   | [program_name] ->
                       (* Extract program name from identifier - remove quotes if present *)
@@ -701,15 +701,15 @@ let rec generate_c_instruction_from_ir ctx instruction =
                         String.sub program_name 1 (String.length program_name - 2)
                       else program_name in
                       ("load_bpf_program", [sprintf "\"%s\"" clean_name])
-                  | _ -> failwith "load_program expects exactly one argument")
-             | "attach_program" ->
-                 (* Special handling for attach_program: now takes program handle (not program name) *)
-                 ctx.function_usage.uses_attach_program <- true;
+                  | _ -> failwith "load expects exactly one argument")
+             | "attach" ->
+                 (* Special handling for attach: now takes program handle (not program name) *)
+                 ctx.function_usage.uses_attach <- true;
                  (match c_args with
                   | [program_handle; target; flags] ->
                       (* Use the program handle variable directly instead of extracting program name *)
                       ("attach_bpf_program_by_fd", [program_handle; target; flags])
-                  | _ -> failwith "attach_program expects exactly three arguments")
+                  | _ -> failwith "attach expects exactly three arguments")
              | _ -> (userspace_impl, c_args))
         | None ->
             (* Regular function call *)
@@ -952,7 +952,7 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     
     (* Check if this main function uses maps and needs auto-initialization *)
     let func_usage = collect_function_usage_from_ir_function ir_func in
-    let needs_auto_init = func_usage.uses_map_operations && not func_usage.uses_load_program in
+    let needs_auto_init = func_usage.uses_map_operations && not func_usage.uses_load in
     let auto_init_call = if needs_auto_init then
       "    \n    // Auto-initialize BPF maps\n    atexit(cleanup_bpf_maps);\n    if (init_bpf_maps() < 0) {\n        return 1;\n    }"
     else "" in
@@ -1234,8 +1234,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function func in
     {
-      uses_load_program = acc_usage.uses_load_program || func_usage.uses_load_program;
-      uses_attach_program = acc_usage.uses_attach_program || func_usage.uses_attach_program;
+      uses_load = acc_usage.uses_load || func_usage.uses_load;
+      uses_attach = acc_usage.uses_attach || func_usage.uses_attach;
       uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
       used_maps = List.fold_left (fun acc map_name ->
         if List.mem map_name acc then acc else map_name :: acc
@@ -1243,7 +1243,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     }
   ) (create_function_usage ()) userspace_prog.userspace_functions in
 
-  let uses_bpf_functions = all_usage.uses_load_program || all_usage.uses_attach_program in
+  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach in
   let base_includes = generate_headers_for_maps ~uses_bpf_functions global_maps in
   let additional_includes = {|#include <stdbool.h>
 #include <stdint.h>
@@ -1356,8 +1356,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Extract base name from source filename *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
   
-  (* Generate automatic BPF object initialization when maps are used but load_program is not called *)
-  let needs_auto_bpf_init = all_usage.uses_map_operations && not all_usage.uses_load_program in
+  (* Generate automatic BPF object initialization when maps are used but load is not called *)
+  let needs_auto_bpf_init = all_usage.uses_map_operations && not all_usage.uses_load in
   let auto_bpf_init_code = if needs_auto_bpf_init && all_setup_code <> "" then
     sprintf {|
 /* Auto-generated BPF object initialization */
@@ -1391,7 +1391,7 @@ void cleanup_bpf_maps(void) {
   
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
-    let load_function = if all_usage.uses_load_program then
+    let load_function = if all_usage.uses_load then
       sprintf {|int load_bpf_program(const char *program_name) {
     if (!bpf_obj) {
         bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
@@ -1422,7 +1422,7 @@ void cleanup_bpf_maps(void) {
 }|} base_name all_setup_code
     else "" in
     
-    let attach_function = if all_usage.uses_attach_program then
+    let attach_function = if all_usage.uses_attach then
       {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
     if (prog_fd < 0) {
         fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);
@@ -1462,7 +1462,7 @@ void cleanup_bpf_maps(void) {
 }|}
     else "" in
     
-    let bpf_obj_decl = if all_usage.uses_load_program || all_usage.uses_attach_program then
+    let bpf_obj_decl = if all_usage.uses_load || all_usage.uses_attach then
       "struct bpf_object *bpf_obj = NULL;"
     else "" in
     

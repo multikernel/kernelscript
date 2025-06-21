@@ -38,10 +38,8 @@ let test_basic_map_flags () =
   let program_text = {|
 map<u32, u64> basic_map : HashMap(1024) { }
 
-program flag_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn flag_test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   try
@@ -66,10 +64,8 @@ map<u32, u64> array_map : Array(256) { }
 map<u32, u64> lru_map : LruHash(512) { }
 map<u32, u64> percpu_map : PercpuHash(2048) { }
 
-program types_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn types_test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   try
@@ -110,20 +106,16 @@ let test_map_flags_validation () =
   let valid_program = {|
 map<u32, u64> valid_map : HashMap(1024) { }
 
-program valid_flags : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn valid_flags(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   
   let invalid_program = {|
 map<u32, u64> invalid_map : HashMap(0) { }  // Invalid size
 
-program invalid_flags : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn invalid_flags(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   
@@ -152,10 +144,8 @@ let test_map_flags_with_initialization () =
   let program_text = {|
 map<u32, u64> initialized_map : HashMap(1024) { }
 
-program init_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn init_test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   try
@@ -182,10 +172,8 @@ map<u32, u64> medium_map : HashMap(1024) { }
 map<u64, bool> large_key_map : HashMap(512) { }
 map<bool, u32> bool_key_map : HashMap(2) { }
 
-program types_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn types_test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   try
@@ -215,20 +203,16 @@ let test_map_flags_program_compatibility () =
   let xdp_program = {|
 map<u32, u64> xdp_map : HashMap(1024) { }
 
-program xdp_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn xdp_test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   
   let tc_program = {|
 map<u32, u64> tc_map : Array(256) { }
 
-program tc_test : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    return 0
-  }
+@tc fn tc_test(ctx: TcContext) -> TcAction {
+  return 0
 }
 |} in
   
@@ -265,10 +249,8 @@ let test_map_flags_size_limits () =
   List.iter (fun (map_def, expected_size, should_be_valid) ->
     let program_text = map_def ^ {|
 
-program size_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn size_test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
     try
@@ -288,25 +270,23 @@ map<u32, u64> frequent_map : HashMap(1024)
 map<u32, u64> sparse_map : HashMap(65536)
 map<u32, u64> small_array : Array(16)
 
-program optimization_test : xdp {
-  fn process_frequent() -> u64 {
-    frequent_map[1] = 100 return frequent_map[1]
-  }
-  
-  fn process_sparse() -> u64 {
-    sparse_map[12345] = 200 return sparse_map[12345]
-  }
-  
-  fn process_array() -> u64 {
-    small_array[5] = 300 return small_array[5]
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let freq_result = process_frequent()
-    let sparse_result = process_sparse()
-    let array_result = process_array()
-    return 2
-  }
+kernel fn process_frequent() -> u64 {
+  frequent_map[1] = 100 return frequent_map[1]
+}
+
+kernel fn process_sparse() -> u64 {
+  sparse_map[12345] = 200 return sparse_map[12345]
+}
+
+kernel fn process_array() -> u64 {
+  small_array[5] = 300 return small_array[5]
+}
+
+@xdp fn optimization_test(ctx: XdpContext) -> XdpAction {
+  let freq_result = process_frequent()
+  let sparse_result = process_sparse()
+  let array_result = process_array()
+  return 2
 }
 |} in
   try
@@ -330,31 +310,30 @@ map<u32, u64> packet_count : HashMap(4096)
 map<u16, u32> port_stats : Array(65536)
 map<u32, u64> flow_cache : LruHash(1024)
 
-program comprehensive : xdp {
-  fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
-    let protocol = 6  // TCP
-    let current_count = packet_count[protocol]
-    packet_count[protocol] = current_count + 1 let port_count = port_stats[dst_port]
-    port_stats[dst_port] = port_count + 1
-    
-    let flow_key = src_ip + dst_port
-    flow_cache[flow_key] = current_count
-    
-    return current_count + 1
+kernel fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
+  let protocol = 6  // TCP
+  let current_count = packet_count[protocol]
+  packet_count[protocol] = current_count + 1
+  let port_count = port_stats[dst_port]
+  port_stats[dst_port] = port_count + 1
+  
+  let flow_key = src_ip + dst_port
+  flow_cache[flow_key] = current_count
+  
+  return current_count + 1
+}
+
+@xdp fn comprehensive(ctx: XdpContext) -> XdpAction {
+  let src_ip = 0x0A000001
+  let dst_port = 80
+  
+  let count = track_packet(src_ip, dst_port)
+  
+  if (count > 1000) {
+    return 1  // DROP
   }
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    let src_ip = 0x0A000001
-    let dst_port = 80
-    
-    let count = track_packet(src_ip, dst_port)
-    
-    if (count > 1000) {
-      return 1  // DROP
-    }
-    
-    return 2  // PASS
-  }
+  return 2  // PASS
 }
 |} in
   try
@@ -383,10 +362,8 @@ let test_flag_parsing_validation () =
   let program_text = {|
 map<u32, u64> test_map : HashMap(1024)
 
-program test_program : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test_program(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 |} in
   try

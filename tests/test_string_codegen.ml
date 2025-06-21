@@ -41,10 +41,8 @@ let generate_userspace_code_from_program program_text filename =
 (** Test 1: String assignment generates safe strcpy/strncpy code *)
 let test_string_assignment_codegen () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -72,10 +70,8 @@ fn main() -> i32 {
 (** Test 2: String concatenation generates safe concatenation code *)
 let test_string_concatenation_codegen () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -105,10 +101,8 @@ fn main() -> i32 {
 (** Test 3: String comparison generates strcmp calls *)
 let test_string_comparison_codegen () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -167,10 +161,8 @@ fn main() -> i32 {
 (** Test 4: String indexing generates array access *)
 let test_string_indexing_codegen () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -197,10 +189,8 @@ fn main() -> i32 {
 (** Test 5: String truncation edge cases *)
 let test_string_truncation_edge_cases () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: XdpContext) -> XdpAction {
     return 2
-  }
 }
 
 fn main() -> i32 {
@@ -229,10 +219,8 @@ fn main() -> i32 {
 (** Test 6: Complex string operations together *)
 let test_complex_string_operations () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: XdpContext) -> XdpAction {
     return 2
-  }
 }
 
 fn main() -> i32 {
@@ -271,10 +259,8 @@ fn main() -> i32 {
 (** Test 7: Empty and single character strings *)
 let test_empty_and_single_char_strings () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -301,10 +287,8 @@ fn main() -> i32 {
 (** Test 8: Variable declarations use correct C array syntax *)
 let test_string_variable_declarations () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -332,10 +316,8 @@ fn main() -> i32 {
 (** Test 9: String literal and mixed comparisons *)
 let test_string_literal_and_mixed_comparisons () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {

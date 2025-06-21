@@ -394,78 +394,83 @@ let _test_analysis_report_generation _ =
 (** Test IR generation and basic structure *)
 let test_ir_generation_basic () =
   let program_text = {|
-program simple_ir : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn simple_ir(ctx: XdpContext) -> XdpAction {
+  return 2
+}
+
+fn main() -> i32 {
+  return 0
 }
 |} in
   try
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "simple_ir" in
     let ir = List.hd ir_multi.programs in
     check bool "IR generation successful" true (ir.name <> "");
-    check bool "IR has main function" true ir.main_function.is_main;
-    check int "IR function count" 1 (List.length ir.functions) (* Just the main function *)
+    check bool "IR has main function" true ir.entry_function.is_main;
   with
-  | exn -> fail ("Error occurred: " ^ (Printexc.to_string exn))
+  | exn -> fail ("IR generation basic error: " ^ (Printexc.to_string exn))
 
 (** Test basic IR analysis *)
 let test_basic_ir_analysis () =
   let program_text = {|
-program basic : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let x = 42
-    return 2
-  }
+@xdp fn basic(ctx: XdpContext) -> XdpAction {
+  let x = 42
+  return 2
+}
+
+fn main() -> i32 {
+  return 0
 }
 |} in
   try
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "basic" in
     let ir = List.hd ir_multi.programs in
     (* Perform comprehensive analysis on the generated IR *)
-    let analysis_result = comprehensive_analysis ir.main_function in
+    let analysis_result = comprehensive_analysis ir.entry_function in
     check bool "IR generation successful" true (ir.name <> "");
     check bool "basic IR analysis valid" true analysis_result.is_valid;
     check bool "has control flow info" true (analysis_result.control_flow_info <> None);
     check bool "has data flow info" true (analysis_result.data_flow_info <> None);
     check bool "has optimization opportunities" true (List.length analysis_result.optimizations > 0)
   with
-  | _ -> fail "Error occurred"
+  | exn -> fail ("Basic IR analysis error: " ^ (Printexc.to_string exn))
 
 (** Test control flow analysis *)
 let test_control_flow_analysis () =
   let program_text = {|
-program control_flow : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let x = 10
-    if (x > 5) {
-      return 2
-    } else {
-      return 1
-    }
+@xdp fn control_flow(ctx: XdpContext) -> XdpAction {
+  let x = 10
+  if (x > 5) {
+    return 2
+  } else {
+    return 1
   }
+}
+
+fn main() -> i32 {
+  return 0
 }
 |} in
   try
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "control_flow" in
     let ir = List.hd ir_multi.programs in
-    let cfg = CFG.build_cfg ir.main_function in
+    let cfg = CFG.build_cfg ir.entry_function in
     check bool "control flow graph built" true (List.length cfg.blocks > 0);
     check bool "has edges" true (List.length cfg.edges > 0);
     
     let reachability = analyze_reachability cfg in
     check bool "reachability analysis" true (List.length reachability.reachable_blocks > 0)
   with
-  | exn -> fail ("Error occurred: " ^ (Printexc.to_string exn))
+  | exn -> fail ("Control flow analysis error: " ^ (Printexc.to_string exn))
 
 (** Test data flow analysis *)
 let test_data_flow_analysis () =
@@ -856,28 +861,29 @@ let test_comprehensive_ir_analysis () =
 (** Test 4: Basic CFG construction *)
 let test_basic_cfg_construction () =
   let program_text = {|
-program cfg_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let x = 42
-    if (x > 10) {
-      return 2
-    } else {
-      return 1
-    }
+@xdp fn cfg_test(ctx: XdpContext) -> XdpAction {
+  let x = 42
+  if (x > 10) {
+    return 2
+  } else {
+    return 1
   }
+}
+
+fn main() -> i32 {
+  return 0
 }
 |} in
   try
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "cfg_test" in
     let ir = List.hd ir_multi.programs in
     check bool "IR generation successful" true (ir.name <> "");
-    check bool "IR has main function" true ir.main_function.is_main;
-    check int "IR function count" 1 (List.length ir.functions) (* Just the main function *)
+    check bool "IR has main function" true ir.entry_function.is_main;
   with
-  | _ -> fail "Error occurred"
+  | exn -> fail ("CFG construction error: " ^ (Printexc.to_string exn))
 
 let ir_analysis_tests = [
   "basic_ir_analysis", `Quick, test_basic_ir_analysis;

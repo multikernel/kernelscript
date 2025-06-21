@@ -10,22 +10,20 @@ let parse_and_type_check source =
   let ctx = create_context empty_symbol_table in
   (* For basic tests, we'll test individual expressions *)
   match ast with
-  | [Program prog] ->
-      (* Type check the program *)
-      let typed_prog = type_check_program ctx prog in
-      (ctx, typed_prog)
-  | _ -> failwith "Expected single program"
+  | [AttributedFunction attr_func] ->
+      (* Type check the attributed function *)
+      let typed_func = type_check_function ctx attr_func.attr_function in
+      (ctx, typed_func)
+  | _ -> failwith "Expected single attributed function"
 
 (* Test str<N> type parsing *)
 let test_string_type_parsing _ =
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let name: str<16> = "hello"
-        let message: str<64> = "world"
-        let large_buffer: str<512> = "large message"
-        return 0
-      }
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let name: str<16> = "hello"
+      let message: str<64> = "world"
+      let large_buffer: str<512> = "large message"
+      return 0
     }
   |} in
   
@@ -34,28 +32,23 @@ let test_string_type_parsing _ =
   
   (* Verify that the AST contains the string types *)
   match ast with
-  | [Program prog] ->
-      (match prog.prog_functions with
-       | [func] ->
-           (match func.func_body with
-            | [{stmt_desc = Declaration ("name", Some (Str 16), _); _}; 
-               {stmt_desc = Declaration ("message", Some (Str 64), _); _};
-               {stmt_desc = Declaration ("large_buffer", Some (Str 512), _); _};
-               _] -> () (* Success *)
-            | _ -> fail "String type declarations not parsed correctly")
-       | _ -> fail "Expected single function")
-  | _ -> fail "Expected single program"
+  | [AttributedFunction attr_func] ->
+      (match attr_func.attr_function.func_body with
+       | [{stmt_desc = Declaration ("name", Some (Str 16), _); _}; 
+          {stmt_desc = Declaration ("message", Some (Str 64), _); _};
+          {stmt_desc = Declaration ("large_buffer", Some (Str 512), _); _};
+          _] -> () (* Success *)
+       | _ -> fail "String type declarations not parsed correctly")
+  | _ -> fail "Expected single attributed function"
 
 (* Test string concatenation type checking *)
 let test_string_concatenation _ =
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let first: str<10> = "hello"
-        let second: str<10> = "world"
-        let result: str<20> = first + second
-        return 0
-      }
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let first: str<10> = "hello"
+      let second: str<10> = "world"
+      let result: str<20> = first + second
+      return 0
     }
   |} in
   
@@ -72,18 +65,16 @@ let test_string_concatenation _ =
 (* Test string equality comparison *)
 let test_string_equality _ =
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let name: str<16> = "test"
-        let other: str<16> = "other"
-        if (name == "test") {
-          return 1
-        }
-        if (name != other) {
-          return 2
-        }
-        return 0
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let name: str<16> = "test"
+      let other: str<16> = "other"
+      if (name == "test") {
+        return 1
       }
+      if (name != other) {
+        return 2
+      }
+      return 0
     }
   |} in
   
@@ -99,13 +90,11 @@ let test_string_equality _ =
 (* Test string indexing *)
 let test_string_indexing _ =
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let name: str<16> = "hello"
-        let first_char: char = name[0]
-        let second_char: char = name[1]
-        return 0
-      }
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let name: str<16> = "hello"
+      let first_char: char = name[0]
+      let second_char: char = name[1]
+      return 0
     }
   |} in
   
@@ -122,15 +111,13 @@ let test_string_indexing _ =
 let test_invalid_string_operations _ =
   (* Test ordering comparison (should fail) *)
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let first: str<10> = "hello"
-        let second: str<10> = "world"
-        if (first < second) {
-          return 1
-        }
-        return 0
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let first: str<10> = "hello"
+      let second: str<10> = "world"
+      if (first < second) {
+        return 1
       }
+      return 0
     }
   |} in
   
@@ -146,13 +133,11 @@ let test_invalid_string_operations _ =
 (* Test string assignment compatibility *)
 let test_string_assignment _ =
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let buffer: str<32> = "initial"
-        let small: str<16> = "small"
-        buffer = small
-        return 0
-      }
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let buffer: str<32> = "initial"
+      let small: str<16> = "small"
+      buffer = small
+      return 0
     }
   |} in
   
@@ -168,14 +153,12 @@ let test_string_assignment _ =
 (* Test arbitrary string sizes *)
 let test_arbitrary_string_sizes _ =
   let program_text = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> i32 {
-        let tiny: str<1> = "a"
-        let small: str<7> = "small"
-        let medium: str<42> = "answer"
-        let large: str<1000> = "very long text"
-        return 0
-      }
+    @xdp fn test(ctx: XdpContext) -> i32 {
+      let tiny: str<1> = "a"
+      let small: str<7> = "small"
+      let medium: str<42> = "answer"
+      let large: str<1000> = "very long text"
+      return 0
     }
   |} in
   

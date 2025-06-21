@@ -42,8 +42,7 @@ struct PacketInfo {
     action: u32,
 }
 
-program packet_filter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
     let packet_size = ctx.data_end - ctx.data
     let info = PacketInfo {
         size: packet_size,
@@ -54,7 +53,6 @@ program packet_filter : xdp {
       return 1
     }
     return info.action
-  }
 }
 
 fn main() -> i32 {
@@ -88,8 +86,7 @@ struct ConfigData {
     flags: u32,
 }
 
-program config_filter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn config_filter(ctx: XdpContext) -> XdpAction {
     let packet_size = ctx.data_end - ctx.data
     let info = ConfigData {
         mode: packet_size,
@@ -100,7 +97,6 @@ program config_filter : xdp {
       return 1
     }
     return info.flags
-  }
 }
 
 fn main() -> i32 {
@@ -129,8 +125,7 @@ struct VariableTest {
     action: u32,
 }
 
-program variable_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn variable_test(ctx: XdpContext) -> XdpAction {
     let packet_size = ctx.data_end - ctx.data
     let info = VariableTest {
         size: packet_size,
@@ -141,7 +136,6 @@ program variable_test : xdp {
       return 1
     }
     return info.action
-  }
 }
 
 fn main() -> i32 {
@@ -175,8 +169,7 @@ struct Payload {
     data_type: u16,
 }
 
-program multi_struct : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn multi_struct(ctx: XdpContext) -> XdpAction {
     let hdr = Header {
         version: 1,
         flags: 0,
@@ -191,7 +184,6 @@ program multi_struct : xdp {
       return 2
     }
     return 1
-  }
 }
 
 fn main() -> i32 {
@@ -225,8 +217,7 @@ struct FieldTest {
     action: u32,
 }
 
-program field_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn field_test(ctx: XdpContext) -> XdpAction {
     let packet_size = ctx.data_end - ctx.data
     let info = FieldTest {
         size: packet_size,
@@ -237,7 +228,6 @@ program field_test : xdp {
       return 1
     }
     return info.action
-  }
 }
 
 fn main() -> i32 {
@@ -266,14 +256,12 @@ struct TestStruct {
     field2: u64,
 }
 
-program test_ir : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn test_ir(ctx: XdpContext) -> XdpAction {
     let test_obj = TestStruct {
         field1: 42,
         field2: 1000,
     }
     return test_obj.field1
-  }
 }
 
 fn main() -> i32 {
@@ -288,7 +276,7 @@ fn main() -> i32 {
     
     (* Extract the main function from IR *)
     let test_program = List.find (fun prog -> prog.name = "test_ir") ir_multi_prog.programs in
-    let main_func = test_program.main_function in
+    let main_func = test_program.entry_function in
     
     (* Look for IRStructLiteral in the instructions *)
     let has_struct_literal = ref false in
@@ -318,8 +306,7 @@ struct Parameter {
     action: u32,
 }
 
-program param_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+@xdp fn param_test(ctx: XdpContext) -> XdpAction {
     let packet_size = ctx.data_end - ctx.data
     let info = Parameter {
         size: packet_size,
@@ -330,7 +317,6 @@ program param_test : xdp {
       return 1
     }
     return info.action
-  }
 }
 
 fn main() -> i32 {

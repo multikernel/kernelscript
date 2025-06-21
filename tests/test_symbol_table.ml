@@ -144,7 +144,7 @@ let comprehensive_symbol_analysis symbol_table ast =
       | GlobalMap _ | LocalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count
       | Config _ -> incr type_count
-      | Program _ -> incr type_count
+      (* AttributedFunction programs are now just functions - no separate Program symbol kind *)
     ) symbols
   ) symbol_table.symbols;
   
@@ -155,20 +155,12 @@ let comprehensive_symbol_analysis symbol_table ast =
   (* Perform additional validation checks *)
   List.iter (fun declaration ->
     match declaration with
-    | Ast.Program prog ->
-        (* Check that main function exists for programs *)
-        (match lookup_symbol symbol_table "main" with
-         | Some { kind = Function _; scope = [prog_name]; _ } when prog_name = prog.prog_name -> ()
-         | Some _ -> errors := ("main function found but not in expected program scope") :: !errors
-         | None -> errors := ("no main function found for program " ^ prog.prog_name) :: !errors);
-        
-        (* Check that all functions in program are properly scoped *)
-        List.iter (fun func ->
-          match lookup_symbol symbol_table func.func_name with
-          | Some { scope = [prog_name]; _ } when prog_name = prog.prog_name -> ()
-          | Some _ -> errors := ("function " ^ func.func_name ^ " has incorrect scope") :: !errors
-          | None -> errors := ("function " ^ func.func_name ^ " not found in symbol table") :: !errors
-        ) prog.prog_functions;
+    | Ast.AttributedFunction attr_func ->
+        (* Check that attributed function is properly registered *)
+        (match lookup_symbol symbol_table attr_func.attr_function.func_name with
+         | Some { kind = Function _; scope = []; _ } -> () (* Attributed functions are global *)
+         | Some _ -> errors := ("attributed function " ^ attr_func.attr_function.func_name ^ " has incorrect scope") :: !errors
+         | None -> errors := ("attributed function " ^ attr_func.attr_function.func_name ^ " not found in symbol table") :: !errors);
         
     | Ast.MapDecl map_decl ->
         (* Check that map is properly registered *)
@@ -521,11 +513,11 @@ let test_build_symbol_table_from_ast () =
   let global_map = create_test_map_decl "global_counter" true in
   
   let main_func = create_test_function "main" [("ctx", XdpContext)] XdpAction in
-  let test_prog = create_test_program "test" [main_func] in
+  let attr_func = make_attributed_function [SimpleAttribute "xdp"] main_func dummy_pos in
   
   let ast = [
     MapDecl global_map;
-    Program test_prog;
+    AttributedFunction attr_func;
   ] in
   
   let symbol_table = build_symbol_table ast in
@@ -533,10 +525,17 @@ let test_build_symbol_table_from_ast () =
   (* Verify global map was added *)
   check bool "global map added" true (is_global_map symbol_table "global_counter");
   
-  (* Verify program function was added *)
-  let prog_functions = get_program_functions symbol_table "test" in
-  check int "program function count" 1 (List.length prog_functions);
-  check string "program function name" "main" (List.hd prog_functions).name;
+  (* Verify attributed function was added as a global function *)
+  let main_symbol = lookup_symbol symbol_table "main" in
+  (match main_symbol with
+   | Some { kind = Function _; scope = []; _ } -> 
+       check int "program function count" 1 1; (* Attributed function found globally *)
+   | Some { kind = Function _; _ } -> 
+       fail "attributed function should have global scope"
+   | Some _ -> 
+       fail "main should be a function"
+   | None -> 
+       check int "program function count" 0 1); (* Function not found *)
   
   check bool "build symbol table from AST test passed" true true
 
@@ -666,16 +665,14 @@ let test_symbol_table_scoping () =
 (** Test function symbol management *)
 let test_function_symbol_management () =
   let program_text = {|
-program func_test : xdp {
-  fn add(a: u32, b: u32) -> u32 {
-    let sum = a + b
-    return sum
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = add(10, 20)
-    return 2
-  }
+kernel fn add(a: u32, b: u32) -> u32 {
+  let sum = a + b
+  return sum
+}
+
+@xdp fn func_test(ctx: XdpContext) -> XdpAction {
+  let result = add(10, 20)
+  return 2
 }
 |} in
   try
@@ -685,9 +682,9 @@ program func_test : xdp {
     
     (* Check function symbols *)
     let add_func = lookup_function symbol_table "add" in
-    let main_func = lookup_function symbol_table "main" in
+    let func_test_func = lookup_function symbol_table "func_test" in
     check bool "add function exists" true (add_func <> None);
-    check bool "main function exists" true (main_func <> None);
+    check bool "func_test function exists" true (func_test_func <> None);
     
     (* Check function parameters *)
     match add_func with
@@ -703,20 +700,18 @@ program func_test : xdp {
 (** Test variable resolution *)
 let test_variable_resolution () =
   let program_text = {|
-program var_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let x: u32 = 42
-    let y: u64 = x + 10
-    if (x > 0) {
-      let z: bool = true
-      if (z) {
-        return 2
-      } else {
-        return 1
-      }
+@xdp fn var_test(ctx: XdpContext) -> XdpAction {
+  let x: u32 = 42
+  let y: u64 = x + 10
+  if (x > 0) {
+    let z: bool = true
+    if (z) {
+      return 2
+    } else {
+      return 1
     }
-    return 1
   }
+  return 1
 }
 |} in
   try
@@ -773,12 +768,10 @@ let test_map_symbol_handling () =
 map<u32, u64> counter : HashMap(1024) { }
 map<u16, bool> flags : Array(256) { }
 
-program map_test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    counter[1] = 100
-    flags[80] = true
-    return 2
-  }
+@xdp fn map_test(ctx: XdpContext) -> XdpAction {
+  counter[1] = 100
+  flags[80] = true
+  return 2
 }
 |} in
   try
@@ -805,19 +798,17 @@ program map_test : xdp {
 (** Test type checking integration *)
 let test_type_checking_integration () =
   let program_text = {|
-program type_test : xdp {
-  fn calculate(x: u32, y: u32) -> u64 {
-    let result: u64 = x + y
-    return result
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let value = calculate(100, 200)
-    if (value > 250) {
-      return 2
-    } else {
-      return 1
-    }
+kernel fn calculate(x: u32, y: u32) -> u64 {
+  let result: u64 = x + y
+  return result
+}
+
+@xdp fn type_test(ctx: XdpContext) -> XdpAction {
+  let value = calculate(100, 200)
+  if (value > 250) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -872,34 +863,32 @@ let test_comprehensive_symbol_analysis () =
   let program_text = {|
 map<u32, u64> stats : HashMap(1024) { }
 
-program comprehensive : xdp {
-  fn update_counter(key: u32, increment: u64) -> u64 {
-    let current = stats[key]
-    let new_value = current + increment
-    stats[key] = new_value
-    return new_value
+kernel fn update_counter(key: u32, increment: u64) -> u64 {
+  let current = stats[key]
+  let new_value = current + increment
+  stats[key] = new_value
+  return new_value
+}
+
+kernel fn validate_packet(size: u32) -> bool {
+  return size > 64 && size < 1500
+}
+
+@xdp fn comprehensive(ctx: XdpContext) -> XdpAction {
+  let data = ctx.data
+  let data_end = ctx.data_end
+  let packet_size = data_end - data
+  
+  if (!validate_packet(packet_size)) {
+    return 1
   }
   
-  fn validate_packet(size: u32) -> bool {
-    return size > 64 && size < 1500
-  }
+  let count = update_counter(6, 1)  // TCP protocol
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    let data = ctx.data
-    let data_end = ctx.data_end
-    let packet_size = data_end - data
-    
-    if (!validate_packet(packet_size)) {
-      return 1
-    }
-    
-    let count = update_counter(6, 1)  // TCP protocol
-    
-    if (count > 1000) {
-      return 1  // DROP - rate limit
-    } else {
-      return 2  // PASS
-    }
+  if (count > 1000) {
+    return 1  // DROP - rate limit
+  } else {
+    return 2  // PASS
   }
 }
 |} in

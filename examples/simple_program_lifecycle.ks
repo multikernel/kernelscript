@@ -7,7 +7,7 @@ program simple_xdp : xdp {
 
 // Userspace program lifecycle management
 fn main() -> i32 {
-    let prog_handle = load_program(simple_xdp)
-    let result = attach_program(prog_handle, "lo", 0)
+    let prog_handle = load(simple_xdp)
+    let result = attach(prog_handle, "lo", 0)
     return 0
 } 

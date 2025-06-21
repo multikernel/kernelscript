@@ -30,11 +30,9 @@ let test_kernel_function_ir_generation () =
       return seed * 31 + 42
     }
     
-    program hash_filter : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let hash = calculate_hash(123)
-        return 2
-      }
+    @xdp fn hash_filter(ctx: XdpContext) -> XdpAction {
+      let hash = calculate_hash(123)
+      return 2
     }
   |} in
   
@@ -61,20 +59,16 @@ let test_kernel_function_shared_across_programs () =
       return 42
     }
     
-    program xdp_filter : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        increment_counter(0)
-        return 2
-      }
+    @xdp fn xdp_filter(ctx: XdpContext) -> XdpAction {
+      increment_counter(0)
+      return 2
     }
     
-          program tc_monitor : tc {
-        fn main(ctx: TcContext) -> TcAction {
-          increment_counter(1)
-          let count = get_counter(1)
-          return 0
-        }
-      }
+    @tc fn tc_monitor(ctx: TcContext) -> TcAction {
+      increment_counter(1)
+      let count = get_counter(1)
+      return 0
+    }
     
     fn main() -> i32 {
       return 0
@@ -91,9 +85,9 @@ let test_kernel_function_shared_across_programs () =
   
   check (list string) "kernel functions" ["increment_counter"; "get_counter"] kernel_functions;
   
-  (* Verify programs are parsed correctly *)
+  (* Verify attributed functions are parsed correctly *)
   let programs = List.filter_map (function
-    | Kernelscript.Ast.Program prog -> Some prog.prog_name
+    | Kernelscript.Ast.AttributedFunction attr_func -> Some attr_func.attr_function.func_name
     | _ -> None
   ) ast in
   
@@ -120,11 +114,9 @@ let test_kernel_function_userspace_restriction () =
       return x + 100
     }
     
-    program test_prog : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let result = kernel_helper(42)  // This should work
-        return 2
-      }
+    @xdp fn test_prog(ctx: XdpContext) -> XdpAction {
+      let result = kernel_helper(42)  // This should work
+      return 2
     }
     
     fn main() -> i32 {
@@ -164,11 +156,9 @@ let test_mixed_kernel_userspace_functions () =
       return y - 50
     }
     
-    program mixed_prog : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let result = kernel_helper(42)  // Should work
-        return 2
-      }
+    @xdp fn mixed_prog(ctx: XdpContext) -> XdpAction {
+      let result = kernel_helper(42)  // Should work
+      return 2
     }
     
     fn main() -> i32 {
@@ -200,14 +190,12 @@ let test_kernel_function_type_checking () =
       return size >= 64 && size <= 1500
     }
     
-    program packet_filter : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let packet_size: u32 = 100
-        if (validate_packet(packet_size)) {
-          return 2
-        } else {
-          return 0
-        }
+    @xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+      let packet_size: u32 = 100
+      if (validate_packet(packet_size)) {
+        return 2
+      } else {
+        return 0
       }
     }
     
@@ -240,13 +228,11 @@ let test_kernel_function_complex_types () =
       return valid && size > 64
     }
     
-    program analyzer : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        if (analyze_packet(128, 0x0800, true)) {
-          return 2
-        }
-        return 0
+    @xdp fn analyzer(ctx: XdpContext) -> XdpAction {
+      if (analyze_packet(128, 0x0800, true)) {
+        return 2
       }
+      return 0
     }
     
     fn main() -> i32 {
@@ -275,18 +261,16 @@ let test_kernel_function_calling_kernel_function () =
       return protocol == 0x0800 || protocol == 0x86DD
     }
     
-    program validator : xdp {
-        fn main(ctx: XdpContext) -> XdpAction {
-          if (advanced_validation(128, 0x0800)) {
-            return 2
-          }
-          return 0
-        }
+    @xdp fn validator(ctx: XdpContext) -> XdpAction {
+      if (advanced_validation(128, 0x0800)) {
+        return 2
       }
-      
-      fn main() -> i32 {
-        return 0
-      }
+      return 0
+    }
+    
+    fn main() -> i32 {
+      return 0
+    }
   |} in
   
   let ast = Kernelscript.Parse.parse_string source in
@@ -308,11 +292,9 @@ let test_kernel_function_calling_kernel_function () =
 (** Test 9: Error handling - undefined kernel function *)
 let test_undefined_kernel_function_error () =
   let source = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let result = undefined_kernel_func(42)
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      let result = undefined_kernel_func(42)
+      return 2
     }
     
     fn main() -> i32 {
@@ -353,10 +335,8 @@ let test_userspace_function_calling_userspace () =
       return result
     }
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
   |} in
   
@@ -392,21 +372,17 @@ let test_comprehensive_kernel_function_system () =
       return false
     }
     
-    program counter_xdp : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        if (safe_increment(0)) {
-          return 2
-        }
-        return 0
+    @xdp fn counter_xdp(ctx: XdpContext) -> XdpAction {
+      if (safe_increment(0)) {
+        return 2
       }
+      return 0
     }
     
-    program counter_tc : tc {
-      fn main(ctx: TcContext) -> TcAction {
-        let count = get_global_counter(0)
-        safe_increment(1)
-        return 0
-      }
+    @tc fn counter_tc(ctx: TcContext) -> TcAction {
+      let count = get_global_counter(0)
+      safe_increment(1)
+      return 0
     }
     
     fn setup_monitoring() -> i32 {
@@ -467,24 +443,20 @@ let test_no_duplicate_kernel_functions () =
       print("Log:", message)
     }
     
-    program xdp_filter : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        if (shared_validation(128)) {
-          shared_logging(1)
-          return 2
-        }
-        return 0
+    @xdp fn xdp_filter(ctx: XdpContext) -> XdpAction {
+      if (shared_validation(128)) {
+        shared_logging(1)
+        return 2
       }
+      return 0
     }
     
-    program tc_filter : tc {
-      fn main(ctx: TcContext) -> TcAction {
-        if (shared_validation(256)) {
-          shared_logging(2)
-          return 0
-        }
-        return 1
+    @tc fn tc_filter(ctx: TcContext) -> TcAction {
+      if (shared_validation(256)) {
+        shared_logging(2)
+        return 0
       }
+      return 1
     }
     
     fn main() -> i32 {

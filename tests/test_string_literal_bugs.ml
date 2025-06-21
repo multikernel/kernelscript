@@ -154,7 +154,7 @@ let test_null_terminator_buffer_bug () =
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
-  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
   
@@ -188,7 +188,7 @@ let test_string_concat_bounds_bug () =
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
-  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
   
@@ -227,7 +227,7 @@ let test_function_call_string_arg_bug () =
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; print_call; return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
-  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
   
@@ -261,7 +261,7 @@ let test_string_concat_loop_bounds_bug () =
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
-  let ir_prog = make_ir_program "test_prog" Xdp [] [] main_func test_pos in
+  let ir_prog = make_ir_program "test_prog" Xdp [] main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
   

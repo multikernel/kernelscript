@@ -59,8 +59,10 @@ let extract_map_assignments (statements: statement list) : map_assignment list =
 let extract_map_assignments_from_ast (ast: declaration list) : map_assignment list =
   let rec extract_from_decl decl =
     match decl with
-    | Program program ->
-        List.flatten (List.map extract_from_function program.prog_functions)
+    | AttributedFunction attr_func ->
+        extract_from_function attr_func.attr_function
+    | GlobalFunction func ->
+        extract_from_function func
     | _ -> []
   and extract_from_function func =
     extract_map_assignments func.func_body

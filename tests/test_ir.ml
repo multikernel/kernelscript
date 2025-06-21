@@ -51,24 +51,21 @@ let make_test_main_function () =
     (Return (Some (make_expr (Literal (IntLit (0, None))) (make_test_position ())))) 
     (make_test_position ()) in
   make_function 
-    "main" 
+    "test_xdp" 
     [("ctx", XdpContext)] 
     (Some XdpAction) 
     [return_stmt] 
     (make_test_position ())
 
-let make_test_program () =
-  make_program_with_maps
-    "test_xdp" 
-    Xdp 
-    [make_test_main_function ()] 
-    [make_test_local_map ()]
-    (make_test_position ())
+let make_test_attributed_function () =
+  let main_func = make_test_main_function () in
+  let attributes = [SimpleAttribute "xdp"] in
+  make_attributed_function attributes main_func (make_test_position ())
 
 let make_test_ast () =
   [
     MapDecl (make_test_global_map ());
-    Program (make_test_program ());
+    AttributedFunction (make_test_attributed_function ());
   ]
 
 (** Test functions matching the roadmap specifications *)
@@ -82,8 +79,8 @@ let test_program_lowering () =
   (* Verify program structure *)
   check (module Program_type) "program type" Xdp ir_prog.program_type;
   check int "global maps count" 1 (List.length ir_multi_prog.global_maps);
-  check int "local maps count" 1 (List.length ir_prog.local_maps);
-  check bool "main function flag" true ir_prog.main_function.is_main
+  (* Attributed functions don't have local maps *)
+  check bool "main function flag" true ir_prog.entry_function.is_main
 
 let test_context_access_lowering () =
   let ctx_access = make_expr 

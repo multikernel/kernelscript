@@ -25,8 +25,7 @@ and ir_program = {
   name: string;
   program_type: program_type;
   local_maps: ir_map_def list; (* Maps local to this program *)
-  functions: ir_function list;
-  main_function: ir_function;
+  entry_function: ir_function; (* The attributed function that serves as the entry point *)
   ir_pos: ir_position;
 }
 
@@ -423,12 +422,11 @@ let make_ir_map_def name key_type value_type map_type max_entries
   map_pos = pos;
 }
 
-let make_ir_program name prog_type local_maps functions main_function pos = {
+let make_ir_program name prog_type local_maps entry_function pos = {
   name;
   program_type = prog_type;
   local_maps;
-  functions;
-  main_function;
+  entry_function;
   ir_pos = pos;
 }
 
@@ -529,7 +527,9 @@ let rec ast_type_to_ir_type = function
   | XdpAction -> IRAction XdpActionType
   | TcAction -> IRAction TcActionType
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
-  | Function _ -> failwith "Function types not supported in IR yet"
+  | Function (_, _) -> 
+      (* For function types, we represent them as function pointers (string names in practice) *)
+      IRStr 64  (* Function names as strings, max 64 chars *)
   | Map (_, _, _) -> failwith "Map types handled separately"
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
   | ProgramHandle -> IRU32 (* Program handles are represented as file descriptors (u32) in IR *)
@@ -755,10 +755,9 @@ let string_of_ir_function func =
     func.func_name params_str return_str blocks_str
 
 let string_of_ir_program prog =
-  let functions_str = String.concat "\n\n" 
-    (List.map string_of_ir_function prog.functions) in
+  let entry_function_str = string_of_ir_function prog.entry_function in
   Printf.sprintf "program %s : %s {\n%s\n}" 
-    prog.name (string_of_program_type prog.program_type) functions_str
+    prog.name (string_of_program_type prog.program_type) entry_function_str
 
 let string_of_ir_multi_program multi_prog =
   let programs_str = String.concat "\n\n" 

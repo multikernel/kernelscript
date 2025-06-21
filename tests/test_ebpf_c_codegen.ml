@@ -200,21 +200,24 @@ let test_complete_program () =
   let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "xdp_prog" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_xdp" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
   
   (* Add a simple map *)
   let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHashMap 1024 test_pos in
   
-  let ir_prog = make_ir_program "test_xdp" Xdp [map_def] [] main_func test_pos in
+  let ir_prog = make_ir_program "test_xdp" Xdp [] main_func test_pos in
   
-  let c_code = compile_to_c ir_prog in
+  (* Create multi-program structure with global maps *)
+  let multi_ir = make_ir_multi_program "test_xdp" [ir_prog] [] [map_def] test_pos in
+  
+  let c_code = compile_multi_to_c multi_ir in
   
   (* Verify the generated C code contains expected elements *)
   check bool "program contains linux/bpf.h include" true (contains_substr c_code "#include <linux/bpf.h>");
   check bool "program contains map name" true (contains_substr c_code "packet_count");
   check bool "program contains maps section" true (contains_substr c_code "SEC(\".maps\")");
   check bool "program contains xdp section" true (contains_substr c_code "SEC(\"xdp\")");
-  check bool "program contains function name" true (contains_substr c_code "xdp_prog");
+  check bool "program contains function name" true (contains_substr c_code "test_xdp");
   check bool "program contains GPL license" true (contains_substr c_code "GPL")
 
 (** Test builtin print function calls *)
@@ -250,8 +253,8 @@ let test_file_writing () =
   let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_prog" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
-  let ir_prog = make_ir_program "test" Xdp [] [] main_func test_pos in
+  let main_func = make_ir_function "test" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let ir_prog = make_ir_program "test" Xdp [] main_func test_pos in
   
   let test_filename = "test_output.c" in
   let c_code = write_c_to_file ir_prog test_filename in
@@ -475,9 +478,8 @@ let test_type_alias_struct_ordering () =
     Kernelscript.Ir.name = "test";
     program_type = Kernelscript.Ast.Xdp;
     local_maps = [];
-    functions = [];
-    main_function = {
-      func_name = "main";
+    entry_function = {
+      func_name = "test";
       parameters = [("ctx", Kernelscript.Ir.IRStruct("XdpContext", []))];
       return_type = Some (Kernelscript.Ir.IRStruct("XdpAction", []));
       basic_blocks = [];
@@ -593,9 +595,8 @@ let test_complete_type_alias_fix_integration () =
     Kernelscript.Ir.name = "packet_analyzer";
     program_type = Kernelscript.Ast.Xdp;
     local_maps = [];
-    functions = [];
-    main_function = {
-      func_name = "main";
+    entry_function = {
+      func_name = "packet_analyzer";
       parameters = [("ctx", Kernelscript.Ir.IRStruct("XdpContext", []))];
       return_type = Some (Kernelscript.Ir.IRStruct("XdpAction", []));
       basic_blocks = [];

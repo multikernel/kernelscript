@@ -14,7 +14,7 @@ open Ir
 open Printf
 
 (** C code generation context *)
-type c_codegen_context = {
+type c_context = {
   (* Generated C code lines *)
   mutable output_lines: string list;
   (* Current indentation level *)
@@ -242,11 +242,8 @@ let collect_string_sizes_from_function ir_func =
 
 let collect_string_sizes_from_multi_program ir_multi_prog =
   List.fold_left (fun acc ir_prog ->
-    let main_sizes = collect_string_sizes_from_function ir_prog.main_function in
-    let other_sizes = List.fold_left (fun acc func ->
-      acc @ (collect_string_sizes_from_function func)
-    ) [] ir_prog.functions in
-    acc @ main_sizes @ other_sizes
+    let entry_sizes = collect_string_sizes_from_function ir_prog.entry_function in
+    acc @ entry_sizes
   ) [] ir_multi_prog.programs
 
 (** Collect enum definitions from IR types *)
@@ -318,8 +315,7 @@ let collect_enum_definitions ir_multi_prog =
   (* Collect from all programs *)
   List.iter (fun ir_prog ->
     List.iter collect_from_map_def ir_prog.local_maps;
-    collect_from_function ir_prog.main_function;
-    List.iter collect_from_function ir_prog.functions
+    collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
   enum_map
@@ -433,8 +429,7 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   (* Collect from all programs *)
   List.iter (fun ir_prog ->
     List.iter collect_from_map_def ir_prog.local_maps;
-    collect_from_function ir_prog.main_function;
-    List.iter collect_from_function ir_prog.functions
+    collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
   List.rev !struct_defs
@@ -514,8 +509,7 @@ let collect_type_aliases_from_multi_program ir_multi_prog =
   (* Collect from all programs *)
   List.iter (fun ir_prog ->
     List.iter collect_from_map_def ir_prog.local_maps;
-    collect_from_function ir_prog.main_function;
-    List.iter collect_from_function ir_prog.functions
+    collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
   List.rev !type_aliases
@@ -1645,12 +1639,11 @@ let generate_c_program ?config_declarations ir_prog =
   | Some configs -> List.iter (generate_config_map_definition ctx) configs
   | None -> ()
   end;
+
+  (* With attributed functions, all maps are global - no program-scoped maps *)
   
-  (* Generate map definitions *)
-  List.iter (generate_map_definition ctx) (ir_prog.local_maps);
-  
-  (* Generate main function - this will collect callbacks *)
-  generate_c_function ctx ir_prog.main_function;
+  (* Generate entry function - this will collect callbacks *)
+  generate_c_function ctx ir_prog.entry_function;
   
   (* Now emit any pending callbacks before other functions *)
   if ctx.pending_callbacks <> [] then (
@@ -1664,9 +1657,7 @@ let generate_c_program ?config_declarations ir_prog =
     ctx.output_lines <- (List.rev current_output) @ ctx.output_lines;
   );
   
-  (* Generate other functions (excluding main to avoid duplicates) *)
-  let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-  List.iter (generate_c_function ctx) other_functions;
+  (* With attributed functions, each program has only the entry function - no nested functions *)
   
   (* Add license (required for eBPF) *)
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
@@ -1708,17 +1699,13 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
   
-  (* Generate all local map definitions from all programs *)
-  List.iter (fun ir_prog ->
-    List.iter (generate_map_definition ctx) ir_prog.local_maps
-  ) ir_multi_program.programs;
+  (* With attributed functions, all maps are global - no program-scoped maps *)
   
   (* First pass: collect all callbacks *)
   let temp_ctx = create_c_context () in
   List.iter (fun ir_prog ->
-    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function temp_ctx) other_functions;  (* Helper functions first *)
-    generate_c_function temp_ctx ir_prog.main_function  (* Main function last *)
+    (* With attributed functions, each program has only its entry function *)
+    generate_c_function temp_ctx ir_prog.entry_function
   ) ir_multi_program.programs;
   
   (* Emit collected callbacks *)
@@ -1730,11 +1717,10 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   (* Generate kernel functions once - they are shared across all programs *)
   List.iter (generate_c_function ctx) ir_multi_program.kernel_functions;
 
-  (* Second pass: generate actual functions (helper functions first, then main) *)
+  (* Generate attributed functions (each program has only the entry function) *)
   List.iter (fun ir_prog ->
-    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function ctx) other_functions;  (* Helper functions first *)
-    generate_c_function ctx ir_prog.main_function  (* Main function last *)
+    (* With attributed functions, each program contains only its entry function - no nested functions *)
+    generate_c_function ctx ir_prog.entry_function
   ) ir_multi_program.programs;
   
   (* Add license (required for eBPF) *)
@@ -1813,17 +1799,13 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
     generate_map_definition ctx map_def
   ) ir_multi_program.global_maps;
   
-  (* Generate all local map definitions from all programs *)
-  List.iter (fun ir_prog ->
-    List.iter (generate_map_definition ctx) ir_prog.local_maps
-  ) ir_multi_program.programs;
+  (* With attributed functions, all maps are global - no program-scoped maps *)
   
   (* First pass: collect all callbacks *)
   let temp_ctx = create_c_context () in
   List.iter (fun ir_prog ->
-    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function temp_ctx) other_functions;  (* Helper functions first *)
-    generate_c_function temp_ctx ir_prog.main_function  (* Main function last *)
+    (* With attributed functions, each program has only its entry function *)
+    generate_c_function temp_ctx ir_prog.entry_function
   ) ir_multi_program.programs;
   
   (* Emit collected callbacks *)
@@ -1835,11 +1817,10 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
   (* Generate kernel functions once - they are shared across all programs *)
   List.iter (generate_c_function ctx) ir_multi_program.kernel_functions;
 
-  (* Second pass: generate actual functions (helper functions first, then main) *)
+  (* Generate attributed functions (each program has only the entry function) *)
   List.iter (fun ir_prog ->
-    let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
-    List.iter (generate_c_function ctx) other_functions;  (* Helper functions first *)
-    generate_c_function ctx ir_prog.main_function  (* Main function last *)
+    (* With attributed functions, each program contains only its entry function - no nested functions *)
+    generate_c_function ctx ir_prog.entry_function
   ) ir_multi_program.programs;
   
   (* Add license (required for eBPF) *)

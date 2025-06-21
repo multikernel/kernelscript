@@ -35,8 +35,8 @@ map<IpAddress, PacketStats> flows : HashMap(1024)
 KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 
 - **`kernel fn` functions**: Kernel-shared functions - accessible by all eBPF programs, compile to eBPF bytecode
-- **Inside `program {}` blocks**: Program-local kernel space - functions local to specific eBPF program
-- **Outside `program {}` blocks**: User space - functions and data structures compile to native executable
+- **Attributed functions** (e.g., `@xdp`, `@tc`): eBPF program entry points - compile to eBPF bytecode
+- **Regular functions**: User space - functions and data structures compile to native executable
 - **Maps and global configs**: Shared resources accessible from both kernel and user space
 - **No wrapper syntax**: Direct, flat structure without unnecessary nesting
 
@@ -54,36 +54,34 @@ kernel fn should_log() -> bool {
     return system.debug
 }
 
-// Kernel space (inside program block) - program-local functions
-program monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        update_counters(0)  // Call kernel-shared function
-        
-        if (should_log()) {  // Call another kernel-shared function
-            bpf_printk("Processing packet")
-        }
-        
-        return XDP_PASS
+// eBPF program functions with attributes
+@xdp
+fn monitor(ctx: XdpContext) -> XdpAction {
+    update_counters(0)  // Call kernel-shared function
+    
+    if (should_log()) {  // Call another kernel-shared function
+        bpf_printk("Processing packet")
     }
+    
+    return XDP_PASS
 }
 
-program analyzer : tc {
-    fn main(ctx: TcContext) -> TcAction {
-        update_counters(1)  // Same kernel-shared function
-        return TC_ACT_OK
-    }
+@tc
+fn analyzer(ctx: TcContext) -> TcAction {
+    update_counters(1)  // Same kernel-shared function
+    return TC_ACT_OK
 }
 
-// User space (outside program blocks)
-struct Args { interface: string }
+// User space (regular functions)
+struct Args { interface: str<16> }
 fn main(args: Args) -> i32 {
     // Cannot call update_counters() here - it's kernel-only
     
-    let monitor_handle = load_program(monitor)
-    let analyzer_handle = load_program(analyzer)
+    let monitor_handle = load(monitor)
+    let analyzer_handle = load(analyzer)
     
-    attach_program(monitor_handle, args.interface, 0)
-    attach_program(analyzer_handle, args.interface, 1)
+    attach(monitor_handle, args.interface, 0)
+    attach(analyzer_handle, args.interface, 1)
     
     return 0
 }
@@ -125,18 +123,22 @@ boolean_literal = "true" | "false"
 
 ## 3. Program Structure
 
-### 3.1 Basic Program Declaration
+### 3.1 eBPF Program Function Declaration
 ```ebnf
-program = "program" identifier ":" program_type "{" program_body "}" 
+ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return_type "{" statement_list "}"
 
-program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-               "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" 
+attribute_list = attribute { attribute }
+attribute = "@" attribute_name [ "(" attribute_args ")" ]
+attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops"
+attribute_args = string_literal | identifier
 
-program_body = { local_map_declaration | 
-                 type_declaration | function_declaration | import_declaration } 
+parameter_list = parameter { "," parameter }
+parameter = identifier ":" type_annotation
+return_type = type_annotation
 ```
 
-**Note:** Programs no longer have local `config` sections. All configuration is done through global named config blocks.
+**Note:** eBPF programs are now simple attributed functions. All configuration is done through global named config blocks.
 
 ### 3.2 Named Configuration Blocks
 ```kernelscript
@@ -154,43 +156,42 @@ config security {
     mut enable_strict_mode: bool = false,
 }
 
-program network_monitor : xdp {    
-    fn main(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet()
-        
-        // Use named configuration values
-        if (packet.size > network.max_packet_size) {
-            if (network.enable_logging) {
-                bpf_printk("Packet too large: %d", packet.size)
-            }
-            return XDP_DROP
+@xdp
+fn network_monitor(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()
+    
+    // Use named configuration values
+    if (packet.size > network.max_packet_size) {
+        if (network.enable_logging) {
+            bpf_printk("Packet too large: %d", packet.size)
         }
-        
-        // Check blocked ports from network config
-        if (packet.is_tcp()) {
-            let tcp = packet.tcp_header()
-            for (i in 0..5) {
-                if (tcp.dst_port == network.blocked_ports[i]) {
-                    return XDP_DROP
-                }
-            }
-        }
-        
-        // Use security config for additional checks
-        if (security.enable_strict_mode && security.current_threat_level > security.threat_threshold) {
-            return XDP_DROP
-        }
-        
-        return XDP_PASS
+        return XDP_DROP
     }
+    
+    // Check blocked ports from network config
+    if (packet.is_tcp()) {
+        let tcp = packet.tcp_header()
+        for (i in 0..5) {
+            if (tcp.dst_port == network.blocked_ports[i]) {
+                return XDP_DROP
+            }
+        }
+    }
+    
+    // Use security config for additional checks
+    if (security.enable_strict_mode && security.current_threat_level > security.threat_threshold) {
+        return XDP_DROP
+    }
+    
+    return XDP_PASS
 }
 ```
 
 ### 3.3 Kernel-Userspace Scoping Model
 
 KernelScript uses a simple and intuitive scoping model:
-- **Inside `program {}` blocks**: Kernel space (eBPF) - compiles to eBPF bytecode
-- **Outside `program {}` blocks**: User space - compiles to native executable
+- **Attributed functions** (e.g., `@xdp`, `@tc`): Kernel space (eBPF) - compiles to eBPF bytecode
+- **Regular functions**: User space - compiles to native executable
 - **Maps and global configs**: Shared between both kernel and user space
 
 ```kernelscript
@@ -215,37 +216,35 @@ struct Args {
     enable_verbose: u32,
 }
 
-// Kernel programs (inside program blocks)
-program packet_analyzer : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (monitoring.enable_stats) {
-            // Process packet and update statistics
-            monitoring.packets_processed += 1
-            update_stats(ctx)
-        }
-        return XDP_PASS
+// Kernel-shared functions (accessible by all eBPF programs)
+kernel fn update_stats(ctx: XdpContext) {
+    let key = ctx.hash() % 1024
+    global_stats[key].packets += 1
+}
+
+// eBPF program functions with attributes
+@xdp
+fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+    if (monitoring.enable_stats) {
+        // Process packet and update statistics
+        monitoring.packets_processed += 1
+        update_stats(ctx)
     }
-    
-    fn update_stats(ctx: XdpContext) {
-        // Kernel helper function
+    return XDP_PASS
+}
+
+@tc
+fn flow_tracker(ctx: TcContext) -> TcAction {
+    // Track flow information using shared config
+    if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
+        // Sample this flow
         let key = ctx.hash() % 1024
-        global_stats[key].packets += 1
+        global_stats[key].bytes += ctx.packet_size()
     }
+    return TC_ACT_OK
 }
 
-program flow_tracker : tc {
-    fn main(ctx: TcContext) -> TcAction {
-        // Track flow information using shared config
-        if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
-            // Sample this flow
-            let key = ctx.hash() % 1024
-            global_stats[key].bytes += ctx.packet_size()
-        }
-        return TC_ACT_OK
-    }
-}
-
-// Userspace coordination (outside program blocks)
+// Userspace coordination (regular functions)
 fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=1 --enable-verbose=1
@@ -253,11 +252,11 @@ fn main(args: Args) -> i32 {
     let interface_index = args.interface_id
     
     // Load and coordinate multiple programs
-    let analyzer_handle = load_program(packet_analyzer)
-    let tracker_handle = load_program(flow_tracker)
+    let analyzer_handle = load(packet_analyzer)
+    let tracker_handle = load(flow_tracker)
     
-    attach_program(analyzer_handle, interface_index, 0)
-    attach_program(tracker_handle, interface_index, 1)
+    attach(analyzer_handle, interface_index, 0)
+    attach(tracker_handle, interface_index, 1)
     
     if (args.enable_verbose == 1) {
         print("Multi-program system started on interface: ", interface_index)
@@ -291,34 +290,32 @@ fn on_packet_event(event: PacketEvent) {
 
 ### 3.4 Explicit Program Lifecycle Management
 
-KernelScript supports explicit control over eBPF program loading and attachment through program references and built-in lifecycle functions. This enables advanced use cases like parameter configuration between loading and attachment phases.
+KernelScript supports explicit control over eBPF program loading and attachment through function references and built-in lifecycle functions. This enables advanced use cases like parameter configuration between loading and attachment phases.
 
-#### 3.4.1 Program References and Safety
+#### 3.4.1 Program Function References and Safety
 
-Programs are first-class values that can be referenced by name and passed to lifecycle functions. The interface enforces safety by requiring programs to be loaded before attachment:
+eBPF program functions are first-class values that can be referenced by name and passed to lifecycle functions. The interface enforces safety by requiring programs to be loaded before attachment:
 
 ```kernelscript
-program packet_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return XDP_PASS
-    }
+@xdp
+fn packet_filter(ctx: XdpContext) -> XdpAction {
+    return XDP_PASS
 }
 
-program flow_monitor : tc {
-    fn main(ctx: TcContext) -> TcAction {
-        return TC_ACT_OK
-    }
+@tc
+fn flow_monitor(ctx: TcContext) -> TcAction {
+    return TC_ACT_OK
 }
 
-// Userspace program coordination (outside program blocks)
+// Userspace program coordination
 fn main() -> i32 {
-    // Programs can be referenced by name
-    let xdp_prog = packet_filter  // Type: ProgramRef
-    let tc_prog = flow_monitor    // Type: ProgramRef
+    // Program functions can be referenced by name
+    let xdp_prog = packet_filter  // Type: FunctionRef
+    let tc_prog = flow_monitor    // Type: FunctionRef
     
     // Explicit loading and attachment
-    let prog_handle = load_program(xdp_prog)
-    let result = attach_program(prog_handle, "eth0", 0)
+    let prog_handle = load(xdp_prog)
+    let result = attach(prog_handle, "eth0", 0)
     
     return 0
 }
@@ -326,15 +323,15 @@ fn main() -> i32 {
 
 #### 3.4.2 Lifecycle Functions
 
-**`load_program(program_ref: ProgramRef) -> ProgramHandle`**
-- Loads the specified eBPF program into the kernel
+**`load(function_ref: FunctionRef) -> ProgramHandle`**
+- Loads the specified eBPF program function into the kernel
 - Returns a program handle that abstracts the underlying implementation
 - Must be called before attachment
 - Enables configuration of program parameters before attachment
 
-**`attach_program(handle: ProgramHandle, target: string, flags: u32) -> u32`**
+**`attach(handle: ProgramHandle, target: string, flags: u32) -> u32`**
 - Attaches the loaded program to the specified target using its handle
-- First parameter must be a ProgramHandle returned from load_program()
+- First parameter must be a ProgramHandle returned from load()
 - Target and flags interpretation depends on program type:
   - **XDP**: target = interface name ("eth0"), flags = XDP attachment flags
   - **TC**: target = interface name ("eth0"), flags = direction (ingress/egress)
@@ -343,7 +340,7 @@ fn main() -> i32 {
 - Returns 0 on success, negative error code on failure
 
 **Safety Benefits:**
-- **Compile-time enforcement**: Cannot call `attach_program()` without first calling `load_program()` - the type system prevents this
+- **Compile-time enforcement**: Cannot call `attach()` without first calling `load()` - the type system prevents this
 - **Implementation abstraction**: Users work with `ProgramHandle` instead of raw file descriptors
 - **Resource safety**: Program handles abstract away the underlying resource management
 
@@ -356,24 +353,23 @@ config network {
     mut max_packet_size: u32 = 1500,
 }
 
-program adaptive_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (network.enable_filtering && ctx.packet_size() > network.max_packet_size) {
-            return XDP_DROP
-        }
-        return XDP_PASS
+@xdp
+fn adaptive_filter(ctx: XdpContext) -> XdpAction {
+    if (network.enable_filtering && ctx.packet_size() > network.max_packet_size) {
+        return XDP_DROP
     }
+    return XDP_PASS
 }
 
 // Userspace coordination and CLI handling
 struct Args {
-    interface: string,
+    interface: str<16>,
     strict_mode: bool,
 }
 
 fn main(args: Args) -> i32 {
     // Load program first
-    let prog_handle = load_program(adaptive_filter)
+    let prog_handle = load(adaptive_filter)
     
     // Configure parameters based on command line
     network.enable_filtering = args.strict_mode
@@ -382,7 +378,7 @@ fn main(args: Args) -> i32 {
     }
     
     // Now attach with configured parameters
-    let result = attach_program(prog_handle, args.interface, 0)
+    let result = attach(prog_handle, args.interface, 0)
     
     if (result == 0) {
         print("Filter attached successfully")
@@ -397,31 +393,52 @@ fn main(args: Args) -> i32 {
 
 **Multi-Program Coordination:**
 ```kernelscript
-program ingress_monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction { return XDP_PASS }
-}
+@xdp
+fn ingress_monitor(ctx: XdpContext) -> XdpAction { return XDP_PASS }
 
-program egress_monitor : tc {
-    fn main(ctx: TcContext) -> TcAction { return TC_ACT_OK }
-}
+@tc
+fn egress_monitor(ctx: TcContext) -> TcAction { return TC_ACT_OK }
 
-program security_check : lsm {
-    fn main(ctx: LsmContext) -> i32 { return 0 }
+@lsm("socket_connect")
+fn security_check(ctx: LsmContext) -> i32 { return 0 }
+
+// Struct_ops example using module-based approach
+@struct_ops("tcp_congestion_ops")
+mod my_bbr {
+    fn init(sk: *TcpSock) -> void {
+        // Initialize BBR state
+    }
+    
+    fn cong_avoid(sk: *TcpSock, ack: u32, acked: u32) -> void {
+        // BBR congestion avoidance
+    }
+    
+    fn cong_control(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
+        // BBR control logic
+    }
+    
+    fn set_state(sk: *TcpSock, new_state: u32) -> void {
+        // State transitions
+    }
 }
 
 // Multi-program userspace coordination
 fn main() -> i32 {
     // Load all programs
-    let ingress_handle = load_program(ingress_monitor)
-    let egress_handle = load_program(egress_monitor)
-    let security_handle = load_program(security_check)
+    let ingress_handle = load(ingress_monitor)
+    let egress_handle = load(egress_monitor)
+    let security_handle = load(security_check)
     
     // Attach in specific order for coordinated monitoring
-    attach_program(security_handle, "socket_connect", 0)
-    attach_program(ingress_handle, "eth0", 0)
-    attach_program(egress_handle, "eth0", 1)  // Egress direction
+    attach(security_handle, "socket_connect", 0)
+    attach(ingress_handle, "eth0", 0)
+    attach(egress_handle, "eth0", 1)  // Egress direction
     
-    print("Multi-program monitoring system active")
+    // Load and attach struct_ops
+    let bbr_handle = load(my_bbr)
+    attach_struct_ops(bbr_handle)
+    
+    print("Multi-program monitoring system with BBR congestion control active")
     
     // Event processing loop
     while (true) {
@@ -450,9 +467,9 @@ str<N>                 // Fixed-size string with capacity N characters (N can be
 // Pointer types (restricted usage in kernel context)
 *u8, *u32, *void       // Pointers to specific types
 
-// Program reference types (for explicit program lifecycle control)
-ProgramRef             // Reference to an eBPF program for loading/attachment
-ProgramHandle          // Handle returned by load_program() for safe attachment
+// Program function reference types (for explicit program lifecycle control)
+FunctionRef            // Reference to an eBPF program function for loading/attachment
+ProgramHandle          // Handle returned by load() for safe attachment
 ```
 
 ### 4.1.1 Null Semantics and Usage Guidelines
@@ -698,7 +715,7 @@ map_attribute = "pinned" | "read_only" | "write_only" | "userspace_writable" |
 
 ### 5.2 Global Maps (Shared Across Programs)
 
-Global maps are declared outside any program block and are automatically shared:
+Global maps are declared at the global scope and are automatically shared between all eBPF programs:
 
 ```kernelscript
 // Global maps - automatically shared between all programs
@@ -719,138 +736,112 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 }
 
 // Program 1: Can access all global maps
-program ingress_monitor : xdp {
-    // Local maps (only accessible within this program)
-    map<u32, LocalStats> local_cache : HashMap(512)
+@xdp
+fn ingress_monitor(ctx: XdpContext) -> XdpAction {
+    let flow_key = extract_flow_key(ctx)?
     
-    fn main(ctx: XdpContext) -> XdpAction {
-        let flow_key = extract_flow_key(ctx)?
-        
-        // Access global map directly
-        if (global_flows[flow_key] == null) {
-            global_flows[flow_key] = FlowStats::new()
-        }
-        global_flows[flow_key].ingress_packets += 1
-        global_flows[flow_key].ingress_bytes += ctx.packet_size()
-        
-        // Update interface stats
-        interface_stats[ctx.ingress_ifindex()].packets += 1
-        
-        return XDP_PASS
+    // Access global map directly
+    if (global_flows[flow_key] == null) {
+        global_flows[flow_key] = FlowStats::new()
     }
+    global_flows[flow_key].ingress_packets += 1
+    global_flows[flow_key].ingress_bytes += ctx.packet_size()
+    
+    // Update interface stats
+    interface_stats[ctx.ingress_ifindex()].packets += 1
+    
+    return XDP_PASS
 }
 
 // Program 2: Automatically has access to the same global maps
-program egress_monitor : tc {
-    // Local maps
-    map<FlowKey, EgressInfo> egress_cache : LruHash(1000)
+@tc
+fn egress_monitor(ctx: TcContext) -> TcAction {
+    let flow_key = extract_flow_key(ctx)?
     
-    fn main(ctx: TcContext) -> TcAction {
-        let flow_key = extract_flow_key(ctx)?
-        
-        // Same global map, no import needed
-        if (global_flows[flow_key] != null) {
-            global_flows[flow_key].egress_packets += 1
-            global_flows[flow_key].egress_bytes += ctx.packet_size()
-        }
-        
-        // Check global configuration
-        let enable_filtering = if (global_config[CONFIG_KEY_ENABLE_FILTERING] != null) {
-            global_config[CONFIG_KEY_ENABLE_FILTERING]
-        } else {
-            CONFIG_VALUE_BOOL_FALSE
-        }
-        
-        if (enable_filtering.as_bool() && should_drop(flow_key)) {
-            // Log to global security events
-            security_events.submit(SecurityEvent {
-                event_type: EVENT_TYPE_PACKET_DROPPED,
-                flow_key: flow_key,
-                timestamp: bpf_ktime_get_ns(),
-            })
-            return TC_ACT_SHOT
-        }
-        
-        return TC_ACT_OK
+    // Same global map, no import needed
+    if (global_flows[flow_key] != null) {
+        global_flows[flow_key].egress_packets += 1
+        global_flows[flow_key].egress_bytes += ctx.packet_size()
     }
+    
+    // Check global configuration
+    let enable_filtering = if (global_config[CONFIG_KEY_ENABLE_FILTERING] != null) {
+        global_config[CONFIG_KEY_ENABLE_FILTERING]
+    } else {
+        CONFIG_VALUE_BOOL_FALSE
+    }
+    
+    if (enable_filtering.as_bool() && should_drop(flow_key)) {
+        // Log to global security events
+        security_events.submit(SecurityEvent {
+            event_type: EVENT_TYPE_PACKET_DROPPED,
+            flow_key: flow_key,
+            timestamp: bpf_ktime_get_ns(),
+        })
+        return TC_ACT_SHOT
+    }
+    
+    return TC_ACT_OK
 }
 
 // Program 3: Security analyzer using the same global maps
-program security_analyzer : lsm("socket_connect") {
-    fn main(ctx: LsmContext) -> i32 {
-        let flow_key = extract_flow_key_from_socket(ctx)?
-        
-        // Check global flow statistics
-        if (global_flows[flow_key] != null) {
-            let flow_stats = global_flows[flow_key]
-            if (flow_stats.is_suspicious()) {
-                security_events.submit(SecurityEvent {
-                    event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
-                    flow_key: flow_key,
-                    timestamp: bpf_ktime_get_ns(),
-                })
-                return -EPERM  // Block connection
-            }
+@lsm("socket_connect")
+fn security_analyzer(ctx: LsmContext) -> i32 {
+    let flow_key = extract_flow_key_from_socket(ctx)?
+    
+    // Check global flow statistics
+    if (global_flows[flow_key] != null) {
+        let flow_stats = global_flows[flow_key]
+        if (flow_stats.is_suspicious()) {
+            security_events.submit(SecurityEvent {
+                event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
+                flow_key: flow_key,
+                timestamp: bpf_ktime_get_ns(),
+            })
+            return -EPERM  // Block connection
         }
-        
-        return 0  // Allow connection
     }
+    
+    return 0  // Allow connection
 }
 ```
 
-### 5.3 Local vs Global Map Scope
+### 5.3 Global Map Access
 
 ```kernelscript
-// Global maps (outside any program)
+// Global maps - accessible by all eBPF programs
 map<u32, GlobalCounter> global_counters : Array(256)
 map<Event> event_stream : RingBuffer(1024 * 1024)
 
-program producer : kprobe("sys_read") {
-    // Local maps (only accessible within this program)
-    map<u32, LocalState> producer_state : HashMap(1024)
+@kprobe("sys_read")
+fn producer(ctx: KprobeContext) -> i32 {
+    let pid = bpf_get_current_pid_tgid() as u32
     
-    fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32
-        
-        // Update local state
-        producer_state[pid] += 1
-        
-        // Update global counter (accessible by other programs)
-        global_counters[pid % 256] += 1
-        
-        // Send event to global stream
-        let event = Event {
-            pid: pid,
-            syscall: "read",
-            timestamp: bpf_ktime_get_ns(),
-        }
-        event_stream.submit(event)
-        
-        return 0
+    // Update global counter (accessible by other programs)
+    global_counters[pid % 256] += 1
+    
+    // Send event to global stream
+    let event = Event {
+        pid: pid,
+        syscall: "read",
+        timestamp: bpf_ktime_get_ns(),
     }
+    event_stream.submit(event)
     
+    return 0
 }
 
-program consumer : kprobe("sys_write") {
-    // Local maps
-    map<u32, LocalState> consumer_state : HashMap(1024)
+@kprobe("sys_write")
+fn consumer(ctx: KprobeContext) -> i32 {
+    let pid = bpf_get_current_pid_tgid() as u32
     
-    fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32
-        
-        // Access global counter (same map as producer program)
-        let read_count = global_counters[pid % 256]
-        
-        // Update local state
-        let local_state = LocalState {
-            write_count: 1,
-            corresponding_reads: read_count,
-        }
-        consumer_state[pid] = local_state
-        
-        return 0
-    }
+    // Access global counter (same map as producer program)
+    let read_count = global_counters[pid % 256]
     
+    // Process the read count data
+    process_read_count(read_count)
+    
+    return 0
 }
 ```
 
@@ -877,20 +868,17 @@ map<ConfigKey, ConfigValue> config_map : Array(16) {
     pinned: "/sys/fs/bpf/config",
 }
 
-program simple_monitor : xdp {
-    // Local map - only accessible within this program
-    map<u32, LocalCache> cache : HashMap(256)
+@xdp
+fn simple_monitor(ctx: XdpContext) -> XdpAction {
+    // Access global maps directly
+    packet_stats[ctx.packet_type()] += 1
+    counters[0] += 1
     
-    fn main(ctx: XdpContext) -> XdpAction {
-        // Access global maps directly
-        packet_stats[ctx.packet_type()] += 1
-        counters[0] += 1
-        
-        // Access local map
-        cache[ctx.hash()] = LocalCache::new()
-        
-        return XDP_PASS
-    }
+    // Process packet and update flow info
+    let flow_key = extract_flow_key(ctx)
+    active_flows[flow_key] = FlowInfo::new()
+    
+    return XDP_PASS
 }
 ```
 
@@ -898,7 +886,13 @@ program simple_monitor : xdp {
 
 ### 6.1 Function Declaration
 ```ebnf
-function_declaration = [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
+function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
+
+attribute_list = attribute { attribute }
+attribute = "@" attribute_name [ "(" attribute_args ")" ]
+attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops"
+attribute_args = string_literal | identifier
 
 visibility = "pub" | "priv" 
 parameter_list = [ parameter { "," parameter } ] 
@@ -906,29 +900,27 @@ parameter = identifier ":" type_annotation
 return_type = type_annotation 
 ```
 
-### 6.2 Main Program Function
+### 6.2 eBPF Program Functions
 ```kernelscript
-program simple_xdp : xdp {
-    // Required main function - entry point
-    fn main(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet()?
-        
-        if packet.is_tcp() {
-            return XDP_PASS
-        }
-        
-        return XDP_DROP
+// eBPF program function with attribute - entry point
+@xdp
+fn simple_xdp(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()?
+    
+    if packet.is_tcp() {
+        return XDP_PASS
     }
+    
+    return XDP_DROP
 }
 ```
 
 ### 6.3 Helper Functions
 
-KernelScript supports three types of functions with different scoping rules:
+KernelScript supports two types of functions with different scoping rules:
 
 1. **Kernel-shared functions** (`kernel fn`) - Shared across all eBPF programs
-2. **Program-local functions** (inside `program {}` blocks) - Local to specific eBPF program
-3. **Userspace functions** (outside `program {}` blocks, no `kernel` qualifier) - Native userspace code
+2. **Userspace functions** (no `kernel` qualifier, no attributes) - Native userspace code
 
 ```kernelscript
 // Kernel-shared functions - accessible by all eBPF programs
@@ -953,41 +945,29 @@ priv kernel fn internal_kernel_helper() -> u32 {
     return 42
 }
 
-program packet_filter : xdp {
-    // Program-local function - only accessible within this program
-    fn local_helper() -> bool {
-        return true
+@xdp
+fn packet_filter(ctx: XdpContext) -> XdpAction {
+    // Can call kernel-shared functions
+    if (!validate_packet(ctx.packet())) {
+        return XDP_DROP
     }
     
-    fn main(ctx: XdpContext) -> XdpAction {
-        // Can call kernel-shared functions
-        if (!validate_packet(ctx.packet())) {
-            return XDP_DROP
-        }
-        
-        let checksum = calculate_checksum(ctx.data(), ctx.len())
-        
-        // Can call local function
-        local_helper()
-        
-        return XDP_PASS
-    }
+    let checksum = calculate_checksum(ctx.data(), ctx.len())
+    
+    return XDP_PASS
 }
 
-program flow_monitor : tc {
-    fn main(ctx: TcContext) -> TcAction {
-        // Can call the same kernel-shared functions
-        if (!validate_packet(ctx.packet())) {
-            return TC_ACT_SHOT
-        }
-        
-        // Cannot call packet_filter's local_helper() - it's program-local
-        
-        return TC_ACT_OK
+@tc
+fn flow_monitor(ctx: TcContext) -> TcAction {
+    // Can call the same kernel-shared functions
+    if (!validate_packet(ctx.packet())) {
+        return TC_ACT_SHOT
     }
+    
+    return TC_ACT_OK
 }
 
-// Userspace function (no kernel qualifier, outside program blocks)
+// Userspace function (no kernel qualifier, no attributes)
 fn setup_monitoring() -> i32 {
     print("Setting up monitoring system")
     return 0
@@ -998,11 +978,11 @@ fn main() -> i32 {
     
     // Cannot call validate_packet() here - it's kernel-only
     
-    let filter_handle = load_program(packet_filter)
-    let monitor_handle = load_program(flow_monitor)
+    let filter_handle = load(packet_filter)
+    let monitor_handle = load(flow_monitor)
     
-    attach_program(filter_handle, "eth0", 0)
-    attach_program(monitor_handle, "eth0", 1)
+    attach(filter_handle, "eth0", 0)
+    attach(monitor_handle, "eth0", 1)
     
     return 0
 }
@@ -1251,8 +1231,8 @@ Userspace functions generate **compiler warnings** for uncaught throws, but comp
 
 ```kernelscript
 fn main() -> i32 {
-    let prog = load_program(packet_filter)    // ⚠️ Warning: might throw
-    attach_program(prog, "eth0", 0)           // ⚠️ Warning: might throw
+    let prog = load(packet_filter)    // ⚠️ Warning: might throw
+    attach(prog, "eth0", 0)           // ⚠️ Warning: might throw
     return 0
     // If any throw occurs, program terminates (like panic)
 }
@@ -1260,8 +1240,8 @@ fn main() -> i32 {
 // Better - explicit error handling
 fn main() -> i32 {
     try {
-        let prog = load_program(packet_filter)
-        attach_program(prog, "eth0", 0)
+        let prog = load(packet_filter)
+    attach(prog, "eth0", 0)
         print("Program attached successfully")
         return 0
         
@@ -1409,8 +1389,8 @@ struct SystemCoordinator {
 impl SystemCoordinator {
     fn new() -> Result<Self, Error> {
         Ok(Self {
-            network_monitor: load_program(network_monitor),
-            security_filter: load_program(security_filter),
+            network_monitor: load(network_monitor),
+        security_filter: load(security_filter),
             
             // Global maps are automatically accessible
             global_flows: GlobalMaps::flows(),
@@ -1421,8 +1401,8 @@ impl SystemCoordinator {
     
     fn start(&mut self) -> Result<(), Error> {
         // Coordinate multiple programs
-        attach_program(network_monitor, "eth0", 0)?
-        attach_program(security_filter, "socket_connect", 0)?
+        attach(network_monitor, "eth0", 0)?
+    attach(security_filter, "socket_connect", 0)?
         Ok(())
     }
     
@@ -1504,11 +1484,11 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --verbose-mode=1 --enable-monitoring=1
     
-    let network_monitor = load_program(network_monitor)
-    let flow_analyzer = load_program(flow_analyzer)
+    let network_monitor = load(network_monitor)
+    let flow_analyzer = load(flow_analyzer)
     
-    attach_program(network_monitor, args.interface_id, 0)
-    attach_program(flow_analyzer, args.interface_id, 1)
+    attach(network_monitor, args.interface_id, 0)
+    attach(flow_analyzer, args.interface_id, 1)
     
     // Update runtime config based on command line
     runtime.verbose_mode = (args.verbose_mode == 1)
@@ -1656,16 +1636,19 @@ mod math {
 
 // Program lifecycle management (userspace only)
 mod program {
-    // Load an eBPF program and return its handle
-    pub fn load_program(program_ref: ProgramRef) -> ProgramHandle
+    // Load an eBPF program function and return its handle
+    pub fn load(function_ref: FunctionRef) -> ProgramHandle
     
     // Attach a program to a target with optional flags using its handle
-    // - First parameter must be a ProgramHandle returned from load_program()
+    // - First parameter must be a ProgramHandle returned from load()
     // - For XDP: target is interface name (e.g., "eth0"), flags are XDP attachment flags
     // - For TC: target is interface name, flags indicate direction (ingress/egress)
     // - For Kprobe: target is function name (e.g., "sys_read"), flags are unused (0)
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
-    pub fn attach_program(handle: ProgramHandle, target: string, flags: u32) -> u32
+    pub fn attach(handle: ProgramHandle, target: string, flags: u32) -> u32
+    
+    // Attach a struct_ops program to the kernel
+    pub fn attach_struct_ops(handle: ProgramHandle) -> u32
 }
 ```
 
@@ -1718,50 +1701,48 @@ kernel fn log_blocked_port(port: u16) {
     }
 }
 
-program simple_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        let packet = ctx.packet()
-        if (packet == null) {
-            return XDP_PASS
-        }
-        
-        system.packets_processed += 1
-        
-        if (packet.is_tcp()) {
-            let tcp = packet.tcp_header()
-            if (is_port_blocked(tcp.dst_port)) {  // Call kernel-shared function
-                log_blocked_port(tcp.dst_port)    // Call another kernel-shared function
-                system.packets_dropped += 1
-                return XDP_DROP
-            }
-        }
-        
+@xdp
+fn simple_filter(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()
+    if (packet == null) {
         return XDP_PASS
     }
+    
+    system.packets_processed += 1
+    
+    if (packet.is_tcp()) {
+        let tcp = packet.tcp_header()
+        if (is_port_blocked(tcp.dst_port)) {  // Call kernel-shared function
+            log_blocked_port(tcp.dst_port)    // Call another kernel-shared function
+            system.packets_dropped += 1
+            return XDP_DROP
+        }
+    }
+    
+    return XDP_PASS
 }
 
-program security_monitor : tc {
-    fn main(ctx: TcContext) -> TcAction {
-        let packet = ctx.packet()
-        if (packet == null) {
-            return TC_ACT_OK
-        }
-        
-        if (packet.is_tcp()) {
-            let tcp = packet.tcp_header()
-            if (is_port_blocked(tcp.src_port)) {  // Same kernel-shared function
-                log_blocked_port(tcp.src_port)
-                return TC_ACT_SHOT
-            }
-        }
-        
+@tc
+fn security_monitor(ctx: TcContext) -> TcAction {
+    let packet = ctx.packet()
+    if (packet == null) {
         return TC_ACT_OK
     }
+    
+    if (packet.is_tcp()) {
+        let tcp = packet.tcp_header()
+        if (is_port_blocked(tcp.src_port)) {  // Same kernel-shared function
+            log_blocked_port(tcp.src_port)
+            return TC_ACT_SHOT
+        }
+    }
+    
+    return TC_ACT_OK
 }
 
 // Userspace coordination with explicit program lifecycle
 struct Args {
-    interface: string,
+    interface: str<16>,
     quiet_mode: bool,
     strict_mode: bool,
 }
@@ -1777,11 +1758,11 @@ fn main(args: Args) -> i32 {
     }
     
     // Explicit program lifecycle management for multiple programs
-    let filter_handle = load_program(simple_filter)
-    let monitor_handle = load_program(security_monitor)
+    let filter_handle = load(simple_filter)
+    let monitor_handle = load(security_monitor)
     
-    let filter_result = attach_program(filter_handle, args.interface, 0)
-    let monitor_result = attach_program(monitor_handle, args.interface, 1)
+    let filter_result = attach(filter_handle, args.interface, 0)
+    let monitor_result = attach(monitor_handle, args.interface, 1)
     
     if (filter_result != 0 || monitor_result != 0) {
         print("Failed to attach programs to interface: ", args.interface)
@@ -1821,39 +1802,43 @@ struct CallInfo {
     bytes_requested: u32,
 }
 
-program perf_monitor : kprobe("sys_read") {
-    fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32
-        let call_info = CallInfo {
-            start_time: bpf_ktime_get_ns(),
-            bytes_requested: ctx.arg_u32(2),
-        }
-        
-        active_calls[pid] = call_info
-        return 0
-    }
-    
-    fn on_return(ctx: KretprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32
-        
-        let call_info = active_calls[pid]
-        if (call_info != null) {
-            let duration = bpf_ktime_get_ns() - call_info.start_time
-            read_stats[pid % 1024] += duration
-            delete active_calls[pid]
-        }
-        
-        return 0
-    }
+// Kernel-shared function for measuring write time
+kernel fn measure_write_time(ctx: KprobeContext) -> u64 {
+    return bpf_ktime_get_ns()
 }
 
-program write_monitor : kprobe("sys_write") {
-    fn main(ctx: KprobeContext) -> i32 {
-        let pid = bpf_get_current_pid_tgid() as u32
-        let duration = measure_write_time(ctx)
-        write_stats[pid % 1024] += duration
-        return 0
+@kprobe("sys_read")
+fn perf_monitor(ctx: KprobeContext) -> i32 {
+    let pid = bpf_get_current_pid_tgid() as u32
+    let call_info = CallInfo {
+        start_time: bpf_ktime_get_ns(),
+        bytes_requested: ctx.arg_u32(2),
     }
+    
+    active_calls[pid] = call_info
+    return 0
+}
+
+@kretprobe("sys_read")
+fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
+    let pid = bpf_get_current_pid_tgid() as u32
+    
+    let call_info = active_calls[pid]
+    if (call_info != null) {
+        let duration = bpf_ktime_get_ns() - call_info.start_time
+        read_stats[pid % 1024] += duration
+        delete active_calls[pid]
+    }
+    
+    return 0
+}
+
+@kprobe("sys_write")
+fn write_monitor(ctx: KprobeContext) -> i32 {
+    let pid = bpf_get_current_pid_tgid() as u32
+    let duration = measure_write_time(ctx)
+    write_stats[pid % 1024] += duration
+    return 0
 }
 
 // Userspace coordination for all monitoring programs
@@ -1877,14 +1862,16 @@ fn main(args: Args) -> i32 {
     let show_details = (args.show_details == 1)
     
     // Explicit program lifecycle management for multiple programs
-    let read_handle = load_program(perf_monitor)
-    let write_handle = load_program(write_monitor)
+    let read_handle = load(perf_monitor)
+    let read_ret_handle = load(perf_monitor_return)
+    let write_handle = load(write_monitor)
     
     // Attach programs to different kprobe targets
-    let read_attach = attach_program(read_handle, "sys_read", 0)
-    let write_attach = attach_program(write_handle, "sys_write", 0)
+    let read_attach = attach(read_handle, "sys_read", 0)
+    let read_ret_attach = attach(read_ret_handle, "sys_read", 0)
+    let write_attach = attach(write_handle, "sys_write", 0)
     
-    if (read_attach != 0 || write_attach != 0) {
+    if (read_attach != 0 || read_ret_attach != 0 || write_attach != 0) {
         print("Failed to attach monitoring programs")
         return 1
     }
@@ -1938,7 +1925,7 @@ fn print_summary_stats() {
 kernelscript_file = { global_declaration } 
 
 global_declaration = config_declaration | map_declaration | type_declaration | 
-                    program_declaration | function_declaration | struct_declaration | 
+                    function_declaration | struct_declaration | 
                     bindings_declaration | import_declaration 
 
 (* Map declarations - global scope *)
@@ -1954,27 +1941,20 @@ map_config_item = identifier "=" literal
 map_attributes = "{" map_attribute { "," map_attribute } [ "," ] "}" 
 map_attribute = identifier [ "=" literal ] 
 
-(* Program declarations *)
-program_declaration = "program" identifier ":" program_type "{" program_body "}" 
-
-program_type = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-               "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" 
-
-program_body = { program_item } 
-
-program_item = local_map_declaration | function_declaration | type_declaration 
-
-(* Local maps - inside program scope *)
-local_map_declaration = "map" "<" type_annotation [ "," type_annotation ] ">" identifier 
-                        ":" map_type "(" map_config ")" [ map_attributes ] 
+(* eBPF program function attributes *)
+attribute_list = attribute { attribute }
+attribute = "@" attribute_name [ "(" attribute_args ")" ]
+attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
+                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops"
+attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)
 config_declaration = "config" identifier "{" { config_field } "}" 
 config_field = [ "mut" ] identifier ":" type_annotation [ "=" expression ] "," 
 
 (* Scoping rules for KernelScript:
-   - Inside program {} blocks: Kernel space (eBPF) - compiles to eBPF bytecode
-   - Outside program {} blocks: User space - compiles to native executable  
+   - Attributed functions (e.g., @xdp, @tc): Kernel space (eBPF) - compiles to eBPF bytecode
+   - Regular functions: User space - compiles to native executable  
    - Maps and global configs: Shared between both kernel and user space
    
    Userspace main function can have two forms:
@@ -1997,7 +1977,7 @@ enum_variant = identifier [ "=" integer_literal ]
 type_alias = type_annotation 
 
 (* Function declarations *)
-function_declaration = [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" 
+function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" 
                        [ "->" type_annotation ] "{" statement_list "}" 
 
 visibility = "pub" | "priv" 
@@ -2134,17 +2114,18 @@ whitespace = " " | "\t" | "\n" | "\r"
 
 **Top Level:**
 - `kernelscript_file` contains global declarations
-- Global maps, types, namespaces, programs, and top-level userspace
+- Global maps, types, configs, and functions (both kernel and userspace)
 
-**Program Structure:**
-- `program_declaration` defines an eBPF program
-- `program_body` contains local maps, config, and functions
-- `userspace_declaration` is a top-level block for coordinating all programs
+**Function Structure:**
+- `function_declaration` defines functions with optional attributes
+- Functions with attributes (e.g., `@xdp`, `@tc`) are eBPF programs
+- Functions without attributes are userspace functions
+- `kernel fn` functions are shared across all eBPF programs
 
 **Scoping Rules:**
-- **Global scope**: Maps, types, and userspace coordinator outside any program
-- **Program scope**: Local maps, config, and functions within a program  
+- **Global scope**: Maps, types, configs, and all function declarations
 - **Function scope**: Variables and parameters within functions
-- **Userspace scope**: Functions and configs within the top-level userspace block
+- **Kernel scope**: `kernel fn` functions accessible to all eBPF programs
+- **Userspace scope**: Regular functions (no attributes, no `kernel` qualifier)
 
 This specification provides a comprehensive foundation for KernelScript while addressing the concerns about template complexity and userspace integration. The simplified type system avoids complex template metaprograming while still providing safety, and the top-level userspace section enables seamless coordination of multiple eBPF programs with centralized control plane management.

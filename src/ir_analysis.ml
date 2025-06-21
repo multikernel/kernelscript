@@ -247,18 +247,11 @@ let analyze_ir_function (func : ir_function) : ir_function * string list =
 let analyze_ir_program (prog : ir_program) : ir_program * string list =
   let all_warnings = ref [] in
   
-  let optimized_functions = List.map (fun func ->
-    let (opt_func, warnings) = analyze_ir_function func in
-    all_warnings := warnings @ !all_warnings;
-    opt_func
-  ) prog.functions in
-  
-  let (opt_main, main_warnings) = analyze_ir_function prog.main_function in
-  all_warnings := main_warnings @ !all_warnings;
+  let (opt_entry, entry_warnings) = analyze_ir_function prog.entry_function in
+  all_warnings := entry_warnings @ !all_warnings;
   
   let optimized_prog = { prog with 
-    functions = optimized_functions;
-    main_function = opt_main;
+    entry_function = opt_entry;
   } in
   
   (optimized_prog, !all_warnings)

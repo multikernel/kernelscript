@@ -55,7 +55,6 @@
     aux 0 0
 
   let lookup_keyword = function
-    | "program" -> PROGRAM
     | "fn" -> FN
     | "map" -> MAP
     | "type" -> TYPE
@@ -146,6 +145,7 @@ rule token = parse
   | '<' { LT }
   | '>' { GT }
   | '!' { NOT }
+  | '@' { AT }
   | '|' { PIPE }
   | '{' { LBRACE }
   | '}' { RBRACE }

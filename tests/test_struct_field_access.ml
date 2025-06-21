@@ -23,19 +23,17 @@ struct GlobalConfig {
   timeout_ms: u32
 }
 
-program test : xdp {
-  fn process_packet(cfg: GlobalConfig) -> u32 {
-    let max_size = cfg.max_packet_size
-    let timeout = cfg.timeout_ms
-    if (max_size > 1500) {
-      return 1
-    }
-    return 0
+kernel fn process_packet(cfg: GlobalConfig) -> u32 {
+  let max_size = cfg.max_packet_size
+  let timeout = cfg.timeout_ms
+  if (max_size > 1500) {
+    return 1
   }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+  return 0
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -54,24 +52,22 @@ fn main() -> i32 {
 (** Test 2: Local struct within eBPF program *)
 let test_local_struct_ebpf_program () =
   let program_text = {|
-program test : xdp {
-  struct LocalConfig {
-    threshold: u32,
-    mode: u32
+struct LocalConfig {
+  threshold: u32,
+  mode: u32
+}
+
+kernel fn check_threshold(settings: LocalConfig) -> u32 {
+  let val = settings.threshold
+  let m = settings.mode
+  if (val > 100 && m > 0) {
+    return 1
   }
-  
-  fn check_threshold(settings: LocalConfig) -> u32 {
-    let val = settings.threshold
-    let m = settings.mode
-    if (val > 100 && m > 0) {
-      return 1
-    }
-    return 0
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+  return 0
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -95,20 +91,18 @@ struct NetworkLimits {
   bandwidth_limit: u32
 }
 
-program monitor : xdp {
-  fn enforce_limits(limits: NetworkLimits) -> u32 {
-    let max_conn = limits.max_connections
-    let bandwidth = limits.bandwidth_limit
-    
-    if (max_conn > 1000 || bandwidth > 10000) {
-      return 1 // Drop
-    }
-    return 0 // Pass
-  }
+kernel fn enforce_limits(limits: NetworkLimits) -> u32 {
+  let max_conn = limits.max_connections
+  let bandwidth = limits.bandwidth_limit
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
+  if (max_conn > 1000 || bandwidth > 10000) {
+    return 1 // Drop
   }
+  return 0 // Pass
+}
+
+@xdp fn monitor(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -127,10 +121,8 @@ fn main() -> i32 {
 (** Test 4: Userspace struct parameter field access *)
 let test_userspace_struct_parameter_field_access () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct ServerConfig {
@@ -172,20 +164,18 @@ struct Config2 {
   value2: u32
 }
 
-program test : xdp {
-  fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
-    let val1 = cfg1.value1
-    let val2 = cfg2.value2
-    
-    if (val1 > val2) {
-      return 1
-    }
-    return 0
-  }
+kernel fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
+  let val1 = cfg1.value1
+  let val2 = cfg2.value2
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
+  if (val1 > val2) {
+    return 1
   }
+  return 0
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -210,27 +200,25 @@ struct PacketLimits {
   strict_mode: u32
 }
 
-program test : xdp {
-  fn validate_packet(limits: PacketLimits) -> u32 {
-    let packet_size: u32 = 800
+kernel fn validate_packet(limits: PacketLimits) -> u32 {
+  let packet_size: u32 = 800
+  
+  if (packet_size > limits.max_size || packet_size < limits.min_size) {
+    return 1  // Invalid
+  }
     
-    if (packet_size > limits.max_size || packet_size < limits.min_size) {
-      return 1  // Invalid
-    }
-    
-    let total_range = limits.max_size - limits.min_size
-    let middle_point = limits.min_size + (total_range / 2)
-    
-    if (packet_size > middle_point && limits.strict_mode > 0) {
-      return 2  // Warning
-    }
-    
-    return 0  // Valid
+  let total_range = limits.max_size - limits.min_size
+  let middle_point = limits.min_size + (total_range / 2)
+  
+  if (packet_size > middle_point && limits.strict_mode > 0) {
+    return 2  // Warning
   }
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+  return 0  // Valid
+}
+
+@xdp fn main(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -241,7 +229,7 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let symbol_table = build_symbol_table ast in
     let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
+    let _ir = generate_ir annotated_ast symbol_table "main" in
     check bool "struct field access in expressions" true true
   with
   | exn -> fail ("Struct field access in expressions test failed: " ^ Printexc.to_string exn)
@@ -253,20 +241,18 @@ struct GlobalSettings {
   global_limit: u32
 }
 
-program test : xdp {
-  struct LocalSettings {
-    local_limit: u32
-  }
-  
-  fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
-    let g_limit = global.global_limit
-    let l_limit = local.local_limit
-    return g_limit + l_limit
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+struct LocalSettings {
+  local_limit: u32
+}
+
+kernel fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
+  let g_limit = global.global_limit
+  let l_limit = local.local_limit
+  return g_limit + l_limit
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -290,20 +276,18 @@ struct PacketInfo {
   proto: u32
 }
 
-program test : xdp {
-  fn should_drop(info: PacketInfo) -> u32 {
-    let size = info.size
-    let proto = info.proto
-    if (size > 1500 || proto == 17) {
-      return 1
-    }
-    return 0
+kernel fn should_drop(info: PacketInfo) -> u32 {
+  let size = info.size
+  let proto = info.proto
+  if (size > 1500 || proto == 17) {
+    return 1
   }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let packet_size = ctx.data_end - ctx.data
-    return 2
-  }
+  return 0
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let packet_size = ctx.data_end - ctx.data
+  return 2
 }
 
 fn main() -> i32 {
@@ -326,15 +310,13 @@ struct SimpleConfig {
   value: u32
 }
 
-program test : xdp {
-  fn helper(cfg: SimpleConfig) -> u32 {
-    let value = cfg.nonexistent_field  // Should cause error
-    return value
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+kernel fn helper(cfg: SimpleConfig) -> u32 {
+  let value = cfg.nonexistent_field  // Should cause error
+  return value
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -354,14 +336,12 @@ fn main() -> i32 {
 (** Test 10: Error case - using undefined struct *)
 let test_undefined_struct_error () =
   let program_text = {|
-program test : xdp {
-  fn helper(cfg: UndefinedStruct) -> u32 {
-    return cfg.value
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+kernel fn helper(cfg: UndefinedStruct) -> u32 {
+  return cfg.value
+}
+
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn main() -> i32 {
@@ -386,26 +366,24 @@ struct GlobalConfig {
   timeout: u32
 }
 
-program monitor : xdp {
-  struct LocalStats {
-    packet_count: u32,
-    drop_count: u32
-  }
+struct LocalStats {
+  packet_count: u32,
+  drop_count: u32
+}
+
+kernel fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
+  let packets = stats.packet_count
+  let drops = stats.drop_count
+  let max_entries = cfg.max_entries
   
-  fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
-    let packets = stats.packet_count
-    let drops = stats.drop_count
-    let max_entries = cfg.max_entries
-    
-    if (packets > max_entries) {
-      return drops + 1
-    }
-    return drops
+  if (packets > max_entries) {
+    return drops + 1
   }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+  return drops
+}
+
+@xdp fn monitor(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 struct UserConfig {
@@ -445,13 +423,11 @@ let test_struct_field_assignment_type_checking () =
       value: u64
     }
     
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let test_data = TestStruct { count: 1, value: 100 }
-        test_data.count = test_data.count + 1
-        test_data.value = 200
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      let test_data = TestStruct { count: 1, value: 100 }
+      test_data.count = test_data.count + 1
+      test_data.value = 200
+      return 2
     }
   |} in
   
@@ -474,12 +450,10 @@ let test_struct_field_assignment_ir_generation () =
       bytes: u64
     }
     
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
         let stats = Stats { packets: 1, bytes: 64 }
         stats.packets = stats.packets + 1
         return 2
-      }
     }
   |} in
   
@@ -502,12 +476,10 @@ let test_struct_field_assignment_c_generation () =
       bytes: u64
     }
     
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let stats = Stats { packets: 1, bytes: 64 }
-        stats.packets = stats.packets + 1
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      let stats = Stats { packets: 1, bytes: 64 }
+      stats.packets = stats.packets + 1
+      return 2
     }
   |} in
   
@@ -530,12 +502,10 @@ let test_struct_field_assignment_errors () =
       packets: u32
     }
     
-    program test_program : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        let stats = Stats { packets: 1 }
-        stats.nonexistent = 42
-        return 2
-      }
+    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+      let stats = Stats { packets: 1 }
+      stats.nonexistent = 42
+      return 2
     }
   |} in
   
@@ -558,12 +528,10 @@ struct PacketStats {
   bytes: u64
 }
 
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let stats = PacketStats { count: 1, bytes: 100 }
-    let count_val = stats.count
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let stats = PacketStats { count: 1, bytes: 100 }
+  let count_val = stats.count
+  return 2
 }
 |} in
   try

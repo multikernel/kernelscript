@@ -46,10 +46,8 @@ module Ir = Kernelscript.Ir
 (** Test that global functions are parsed correctly *)
 let test_global_functions_top_level () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -67,14 +65,8 @@ let test_global_functions_top_level () =
 (** Test that functions inside program blocks are not global *)
 let test_program_function_isolation () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
-      
-      fn helper() -> u32 {
-        return 42
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -82,21 +74,20 @@ let test_program_function_isolation () =
     }
   |} in
   let ast = parse_string code in
-  (* Should only have one global function (main), not the program's helper *)
+  (* Should have two global functions: the attributed function and main *)
   let global_functions = List.filter_map (function
     | Kernelscript.Ast.GlobalFunction f -> Some f
+    | Kernelscript.Ast.AttributedFunction _ -> None (* Attributed functions are not global functions *)
     | _ -> None
   ) ast in
-  check int "only one global function" 1 (List.length global_functions);
+  check int "only one global function (main)" 1 (List.length global_functions);
   check string "global function is main" "main" (List.hd global_functions).func_name
 
 (** Test main function with correct signature - no parameters *)
 let test_main_correct_signature () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -112,10 +103,8 @@ let test_main_correct_signature () =
 (** Test main function with struct parameter *)
 let test_main_with_struct_param () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     struct Args {
@@ -136,10 +125,8 @@ let test_main_with_struct_param () =
 (** Test main function with wrong parameter types *)
 let test_main_wrong_param_types () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main(wrong_param: u32, another_wrong: u32) -> i32 {
@@ -161,10 +148,8 @@ let test_main_wrong_param_types () =
 (** Test main function with wrong return type *)
 let test_main_wrong_return_type () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> u32 {
@@ -186,10 +171,8 @@ let test_main_wrong_return_type () =
 (** Test main function with non-struct single parameter *)
 let test_main_non_struct_param () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main(bad_param: u32) -> i32 {
@@ -211,10 +194,8 @@ let test_main_non_struct_param () =
 (** Test main function with too many parameters *)
 let test_main_too_many_params () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main(param1: u32, param2: u64, extra: u32) -> i32 {
@@ -236,10 +217,8 @@ let test_main_too_many_params () =
 (** Test missing main function *)
 let test_missing_main () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn helper(x: u32) -> u32 {
@@ -261,16 +240,10 @@ let test_missing_main () =
 (** Test multiple main functions *)
 let test_multiple_main () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn main(ctx: XdpContext) -> XdpAction {
+      return 2
     }
-    
-    fn main() -> i32 {
-      return 0
-    }
-    
+
     fn main(a: u32, b: u64) -> i32 {
       return 1
     }
@@ -290,15 +263,14 @@ let test_multiple_main () =
 (** Test global functions with other functions (should be allowed) *)
 let test_global_functions_with_other_functions () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
       return 0
     }
+    
   |} in
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
@@ -309,10 +281,8 @@ let test_global_functions_with_other_functions () =
 (** Test global functions with struct definitions *)
 let test_global_functions_with_structs () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     struct Config {
@@ -338,16 +308,12 @@ let test_global_functions_with_structs () =
 (** Test multiple programs with single global main *)
 let test_multiple_programs_single_main () =
   let code = {|
-    program monitor : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
+    @xdp fn monitor(ctx: XdpContext) -> XdpAction {
         return 2
-      }
     }
     
-    program filter : tc {
-      fn main(ctx: XdpContext) -> XdpAction {
+    @tc fn filter(ctx: TcContext) -> TcAction {
         return 0
-      }
     }
     
     fn main() -> i32 {
@@ -363,12 +329,10 @@ let test_multiple_programs_single_main () =
 (** Test basic global function functionality *)
 let test_basic_global_functions () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
-    
+
     fn main() -> i32 {
       return 0
     }
@@ -397,10 +361,8 @@ let test_basic_global_functions () =
 (** Test global function code generation from AST *)
 let test_global_function_codegen () =
   let code = {|
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -433,10 +395,8 @@ let test_literal_map_assignment () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -463,10 +423,8 @@ let test_map_lookup_with_literal_key () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -493,10 +451,8 @@ let test_map_update_with_literal_key_value () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -524,10 +480,8 @@ let test_map_delete_with_literal_key () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -555,10 +509,8 @@ let test_map_iterate_with_literal_key () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -587,10 +539,8 @@ let test_mixed_literal_variable_expressions () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -619,10 +569,8 @@ let test_unique_temp_var_names () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -650,10 +598,8 @@ let test_no_direct_literal_addressing () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
@@ -689,15 +635,13 @@ let test_map_loading_code_generation () =
         threat_level: u32 = 1,
     }
     
-    program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-      }
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
+      return 2
     }
     
     fn main() -> i32 {
       network.enable_logging = true
-      let prog_handle = load_program(test)
+      let prog_handle = load(test)
       return 0
     }
   |} in
@@ -734,7 +678,7 @@ let test_map_loading_code_generation () =
         Unix.unlink generated_file;
         Unix.rmdir temp_dir;
         
-        (* Verify BPF helper functions are generated (since load_program is called) *)
+        (* Verify BPF helper functions are generated (since load is called) *)
         check bool "load_bpf_program function exists" true 
           (try ignore (Str.search_forward (Str.regexp "int load_bpf_program") content 0); true with Not_found -> false);
         
@@ -742,8 +686,8 @@ let test_map_loading_code_generation () =
         check bool "user main function exists" true 
           (try ignore (Str.search_forward (Str.regexp "int main(void)") content 0); true with Not_found -> false);
         
-        (* Verify load_program call is present *)
-        check bool "load_program call present" true 
+        (* Verify load call is present *)
+  check bool "load call present" true 
           (try ignore (Str.search_forward (Str.regexp "load_bpf_program.*test") content 0); true with Not_found -> false);
         
         (* Verify BPF object filename is correct *)

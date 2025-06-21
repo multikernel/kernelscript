@@ -43,10 +43,8 @@ let test_global_function_main_with_different_struct_name () =
   let program_text = {|
 map<u32, u64> server_stats : HashMap(32)
 
-program server_monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn server_monitor(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 struct ServerConfig {
@@ -110,10 +108,8 @@ let test_global_function_main_with_minimal_struct_name () =
   let program_text = {|
 map<u32, u64> minimal_map : HashMap(8)
 
-program minimal_prog : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn minimal_prog(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 struct X {
@@ -161,10 +157,8 @@ let test_global_function_main_validation_with_custom_struct () =
   let program_text = {|
 map<u32, u64> validation_map : HashMap(16)
 
-program validation_prog : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn validation_prog(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 struct CustomArgs {
@@ -195,10 +189,8 @@ fn main(custom_args: CustomArgs) -> i32 {
 (** Test 4: Verify argument parsing and assignment to IR variables works correctly *)
 let test_argument_parsing_assignment_bug_fix () =
   let program_text = {|
-program packet_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 struct Args {
@@ -210,8 +202,8 @@ fn main(args: Args) -> i32 {
     if (args.enable_debug > 0) {
         print("Debug mode enabled")
     }
-    let prog = load_program(packet_filter)
-    attach_program(prog, args.interface, 0)
+    let prog = load(packet_filter)
+    attach(prog, args.interface, 0)
     return 0
 }
 |} in
@@ -230,7 +222,7 @@ fn main(args: Args) -> i32 {
       (contains_pattern result "var_0 = args;");
     
     (* 3. Check that function parameter fields are used directly *)
-    check bool "args.interface used for attach_program" true 
+    check bool "args.interface used for attach" true 
       (contains_pattern result "args\\.interface");
     check bool "args.enable_debug used directly" true 
       (contains_pattern result "args\\.enable_debug");

@@ -122,8 +122,8 @@ program traffic_shaper : tc {
 }
 
 fn main() -> i32 {
-  let prog1 = load_program(traffic_shaper)
-  let prog2 = load_program(packet_analyzer)
-  attach_program(prog1, "lo", 0)
-  attach_program(prog2, "lo", 0)
+  let prog1 = load(traffic_shaper)
+  let prog2 = load(packet_analyzer)
+  attach(prog1, "lo", 0)
+  attach(prog2, "lo", 0)
 }

@@ -7,13 +7,11 @@ open Kernelscript.Type_checker
 (** Test for loop with constant bounds *)
 let test_for_constant_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 0..5) {
-      let x = i * 2
-    }
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 0..5) {
+    let x = i * 2
   }
+  return 2
 }
 |} in
   try
@@ -26,15 +24,13 @@ program test : xdp {
 (** Test for loop with variable bounds *)
 let test_for_variable_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let start = 1
-    let endval = 10
-    for (i in start..endval) {
-      let x = i
-    }
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let start = 1
+  let endval = 10
+  for (i in start..endval) {
+    let x = i
   }
+  return 2
 }
 |} in
   try
@@ -47,12 +43,10 @@ program test : xdp {
 (** Test for loop with empty body *)
 let test_for_empty_body () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 1..10) {
-    }
-    return 0
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 1..10) {
   }
+  return 0
 }
 |} in
   try
@@ -65,13 +59,11 @@ program test : xdp {
 (** Test for loop with single iteration (same bounds) *)
 let test_for_single_iteration () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 5..5) {
-      let y = 42
-    }
-    return 0
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 5..5) {
+    let y = 42
   }
+  return 0
 }
 |} in
   try
@@ -84,13 +76,11 @@ program test : xdp {
 (** Test for loop with simple arithmetic *)
 let test_for_simple_arithmetic () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 1..3) {
-      let temp = i * 2
-    }
-    return 1
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 1..3) {
+    let temp = i * 2
   }
+  return 1
 }
 |} in
   try
@@ -103,16 +93,14 @@ program test : xdp {
 (** Test for loop with break statement *)
 let test_for_with_break () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 0..10) {
-      if (i == 5) {
-        break
-      }
-      let x = i
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 0..10) {
+    if (i == 5) {
+      break
     }
-    return 2
+    let x = i
   }
+  return 2
 }
 |} in
   try
@@ -125,16 +113,14 @@ program test : xdp {
 (** Test for loop with continue statement *)
 let test_for_with_continue () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 0..10) {
-      if (i % 2 == 0) {
-        continue
-      }
-      let x = i
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 0..10) {
+    if (i % 2 == 0) {
+      continue
     }
-    return 2
+    let x = i
   }
+  return 2
 }
 |} in
   try
@@ -147,15 +133,13 @@ program test : xdp {
 (** Test for loop with complex expressions in bounds *)
 let test_for_complex_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let base = 5
-    let multiplier = 2
-    for (i in (base - 1)..(base + multiplier)) {
-      let result = i * base
-    }
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let base = 5
+  let multiplier = 2
+  for (i in (base - 1)..(base + multiplier)) {
+    let result = i * base
   }
+  return 2
 }
 |} in
   try
@@ -177,15 +161,13 @@ let test_for_different_integer_types () =
   
   List.iter (fun (type_name, _) ->
     let program_text = Printf.sprintf {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let start: %s = 1
-    let end_val: %s = 5
-    for (i in start..end_val) {
-      let x = i
-    }
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let start: %s = 1
+  let end_val: %s = 5
+  for (i in start..end_val) {
+    let x = i
   }
+  return 2
 }
 |} type_name type_name in
     try
@@ -199,13 +181,11 @@ program test : xdp {
 (** Test for loop with large bounds *)
 let test_for_large_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 0..1000000) {
-      let large = i
-    }
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 0..1000000) {
+    let large = i
   }
+  return 2
 }
 |} in
   try
@@ -218,13 +198,11 @@ program test : xdp {
 (** Test for loop with reverse bounds (start > end) *)
 let test_for_reverse_bounds () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    for (i in 10..5) {
-      let never_executed = i
-    }
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  for (i in 10..5) {
+    let never_executed = i
   }
+  return 2
 }
 |} in
   try
@@ -237,15 +215,13 @@ program test : xdp {
 (** Test for loop variable scoping *)
 let test_for_variable_scoping () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let i = 100
-    for (i in 0..5) {
-      let x = i * 2
-    }
-    let after_loop = i
-    return 2
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  let i = 100
+  for (i in 0..5) {
+    let x = i * 2
   }
+  let after_loop = i
+  return 2
 }
 |} in
   try
@@ -258,10 +234,8 @@ program test : xdp {
 (** Test for loop in global functions *)
 let test_for_in_global_function () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn helper() -> u32 {
@@ -294,11 +268,9 @@ let test_for_error_cases () =
   
   List.iter (fun (code, desc) ->
     let full_program = Printf.sprintf {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    %s
-    return 0
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  %s
+  return 0
 }
 |} code in
     try

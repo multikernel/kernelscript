@@ -36,7 +36,7 @@ fn main(args: Args) -> i32 {
     if (args.enable_debug > 0) {
         network.enable_logging = true
     }
-    let prog = load_program(packet_filter)
-    attach_program(prog, args.interface, 0)
+    let prog = load(packet_filter)
+    attach(prog, args.interface, 0)
     return 0
 } 

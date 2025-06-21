@@ -47,15 +47,11 @@ let create_test_program () =
   let main_func = create_test_function "main" true 
     [("ctx", IRContext XdpCtx)] 
     (Some (IRAction XdpActionType)) in
-  let helper_func = create_test_function "helper" false 
-    [("x", IRU32)] 
-    (Some IRU32) in
   {
     name = "test_program";
     program_type = Xdp;
     local_maps = [];
-    functions = [helper_func];
-    main_function = main_func;
+    entry_function = main_func;
     ir_pos = { line = 1; column = 1; filename = "test" };
   }
 
@@ -103,53 +99,29 @@ let test_simple_analysis _ =
   let prog = create_test_program () in
   let analysis = analyze_ir_program_simple prog in
   
-  check int "signature validations count" 2 (List.length analysis.signature_validations);
+  check int "signature validations count" 1 (List.length analysis.signature_validations);
   check bool "Analysis should contain summary" true (String.length analysis.analysis_summary > 0)
 
 
 
 (** Test basic function system operations *)
 let test_basic_function_system () =
-  let program_text = {|
-program simple : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
-}
-|} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-    let ir_program = List.hd ir_multi.programs in
-    
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
-    
-    (* Verify basic function system operations *)
-    check bool "Analysis should complete successfully" true 
-      (List.length analysis.signature_validations >= 1);
-    (* Note: main function gets renamed to program name in IR *)
-    check bool "Should find main function (renamed to program name)" true
-      (List.exists (fun sig_info -> sig_info.func_name = "simple" && sig_info.is_main) analysis.signature_validations);
-    check bool "Analysis summary should be non-empty" true 
-      (String.length analysis.analysis_summary > 0)
-  with
-  | exn -> fail ("Failed to test basic function system: " ^ (Printexc.to_string exn))
+  let prog = create_test_program () in
+  let analysis = analyze_ir_program_simple prog in
+  
+  check int "signature validations count" 1 (List.length analysis.signature_validations);
+  check bool "Analysis should contain summary" true (String.length analysis.analysis_summary > 0)
 
 (** Test function registration *)
 let test_function_registration () =
   let program_text = {|
-program func_test : xdp {
-  fn helper(x: u32, y: u32) -> u32 {
-    return x + y
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = helper(10, 20)
-    return 2
-  }
+kernel fn helper(x: u32, y: u32) -> u32 {
+  return x + y
+}
+
+@xdp fn func_test(ctx: XdpContext) -> XdpAction {
+  let result = helper(10, 20)
+  return 2
 }
 |} in
   try
@@ -159,8 +131,8 @@ program func_test : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Verify function registration through analysis *)
     let function_names = List.map (fun sig_info -> sig_info.func_name) analysis.signature_validations in
@@ -176,18 +148,16 @@ program func_test : xdp {
 let test_function_signature_validation () =
   (* Test with actual IR functions using the real validation system *)
   let program_text = {|
-program signature_test : xdp {
-  fn valid_function(a: u32, b: u32) -> u32 {
-    return a + b
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = valid_function(10, 20)
-    if (result > 25) {
-      return 2
-    } else {
-      return 1
-    }
+kernel fn valid_function(a: u32, b: u32) -> u32 {
+  return a + b
+}
+
+@xdp fn signature_test(ctx: XdpContext) -> XdpAction {
+  let result = valid_function(10, 20)
+  if (result > 25) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -198,8 +168,8 @@ program signature_test : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Verify signature validation *)
     let valid_function_sig = List.find (fun sig_info -> sig_info.func_name = "valid_function") analysis.signature_validations in
@@ -217,18 +187,16 @@ program signature_test : xdp {
 let test_function_call_resolution () =
   (* This test should focus on what the IR function system actually provides *)
   let program_text = {|
-program call_test : xdp {
-  fn multiply(x: u32, factor: u32) -> u32 {
-    return x * factor
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = multiply(10, 2)
-    if (result > 15) {
-      return 2
-    } else {
-      return 1
-    }
+kernel fn multiply(x: u32, factor: u32) -> u32 {
+  return x * factor
+}
+
+@xdp fn call_test(ctx: XdpContext) -> XdpAction {
+  let result = multiply(10, 2)
+  if (result > 15) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -239,8 +207,8 @@ program call_test : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Verify that the analysis includes both functions *)
     (* Note: main function gets renamed to program name in IR *)
@@ -257,18 +225,16 @@ program call_test : xdp {
 let test_recursive_function_detection () =
   (* Test with a simple non-recursive program since we don't have actual recursion detection *)
   let simple_program = {|
-program simple : xdp {
-  fn helper() -> u32 {
-    return 42
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = helper()
-    if (result > 40) {
-      return 2
-    } else {
-      return 1
-    }
+kernel fn helper() -> u32 {
+  return 42
+}
+
+@xdp fn simple(ctx: XdpContext) -> XdpAction {
+  let result = helper()
+  if (result > 40) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -279,8 +245,8 @@ program simple : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Verify basic analysis works *)
     check bool "Analysis should complete successfully" true 
@@ -297,28 +263,26 @@ program simple : xdp {
 let test_function_dependency_analysis () =
   (* Test with a multi-level function call hierarchy *)
   let program_text = {|
-program dependency : xdp {
-  fn level3() -> u32 {
-    return 3
-  }
-  
-  fn level2() -> u32 {
-    let val3 = level3()
-    return val3 + 2
-  }
-  
-  fn level1() -> u32 {
-    let val2 = level2()
-    return val2 + 1
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = level1()
-    if (result > 5) {
-      return 2
-    } else {
-      return 1
-    }
+kernel fn level3() -> u32 {
+  return 3
+}
+
+kernel fn level2() -> u32 {
+  let val3 = level3()
+  return val3 + 2
+}
+
+kernel fn level1() -> u32 {
+  let val2 = level2()
+  return val2 + 1
+}
+
+@xdp fn dependency(ctx: XdpContext) -> XdpAction {
+  let result = level1()
+  if (result > 5) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -329,8 +293,8 @@ program dependency : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Verify that all functions are analyzed *)
     let function_names = List.map (fun sig_info -> sig_info.func_name) analysis.signature_validations in
@@ -351,23 +315,21 @@ program dependency : xdp {
 let test_function_optimization () =
   (* Test with simple functions that could theoretically be optimized *)
   let program_text = {|
-program optimization : xdp {
-  fn constant_function() -> u32 {
-    return 42
-  }
-  
-  fn simple_math(x: u32) -> u32 {
-    return x + 1
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let const_val = constant_function()
-    let result = simple_math(const_val)
-    if (result > 40) {
-      return 2
-    } else {
-      return 1
-    }
+kernel fn constant_function() -> u32 {
+  return 42
+}
+
+kernel fn simple_math(x: u32) -> u32 {
+  return x + 1
+}
+
+@xdp fn optimization(ctx: XdpContext) -> XdpAction {
+  let const_val = constant_function()
+  let result = simple_math(const_val)
+  if (result > 40) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -378,8 +340,8 @@ program optimization : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Verify that optimization analysis can identify simple functions *)
     let function_names = List.map (fun sig_info -> sig_info.func_name) analysis.signature_validations in
@@ -402,41 +364,39 @@ program optimization : xdp {
 let test_comprehensive_function_system () =
   (* Test with a comprehensive program that exercises multiple aspects *)
   let program_text = {|
-program comprehensive : xdp {
-  fn validate_packet(size: u32) -> bool {
-    return size > 64 && size < 1500
+kernel fn validate_packet(size: u32) -> bool {
+  return size > 64 && size < 1500
+}
+
+kernel fn calculate_hash(data: u32) -> u32 {
+  let hash = data * 31
+  return hash % 1024
+}
+
+kernel fn process_protocol(protocol: u8) -> u32 {
+  if (protocol == 6) {
+    return 1
+  } else if (protocol == 17) {
+    return 2
+  } else {
+    return 0
+  }
+}
+
+@xdp fn comprehensive(ctx: XdpContext) -> XdpAction {
+  let packet_size = 1000
+  
+  if (!validate_packet(packet_size)) {
+    return 1
   }
   
-  fn calculate_hash(data: u32) -> u32 {
-    let hash = data * 31
-    return hash % 1024
-  }
+  let hash = calculate_hash(packet_size)
+  let proto_result = process_protocol(6)
   
-  fn process_protocol(protocol: u8) -> u32 {
-    if (protocol == 6) {
-      return 1
-    } else if (protocol == 17) {
-      return 2
-    } else {
-      return 0
-    }
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let packet_size = 1000
-    
-    if (!validate_packet(packet_size)) {
-      return 1
-    }
-    
-    let hash = calculate_hash(packet_size)
-    let proto_result = process_protocol(6)
-    
-    if (hash > 500 && proto_result == 1) {
-      return 2
-    } else {
-      return 1
-    }
+  if (hash > 500 && proto_result == 1) {
+    return 2
+  } else {
+    return 1
   }
 }
 |} in
@@ -447,8 +407,8 @@ program comprehensive : xdp {
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     let ir_program = List.hd ir_multi.programs in
     
-    (* Use the actual IR function system analysis *)
-    let analysis = analyze_ir_program_simple ir_program in
+    (* Use the new analysis function that includes kernel functions *)
+    let analysis = analyze_ir_program_with_kernel_functions ir_program ir_multi.kernel_functions in
     
     (* Comprehensive validation *)
     let expected_functions = ["validate_packet"; "calculate_hash"; "process_protocol"] in

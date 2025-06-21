@@ -12,6 +12,11 @@ type catch_pattern =
   | IntPattern of int     (* catch 42 { ... } *)
   | WildcardPattern       (* catch _ { ... } *)
 
+(** Attribute types for eBPF program functions *)
+type attribute =
+  | SimpleAttribute of string  (* @xdp *)
+  | AttributeWithArg of string * string  (* @kprobe("sys_read") *)
+
 (** Program types supported by KernelScript *)
 type program_type = 
   | Xdp | Tc | Kprobe | Uprobe | Tracepoint | Lsm | CgroupSkb
@@ -186,17 +191,13 @@ type function_def = {
   func_pos: position;
 }
 
-
-
 and struct_def = {
   struct_name: string;
   struct_fields: (string * bpf_type) list;
   struct_pos: position;
 }
 
-
-
-(** Program definition *)
+(** Program definition with local maps and structs *)
 type program_def = {
   prog_name: string;
   prog_type: program_type;
@@ -204,6 +205,13 @@ type program_def = {
   prog_maps: map_declaration list; (* Maps local to this program *)
   prog_structs: struct_def list; (* Structs local to this program *)
   prog_pos: position;
+}
+
+(** Attributed function - a function with eBPF attributes *)
+type attributed_function = {
+  attr_list: attribute list;
+  attr_function: function_def;
+  attr_pos: position;
 }
 
 (** Config field declaration *)
@@ -223,13 +231,12 @@ type config_declaration = {
 
 (** Top-level declarations *)
 type declaration =
-  | Program of program_def
+  | AttributedFunction of attributed_function
   | GlobalFunction of function_def
   | TypeDef of type_def
   | MapDecl of map_declaration
   | ConfigDecl of config_declaration
   | StructDecl of struct_def
-  
 
 (** Complete AST *)
 type ast = declaration list
@@ -285,6 +292,12 @@ let make_program_with_all name prog_type functions maps structs pos = {
   prog_pos = pos;
 }
 
+let make_attributed_function attrs func pos = {
+  attr_list = attrs;
+  attr_function = func;
+  attr_pos = pos;
+}
+
 let make_type_def def = def
 
 let make_enum_def name values = EnumDef (name, values)
@@ -316,15 +329,11 @@ let make_map_declaration name key_type value_type map_type config is_global pos 
   map_pos = pos;
 }
 
-
-
 let make_struct_def name fields pos = {
   struct_name = name;
   struct_fields = fields;
   struct_pos = pos;
 }
-
-
 
 let make_config_field name field_type default pos = {
   field_name = name;
@@ -511,14 +520,14 @@ let rec string_of_stmt stmt =
       Printf.sprintf "delete %s[%s];" (string_of_expr map_expr) (string_of_expr key_expr)
   | Break -> "break;"
   | Continue -> "continue;"
-      | Try (statements, catch_clauses) ->
-        let statements_str = String.concat " " (List.map string_of_stmt statements) in
-        let catch_clauses_str = String.concat " " (List.map (fun _ -> "catch {...}") catch_clauses) in
-        Printf.sprintf "try { %s } %s" statements_str catch_clauses_str
-    | Throw expr ->
-        Printf.sprintf "throw %s;" (string_of_expr expr)
-    | Defer expr ->
-        Printf.sprintf "defer %s;" (string_of_expr expr)
+  | Try (statements, catch_clauses) ->
+      let statements_str = String.concat " " (List.map string_of_stmt statements) in
+      let catch_clauses_str = String.concat " " (List.map (fun _ -> "catch {...}") catch_clauses) in
+      Printf.sprintf "try { %s } %s" statements_str catch_clauses_str
+  | Throw expr ->
+      Printf.sprintf "throw %s;" (string_of_expr expr)
+  | Defer expr ->
+      Printf.sprintf "defer %s;" (string_of_expr expr)
 
 let string_of_function func =
   let params_str = String.concat ", " 
@@ -538,8 +547,16 @@ let string_of_program prog =
   Printf.sprintf "program %s : %s {\n  %s\n}" 
     prog.prog_name (string_of_program_type prog.prog_type) functions_str
 
+let string_of_attribute = function
+  | SimpleAttribute name -> "@" ^ name
+  | AttributeWithArg (name, arg) -> "@" ^ name ^ "(\"" ^ arg ^ "\")"
+
+let string_of_attributed_function attr_func =
+  let attrs_str = String.concat " " (List.map string_of_attribute attr_func.attr_list) in
+  attrs_str ^ " " ^ string_of_function attr_func.attr_function
+
 let string_of_declaration = function
-  | Program prog -> string_of_program prog
+  | AttributedFunction attr_func -> string_of_attributed_function attr_func
   | GlobalFunction func -> string_of_function func
   | TypeDef td ->
       let type_str = match td with
@@ -588,7 +605,6 @@ let string_of_declaration = function
       ) struct_def.struct_fields) in
       Printf.sprintf "struct %s {\n    %s\n}" struct_def.struct_name fields_str
 
-
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)
 
@@ -609,5 +625,5 @@ let print_function func =
 let print_program prog =
   print_endline (string_of_program prog)
 
-  let print_ast ast =
-    print_endline (string_of_ast ast) 
+let print_ast ast =
+  print_endline (string_of_ast ast) 

@@ -19,7 +19,7 @@ program simple_logger : xdp {
 fn main() -> i32 {
     print("Userspace: Starting packet logger")
     print("Userspace: Logger initialized successfully")
-    let prog = load_program(simple_logger)
-    attach_program(prog, "lo", 0)
+    let prog = load(simple_logger)
+    attach(prog, "lo", 0)
     return 0
 } 

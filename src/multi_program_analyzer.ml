@@ -93,10 +93,32 @@ type multi_program_analysis = {
   sequential_dependencies: string list; (* NEW: Sequential access patterns *)
 }
 
-(** Extract programs from AST *)
+(** Extract programs from AST by converting attributed functions to program_def records *)
 let extract_programs (ast: declaration list) : program_def list =
   List.filter_map (function
-    | Program prog -> Some prog
+    | AttributedFunction attr_func ->
+        (* Convert attributed function to program_def for compatibility *)
+        (match attr_func.attr_list with
+         | SimpleAttribute prog_type_str :: _ ->
+             let prog_type = match prog_type_str with
+               | "xdp" -> Xdp
+               | "tc" -> Tc  
+               | "kprobe" -> Kprobe
+               | "uprobe" -> Uprobe
+               | "tracepoint" -> Tracepoint
+               | "lsm" -> Lsm
+               | "cgroup_skb" -> CgroupSkb
+               | _ -> failwith ("Unknown program type: " ^ prog_type_str)
+             in
+             Some {
+               prog_name = attr_func.attr_function.func_name;
+               prog_type = prog_type;
+               prog_functions = [attr_func.attr_function];
+               prog_maps = [];
+               prog_structs = [];
+               prog_pos = attr_func.attr_pos;
+             }
+         | _ -> None)
     | _ -> None
   ) ast
 

@@ -41,10 +41,8 @@ let generate_userspace_code_from_program program_text filename =
 (** Test 1: Basic If statement without else clause *)
 let test_basic_if_statement () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -75,10 +73,8 @@ fn main() -> i32 {
 (** Test 2: If statement with else clause *)
 let test_if_else_statement () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -111,10 +107,8 @@ fn main() -> i32 {
 (** Test 3: Break statement generation *)
 let test_break_statement () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -141,10 +135,8 @@ fn main() -> i32 {
 (** Test 4: Continue statement generation *)
 let test_continue_statement () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -171,10 +163,8 @@ fn main() -> i32 {
 (** Test 5: If statement with break inside for loop *)
 let test_if_with_break_in_loop () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -205,10 +195,8 @@ fn main() -> i32 {
 (** Test 6: If statement with continue inside for loop *)
 let test_if_with_continue_in_loop () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -241,10 +229,8 @@ fn main() -> i32 {
 (** Test 7: Complex binary operators in if conditions *)
 let test_complex_binary_operators () =
   let program_text_and = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -262,10 +248,8 @@ fn main() -> i32 {
 |} in
 
   let program_text_or = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -294,10 +278,8 @@ fn main() -> i32 {
 (** Test 8: Nested if statements *)
 let test_nested_if_statements () =
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {
@@ -331,10 +313,8 @@ fn main() -> i32 {
 (** Test 9: Integration test with complete global function program *)
 let test_complete_global_function_program_with_if_break_continue () =
   let program_text = {|
-program test_prog : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        return 2
-    }
+@xdp fn test_prog(ctx: XdpContext) -> XdpAction {
+    return 2
 }
 
 fn main() -> i32 {
@@ -411,10 +391,8 @@ fn main() -> i32 {
 let test_unsupported_statement_fallback () =
   (* This test verifies that the system gracefully handles any unsupported statements *)
   let program_text = {|
-program test : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    return 2
-  }
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return 2
 }
 
 fn test_func() -> u32 {

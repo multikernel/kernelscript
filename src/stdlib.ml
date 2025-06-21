@@ -38,16 +38,16 @@ let builtin_functions = [
     userspace_impl = "printf";
   };
   {
-    name = "load_program";
-    param_types = [ProgramRef Xdp]; (* Will be matched against any ProgramRef *)
+    name = "load";
+    param_types = [Function ([], U32)]; (* Accept any function - will be generalized in type checker *)
     return_type = ProgramHandle; (* Returns program handle instead of fd *)
-    description = "Load an eBPF program and return its handle";
+    description = "Load an eBPF attributed function and return its handle";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_load";
   };
   {
-    name = "attach_program";
+    name = "attach";
     param_types = [ProgramHandle; Str 128; U32]; (* program handle, target interface, flags *)
     return_type = U32; (* Returns 0 on success *)
     description = "Attach a loaded eBPF program to a target with flags";

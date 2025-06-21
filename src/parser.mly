@@ -14,7 +14,7 @@
 %token NULL
 
 /* Keywords */
-%token PROGRAM FN MAP TYPE STRUCT ENUM
+%token FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET CONST CONFIG
@@ -27,7 +27,7 @@
 
 /* Punctuation */
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET
-%token COMMA DOT COLON ARROW ASSIGN PIPE
+%token COMMA DOT COLON ARROW ASSIGN PIPE AT
 
 /* Special */
 %token EOF
@@ -50,12 +50,10 @@
 %type <Ast.config_declaration> config_declaration
 %type <Ast.config_field list> config_fields
 %type <Ast.config_field> config_field
-%type <Ast.program_def> program_declaration
-%type <Ast.program_type> program_type
+%type <Ast.attribute list> attribute_list
+%type <Ast.attribute> attribute
+%type <Ast.attributed_function> attributed_function_declaration
 %type <Ast.map_declaration> map_declaration
-%type <Ast.map_declaration> local_map_declaration
-%type <Ast.function_def list * Ast.map_declaration list * Ast.struct_def list> program_items
-%type <[`Function of Ast.function_def | `Map of Ast.map_declaration | `Struct of Ast.struct_def]> program_item
 %type <Ast.struct_def> struct_declaration
 %type <(string * Ast.bpf_type) list> struct_fields
 %type <string * Ast.bpf_type> struct_field
@@ -125,7 +123,7 @@ declarations:
 
 declaration:
   | config_declaration { ConfigDecl $1 }
-  | program_declaration { Program $1 }
+  | attributed_function_declaration { AttributedFunction $1 }
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
   | struct_declaration { StructDecl $1 }
@@ -147,40 +145,17 @@ config_field:
   | IDENTIFIER COLON bpf_type COMMA
     { make_config_field $1 $3 None (make_pos ()) }
 
-/* Program declaration: program name : type { program_items } */
-program_declaration:
-  | PROGRAM IDENTIFIER COLON program_type LBRACE program_items RBRACE
-    { let functions, maps, structs = $6 in
-      make_program_with_all $2 $4 functions maps structs (make_pos ()) }
+/* Attributed function declaration: @attribute [attribute...] fn name(params) -> return_type { body } */
+attributed_function_declaration:
+  | attribute_list function_declaration { make_attributed_function $1 $2 (make_pos ()) }
 
-program_type:
-  | IDENTIFIER { 
-      match $1 with
-      | "xdp" -> Xdp
-      | "tc" -> Tc  
-      | "kprobe" -> Kprobe
-      | "uprobe" -> Uprobe
-      | "tracepoint" -> Tracepoint
-      | "lsm" -> Lsm
-      | unknown -> failwith ("Unknown program type: " ^ unknown)
-    }
+attribute_list:
+  | attribute { [$1] }
+  | attribute attribute_list { $1 :: $2 }
 
-program_items:
-  | /* empty */ { ([], [], []) }
-  | program_item program_items { 
-      let functions, maps, structs = $2 in
-      match $1 with
-      | `Function func -> (func :: functions, maps, structs)
-      | `Map map -> (functions, map :: maps, structs)
-      | `Struct struct_def -> (functions, maps, struct_def :: structs)
-    }
-
-program_item:
-  | function_declaration { `Function $1 }
-  | local_map_declaration { `Map $1 }
-  | struct_declaration { `Struct $1 }
-
-
+attribute:
+  | AT IDENTIFIER { SimpleAttribute $2 }
+  | AT IDENTIFIER LPAREN STRING RPAREN { AttributeWithArg ($2, $4) }
 
 /* Function declaration: [kernel] fn name(params) -> return_type { body } */
 function_declaration:
@@ -494,8 +469,6 @@ flag_item:
       | "numa_node" -> NumaNode (fst $3)
       | unknown -> failwith ("Unknown parameterized map flag: " ^ unknown)
     }
-
-
 
 struct_declaration:
   | STRUCT IDENTIFIER LBRACE struct_fields RBRACE
