@@ -173,12 +173,16 @@ and catch_clause = {
   catch_pos: position;
 }
 
+(** Function scope modifiers *)
+type function_scope = Userspace | Kernel
+
 (** Function definitions *)
 type function_def = {
   func_name: string;
   func_params: (string * bpf_type) list;
   func_return_type: bpf_type option;
   func_body: statement list;
+  func_scope: function_scope;
   func_pos: position;
 }
 
@@ -245,11 +249,12 @@ let make_expr desc pos = {
 
 let make_stmt desc pos = { stmt_desc = desc; stmt_pos = pos }
 
-let make_function name params return_type body pos = {
+let make_function name params return_type body ?(scope=Userspace) pos = {
   func_name = name;
   func_params = params;
   func_return_type = return_type;
   func_body = body;
+  func_scope = scope;
   func_pos = pos;
 }
 

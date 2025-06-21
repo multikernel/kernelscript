@@ -1472,7 +1472,7 @@ let generate_userspace_bindings_from_multi_programs _prog_defs _userspace_functi
   }]
 
 (** Lower a single program from AST to IR *)
-let lower_single_program ctx prog_def _global_ir_maps =
+let lower_single_program ctx prog_def _global_ir_maps kernel_shared_functions =
   (* Include program-scoped maps *)
   let program_scoped_maps = prog_def.prog_maps in
   
@@ -1488,18 +1488,24 @@ let lower_single_program ctx prog_def _global_ir_maps =
     Hashtbl.add ctx.maps map_def.map_name map_def
   ) (_global_ir_maps : ir_map_def list);
   
-  (* Lower functions *)
-  let ir_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
+  (* Lower program-local functions *)
+  let ir_program_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
+  
+  (* Lower kernel-shared functions *)
+  let ir_kernel_shared_functions = List.map (lower_function ctx prog_def.prog_name) kernel_shared_functions in
+  
+  (* Combine all functions for this program *)
+  let all_ir_functions = ir_program_functions @ ir_kernel_shared_functions in
   
   (* Find main function *)
-  let main_function = List.find (fun f -> f.is_main) ir_functions in
+  let main_function = List.find (fun f -> f.is_main) ir_program_functions in
   
   (* Create IR program *)
   make_ir_program 
     prog_def.prog_name 
     prog_def.prog_type 
     ir_program_maps 
-    ir_functions 
+    all_ir_functions 
     main_function 
     prog_def.prog_pos
 
@@ -1568,18 +1574,22 @@ let lower_multi_program ast symbol_table source_name =
     ) ir_program_maps
   ) prog_defs;
   
+  (* Separate global functions by scope *)
+  let all_global_functions = List.filter_map (function
+    | Ast.GlobalFunction func -> Some func
+    | _ -> None
+  ) ast in
+  
+  let (kernel_shared_functions, userspace_functions) = List.partition (fun func ->
+    func.Ast.func_scope = Ast.Kernel
+  ) all_global_functions in
+  
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
     let prog_ctx = create_context symbol_table in
-    lower_single_program prog_ctx prog_def ir_global_maps
+    lower_single_program prog_ctx prog_def ir_global_maps kernel_shared_functions
   ) prog_defs in
-  
-  (* Find top-level userspace functions *)
-  let userspace_functions = List.filter_map (function
-    | Ast.GlobalFunction func -> Some func
-    | _ -> None
-  ) ast in
   
   (* Convert AST userspace functions to IR userspace program *)
   let userspace_program = 

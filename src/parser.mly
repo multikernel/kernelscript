@@ -19,6 +19,7 @@
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token LET CONST CONFIG
 %token IN DELETE TRY CATCH THROW DEFER
+%token KERNEL
 
 /* Operators */
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
@@ -181,10 +182,12 @@ program_item:
 
 
 
-/* Function declaration: fn name(params) -> return_type { body } */
+/* Function declaration: [kernel] fn name(params) -> return_type { body } */
 function_declaration:
   | FN IDENTIFIER LPAREN parameter_list RPAREN function_return_type LBRACE statement_list RBRACE
     { make_function $2 $4 $6 $8 (make_pos ()) }
+  | KERNEL FN IDENTIFIER LPAREN parameter_list RPAREN function_return_type LBRACE statement_list RBRACE
+    { make_function $3 $5 $7 $9 ~scope:Kernel (make_pos ()) }
 
 function_return_type:
   | /* empty */ { None }

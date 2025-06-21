@@ -197,8 +197,13 @@
 (executable
  (public_name test_error_handling)
  (name test_error_handling)
- (libraries kernelscript alcotest)
- (modules test_error_handling))
+ (modules test_error_handling)
+ (libraries kernelscript alcotest))
+
+(executable
+ (name test_function_scope)
+ (modules test_function_scope)
+ (libraries kernelscript alcotest))
 
 (executable
  (public_name test_integer_literal_codegen)

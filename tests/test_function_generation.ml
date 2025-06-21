@@ -28,6 +28,7 @@ let test_function_parameters _ =
     func_params = func_params;
     func_return_type = Some U32;
     func_body = func_body;
+    func_scope = Ast.Userspace;
     func_pos = test_pos;
   } in
   
@@ -81,6 +82,7 @@ let test_program_function_calls _ =
     func_params = helper_params;
     func_return_type = Some U32;
     func_body = helper_body;
+    func_scope = Ast.Userspace;
     func_pos = test_pos;
   } in
   
@@ -102,6 +104,7 @@ let test_program_function_calls _ =
     func_params = main_params;
     func_return_type = Some XdpAction;
     func_body = [main_stmt; main_return];
+    func_scope = Ast.Userspace;
     func_pos = test_pos;
   } in
   
@@ -158,6 +161,7 @@ let test_multiple_parameters _ =
     func_params = func_params;
     func_return_type = Some U32;
     func_body = func_body;
+    func_scope = Ast.Userspace;
     func_pos = test_pos;
   } in
   
@@ -169,6 +173,7 @@ let test_multiple_parameters _ =
     func_body = [{ stmt_desc = Return (Some {
       expr_desc = Identifier "XDP_PASS"; expr_pos = test_pos; expr_type = Some XdpAction
     }); stmt_pos = test_pos }];
+    func_scope = Ast.Userspace;
     func_pos = test_pos;
   } in
   

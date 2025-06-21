@@ -32,6 +32,10 @@ map<u32, u8> event_log : RingBuffer(65536) {
   pinned: "/sys/fs/bpf/events"
 }
 
+kernel fn get_cpu_id() -> u32 {
+    return 0 // Demo CPU ID
+}
+
 // XDP program demonstrating map usage
 program packet_analyzer : xdp {
   // Helper functions (would be implemented in stdlib)
@@ -42,11 +46,7 @@ program packet_analyzer : xdp {
   fn get_packet_len(ctx: XdpContext) -> PacketSize {
     return 64 // Demo packet size
   }
-  
-  fn get_cpu_id() -> u32 {
-    return 0 // Demo CPU ID
-  }
-  
+
   fn get_timestamp() -> u64 {
     return 1234567890 // Demo timestamp
   }
@@ -101,10 +101,6 @@ program traffic_shaper : tc {
     pinned: "/sys/fs/bpf/bandwidth"
   }
 
-  fn get_cpu_id() -> u32 {
-    return 0 // Demo CPU ID
-  }
-  
   fn main(ctx: TcContext) -> TcAction {
     let cpu = get_cpu_id()
     let bytes = get_packet_len(ctx)

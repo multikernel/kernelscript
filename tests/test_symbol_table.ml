@@ -64,6 +64,7 @@ let create_test_function name params return_type =
     func_params = params;
     func_return_type = Some return_type;
     func_body = [];
+    func_scope = Ast.Userspace;
     func_pos = dummy_pos;
   }
 
@@ -95,6 +96,7 @@ let lookup_function table func_name =
         func_params = params;
         func_return_type = Some return_type;
         func_body = [];
+        func_scope = Ast.Userspace;
         func_pos = {filename = "test.ks"; line = 1; column = 1};
       }
   | _ -> None

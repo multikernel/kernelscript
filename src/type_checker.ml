@@ -10,6 +10,7 @@ exception Unification_error of bpf_type * bpf_type * position
 type type_context = {
   variables: (string, bpf_type) Hashtbl.t;
   functions: (string, bpf_type list * bpf_type) Hashtbl.t;
+  function_scopes: (string, Ast.function_scope) Hashtbl.t; (* Track function scopes *)
   types: (string, type_def) Hashtbl.t;
   maps: (string, map_declaration) Hashtbl.t;
   configs: (string, config_declaration) Hashtbl.t;
@@ -68,6 +69,7 @@ type typed_function = {
   tfunc_params: (string * bpf_type) list;
   tfunc_return_type: bpf_type;
   tfunc_body: typed_statement list;
+  tfunc_scope: Ast.function_scope;
   tfunc_pos: position;
 }
 
@@ -83,6 +85,7 @@ type typed_program = {
 let create_context symbol_table = {
   variables = Hashtbl.create 32;
   functions = Hashtbl.create 16;
+  function_scopes = Hashtbl.create 16;
   types = Hashtbl.create 16;
   maps = Hashtbl.create 16;
   configs = Hashtbl.create 16;
@@ -404,6 +407,28 @@ let rec type_check_function_call ctx name args pos =
   | None ->
       try
         let (expected_params, return_type) = Hashtbl.find ctx.functions name in
+        
+        (* Check kernel/userspace function call restrictions *)
+        (try
+          let func_scope = Hashtbl.find ctx.function_scopes name in
+          (* Determine current context: are we in a kernel program or kernel function? *)
+          let in_kernel_context = 
+            ctx.current_program <> None ||  (* Inside an eBPF program *)
+            (match ctx.current_function with
+             | Some current_func_name ->
+                 (try
+                   let current_func_scope = Hashtbl.find ctx.function_scopes current_func_name in
+                   current_func_scope = Ast.Kernel
+                 with Not_found -> false)
+             | None -> false) in
+          
+          (* Kernel functions can only be called from kernel context (eBPF programs or other kernel functions) *)
+          if func_scope = Ast.Kernel && not in_kernel_context then
+            type_error ("Kernel function '" ^ name ^ "' cannot be called from userspace context") pos
+        with Not_found ->
+          (* Function scope not found - this is fine for built-in functions or program-local functions *)
+          ());
+        
         if List.length expected_params = List.length arg_types then
           let unified = List.map2 unify_types expected_params arg_types in
           if List.for_all (function Some _ -> true | None -> false) unified then
@@ -1056,6 +1081,11 @@ let type_check_function ?(register_signature=true) ctx func =
   let old_function = ctx.current_function in
   ctx.current_function <- Some func.func_name;
   
+  (* Register function scope early so it's available during type checking *)
+  if register_signature then (
+    Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
+  );
+  
   (* Add parameters to scope with proper type resolution *)
   let resolved_params = List.map (fun (name, typ) -> 
     let resolved_type = resolve_user_type ctx typ in
@@ -1082,13 +1112,16 @@ let type_check_function ?(register_signature=true) ctx func =
     tfunc_params = resolved_params;
     tfunc_return_type = return_type;
     tfunc_body = typed_body;
+    tfunc_scope = func.func_scope;
     tfunc_pos = func.func_pos;
   } in
   
   (* Only register function signature if requested (for global functions) *)
   if register_signature then (
     let param_types = List.map snd func.func_params in
-    Hashtbl.replace ctx.functions func.func_name (param_types, return_type)
+    Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
+    (* Also register the function scope *)
+    Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
   );
   
   typed_func
@@ -1199,16 +1232,33 @@ let type_check_ast ?builtin_path ast =
     | _ -> ()
   ) ast;
   
-  (* Second pass: type check programs, functions, and userspace blocks *)
+  (* Second pass: First register ALL global function signatures *)
+  List.iter (function
+    | GlobalFunction func ->
+        let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
+        let return_type = match func.func_return_type with
+          | Some t -> resolve_user_type ctx t
+          | None -> U32  (* default return type *)
+        in
+        Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
+        Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
+    | _ -> ()
+  ) ast;
+  
+  (* Second-and-a-half pass: Type-check ALL global function bodies *)
+  List.iter (function
+    | GlobalFunction func ->
+        let _ = type_check_function ~register_signature:false ctx func in
+        ()
+    | _ -> ()
+  ) ast;
+  
+  (* Third pass: type check programs now that global functions are registered *)
   List.fold_left (fun acc decl ->
     match decl with
     | Program prog ->
         let typed_prog = type_check_program ctx prog in
         typed_prog :: acc
-    | GlobalFunction func ->
-        let _ = type_check_function ctx func in
-        acc
-
     | _ -> acc
   ) [] ast |> List.rev
 
@@ -1304,6 +1354,7 @@ let typed_function_to_function tfunc =
     func_params = tfunc.tfunc_params;
     func_return_type = Some tfunc.tfunc_return_type;
     func_body = List.map typed_stmt_to_stmt tfunc.tfunc_body;
+    func_scope = tfunc.tfunc_scope;
     func_pos = tfunc.tfunc_pos }
 
 let typed_program_to_program tprog original_prog =

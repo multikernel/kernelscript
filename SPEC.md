@@ -34,7 +34,8 @@ map<IpAddress, PacketStats> flows : HashMap(1024)
 ### 1.3 Intuitive Scoping Model
 KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 
-- **Inside `program {}` blocks**: Kernel space (eBPF) - functions and data structures compile to eBPF bytecode
+- **`kernel fn` functions**: Kernel-shared functions - accessible by all eBPF programs, compile to eBPF bytecode
+- **Inside `program {}` blocks**: Program-local kernel space - functions local to specific eBPF program
 - **Outside `program {}` blocks**: User space - functions and data structures compile to native executable
 - **Maps and global configs**: Shared resources accessible from both kernel and user space
 - **No wrapper syntax**: Direct, flat structure without unnecessary nesting
@@ -44,19 +45,46 @@ KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 config system { debug: bool = false }
 map<u32, u64> counters : Array(256)
 
-// Kernel space (inside program block)
+// Kernel-shared functions (accessible by all eBPF programs)
+kernel fn update_counters(index: u32) {
+    counters[index] += 1
+}
+
+kernel fn should_log() -> bool {
+    return system.debug
+}
+
+// Kernel space (inside program block) - program-local functions
 program monitor : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
-        counters[0] += 1  // Access shared map
+        update_counters(0)  // Call kernel-shared function
+        
+        if (should_log()) {  // Call another kernel-shared function
+            bpf_printk("Processing packet")
+        }
+        
         return XDP_PASS
+    }
+}
+
+program analyzer : tc {
+    fn main(ctx: TcContext) -> TcAction {
+        update_counters(1)  // Same kernel-shared function
+        return TC_ACT_OK
     }
 }
 
 // User space (outside program blocks)
 struct Args { interface: string }
 fn main(args: Args) -> i32 {
-    load_program(monitor)
-    attach_program(monitor, args.interface, 0)
+    // Cannot call update_counters() here - it's kernel-only
+    
+    let monitor_handle = load_program(monitor)
+    let analyzer_handle = load_program(analyzer)
+    
+    attach_program(monitor_handle, args.interface, 0)
+    attach_program(analyzer_handle, args.interface, 1)
+    
     return 0
 }
 ```
@@ -71,7 +99,7 @@ for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
 as          is          try         catch       throw       defer       go
-delete
+delete      kernel
 ```
 
 ### 2.2 Identifiers
@@ -870,7 +898,7 @@ program simple_monitor : xdp {
 
 ### 6.1 Function Declaration
 ```ebnf
-function_declaration = [ visibility ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
+function_declaration = [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
 
 visibility = "pub" | "priv" 
 parameter_list = [ parameter { "," parameter } ] 
@@ -895,14 +923,21 @@ program simple_xdp : xdp {
 ```
 
 ### 6.3 Helper Functions
+
+KernelScript supports three types of functions with different scoping rules:
+
+1. **Kernel-shared functions** (`kernel fn`) - Shared across all eBPF programs
+2. **Program-local functions** (inside `program {}` blocks) - Local to specific eBPF program
+3. **Userspace functions** (outside `program {}` blocks, no `kernel` qualifier) - Native userspace code
+
 ```kernelscript
-// Private helper function
-priv fn validate_packet(packet: *PacketHeader) -> bool {
+// Kernel-shared functions - accessible by all eBPF programs
+kernel fn validate_packet(packet: *PacketHeader) -> bool {
     packet.len >= 64 && packet.len <= 1500
 }
 
-// Public function (can be called from other programs)
-pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
+// Public kernel-shared function
+pub kernel fn calculate_checksum(data: *u8, len: u32) -> u16 {
     let mut sum: u32 = 0
     for (i in 0..(len / 2)) {
         sum += data[i * 2] + (data[i * 2 + 1] << 8)
@@ -911,6 +946,65 @@ pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
         sum = (sum & 0xFFFF) + (sum >> 16)
     }
     return !(sum as u16)
+}
+
+// Private kernel-shared function
+priv kernel fn internal_kernel_helper() -> u32 {
+    return 42
+}
+
+program packet_filter : xdp {
+    // Program-local function - only accessible within this program
+    fn local_helper() -> bool {
+        return true
+    }
+    
+    fn main(ctx: XdpContext) -> XdpAction {
+        // Can call kernel-shared functions
+        if (!validate_packet(ctx.packet())) {
+            return XDP_DROP
+        }
+        
+        let checksum = calculate_checksum(ctx.data(), ctx.len())
+        
+        // Can call local function
+        local_helper()
+        
+        return XDP_PASS
+    }
+}
+
+program flow_monitor : tc {
+    fn main(ctx: TcContext) -> TcAction {
+        // Can call the same kernel-shared functions
+        if (!validate_packet(ctx.packet())) {
+            return TC_ACT_SHOT
+        }
+        
+        // Cannot call packet_filter's local_helper() - it's program-local
+        
+        return TC_ACT_OK
+    }
+}
+
+// Userspace function (no kernel qualifier, outside program blocks)
+fn setup_monitoring() -> i32 {
+    print("Setting up monitoring system")
+    return 0
+}
+
+fn main() -> i32 {
+    setup_monitoring()  // Can call other userspace functions
+    
+    // Cannot call validate_packet() here - it's kernel-only
+    
+    let filter_handle = load_program(packet_filter)
+    let monitor_handle = load_program(flow_monitor)
+    
+    attach_program(filter_handle, "eth0", 0)
+    attach_program(monitor_handle, "eth0", 1)
+    
+    return 0
 }
 ```
 
@@ -1608,6 +1702,22 @@ config system {
     mut packets_processed: u64 = 0,
 }
 
+// Kernel-shared functions - accessible by all eBPF programs
+kernel fn is_port_blocked(port: u16) -> bool {
+    for (i in 0..4) {
+        if (port == filtering.blocked_ports[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+kernel fn log_blocked_port(port: u16) {
+    if (filtering.enable_logging) {
+        bpf_printk("Blocked port %d", port)
+    }
+}
+
 program simple_filter : xdp {
     fn main(ctx: XdpContext) -> XdpAction {
         let packet = ctx.packet()
@@ -1619,18 +1729,33 @@ program simple_filter : xdp {
         
         if (packet.is_tcp()) {
             let tcp = packet.tcp_header()
-            for (i in 0..4) {
-                if (tcp.dst_port == filtering.blocked_ports[i]) {
-                    if (filtering.enable_logging) {
-                        bpf_printk("Blocked port %d", tcp.dst_port)
-                    }
-                    system.packets_dropped += 1
-                    return XDP_DROP
-                }
+            if (is_port_blocked(tcp.dst_port)) {  // Call kernel-shared function
+                log_blocked_port(tcp.dst_port)    // Call another kernel-shared function
+                system.packets_dropped += 1
+                return XDP_DROP
             }
         }
         
         return XDP_PASS
+    }
+}
+
+program security_monitor : tc {
+    fn main(ctx: TcContext) -> TcAction {
+        let packet = ctx.packet()
+        if (packet == null) {
+            return TC_ACT_OK
+        }
+        
+        if (packet.is_tcp()) {
+            let tcp = packet.tcp_header()
+            if (is_port_blocked(tcp.src_port)) {  // Same kernel-shared function
+                log_blocked_port(tcp.src_port)
+                return TC_ACT_SHOT
+            }
+        }
+        
+        return TC_ACT_OK
     }
 }
 
@@ -1651,17 +1776,21 @@ fn main(args: Args) -> i32 {
         filtering.max_packet_size = 1000  // Stricter filtering
     }
     
-    // Explicit program lifecycle management
-    let prog_handle = load_program(simple_filter)
+    // Explicit program lifecycle management for multiple programs
+    let filter_handle = load_program(simple_filter)
+    let monitor_handle = load_program(security_monitor)
     
-    let attach_result = attach_program(prog_handle, args.interface, 0)
-    if (attach_result != 0) {
-        print("Failed to attach program to interface: ", args.interface)
+    let filter_result = attach_program(filter_handle, args.interface, 0)
+    let monitor_result = attach_program(monitor_handle, args.interface, 1)
+    
+    if (filter_result != 0 || monitor_result != 0) {
+        print("Failed to attach programs to interface: ", args.interface)
         return 1
     }
     
     if (!args.quiet_mode) {
-        print("Packet filter started on interface: ", args.interface)
+        print("Multi-program packet filtering started on interface: ", args.interface)
+        print("XDP filter and TC monitor both using shared kernel functions")
         print("Blocking ports: 22, 23, 135, 445")
         if (args.strict_mode) {
             print("Strict mode enabled - max packet size: 1000")
@@ -1868,7 +1997,7 @@ enum_variant = identifier [ "=" integer_literal ]
 type_alias = type_annotation 
 
 (* Function declarations *)
-function_declaration = [ visibility ] "fn" identifier "(" parameter_list ")" 
+function_declaration = [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" 
                        [ "->" type_annotation ] "{" statement_list "}" 
 
 visibility = "pub" | "priv" 
