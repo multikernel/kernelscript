@@ -46,22 +46,6 @@ let parse_file filename =
       let pos = { line = 1; column = 1; filename } in
       create_parse_error ("File error: " ^ msg) pos
 
-(** Parse just an expression (for testing) *)
-let parse_expression_string ?(filename="<expr>") str =
-  try
-    let lexbuf = Lexing.from_string str in
-    Lexing.set_filename lexbuf filename;
-    (* We need to modify our parser to support standalone expressions *)
-    (* For now, we'll wrap the expression in a minimal attributed function *)
-    let wrapped = Printf.sprintf "@xdp fn test() { return %s; }" str in
-    let ast = parse_string ~filename wrapped in
-    match ast with
-    | [AttributedFunction { attr_function = { func_body = [{ stmt_desc = Return (Some expr); _ }]; _ }; _ }] -> expr
-    | _ -> failwith "Failed to extract expression from parsed attributed function"
-  with
-  | e -> 
-      let pos = { line = 1; column = 1; filename } in
-      create_parse_error ("Expression parse error: " ^ Printexc.to_string e) pos
 
 (** Validate parsed AST *)
 let validate_ast ast =
