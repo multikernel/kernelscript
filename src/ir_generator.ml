@@ -1472,7 +1472,7 @@ let generate_userspace_bindings_from_multi_programs _prog_defs _userspace_functi
   }]
 
 (** Lower a single program from AST to IR *)
-let lower_single_program ctx prog_def _global_ir_maps kernel_shared_functions =
+let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
   (* Include program-scoped maps *)
   let program_scoped_maps = prog_def.prog_maps in
   
@@ -1488,24 +1488,18 @@ let lower_single_program ctx prog_def _global_ir_maps kernel_shared_functions =
     Hashtbl.add ctx.maps map_def.map_name map_def
   ) (_global_ir_maps : ir_map_def list);
   
-  (* Lower program-local functions *)
+  (* Lower program-local functions only - kernel functions are handled separately *)
   let ir_program_functions = List.map (lower_function ctx prog_def.prog_name) prog_def.prog_functions in
-  
-  (* Lower kernel-shared functions *)
-  let ir_kernel_shared_functions = List.map (lower_function ctx prog_def.prog_name) kernel_shared_functions in
-  
-  (* Combine all functions for this program *)
-  let all_ir_functions = ir_program_functions @ ir_kernel_shared_functions in
   
   (* Find main function *)
   let main_function = List.find (fun f -> f.is_main) ir_program_functions in
   
-  (* Create IR program *)
+  (* Create IR program with only program-local functions *)
   make_ir_program 
     prog_def.prog_name 
     prog_def.prog_type 
     ir_program_maps 
-    all_ir_functions 
+    ir_program_functions 
     main_function 
     prog_def.prog_pos
 
@@ -1583,6 +1577,9 @@ let lower_multi_program ast symbol_table source_name =
   let (kernel_shared_functions, userspace_functions) = List.partition (fun func ->
     func.Ast.func_scope = Ast.Kernel
   ) all_global_functions in
+  
+  (* Lower kernel functions once - they are shared across all programs *)
+  let ir_kernel_functions = List.map (lower_function ctx "kernel") kernel_shared_functions in
   
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
@@ -1699,6 +1696,7 @@ let lower_multi_program ast symbol_table source_name =
   make_ir_multi_program 
     source_name 
     ir_programs 
+    ir_kernel_functions 
     ir_global_maps 
     ?userspace_program:userspace_program 
     ~userspace_bindings:userspace_bindings 

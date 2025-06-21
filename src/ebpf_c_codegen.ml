@@ -1620,6 +1620,7 @@ let generate_c_program ?config_declarations ir_prog =
   let temp_multi_prog = {
     source_name = ir_prog.name;
     programs = [ir_prog];
+    kernel_functions = [];
     global_maps = [];
     global_configs = [];
     userspace_program = None;
@@ -1726,6 +1727,9 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
     emit_blank_line ctx;
   );
   
+  (* Generate kernel functions once - they are shared across all programs *)
+  List.iter (generate_c_function ctx) ir_multi_program.kernel_functions;
+
   (* Second pass: generate actual functions (helper functions first, then main) *)
   List.iter (fun ir_prog ->
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in
@@ -1828,6 +1832,9 @@ let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=
     emit_blank_line ctx;
   );
   
+  (* Generate kernel functions once - they are shared across all programs *)
+  List.iter (generate_c_function ctx) ir_multi_program.kernel_functions;
+
   (* Second pass: generate actual functions (helper functions first, then main) *)
   List.iter (fun ir_prog ->
     let other_functions = List.filter (fun f -> not f.is_main) ir_prog.functions in

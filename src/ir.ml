@@ -12,6 +12,7 @@ type ir_position = position
 type ir_multi_program = {
   source_name: string; (* Base name of source file *)
   programs: ir_program list; (* List of eBPF programs *)
+  kernel_functions: ir_function list; (* Kernel functions shared across all programs *)
   global_maps: ir_map_def list; (* Maps shared across programs *)
   global_configs: ir_global_config list; (* Named configuration blocks *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
@@ -431,10 +432,11 @@ let make_ir_program name prog_type local_maps functions main_function pos = {
   ir_pos = pos;
 }
 
-let make_ir_multi_program source_name programs global_maps 
+let make_ir_multi_program source_name programs kernel_functions global_maps 
                           ?(global_configs = []) ?userspace_program ?(userspace_bindings = []) pos = {
   source_name;
   programs;
+  kernel_functions;
   global_maps;
   global_configs;
   userspace_program;

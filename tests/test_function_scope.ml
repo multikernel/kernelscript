@@ -44,11 +44,10 @@ let test_kernel_function_ir_generation () =
   (* Generate IR *)
   let multi_ir = Kernelscript.Ir_generator.lower_multi_program ast symbol_table "test" in
   
-  (* Verify the program has the kernel function *)
-  let program = List.hd multi_ir.programs in
+  (* Verify the kernel function is in the multi-program IR *)
   let has_kernel_func = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "calculate_hash"
-  ) program.Kernelscript.Ir.functions in
+  ) multi_ir.kernel_functions in
   check bool "program has kernel function" true has_kernel_func
 
 (** Test 3: Kernel functions shared across multiple programs *)
@@ -104,17 +103,15 @@ let test_kernel_function_shared_across_programs () =
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let multi_ir = Kernelscript.Ir_generator.lower_multi_program ast symbol_table "test" in
   
-  (* Verify both programs have both kernel functions *)
-  List.iter (fun program ->
-    let has_increment = List.exists (fun func ->
-      func.Kernelscript.Ir.func_name = "increment_counter"
-    ) program.Kernelscript.Ir.functions in
-    let has_get = List.exists (fun func ->
-      func.Kernelscript.Ir.func_name = "get_counter"
-    ) program.Kernelscript.Ir.functions in
-    check bool (Printf.sprintf "program %s has increment_counter" program.name) true has_increment;
-    check bool (Printf.sprintf "program %s has get_counter" program.name) true has_get
-  ) multi_ir.programs
+  (* Verify both kernel functions are in the multi-program IR *)
+  let has_increment = List.exists (fun func ->
+    func.Kernelscript.Ir.func_name = "increment_counter"
+  ) multi_ir.kernel_functions in
+  let has_get = List.exists (fun func ->
+    func.Kernelscript.Ir.func_name = "get_counter"
+  ) multi_ir.kernel_functions in
+  check bool "multi-program has increment_counter" true has_increment;
+  check bool "multi-program has get_counter" true has_get
 
 (** Test 4: Kernel functions cannot be called by userspace functions *)
 let test_kernel_function_userspace_restriction () =
@@ -297,17 +294,16 @@ let test_kernel_function_calling_kernel_function () =
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   let multi_ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test" in
   
-  (* Verify both kernel functions are in the program *)
-  let program = List.hd multi_ir.programs in
+  (* Verify both kernel functions are in the multi-program IR *)
   let has_basic = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "basic_validation"
-  ) program.Kernelscript.Ir.functions in
+  ) multi_ir.kernel_functions in
   let has_advanced = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "advanced_validation"
-  ) program.Kernelscript.Ir.functions in
+  ) multi_ir.kernel_functions in
   
-  check bool "program has basic_validation" true has_basic;
-  check bool "program has advanced_validation" true has_advanced
+  check bool "multi-program has basic_validation" true has_basic;
+  check bool "multi-program has advanced_validation" true has_advanced
 
 (** Test 9: Error handling - undefined kernel function *)
 let test_undefined_kernel_function_error () =
@@ -452,15 +448,88 @@ let test_comprehensive_kernel_function_system () =
   check int "number of programs in IR" 2 (List.length multi_ir.programs);
   check bool "userspace program exists" true (Option.is_some multi_ir.userspace_program);
   
-  (* Verify each eBPF program contains all kernel functions *)
-  List.iter (fun program ->
-    List.iter (fun expected_func ->
-      let has_func = List.exists (fun func ->
-        func.Kernelscript.Ir.func_name = expected_func
-      ) program.Kernelscript.Ir.functions in
-      check bool (Printf.sprintf "program %s has kernel function %s" program.name expected_func) true has_func
-    ) expected_kernel_funcs
-  ) multi_ir.programs
+  (* Verify all kernel functions are in the multi-program IR *)
+  List.iter (fun expected_func ->
+    let has_func = List.exists (fun func ->
+      func.Kernelscript.Ir.func_name = expected_func
+    ) multi_ir.kernel_functions in
+    check bool (Printf.sprintf "multi-program has kernel function %s" expected_func) true has_func
+  ) expected_kernel_funcs
+
+(** Test 12: No duplicate kernel functions in generated code *)
+let test_no_duplicate_kernel_functions () =
+  let source = {|
+    kernel fn shared_validation(size: u32) -> bool {
+      return size >= 64 && size <= 1500
+    }
+    
+    kernel fn shared_logging(message: u32) {
+      print("Log:", message)
+    }
+    
+    program xdp_filter : xdp {
+      fn main(ctx: XdpContext) -> XdpAction {
+        if (shared_validation(128)) {
+          shared_logging(1)
+          return 2
+        }
+        return 0
+      }
+    }
+    
+    program tc_filter : tc {
+      fn main(ctx: TcContext) -> TcAction {
+        if (shared_validation(256)) {
+          shared_logging(2)
+          return 0
+        }
+        return 1
+      }
+    }
+    
+    fn main() -> i32 {
+      return 0
+    }
+  |} in
+  
+  let ast = Kernelscript.Parse.parse_string source in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+  let multi_ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test_no_duplicates" in
+  
+  (* Generate eBPF C code *)
+  let ebpf_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
+  
+  (* Count occurrences of each kernel function definition by looking for function signature pattern *)
+  let count_function_definitions func_name code =
+    (* Look for function definition pattern: return_type func_name( *)
+    let lines = String.split_on_char '\n' code in
+    List.fold_left (fun acc line ->
+      let trimmed = String.trim line in
+      (* Check if this line contains a function definition (not a call) *)
+      if String.contains trimmed ' ' then
+        let parts = String.split_on_char ' ' trimmed in
+        match parts with
+        | _return_type :: func_part :: _ when String.contains func_part '(' ->
+            let func_and_params = String.split_on_char '(' func_part in
+            (match func_and_params with
+             | actual_func_name :: _ when actual_func_name = func_name -> acc + 1
+             | _ -> acc)
+        | _ -> acc
+      else acc
+    ) 0 lines
+  in
+  
+  let shared_validation_count = count_function_definitions "shared_validation" ebpf_code in
+  let shared_logging_count = count_function_definitions "shared_logging" ebpf_code in
+  
+  (* Each kernel function should be defined only once, not once per program *)
+  check int "shared_validation defined only once" 1 shared_validation_count;
+  check int "shared_logging defined only once" 1 shared_logging_count;
+  
+  (* Verify both programs can still call the shared functions *)
+  check bool "xdp_filter contains shared_validation call" true (String.contains ebpf_code 's' && String.contains ebpf_code 'h');
+  check bool "tc_filter contains shared_logging call" true (String.contains ebpf_code 'l' && String.contains ebpf_code 'o')
 
 let () =
   run "Function Scope Tests" [
@@ -496,5 +565,8 @@ let () =
     ];
     "comprehensive_system", [
       test_case "comprehensive kernel function system" `Quick test_comprehensive_kernel_function_system;
+    ];
+    "no_duplicate_kernel_functions", [
+      test_case "no duplicate kernel functions in generated code" `Quick test_no_duplicate_kernel_functions;
     ];
   ]

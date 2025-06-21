@@ -422,7 +422,7 @@ let compile_to_userspace_c ast =
       ) ast
     in
     (* Convert AST to IR for the new IR-based codegen *)
-    let ir_multi_prog = Kernelscript.Ir.make_ir_multi_program "test" [] [] dummy_pos in
+    let ir_multi_prog = Kernelscript.Ir.make_ir_multi_program "test" [] [] [] dummy_pos in
     let _output_file = generate_userspace_code_from_ir ir_multi_prog ~output_dir:temp_dir "test" in
     let generated_file = Filename.concat temp_dir "test.c" in
     
