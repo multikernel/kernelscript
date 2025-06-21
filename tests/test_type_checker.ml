@@ -964,13 +964,6 @@ let test_xdp_signature_validation () =
 }
 |}, "wrong parameter type");
     
-    (* Wrong return type - TODO: Fix IR generation for this case *)
-    (* ({|
-@xdp fn test(ctx: XdpContext) -> u32 {
-  return 0
-}
-|}, "wrong return type"); *)
-    
     (* No parameters and wrong return type *)
     ({|
 @xdp fn test() -> u32 {
