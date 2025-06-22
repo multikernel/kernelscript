@@ -1124,7 +1124,7 @@ let type_check_function ?(register_signature=true) ctx func =
   
   (* Only register function signature if requested (for global functions) *)
   if register_signature then (
-    let param_types = List.map snd func.func_params in
+    let param_types = List.map snd resolved_params in
     Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
     (* Also register the function scope *)
     Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
@@ -1459,7 +1459,7 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
   ) ctx.types;
   ctx.multi_program_analysis <- Some multi_prog_analysis;
   
-  (* First pass: collect type definitions, map declarations, config declarations, and attributed functions *)
+  (* First pass: collect type definitions, map declarations, config declarations, and ALL function signatures *)
   List.iter (function
     | TypeDef type_def ->
         (match type_def with
@@ -1481,7 +1481,15 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
         in
         Hashtbl.replace ctx.functions attr_func.attr_function.func_name (param_types, return_type);
         Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name attr_func.attr_function.func_scope
-    | _ -> ()
+    | GlobalFunction func ->
+        (* Register global function signature in context *)
+        let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
+        let return_type = match func.func_return_type with
+          | Some t -> resolve_user_type ctx t
+          | None -> U32  (* default return type *)
+        in
+        Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
+        Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
   ) ast;
   
   (* Second pass: type check attributed functions and global functions with multi-program awareness *)

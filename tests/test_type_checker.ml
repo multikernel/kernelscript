@@ -1011,6 +1011,123 @@ let test_xdp_signature_validation () =
       Printf.printf "Valid XDP signature unexpectedly failed: %s\n" (Printexc.to_string exn);
       check bool "valid XDP signature should pass" false true
 
+(** Test kernel function calls from attributed functions *)
+let test_kernel_function_calls_from_attributed () =
+  (* Test the specific bug case: kernel function called from attributed function *)
+  let program_text = {|
+kernel fn get_src_ip(ctx: XdpContext) -> IpAddress {
+    return 0x08080808  // 8.8.8.8 as u32
+}
+
+@xdp fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+    let src_ip: IpAddress = get_src_ip(ctx)
+    return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_and_annotate_ast ast in
+    check bool "kernel function call from attributed function" true true
+  with
+  | exn -> 
+      Printf.printf "Kernel function call test failed: %s\n" (Printexc.to_string exn);
+      fail "Kernel function call from attributed function should succeed"
+
+(** Test multiple kernel function calls with different parameter types *)
+let test_multiple_kernel_function_calls () =
+  let program_text = {|
+kernel fn process_packet(ctx: XdpContext, flags: u32) -> u32 {
+    return flags + 1
+}
+
+kernel fn get_packet_size(ctx: XdpContext) -> u32 {
+    return 1500
+}
+
+kernel fn validate_headers(ctx: XdpContext, min_size: u32, max_size: u32) -> bool {
+    let size = get_packet_size(ctx)
+    return size >= min_size && size <= max_size
+}
+
+@xdp fn complex_handler(ctx: XdpContext) -> XdpAction {
+    let flags = process_packet(ctx, 0x01)
+    let size = get_packet_size(ctx)
+    let is_valid = validate_headers(ctx, 64, 1500)
+    
+    if (is_valid) {
+        return XDP_PASS
+    } else {
+        return XDP_DROP
+    }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_and_annotate_ast ast in
+    check bool "multiple kernel function calls" true true
+  with
+  | exn -> 
+      Printf.printf "Multiple kernel function calls test failed: %s\n" (Printexc.to_string exn);
+      fail "Multiple kernel function calls should succeed"
+
+(** Test kernel functions calling other kernel functions *)
+let test_kernel_to_kernel_function_calls () =
+  let program_text = {|
+kernel fn helper_function(value: u32) -> u32 {
+    return value * 2
+}
+
+kernel fn main_kernel_function(ctx: XdpContext) -> u32 {
+    let base_value = 42
+    let result = helper_function(base_value)
+    return result
+}
+
+@xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    let computed = main_kernel_function(ctx)
+    return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_and_annotate_ast ast in
+    check bool "kernel to kernel function calls" true true
+  with
+  | exn -> 
+      Printf.printf "Kernel to kernel function calls test failed: %s\n" (Printexc.to_string exn);
+      fail "Kernel to kernel function calls should succeed"
+
+(** Test function call type resolution with user-defined types *)
+let test_function_call_user_type_resolution () =
+  let program_text = {|
+kernel fn extract_ip_from_context(ctx: XdpContext) -> IpAddress {
+    return 0x7f000001  // 127.0.0.1 as u32
+}
+
+kernel fn convert_ip_to_u32(addr: IpAddress) -> u32 {
+    return addr
+}
+
+@xdp fn packet_processor(ctx: XdpContext) -> XdpAction {
+    let ip_addr = extract_ip_from_context(ctx)
+    let converted_value = convert_ip_to_u32(ip_addr)
+    
+    if (converted_value > 0) {
+        return XDP_PASS
+    } else {
+        return XDP_DROP
+    }
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let _ = type_check_and_annotate_ast ast in
+    check bool "function call user type resolution" true true
+  with
+  | exn -> 
+      Printf.printf "Function call user type resolution test failed: %s\n" (Printexc.to_string exn);
+      fail "Function call user type resolution should succeed"
+
 let type_checker_tests = [
   "type_unification", `Quick, test_type_unification;
   "basic_type_inference", `Quick, test_basic_type_inference;
@@ -1043,6 +1160,10 @@ let type_checker_tests = [
   "map_null_semantics", `Quick, test_map_null_semantics;
   "null_vs_throw_pattern", `Quick, test_null_vs_throw_pattern;
   "xdp_signature_validation", `Quick, test_xdp_signature_validation;
+  "kernel_function_calls_from_attributed", `Quick, test_kernel_function_calls_from_attributed;
+  "multiple_kernel_function_calls", `Quick, test_multiple_kernel_function_calls;
+  "kernel_to_kernel_function_calls", `Quick, test_kernel_to_kernel_function_calls;
+  "function_call_user_type_resolution", `Quick, test_function_call_user_type_resolution;
 ]
 
 let () =
