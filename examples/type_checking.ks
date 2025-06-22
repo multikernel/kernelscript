@@ -29,99 +29,96 @@ map<IpAddress, u64> connection_stats : hash_map(1024) {
   pinned = "/sys/fs/bpf/stats"
 }
 
-program packet_analyzer : xdp {
+kernel fn extract_header(ctx: XdpContext) -> XdpAction {
+  // Type checker validates that ctx is xdp_context type
+  let data = ctx.data
+  let data_end = ctx.data_end
   
-  fn extract_header(ctx: XdpContext) -> XdpAction {
-    // Type checker validates that ctx is xdp_context type
-    let data = ctx.data
-    let data_end = ctx.data_end
-    
-    // Type checker ensures arithmetic operations are on numeric types
-    let packet_len = data_end - data
-    
-    if (packet_len < 20) {
-      return 1
-    }
-    
-    // Type checker validates struct field types
-    let header: PacketHeader = PacketHeader {
-      src_ip: 0xC0A80001,    // Type checked as u32 (IpAddress)
-      dst_ip: 0xC0A80002,    // Type checked as u32 (IpAddress)
-      protocol: 6,           // Type checked as u8
-      length: packet_len     // Type promoted from arithmetic to u16
-    }
-    
-    return 2
+  // Type checker ensures arithmetic operations are on numeric types
+  let packet_len = data_end - data
+  
+  if (packet_len < 20) {
+    return 1
   }
   
-  fn classify_protocol(proto: u8) -> ProtocolType {
-    // Type checker validates enum constant access
-    if (proto == 6) {
-      return some PROTOCOL_TYPE_TCP
-    } else if (proto == 17) {
-      return some PROTOCOL_TYPE_UDP
-    } else if (proto == 1) {
-      return some PROTOCOL_TYPE_ICMP
-    }
-    return none
+  // Type checker validates struct field types
+  let header: PacketHeader = PacketHeader {
+    src_ip: 0xC0A80001,    // Type checked as u32 (IpAddress)
+    dst_ip: 0xC0A80002,    // Type checked as u32 (IpAddress)
+    protocol: 6,           // Type checked as u8
+    length: packet_len     // Type promoted from arithmetic to u16
   }
   
-  fn update_statistics(header: PacketHeader) {
-    // Type checker validates map operations and key/value types
-    let current_count = connection_stats[header.src_ip]
-    
-    if (current_count != null) {
-      // Type checker ensures arithmetic on compatible types
-      connection_stats[header.src_ip] = current_count + 1
-    } else {
-      // Type checker validates map insert operation
-      connection_stats[header.src_ip] = 1
-    }
+  return 2
+}
+
+kernel fn classify_protocol(proto: u8) -> ProtocolType {
+  // Type checker validates enum constant access
+  if (proto == 6) {
+    return some PROTOCOL_TYPE_TCP
+  } else if (proto == 17) {
+    return some PROTOCOL_TYPE_UDP
+  } else if (proto == 1) {
+    return some PROTOCOL_TYPE_ICMP
   }
+  return none
+}
+
+kernel fn update_statistics(header: PacketHeader) {
+  // Type checker validates map operations and key/value types
+  let current_count = connection_stats[header.src_ip]
   
-  fn make_decision(header: PacketHeader) -> FilterDecision {
-    // Type checker validates function call signatures
-    let proto_type = classify_protocol(header.protocol)
-    
-    match proto_type {
-      some PROTOCOL_TYPE_TCP -> {
-        // Type checker validates field access on struct types
-        if (header.length > 1500) {
-          return FILTER_DECISION_BLOCK
-        }
-        return FILTER_DECISION_ALLOW
-      },
-      some PROTOCOL_TYPE_UDP -> return FILTER_DECISION_ALLOW,
-      some PROTOCOL_TYPE_ICMP -> return FILTER_DECISION_LOG,
-      none -> return FILTER_DECISION_BLOCK
-    }
+  if (current_count != null) {
+    // Type checker ensures arithmetic on compatible types
+    connection_stats[header.src_ip] = current_count + 1
+  } else {
+    // Type checker validates map insert operation
+    connection_stats[header.src_ip] = 1
   }
+}
+
+kernel fn make_decision(header: PacketHeader) -> FilterDecision {
+  // Type checker validates function call signatures
+  let proto_type = classify_protocol(header.protocol)
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    // Type checker validates context parameter and return type
-    let packet_header = extract_header(ctx)
-    
-    match packet_header {
-      some header -> {
-        // Type checker validates function calls with correct types
-        update_statistics(header)
-        let decision = make_decision(header)
-        
-        // Type checker validates match expressions and enum types
-        match decision {
-          FILTER_DECISION_ALLOW -> return XDP_PASS,
-          FILTER_DECISION_BLOCK -> return XDP_DROP,
-          FILTER_DECISION_LOG -> {
-            // Type checker validates built-in function signatures
-            bpf_trace_printk("Logging packet", 14)
-            return XDP_PASS
-          }
-        }
-      },
-      none -> {
-        // Type checker validates return type compatibility
-        return XDP_DROP
+  match proto_type {
+    some PROTOCOL_TYPE_TCP -> {
+      // Type checker validates field access on struct types
+      if (header.length > 1500) {
+        return FILTER_DECISION_BLOCK
       }
+      return FILTER_DECISION_ALLOW
+    },
+    some PROTOCOL_TYPE_UDP -> return FILTER_DECISION_ALLOW,
+    some PROTOCOL_TYPE_ICMP -> return FILTER_DECISION_LOG,
+    none -> return FILTER_DECISION_BLOCK
+  }
+}
+
+@xdp fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+  // Type checker validates context parameter and return type
+  let packet_header = extract_header(ctx)
+  
+  match packet_header {
+    some header -> {
+      // Type checker validates function calls with correct types
+      update_statistics(header)
+      let decision = make_decision(header)
+      
+      // Type checker validates match expressions and enum types
+      match decision {
+        FILTER_DECISION_ALLOW -> return XDP_PASS,
+        FILTER_DECISION_BLOCK -> return XDP_DROP,
+        FILTER_DECISION_LOG -> {
+          // Type checker validates built-in function signatures
+          bpf_trace_printk("Logging packet", 14)
+          return XDP_PASS
+        }
+      }
+    },
+    none -> {
+      // Type checker validates return type compatibility
+      return XDP_DROP
     }
   }
 }
@@ -156,4 +153,10 @@ fn type_error_examples() {
   //   let x = 42
   //   // ERROR: missing return statement
   // }
+}
+
+fn main() -> i32 {
+  let prog = load(packet_analyzer)
+  attach(prog, "eth0", 0)
+  return 0
 } 

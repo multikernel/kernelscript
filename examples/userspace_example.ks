@@ -1,7 +1,5 @@
-program packet_monitor : xdp {
-    fn main(ctx: u32) -> u32 {
-        return XDP_PASS
-    }
+@xdp fn packet_monitor(ctx: XdpContext) -> XdpAction {
+    return XDP_PASS
 }
 
 // Userspace types and functions (outside program blocks)
@@ -20,7 +18,8 @@ fn main() -> i32 {
     // Load and attach the packet monitor program
     print("Loading packet monitor program")
     
-    // TODO: Add proper argument parsing and program loading
+    let prog = load(packet_monitor)
+    attach(prog, "eth0", 0)
     
     return 0
 }

@@ -4,35 +4,33 @@ config network {
   limit : u32,
 }
 
-program rate_limiter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let packet_start = ctx.data
-    let packet_end = ctx.data_end
-    let packet_size = packet_end - packet_start
-    
-    // Basic packet size validation
-    if (packet_size < 14) {
-      return XDP_DROP // too small for Ethernet header
-    }
-    
-    // For simplicity, assume IPv4 and extract source IP
-    // In reality, we'd need to parse Ethernet header first
-    let src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
-    
-    // Look up current packet count for this IP
-    let current_count = packet_counts[src_ip]
-    let new_count = current_count + 1
-    
-    // Update the count
-    packet_counts[src_ip] = new_count
-    
-    // Rate limiting: drop if too many packets
-    if (new_count > network.limit) {
-      return XDP_DROP
-    }
-    
-    return XDP_PASS
+@xdp fn rate_limiter(ctx: XdpContext) -> XdpAction {
+  let packet_start = ctx.data
+  let packet_end = ctx.data_end
+  let packet_size = packet_end - packet_start
+  
+  // Basic packet size validation
+  if (packet_size < 14) {
+    return XDP_DROP // too small for Ethernet header
   }
+  
+  // For simplicity, assume IPv4 and extract source IP
+  // In reality, we'd need to parse Ethernet header first
+  let src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
+  
+  // Look up current packet count for this IP
+  let current_count = packet_counts[src_ip]
+  let new_count = current_count + 1
+  
+  // Update the count
+  packet_counts[src_ip] = new_count
+  
+  // Rate limiting: drop if too many packets
+  if (new_count > network.limit) {
+    return XDP_DROP
+  }
+  
+  return XDP_PASS
 }
 
 struct Args {

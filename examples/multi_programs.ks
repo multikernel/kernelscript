@@ -3,23 +3,25 @@ map<u32, u32> shared_counter : HashMap(1024) {
 }
 
 // First eBPF program - packet counter
-program packet_counter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    shared_counter[1] = 100
-    return XDP_PASS
-  }
+@xdp fn packet_counter(ctx: XdpContext) -> XdpAction {
+  shared_counter[1] = 100
+  return XDP_PASS
 }
 
-program packet_filter : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    shared_counter[2] = 200
-    return TC_ACT_OK
-  }
+@tc fn packet_filter(ctx: TcContext) -> TcAction {
+  shared_counter[2] = 200
+  return TC_ACT_OK
 }
 
 // Userspace coordination (outside program blocks)
 fn main() -> i32 {
   shared_counter[1] = 0
   shared_counter[2] = 0
+  
+  let prog1 = load(packet_counter)
+  let prog2 = load(packet_filter)
+  attach(prog1, "eth0", 0)
+  attach(prog2, "eth0", 0)
+  
   return 0
 } 

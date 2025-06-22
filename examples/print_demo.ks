@@ -6,13 +6,11 @@ config demo {
 }
 
 // eBPF program that uses print()
-program simple_logger : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        if (demo.enable_logging) {
-            print("eBPF: Processing packet")
-        }
-        return XDP_PASS
+@xdp fn simple_logger(ctx: XdpContext) -> XdpAction {
+    if (demo.enable_logging) {
+        print("eBPF: Processing packet")
     }
+    return XDP_PASS
 }
 
 // Userspace coordinator that also uses print() (no wrapper)

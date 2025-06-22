@@ -1,8 +1,6 @@
-program simple_xdp : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
-        print("Hello" + " world")
-        return 2
-    }
+@xdp fn simple_xdp(ctx: XdpContext) -> XdpAction {
+    print("Hello" + " world")
+    return 2
 }
 
 // Userspace program lifecycle management

@@ -3,30 +3,28 @@
 
 map<u32, u32> counter_map : HashMap(10)
 
-program packet_filter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
-    let end_value = 1000 // Large value to make it unbound
-    
-    // This should be treated as unbound due to large range
-    for (i in 0..end_value) {
-      // Skip even numbers
-      if (i % 2 == 0) {
-        continue
-      }
-      
-      // Stop processing at threshold
-      if (i > 50) {
-        break
-      }
-      
-      // Count odd numbers up to threshold
-      let key = 0
-      let current = counter_map[key]
-      counter_map[key] = current + 1
+@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+  let end_value = 1000 // Large value to make it unbound
+  
+  // This should be treated as unbound due to large range
+  for (i in 0..end_value) {
+    // Skip even numbers
+    if (i % 2 == 0) {
+      continue
     }
     
-    return XDP_PASS
+    // Stop processing at threshold
+    if (i > 50) {
+      break
+    }
+    
+    // Count odd numbers up to threshold
+    let key = 0
+    let current = counter_map[key]
+    counter_map[key] = current + 1
   }
+  
+  return XDP_PASS
 }
 
 // Userspace coordination (no wrapper)
@@ -46,6 +44,9 @@ fn main() -> i32 {
     
     count = count + 1
   }
+  
+  let prog = load(packet_filter)
+  attach(prog, "eth0", 0)
   
   return 0
 } 

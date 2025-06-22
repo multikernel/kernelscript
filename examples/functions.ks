@@ -1,19 +1,17 @@
 type IpAddress = u32
 
-program test_functions : xdp {
-  fn helper_function(value: u32) -> u32 {
-    return value + 10
-  }
-  
-  fn another_helper() -> u32 {
-    return 42
-  }
-  
-  fn main(ctx: XdpContext) -> XdpAction {
-    let result = helper_function(5)
-    let const_val = another_helper()
-    return XDP_PASS
-  }
+kernel fn helper_function(value: u32) -> u32 {
+  return value + 10
+}
+
+kernel fn another_helper() -> u32 {
+  return 42
+}
+
+@xdp fn test_functions(ctx: XdpContext) -> XdpAction {
+  let result = helper_function(5)
+  let const_val = another_helper()
+  return XDP_PASS
 }
 
 fn global_function(x: u32) -> u32 {

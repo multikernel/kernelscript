@@ -32,93 +32,84 @@ map<u32, u8> event_log : RingBuffer(65536) {
   pinned: "/sys/fs/bpf/events"
 }
 
+map<u32, u32> local_state : HashMap(100)
+map<u32, u64> bandwidth_usage : PercpuArray(256) {
+  pinned: "/sys/fs/bpf/bandwidth"
+}
+
 kernel fn get_cpu_id() -> u32 {
     return 0 // Demo CPU ID
 }
 
+kernel fn get_src_ip(ctx: XdpContext) -> IpAddress {
+  return 0x7f000001 // 127.0.0.1 for demo
+}
+
+kernel fn get_packet_len_xdp(ctx: XdpContext) -> PacketSize {
+  return 64 // Demo packet size
+}
+
+kernel fn get_packet_len_tc(ctx: TcContext) -> u64 {
+  return 128 // Demo packet size
+}
+
+kernel fn get_timestamp() -> u64 {
+  return 1234567890 // Demo timestamp
+}
+
 // XDP program demonstrating map usage
-program packet_analyzer : xdp {
-  // Helper functions (would be implemented in stdlib)
-  fn get_src_ip(ctx: XdpContext) -> IpAddress {
-    return 0x7f000001 // 127.0.0.1 for demo
+@xdp fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+  // Get packet information
+  let src_ip: IpAddress = get_src_ip(ctx)
+  let packet_len: PacketSize = get_packet_len_xdp(ctx)
+  
+  // Update CPU counter
+  let cpu_id = get_cpu_id()
+  cpu_counters[cpu_id] = cpu_counters[cpu_id] + 1
+  
+  // Update IP statistics
+  let stats = ip_stats[src_ip]
+  if (stats != null) {
+    stats.count = stats.count + 1
+    stats.total_bytes = stats.total_bytes + packet_len
+    stats.last_seen = get_timestamp()
+    ip_stats[src_ip] = stats
+  } else {
+    let new_stats = PacketStats {
+      count: 1,
+      total_bytes: packet_len,
+      last_seen: get_timestamp()
+    }
+    ip_stats[src_ip] = new_stats
   }
   
-  fn get_packet_len(ctx: XdpContext) -> PacketSize {
-    return 64 // Demo packet size
+  // Check recent connections
+  let recent = recent_connections[src_ip]
+  if (recent != null) {
+    // Log repeated connection
+    event_log[0] = 1
   }
-
-  fn get_timestamp() -> u64 {
-    return 1234567890 // Demo timestamp
-  }
-
-  // Local map for program-specific data
-  map<u32, u32> local_state : HashMap(100)
   
-  fn main(ctx: XdpContext) -> XdpAction {
-    // Get packet information
-    let src_ip: IpAddress = get_src_ip(ctx)
-    let packet_len: PacketSize = get_packet_len(ctx)
-    
-    // Update CPU counter
-    let cpu_id = get_cpu_id()
-    cpu_counters[cpu_id] = cpu_counters[cpu_id] + 1
-    
-    // Update IP statistics
-    let stats = ip_stats[src_ip]
-    if (stats != null) {
-      stats.count = stats.count + 1
-      stats.total_bytes = stats.total_bytes + packet_len
-      stats.last_seen = get_timestamp()
-      ip_stats[src_ip] = stats
-    } else {
-      let new_stats = PacketStats {
-        count: 1,
-        total_bytes: packet_len,
-        last_seen: get_timestamp()
-      }
-      ip_stats[src_ip] = new_stats
-    }
-    
-    // Check recent connections
-    let recent = recent_connections[src_ip]
-    if (recent != null) {
-      // Log repeated connection
-      event_log[0] = 1
-    }
-    
-    // Update local state
-    local_state[0] = local_state[0] + 1
-    
-    return XDP_PASS
-  }
+  // Update local state
+  local_state[0] = local_state[0] + 1
+  
+  return XDP_PASS
 }
 
 // TC program demonstrating different map usage patterns
-program traffic_shaper : tc {
+@tc fn traffic_shaper(ctx: TcContext) -> TcAction {
+  let cpu = get_cpu_id()
+  let bytes = get_packet_len_tc(ctx)
   
-  // Per-CPU array for bandwidth tracking
-  map<u32, u64> bandwidth_usage : PercpuArray(256) {
-    pinned: "/sys/fs/bpf/bandwidth"
-  }
-
-  fn main(ctx: TcContext) -> TcAction {
-    let cpu = get_cpu_id()
-    let bytes = get_packet_len(ctx)
-    
-    // Update bandwidth usage
-    bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes
-    
-    // Simple rate limiting logic
-    if (bandwidth_usage[cpu] > 1000000) {
-      return TC_ACT_SHOT
-    }
-    
-    return TC_ACT_OK
+  // Update bandwidth usage
+  bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes
+  
+  // Simple rate limiting logic
+  if (bandwidth_usage[cpu] > 1000000) {
+    return TC_ACT_SHOT
   }
   
-  fn get_packet_len(ctx: TcContext) -> u64 {
-    return 128 // Demo packet size
-  }
+  return TC_ACT_OK
 }
 
 fn main() -> i32 {
@@ -126,4 +117,5 @@ fn main() -> i32 {
   let prog2 = load(packet_analyzer)
   attach(prog1, "lo", 0)
   attach(prog2, "lo", 0)
+  return 0
 }

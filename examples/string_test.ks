@@ -1,34 +1,32 @@
 // KernelScript String Type Demonstration
 // Shows unified string syntax working in both eBPF and userspace contexts
 
-program string_demo : xdp {
-  fn main(ctx: XdpContext) -> i32 {
-    // Test string declarations with different sizes
-    let name: str<16> = "hello"
-    let message: str<32> = "world"
-    let large_buffer: str<128> = "large message buffer"
+@xdp fn string_demo(ctx: XdpContext) -> XdpAction {
+  // Test string declarations with different sizes
+  let name: str<16> = "hello"
+  let message: str<32> = "world"
+  let large_buffer: str<128> = "large message buffer"
+  
+  // Test string indexing
+  let first_char: char = name[0]
+  let second_char: char = name[1]
+  
+  // Test string comparison
+  if (name == "hello") {
+    // String concatenation
+    let result: str<48> = name + message
     
-    // Test string indexing
-    let first_char: char = name[0]
-    let second_char: char = name[1]
-    
-    // Test string comparison
-    if (name == "hello") {
-      // String concatenation
-      let result: str<48> = name + message
-      
-      // Test string inequality
-      if (result != "helloworld") {
-        return 1
-      }
+    // Test string inequality
+    if (result != "helloworld") {
+      return 1
     }
-    
-    // Test smaller strings
-    let tiny: str<4> = "abc"
-    let custom: str<10> = "custom"
-    
-    return 0
   }
+  
+  // Test smaller strings
+  let tiny: str<4> = "abc"
+  let custom: str<10> = "custom"
+  
+  return 0
 }
 
 // Userspace coordinator demonstrating the same string operations
