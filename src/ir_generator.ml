@@ -1511,7 +1511,6 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
   make_ir_program 
     prog_def.prog_name 
     prog_def.prog_type 
-    ir_program_maps 
     entry_function 
     prog_def.prog_pos
 

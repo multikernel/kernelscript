@@ -50,7 +50,6 @@ let create_test_program () =
   {
     name = "test_program";
     program_type = Xdp;
-    local_maps = [];
     entry_function = main_func;
     ir_pos = { line = 1; column = 1; filename = "test" };
   }

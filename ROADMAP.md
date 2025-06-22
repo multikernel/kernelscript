@@ -225,23 +225,20 @@ let test_context_types () =
 
 **Unit Tests:**
 ```ocaml
-let test_global_local_scoping () =
+let test_global_scoping () =
   let code = {|
     map<u32, u64> global_counter : array(256)
+    map<u32, LocalData> data_map : hash_map(100)
 
-program test : xdp {
-    map<u32, LocalData> local_map : hash_map(100)
-      
-      fn main(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: XdpContext) -> XdpAction {
         global_counter[0] = 1;
-        local_map[1] = LocalData::new();
+        data_map[1] = LocalData::new();
         return XdpAction::Pass;
-      }
     }
   |} in
   let symbol_table = build_symbol_table code in
   assert (is_global_map symbol_table "global_counter");
-  assert (is_local_map symbol_table "test" "local_map")
+  assert (is_global_map symbol_table "data_map")
 ```
 
 ---
@@ -256,7 +253,7 @@ Implement eBPF map handling, memory safety, and bounds checking.
 - `src/maps.ml` - eBPF map type definitions
 - Map configuration parsing
 - Pin path and attribute handling
-- Global vs local map semantics
+- Global map semantics
 
 **Map Types:**
 ```ocaml
@@ -346,7 +343,6 @@ type ir_program = {
   name: string;
   program_type: program_type;
   global_maps: ir_map_def list;
-  local_maps: ir_map_def list;
   functions: ir_function list;
   main_function: ir_function;
   userspace_bindings: ir_userspace_binding list;
@@ -518,13 +514,12 @@ let test_program_lowering () =
   let ast_program = Program {
     name = "test_xdp";
     prog_type = Xdp;
-    maps = [global_map; local_map];
+    maps = [global_map1; global_map2];
     functions = [main_fn];
   } in
   let ir_prog = lower_program ast_program in
   assert (ir_prog.program_type = Xdp);
-  assert (List.length ir_prog.global_maps = 1);
-  assert (List.length ir_prog.local_maps = 1);
+  assert (List.length ir_prog.global_maps = 2);
   assert (ir_prog.main_function.is_main = true)
 
 let test_context_access_lowering () =

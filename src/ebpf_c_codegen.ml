@@ -314,7 +314,6 @@ let collect_enum_definitions ir_multi_prog =
   
   (* Collect from all programs *)
   List.iter (fun ir_prog ->
-    List.iter collect_from_map_def ir_prog.local_maps;
     collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
@@ -428,7 +427,6 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   
   (* Collect from all programs *)
   List.iter (fun ir_prog ->
-    List.iter collect_from_map_def ir_prog.local_maps;
     collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
@@ -508,7 +506,6 @@ let collect_type_aliases_from_multi_program ir_multi_prog =
   
   (* Collect from all programs *)
   List.iter (fun ir_prog ->
-    List.iter collect_from_map_def ir_prog.local_maps;
     collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   

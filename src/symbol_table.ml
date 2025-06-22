@@ -9,7 +9,6 @@ type symbol_kind =
   | Function of bpf_type list * bpf_type  (* Parameter types, return type *)
   | TypeDef of type_def
   | GlobalMap of map_declaration
-  | LocalMap of map_declaration
   | Parameter of bpf_type
   | EnumConstant of string * int option  (* enum_name, value *)
   | Config of config_declaration
@@ -39,7 +38,6 @@ type symbol_table = {
   current_program: string option;
   current_function: string option;
   global_maps: (string, map_declaration) Hashtbl.t;
-  local_maps: (string * string, map_declaration) Hashtbl.t;  (* (program, map_name) -> map *)
 }
 
 (** Symbol table exceptions *)
@@ -54,7 +52,6 @@ let create_symbol_table () = {
   current_program = None;
   current_function = None;
   global_maps = Hashtbl.create 32;
-  local_maps = Hashtbl.create 64;
 }
 
 (** Helper functions *)
@@ -112,24 +109,16 @@ let enter_scope table scope_type =
   (* Create new hashtables to avoid sharing state *)
   let new_symbols = Hashtbl.copy table.symbols in
   let new_global_maps = Hashtbl.copy table.global_maps in
-  let new_local_maps = Hashtbl.copy table.local_maps in
   let new_table = { 
     symbols = new_symbols;
     scopes = new_scopes;
     current_program = table.current_program;
     current_function = table.current_function;
     global_maps = new_global_maps;
-    local_maps = new_local_maps;
   } in
   match scope_type with
   | ProgramScope name -> 
-      (* When entering a new program scope, filter out local maps from other programs *)
-      let filtered_local_maps = Hashtbl.create 64 in
-      Hashtbl.iter (fun (prog, map_name) map_decl ->
-        if prog = name then
-          Hashtbl.replace filtered_local_maps (prog, map_name) map_decl
-      ) new_local_maps;
-      { new_table with current_program = Some name; local_maps = filtered_local_maps }
+      { new_table with current_program = Some name }
   | FunctionScope (prog, func) -> 
       { new_table with current_program = Some prog; current_function = Some func }
   | _ -> new_table
@@ -143,14 +132,12 @@ let exit_scope table =
       (* Create new hashtables to avoid sharing state *)
       let new_symbols = Hashtbl.copy table.symbols in
       let new_global_maps = Hashtbl.copy table.global_maps in
-      let new_local_maps = Hashtbl.copy table.local_maps in
       let new_table = { 
         symbols = new_symbols;
         scopes = rest;
         current_program = table.current_program;
         current_function = table.current_function;
         global_maps = new_global_maps;
-        local_maps = new_local_maps;
       } in
       match rest with
       | ProgramScope name :: _ -> { new_table with current_program = Some name; current_function = None }
@@ -257,14 +244,7 @@ let add_map_decl table map_decl =
     Hashtbl.replace table.global_maps map_decl.name map_decl;
     add_symbol table map_decl.name (GlobalMap map_decl) Public pos
   ) else (
-    (* Local map - must be inside a program *)
-    match table.current_program with
-    | Some prog_name ->
-        let key = (prog_name, map_decl.name) in
-        Hashtbl.replace table.local_maps key map_decl;
-        add_symbol table map_decl.name (LocalMap map_decl) Private pos
-    | None ->
-        symbol_error "Local maps must be declared inside a program" pos
+    symbol_error "All maps must be declared as global" pos
   )
 
 (** Add function with enhanced validation *)
@@ -310,24 +290,13 @@ let add_config_decl table config_decl =
 let is_global_map table name =
   Hashtbl.mem table.global_maps name
 
-(** Check if map is local to a program *)
-let is_local_map table program_name map_name =
-  Hashtbl.mem table.local_maps (program_name, map_name)
-
 (** Get map declaration *)
 let get_map_declaration table name =
   (* First check global maps *)
   if Hashtbl.mem table.global_maps name then
     Some (Hashtbl.find table.global_maps name)
   else
-    (* Check local maps in current program *)
-    match table.current_program with
-    | Some prog_name ->
-        let key = (prog_name, name) in
-        if Hashtbl.mem table.local_maps key then
-          Some (Hashtbl.find table.local_maps key)
-        else None
-    | None -> None
+    None
 
 (** Validate map access *)
 let validate_map_access table map_name pos =
@@ -696,15 +665,7 @@ let get_accessible_maps table =
     (name, map_decl) :: acc
   ) table.global_maps [] in
   
-  let local_maps = match table.current_program with
-    | Some prog_name ->
-        Hashtbl.fold (fun (prog, map_name) map_decl acc ->
-          if prog = prog_name then (map_name, map_decl) :: acc else acc
-        ) table.local_maps []
-    | None -> []
-  in
-  
-  global_maps @ local_maps
+  global_maps
 
 (** Pretty printing for debugging *)
 let string_of_symbol_kind = function
@@ -716,7 +677,6 @@ let string_of_symbol_kind = function
   | TypeDef (EnumDef (name, _)) -> "enum:" ^ name
   | TypeDef (TypeAlias (name, t)) -> "alias:" ^ name ^ "=" ^ string_of_bpf_type t
   | GlobalMap _ -> "global_map"
-  | LocalMap _ -> "local_map"
   | Parameter t -> "param:" ^ string_of_bpf_type t
   | EnumConstant (enum_name, value) ->
       "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")
@@ -743,8 +703,4 @@ let print_symbol_table table =
   ) table.symbols;
   
   Printf.printf "\nGlobal Maps:\n";
-  Hashtbl.iter (fun name _map -> Printf.printf "  %s\n" name) table.global_maps;
-  
-  Printf.printf "\nLocal Maps:\n";
-  Hashtbl.iter (fun (prog, map_name) _map -> 
-    Printf.printf "  %s::%s\n" prog map_name) table.local_maps 
+  Hashtbl.iter (fun name _map -> Printf.printf "  %s\n" name) table.global_maps

@@ -154,8 +154,8 @@ fn main() -> i32 {
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
-(** Test 2: Local maps are not accessible from global functions *)
-let test_local_map_isolation () =
+(** Test 2: Only global maps are accessible from global functions *)
+let test_global_only_map_access () =
   let code = {|
 map<u32, u64> global_shared : HashMap(1024)
 
@@ -179,23 +179,12 @@ fn main() -> i32 {
     let global_shared = List.find (fun m -> m.name = "global_shared") maps in
     check string "global_shared is present" "global_shared" global_shared.name;
     
-    (* Check that local maps are not in global scope *)
-    let has_local_state = List.exists (fun m -> m.name = "local_state") maps in
-    let has_local_cache = List.exists (fun m -> m.name = "local_cache") maps in
-    
-    check bool "local_state not in global scope" false has_local_state;
-    check bool "local_cache not in global scope" false has_local_cache;
-    
-    (* Generate userspace code and verify local maps are not accessible *)
-    match get_generated_userspace_code ast "test_local_isolation.ks" with
+    (* Generate userspace code and verify only global maps are accessible *)
+    match get_generated_userspace_code ast "test_global_only.ks" with
     | Some generated_content ->
         let has_global_shared = contains_pattern generated_content "global_shared" in
-        let has_local_state = contains_pattern generated_content "local_state" in
-        let has_local_cache = contains_pattern generated_content "local_cache" in
         
-        check bool "global map present in userspace" true has_global_shared;
-        check bool "local state absent from userspace" false has_local_state;
-        check bool "local cache absent from userspace" false has_local_cache
+        check bool "global map present in userspace" true has_global_shared
     | None ->
         fail "Failed to generate userspace code"
   with
@@ -466,7 +455,7 @@ fn main() -> i32 {
 
 let global_function_maps_tests = [
   "global_map_accessibility", `Quick, test_global_map_accessibility;
-  "local_map_isolation", `Quick, test_local_map_isolation;
+  "global_only_map_access", `Quick, test_global_only_map_access;
   "map_operation_generation", `Quick, test_map_operation_generation;
   "multiple_map_types_global_functions", `Quick, test_multiple_map_types_global_functions;
   "global_function_code_structure", `Quick, test_global_function_code_structure;

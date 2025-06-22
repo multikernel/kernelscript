@@ -1338,25 +1338,20 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 }
 
 // Multiple eBPF programs working together
-program network_monitor : xdp {
-    // Local maps (only accessible within this program)
-    map<u32, LocalStats> local_stats : HashMap(1024)
+@xdp fn network_monitor(ctx: XdpContext) -> XdpAction {
+    // Access global maps directly
+    let flow_key = extract_flow_key(ctx)?
+    global_flows[flow_key] += 1
     
-    fn main(ctx: XdpContext) -> XdpAction {
-        // Access global maps directly
-        let flow_key = extract_flow_key(ctx)?
-        global_flows[flow_key] += 1
-        
-        // Use named config for decisions
-        if monitoring.enable_stats {
-            monitoring.packets_processed += 1
-        }
-        
-        // Send event to global stream
-        global_events.submit(EVENT_PACKET_PROCESSED { flow_key })
-        
-        return XDP_PASS
+    // Use named config for decisions
+    if monitoring.enable_stats {
+        monitoring.packets_processed += 1
     }
+    
+    // Send event to global stream
+    global_events.submit(EVENT_PACKET_PROCESSED { flow_key })
+    
+    return XDP_PASS
 }
 
 program security_filter : lsm("socket_connect") {

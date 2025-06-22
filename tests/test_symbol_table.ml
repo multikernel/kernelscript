@@ -116,7 +116,6 @@ let resolve_all_variables _symbol_table _ast =
 let lookup_map table map_name =
   match lookup_symbol table map_name with
   | Some { kind = GlobalMap map_decl; _ } -> Some map_decl
-  | Some { kind = LocalMap map_decl; _ } -> Some map_decl
   | _ -> None
 
 (* Placeholder function for check_types_with_symbol_table *)
@@ -141,7 +140,7 @@ let comprehensive_symbol_analysis symbol_table ast =
       | Variable _ | Parameter _ -> incr variable_count  
       | ConstVariable _ -> incr variable_count  (* Count const variables as variables *)
       | TypeDef _ -> incr type_count
-      | GlobalMap _ | LocalMap _ -> () (* Maps are counted separately *)
+      | GlobalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count
       | Config _ -> incr type_count
       (* AttributedFunction programs are now just functions - no separate Program symbol kind *)
@@ -149,7 +148,7 @@ let comprehensive_symbol_analysis symbol_table ast =
   ) symbol_table.symbols;
   
   (* Add map symbols to total count *)
-  let map_count = Hashtbl.length symbol_table.global_maps + Hashtbl.length symbol_table.local_maps in
+  let map_count = Hashtbl.length symbol_table.global_maps in
   total_symbols := !total_symbols + map_count;
   
   (* Perform additional validation checks *)
@@ -194,7 +193,7 @@ let test_symbol_table_creation () =
   let table = create_symbol_table () in
   check int "empty symbols table" 0 (Hashtbl.length table.symbols);
   check int "empty global maps" 0 (Hashtbl.length table.global_maps);
-  check int "empty local maps" 0 (Hashtbl.length table.local_maps);
+
   (* check (list (fun pp scope -> Format.fprintf pp "%s" (match scope with GlobalScope -> "Global" | ProgramScope s -> "Program:" ^ s | FunctionScope (p, f) -> "Function:" ^ p ^ ":" ^ f))) "initial scopes" [GlobalScope] table.scopes; *)
   check bool "has initial scope" true (List.length table.scopes > 0);
   check (option string) "no current program" None table.current_program;
@@ -320,7 +319,6 @@ let test_global_map_handling () =
   add_map_decl table global_map;
   
   check bool "is global map" true (is_global_map table "global_counter");
-  check bool "not local map" false (is_local_map table "test_prog" "global_counter");
   
   (match get_map_declaration table "global_counter" with
   | Some map_decl -> check string "global map name" "global_counter" map_decl.name
@@ -328,21 +326,19 @@ let test_global_map_handling () =
   
   check bool "map declaration exists" true (get_map_declaration table "global_counter" <> None)
 
-(** Test 3: Local map handling *)
-let test_local_map_handling () =
+(** Test 3: Local map rejection *)
+let test_local_map_rejection () =
   let table = create_symbol_table () in
   let table_with_prog = enter_scope table (ProgramScope "test_prog") in
   let local_map = create_test_map_decl "local_map" false in
-  add_map_decl table_with_prog local_map;
   
-  check bool "is local map" true (is_local_map table_with_prog "test_prog" "local_map");
-  check bool "not global map" false (is_global_map table_with_prog "local_map");
-  
-  (match get_map_declaration table_with_prog "local_map" with
-  | Some map_decl -> check string "local map name" "local_map" map_decl.name
-  | None -> fail "expected to find local_map");
-  
-  check bool "local map declaration exists" true (get_map_declaration table_with_prog "local_map" <> None)
+  (* Local maps should be rejected *)
+  try
+    add_map_decl table_with_prog local_map;
+    fail "Expected error for local map declaration"
+  with Symbol_error (msg, _) ->
+    check bool "local map error detected" true (String.contains msg 'g');  (* Check for "global" in error message *)
+    check bool "local map rejection test passed" true true
 
 (** Test 4: Scope management *)
 let test_scope_management () =
@@ -452,8 +448,8 @@ let test_function_parameter_handling () =
    
   check bool "function parameter handling test passed" true true
 
-(** Test 8: Global vs Local scoping from the roadmap example *)
-let test_global_local_scoping () =
+(** Test 8: Global-only scoping *)
+let test_global_only_scoping () =
   let table = create_symbol_table () in
   
   (* Add global map *)
@@ -463,50 +459,52 @@ let test_global_local_scoping () =
   (* Enter program scope *)
   let table_with_prog = enter_scope table (ProgramScope "test") in
   
-  (* Add local map *)
-  let local_map = create_test_map_decl "local_map" false in
-  add_map_decl table_with_prog local_map;
-  
-  (* Test the assertions from the roadmap *)
+  (* Test that global maps are still accessible *)
   check bool "global map visible" true (is_global_map table_with_prog "global_counter");
-  check bool "local map visible" true (is_local_map table_with_prog "test" "local_map");
   
-  check bool "global vs local scoping test passed" true true
+  (* Test that attempting to add local map fails *)
+  let local_map = create_test_map_decl "local_map" false in
+  try
+    add_map_decl table_with_prog local_map;
+    fail "Expected error for local map declaration"
+  with Symbol_error _ ->
+    check bool "local map correctly rejected" true true;
+  
+  check bool "global-only scoping test passed" true true
 
-(** Test 9: Map visibility rules *)
-let test_map_visibility_rules () =
+(** Test 9: Global map visibility rules *)
+let test_global_map_visibility_rules () =
   let table = create_symbol_table () in
   
-  (* Add global map *)
-  let global_map = create_test_map_decl "global_counter" true in
-  add_map_decl table global_map;
+  (* Add global maps *)
+  let global_map1 = create_test_map_decl "global_counter1" true in
+  add_map_decl table global_map1;
+  let global_map2 = create_test_map_decl "global_counter2" true in
+  add_map_decl table global_map2;
   
   (* Enter first program scope *)
   let table_prog1 = enter_scope table (ProgramScope "prog1") in
-  let local_map1 = create_test_map_decl "local_map" false in
-  add_map_decl table_prog1 local_map1;
   
   (* Exit and enter second program scope *)
   let table_back = exit_scope table_prog1 in
   let table_prog2 = enter_scope table_back (ProgramScope "prog2") in
-  let local_map2 = create_test_map_decl "local_map" false in
-  add_map_decl table_prog2 local_map2;
   
-  (* Global map should be visible from both programs *)
-  check bool "global map visible in prog1" true (is_global_map table_prog1 "global_counter");
-  check bool "global map visible in prog2" true (is_global_map table_prog2 "global_counter");
+  (* Global maps should be visible from both programs *)
+  check bool "global map1 visible in prog1" true (is_global_map table_prog1 "global_counter1");
+  check bool "global map2 visible in prog1" true (is_global_map table_prog1 "global_counter2");
+  check bool "global map1 visible in prog2" true (is_global_map table_prog2 "global_counter1");
+  check bool "global map2 visible in prog2" true (is_global_map table_prog2 "global_counter2");
   
-  (* Local maps should only be visible within their program *)
-  check bool "local map visible in prog1" true (is_local_map table_prog1 "prog1" "local_map");
-  check bool "local map not visible in prog1 prog2" true (not (is_local_map table_prog1 "prog2" "local_map"));
-  check bool "local map visible in prog2" true (is_local_map table_prog2 "prog2" "local_map");
-  check bool "local map not visible in prog2 prog1" true (not (is_local_map table_prog2 "prog1" "local_map"));
+  (* Test that we can access global maps from any scope *)
+  (match get_map_declaration table_prog1 "global_counter1" with
+   | Some _ -> check bool "global map accessible from prog1" true true
+   | None -> fail "should be able to access global map from prog1");
+   
+  (match get_map_declaration table_prog2 "global_counter2" with
+   | Some _ -> check bool "global map accessible from prog2" true true
+   | None -> fail "should be able to access global map from prog2");
   
-  (* Test that local maps are not accessible from the wrong program context *)
-  check bool "local map not accessible in prog2 prog1" true (not (is_local_map table_prog2 "prog1" "local_map"));
-  check bool "local map not accessible in prog1 prog2" true (not (is_local_map table_prog1 "prog2" "local_map"));
-  
-  check bool "map visibility rules test passed" true true
+  check bool "global map visibility rules test passed" true true
 
 (** Test 10: Build symbol table from AST *)
 let test_build_symbol_table_from_ast () =
@@ -556,13 +554,13 @@ let test_error_handling () =
    | None -> check bool "undefined symbol not found" true true
    | Some _ -> fail "should not find undefined_var");
   
-  (* Test local map outside program error *)
+  (* Test local map rejection error *)
   let local_map = create_test_map_decl "invalid_local" false in
   (try
      add_map_decl table local_map;
      fail "expected Symbol_error exception"
    with Symbol_error (msg, _) ->
-     check bool "local map outside program error" true (Str.search_forward (Str.regexp "inside a program") msg 0 >= 0));
+     check bool "local map rejection error" true (String.contains msg 'g'));  (* Check for "global" in error message *)
   
   check bool "error handling test passed" true true
 
@@ -582,8 +580,6 @@ let test_complex_integration () =
   
   (* Program scope *)
   let table_prog = enter_scope table (ProgramScope "packet_filter") in
-  let local_map = create_test_map_decl "local_cache" false in
-  add_map_decl table_prog local_map;
   
   (* Function scope *)
   let main_func = create_test_function "main" [("ctx", XdpContext)] XdpAction in
@@ -595,7 +591,6 @@ let test_complex_integration () =
   
   (* Verify all symbols are accessible *)
   check bool "global map visible" true (is_global_map table_func "global_stats");
-  check bool "local map visible" true (is_local_map table_func "packet_filter" "local_cache");
   
   (match lookup_symbol table_func "PacketInfo" with
    | Some { kind = TypeDef _; _ } -> check bool "packet info type" true true
@@ -913,13 +908,13 @@ let symbol_table_tests = [
   "builtin_function_contexts", `Quick, test_builtin_function_contexts;
   "multiple_builtin_functions", `Quick, test_multiple_builtin_functions;
   "global_map_handling", `Quick, test_global_map_handling;
-  "local_map_handling", `Quick, test_local_map_handling;
+  "local_map_rejection", `Quick, test_local_map_rejection;
   "scope_management", `Quick, test_scope_management;
   "symbol_lookup_and_visibility", `Quick, test_symbol_lookup_and_visibility;
   "type_definition_handling", `Quick, test_type_definition_handling;
   "function_parameter_handling", `Quick, test_function_parameter_handling;
-  "global_local_scoping", `Quick, test_global_local_scoping;
-  "map_visibility_rules", `Quick, test_map_visibility_rules;
+  "global_only_scoping", `Quick, test_global_only_scoping;
+  "global_map_visibility_rules", `Quick, test_global_map_visibility_rules;
   "build_symbol_table_from_ast", `Quick, test_build_symbol_table_from_ast;
   "error_handling", `Quick, test_error_handling;
   "complex_integration", `Quick, test_complex_integration;

@@ -36,14 +36,14 @@ let make_test_global_map () =
     true 
     (make_test_position ())
 
-let make_test_local_map () =
+let make_test_global_map_2 () =
   make_map_declaration 
-    "local_map" 
+    "global_map_2" 
     U32 
     U32 
     HashMap 
     (make_test_map_config 100) 
-    false 
+    true 
     (make_test_position ())
 
 let make_test_main_function () =
@@ -101,7 +101,7 @@ let test_context_access_lowering () =
 let test_map_operation_lowering () =
   let map_access = make_expr 
     (ArrayAccess (
-      make_expr (Identifier "local_map") (make_test_position ()),
+      make_expr (Identifier "global_map_2") (make_test_position ()),
       make_expr (Literal (IntLit (0, None))) (make_test_position ())
     )) 
     (make_test_position ()) in
@@ -112,14 +112,14 @@ let test_map_operation_lowering () =
   
   (* Add test map to context *)
   let test_map = make_ir_map_def 
-    "local_map" 
+    "global_map_2" 
     IRU32 
     IRU32 
     IRHashMap 
     100 
     ~flags:0
     (make_test_position ()) in
-  Hashtbl.add ctx.maps "local_map" test_map;
+  Hashtbl.add ctx.maps "global_map_2" test_map;
   
   let _ir_val = lower_expression ctx map_access in
   (* Should generate map lookup with bounds checks *)

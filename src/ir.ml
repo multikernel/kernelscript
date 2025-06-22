@@ -24,7 +24,6 @@ type ir_multi_program = {
 and ir_program = {
   name: string;
   program_type: program_type;
-  local_maps: ir_map_def list; (* Maps local to this program *)
   entry_function: ir_function; (* The attributed function that serves as the entry point *)
   ir_pos: ir_position;
 }
@@ -422,10 +421,9 @@ let make_ir_map_def name key_type value_type map_type max_entries
   map_pos = pos;
 }
 
-let make_ir_program name prog_type local_maps entry_function pos = {
+let make_ir_program name prog_type entry_function pos = {
   name;
   program_type = prog_type;
-  local_maps;
   entry_function;
   ir_pos = pos;
 }
