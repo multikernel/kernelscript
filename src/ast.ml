@@ -138,13 +138,14 @@ type expr = {
 and expr_desc =
   | Literal of literal
   | Identifier of string
-  | ConfigAccess of string * string  (* config_name.field_name *)
+  | ConfigAccess of string * string  (* config_name, field_name *)
   | FunctionCall of string * expr list
+  | TailCall of string * expr list  (* function_name, arguments - for explicit tail calls *)
   | ArrayAccess of expr * expr
   | FieldAccess of expr * string
   | BinaryOp of expr * binary_op * expr
   | UnaryOp of unary_op * expr
-  | StructLiteral of string * (string * expr) list  (* struct_name, field_assignments *)
+  | StructLiteral of string * (string * expr) list
 
 (** Statements with position tracking *)
 type statement = {
@@ -189,6 +190,9 @@ type function_def = {
   func_body: statement list;
   func_scope: function_scope;
   func_pos: position;
+  (* Tail call dependency tracking *)
+  mutable tail_call_targets: string list; (* Functions this function can tail call *)
+  mutable is_tail_callable: bool; (* Whether this function can be tail-called *)
 }
 
 and struct_def = {
@@ -212,6 +216,9 @@ type attributed_function = {
   attr_list: attribute list;
   attr_function: function_def;
   attr_pos: position;
+  (* Tail call dependency analysis *)
+  mutable program_type: program_type option; (* Extracted from attributes *)
+  mutable tail_call_dependencies: string list; (* Other attributed functions this calls *)
 }
 
 (** Config field declaration *)
@@ -263,6 +270,8 @@ let make_function name params return_type body ?(scope=Userspace) pos = {
   func_body = body;
   func_scope = scope;
   func_pos = pos;
+  tail_call_targets = [];
+  is_tail_callable = false;
 }
 
 let make_program name prog_type functions pos = {
@@ -296,6 +305,8 @@ let make_attributed_function attrs func pos = {
   attr_list = attrs;
   attr_function = func;
   attr_pos = pos;
+  program_type = None;
+  tail_call_dependencies = [];
 }
 
 let make_type_def def = def
@@ -457,6 +468,9 @@ let rec string_of_expr expr =
   | ConfigAccess (config_name, field_name) ->
       Printf.sprintf "%s.%s" config_name field_name
   | FunctionCall (name, args) ->
+      Printf.sprintf "%s(%s)" name 
+        (String.concat ", " (List.map string_of_expr args))
+  | TailCall (name, args) ->
       Printf.sprintf "%s(%s)" name 
         (String.concat ", " (List.map string_of_expr args))
   | ArrayAccess (arr, idx) ->

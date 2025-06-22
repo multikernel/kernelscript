@@ -1128,6 +1128,36 @@ kernel fn convert_ip_to_u32(addr: IpAddress) -> u32 {
       Printf.printf "Function call user type resolution test failed: %s\n" (Printexc.to_string exn);
       fail "Function call user type resolution should succeed"
 
+(** Test tail call type compatibility - different program types should be rejected *)
+let test_tail_call_cross_program_type_restriction _ =
+  (* Test XDP -> TC tail call should fail *)
+  let source_code = {|
+    @tc fn tc_drop_handler(ctx: TcContext) -> TcAction {
+      return 1  // TC_ACT_SHOT
+    }
+
+    @xdp fn xdp_filter(ctx: XdpContext) -> XdpAction {
+      // INVALID: @xdp trying to tail call to @tc function
+      return tc_drop_handler(ctx)
+    }
+
+    fn main() -> i32 {
+      return 0
+    }
+  |} in
+  
+  let ast = parse_string source_code in
+  
+  (* This should fail with incompatible program type error *)
+  (try
+     let _ = type_check_and_annotate_ast ast in
+     failwith "Expected type checking to fail for cross-program-type tail call"
+   with
+   | Type_error (msg, _) ->
+               check bool "Error should mention incompatible program type" 
+              true (contains_substr msg "incompatible program type")
+   | _ -> failwith "Expected TypeError for cross-program-type tail call")
+
 let type_checker_tests = [
   "type_unification", `Quick, test_type_unification;
   "basic_type_inference", `Quick, test_basic_type_inference;
@@ -1164,6 +1194,7 @@ let type_checker_tests = [
   "multiple_kernel_function_calls", `Quick, test_multiple_kernel_function_calls;
   "kernel_to_kernel_function_calls", `Quick, test_kernel_to_kernel_function_calls;
   "function_call_user_type_resolution", `Quick, test_function_call_user_type_resolution;
+  "tail_call_cross_program_type_restriction", `Quick, test_tail_call_cross_program_type_restriction;
 ]
 
 let () =

@@ -202,6 +202,10 @@ let _test_cfg_construction _ =
     visibility = Public;
     is_main = true;
     func_pos = make_test_ir_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let cfg = CFG.build_cfg test_function in
@@ -243,6 +247,10 @@ let _test_function_with_return _ =
     visibility = Public;
     is_main = false;
     func_pos = make_test_ir_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let return_info = analyze_return_paths test_function in
@@ -274,6 +282,10 @@ let _test_loop_termination_verification _ =
     visibility = Public;
     is_main = false;
     func_pos = make_test_ir_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   check bool "Bounded loop should be verified as terminating" true
@@ -305,6 +317,10 @@ let _test_complete_statement_processing _ =
     visibility = Public;
     is_main = true;
     func_pos = make_test_ir_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let result = StatementProcessor.process_statements test_function in
@@ -338,6 +354,10 @@ let _test_analyze_ir_function _ =
     visibility = Public;
     is_main = false;
     func_pos = make_test_ir_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let (optimized_func, warnings) = analyze_ir_function test_function in
@@ -385,6 +405,10 @@ let _test_analysis_report_generation _ =
     visibility = Public;
     is_main = false;
     func_pos = make_test_ir_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let report = generate_analysis_report test_function in
@@ -499,6 +523,10 @@ let test_data_flow_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let data_flow = analyze_data_flow test_function in
     check bool "data flow analysis" true (List.length data_flow.definitions > 0);
@@ -538,6 +566,10 @@ let test_variable_liveness_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let liveness = analyze_variable_liveness test_function in
     check bool "liveness analysis" true (List.length liveness.live_variables > 0);
@@ -579,6 +611,10 @@ let test_loop_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let loop_info = analyze_loops test_function in
     check bool "loop analysis" true (List.length loop_info.loops > 0);
@@ -612,6 +648,10 @@ let test_function_call_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let call_graph = build_call_graph test_function in
     check bool "call graph built" true (List.length call_graph.nodes > 0);
@@ -657,6 +697,10 @@ let test_memory_access_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let memory_info = analyze_memory_access test_function in
     check bool "memory access analysis" true (List.length memory_info.memory_accesses > 0);
@@ -693,6 +737,10 @@ let test_optimization_opportunities () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let optimizations = find_optimization_opportunities test_function in
     check bool "optimization analysis" true (List.length optimizations > 0);
@@ -730,6 +778,10 @@ let test_safety_violations_detection () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let safety_info = analyze_safety_violations test_function in
     check bool "safety violations detected" true (List.length safety_info.violations > 0);
@@ -773,6 +825,10 @@ let test_complexity_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let complexity = analyze_complexity test_function in
     check bool "complexity analysis" true (complexity.time_complexity >= 2);  (* O(n^2) due to nested loops *)
@@ -847,6 +903,10 @@ let test_comprehensive_ir_analysis () =
       visibility = Public;
       is_main = true;
       func_pos = make_test_ir_position;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     } in
     let analysis = comprehensive_analysis test_function in
     

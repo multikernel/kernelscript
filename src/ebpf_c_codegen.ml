@@ -232,6 +232,9 @@ let rec collect_string_sizes_from_instr ir_instr =
   | IRDefer defer_instructions ->
       List.fold_left (fun acc instr -> 
         acc @ (collect_string_sizes_from_instr instr)) [] defer_instructions
+  | IRTailCall (_, args, _) ->
+      List.fold_left (fun acc arg ->
+        acc @ (collect_string_sizes_from_value arg)) [] args
 
 let collect_string_sizes_from_function ir_func =
   List.fold_left (fun acc block ->
@@ -403,7 +406,7 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     | IRReturn (Some ret_val) -> collect_from_value ret_val
     | IRIf (cond_val, then_instrs, else_instrs_opt) ->
         collect_from_value cond_val;
-        List.iter collect_from_instr then_instrs;
+                  List.iter collect_from_instr then_instrs;
         (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
     | _ -> ()
   in
@@ -1101,6 +1104,12 @@ let rec generate_c_instruction ctx ir_instr =
            emit_line ctx (sprintf "%s = %s(%s);" ret_str actual_name args_str)
        | None ->
            emit_line ctx (sprintf "%s(%s);" actual_name args_str))
+           
+  | IRTailCall (name, _args, index) ->
+      (* Generate bpf_tail_call instruction *)
+      emit_line ctx (sprintf "/* Tail call to %s (index %d) */" name index);
+      emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, %d);" index);
+      emit_line ctx "/* If tail call fails, continue execution */"
 
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
       generate_map_load ctx map_val key_val dest_val load_type
@@ -1527,6 +1536,8 @@ let collect_registers_in_function ir_func =
         ()  (* Throw statements don't contain values to collect *)
     | IRDefer defer_instructions ->
         List.iter collect_in_instr defer_instructions
+    | IRTailCall (_, args, _) ->
+        List.iter collect_in_value args
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -1726,116 +1737,12 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   (* Return generated code *)
   String.concat "\n" (List.rev ctx.output_lines)
 
-(** Enhanced multi-program compilation entry point with analysis *)
 
-let compile_multi_to_c_with_analysis ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program 
-                                   (multi_prog_analysis: Multi_program_analyzer.multi_program_analysis) 
-                                   (resource_plan: Multi_program_ir_optimizer.resource_plan)
-                                   (_optimization_results: Multi_program_ir_optimizer.optimization_strategy list) =
-  let ctx = create_c_context () in
-  
-  (* Initialize modular context code generators *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  
-  (* Add enhanced includes for multi-program systems *)
-  let program_types = List.map (fun prog -> prog.program_type) ir_multi_program.programs in
-  generate_includes ctx ~program_types ();
-  
-  (* Generate string type definitions *)
-  generate_string_typedefs ctx ir_multi_program;
-  
-  (* Store variable type aliases for later lookup *)
-  ctx.variable_type_aliases <- variable_type_aliases;
-  
-  (* Generate enum definitions *)
-  generate_enum_definitions ctx ir_multi_program;
-  
-  (* Generate declarations in original AST order to preserve source order *)
-  generate_declarations_in_source_order ctx ir_multi_program type_aliases;
-  
-  emit_line ctx "/* Enhanced Multi-Program eBPF System */";
-  emit_line ctx (sprintf "/* Programs: %d, Global Maps: %d */" 
-    (List.length ir_multi_program.programs) 
-    (List.length ir_multi_program.global_maps));
-  
-  (* Add multi-program analysis comments *)
-  if List.length multi_prog_analysis.potential_conflicts > 0 then (
-    emit_line ctx "/* ⚠️  Multi-Program Conflicts Detected: */";
-    List.iter (fun conflict ->
-      emit_line ctx (sprintf "/*   - %s */" conflict)
-    ) multi_prog_analysis.potential_conflicts;
-  );
-  
-  if List.length multi_prog_analysis.optimization_opportunities > 0 then (
-    emit_line ctx "/* 💡 Multi-Program Optimizations Applied: */";
-    List.iter (fun opt ->
-      emit_line ctx (sprintf "/*   - %s */" opt)
-    ) multi_prog_analysis.optimization_opportunities;
-  );
-  
-  emit_line ctx (sprintf "/* Resource Plan: %d instructions, %d bytes stack */"
-    resource_plan.estimated_instructions resource_plan.estimated_stack);
-  emit_blank_line ctx;
-  
-  (* Generate global map definitions with analysis info *)
-  List.iter (fun map_def ->
-    (* Add analysis comments for maps *)
-    let accessing_programs = 
-      List.fold_left (fun acc (map_name, programs) ->
-        if map_name = map_def.map_name then
-          programs @ acc
-        else acc
-      ) [] multi_prog_analysis.map_usage_patterns
-    in
-    if List.length accessing_programs > 1 then (
-      emit_line ctx (sprintf "/* Map '%s' shared by programs: %s */" 
-        map_def.map_name 
-        (String.concat ", " accessing_programs));
-    );
-    generate_map_definition ctx map_def
-  ) ir_multi_program.global_maps;
-  
-  (* With attributed functions, all maps are global - no program-scoped maps *)
-  
-  (* First pass: collect all callbacks *)
-  let temp_ctx = create_c_context () in
-  List.iter (fun ir_prog ->
-    (* With attributed functions, each program has only its entry function *)
-    generate_c_function temp_ctx ir_prog.entry_function
-  ) ir_multi_program.programs;
-  
-  (* Emit collected callbacks *)
-  if temp_ctx.pending_callbacks <> [] then (
-    List.iter (emit_line ctx) temp_ctx.pending_callbacks;
-    emit_blank_line ctx;
-  );
-  
-  (* Generate kernel functions once - they are shared across all programs *)
-  List.iter (generate_c_function ctx) ir_multi_program.kernel_functions;
-
-  (* Generate attributed functions (each program has only the entry function) *)
-  List.iter (fun ir_prog ->
-    (* With attributed functions, each program contains only its entry function - no nested functions *)
-    generate_c_function ctx ir_prog.entry_function
-  ) ir_multi_program.programs;
-  
-  (* Add license (required for eBPF) *)
-  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
-  
-  (* Return generated code *)
-  String.concat "\n" (List.rev ctx.output_lines)
 
 (** Main compilation entry point *)
 
 let compile_to_c ?config_declarations ir_program =
   let c_code = generate_c_program ?config_declarations ir_program in
-  c_code
-
-(** Multi-program compilation entry point *)
-
-let compile_multi_to_c ?config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
-  let c_code = generate_c_multi_program ?config_declarations ~type_aliases ~variable_type_aliases ir_multi_program in
   c_code
 
 (** Helper function to write C code to file *)
@@ -1860,4 +1767,144 @@ let compile_c_to_ebpf c_filename obj_filename =
 (** Generate config access expression *)
 let generate_config_access _ctx config_name field_name =
   sprintf "get_%s_config()->%s" config_name field_name
+
+(** Generate ProgArray map for tail calls *)
+let generate_prog_array_map ctx prog_array_size =
+  if prog_array_size > 0 then (
+    emit_line ctx "/* eBPF program array for tail calls */";
+    emit_line ctx "struct {";
+    increase_indent ctx;
+    emit_line ctx "__uint(type, BPF_MAP_TYPE_PROG_ARRAY);";
+    emit_line ctx (sprintf "__uint(max_entries, %d);" prog_array_size);
+    emit_line ctx "__uint(key_size, sizeof(__u32));";
+    emit_line ctx "__uint(value_size, sizeof(__u32));";
+    decrease_indent ctx;
+    emit_line ctx "} prog_array SEC(\".maps\");";
+    emit_blank_line ctx
+  )
+
+(** Compile multi-program IR to eBPF C code with automatic tail call detection *)
+let compile_multi_to_c_with_tail_calls 
+    ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[])
+    (ir_multi_prog : Ir.ir_multi_program) =
+  
+  let ctx = create_c_context () in
+  
+  (* Generate headers and includes *)
+  let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
+  generate_includes ctx ~program_types ();
+  
+  (* Store variable type aliases for later lookup *)
+  ctx.variable_type_aliases <- variable_type_aliases;
+  
+  (* Generate string type definitions *)
+  generate_string_typedefs ctx ir_multi_prog;
+  
+  (* Generate enum definitions *)
+  generate_enum_definitions ctx ir_multi_prog;
+  
+  (* Generate declarations in original AST order to preserve source order *)
+  generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
+  
+  (* Generate struct definitions *)
+  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
+  generate_struct_definitions ctx struct_defs;
+  
+  (* Generate kernel functions once - they are shared across all programs *)
+  List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
+
+  (* Generate C functions for each eBPF program and check for tail calls *)
+  let temp_ctx = create_c_context () in
+  List.iter (fun ir_prog ->
+    generate_c_function temp_ctx ir_prog.entry_function
+  ) ir_multi_prog.programs;
+  
+  (* Check if the generated code contains bpf_tail_call and extract target information *)
+  let generated_code = String.concat "\n" (List.rev temp_ctx.output_lines) in
+  let has_tail_calls = try 
+    let _ = Str.search_forward (Str.regexp "bpf_tail_call") generated_code 0 in true 
+  with Not_found -> false in
+  
+  (* Extract tail call targets from comments in generated code *)
+  let tail_call_targets = if has_tail_calls then
+    let lines = String.split_on_char '\n' generated_code in
+    List.fold_left (fun acc line ->
+      (* Look for comments like "/* Tail call to drop_handler (index 0) */" *)
+      if String.contains line '/' && String.contains line '*' then
+        let comment_regex = Str.regexp {|/\* Tail call to \([a-zA-Z_][a-zA-Z0-9_]*\) (index \([0-9]+\)) \*/|} in
+        try
+          let _ = Str.search_forward comment_regex line 0 in
+          let target_name = Str.matched_group 1 line in
+          let index = int_of_string (Str.matched_group 2 line) in
+          (target_name, index) :: acc
+        with Not_found -> acc
+      else acc
+    ) [] lines
+  else [] in
+  
+  (* Generate ProgArray if tail calls detected in the generated code *)
+  let max_index = if List.length tail_call_targets > 0 then
+    List.fold_left (fun max_idx (_, idx) -> max max_idx idx) 0 tail_call_targets + 1
+  else if has_tail_calls then 1 else 0 in
+  
+  if max_index > 0 then
+    generate_prog_array_map ctx max_index;
+  
+  (* Generate global map definitions *)
+  List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
+  
+  (* Generate config maps *)
+  List.iter (generate_config_map_definition ctx) config_declarations;
+  
+  (* Now generate the actual functions *)
+  List.iter (fun ir_prog ->
+    generate_c_function ctx ir_prog.entry_function
+  ) ir_multi_prog.programs;
+  
+  (* Emit pending callbacks *)
+  List.rev ctx.pending_callbacks |> List.iter (emit_line ctx);
+  
+  (* Add license (required for eBPF) *)
+  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
+  
+  (* Create tail call analysis result with extracted targets *)
+  let index_mapping = Hashtbl.create 16 in
+  List.iter (fun (target_name, index) ->
+    Hashtbl.add index_mapping target_name index
+  ) tail_call_targets;
+  
+  let tail_call_analysis = {
+    Tail_call_analyzer.dependencies = [];
+    prog_array_size = max_index;
+    index_mapping = index_mapping;
+    errors = [];
+  } in
+  
+  (String.concat "\n" (List.rev ctx.output_lines), tail_call_analysis)
+
+(** Multi-program compilation entry point with automatic tail call handling *)
+
+let compile_multi_to_c ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+  (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
+  let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
+    ~config_declarations ~type_aliases ~variable_type_aliases ir_multi_program in
+  
+  (* Print tail call analysis results *)
+  Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
+    (List.length tail_call_analysis.dependencies) tail_call_analysis.prog_array_size;
+  
+  c_code
+
+(** Multi-program compilation entry point that returns both code and tail call analysis *)
+
+let compile_multi_to_c_with_analysis ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+  (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
+  let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
+    ~config_declarations ~type_aliases ~variable_type_aliases ir_multi_program in
+  
+  (* Print tail call analysis results *)
+  Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
+    (List.length tail_call_analysis.dependencies) tail_call_analysis.prog_array_size;
+  
+  (c_code, tail_call_analysis)
 

@@ -66,6 +66,8 @@ let create_test_function name params return_type =
     func_body = [];
     func_scope = Ast.Userspace;
     func_pos = dummy_pos;
+    tail_call_targets = [];
+    is_tail_callable = false;
   }
 
 let create_test_program name functions =
@@ -98,6 +100,8 @@ let lookup_function table func_name =
         func_body = [];
         func_scope = Ast.Userspace;
         func_pos = {filename = "test.ks"; line = 1; column = 1};
+        tail_call_targets = [];
+        is_tail_callable = false;
       }
   | _ -> None
 

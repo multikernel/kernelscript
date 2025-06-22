@@ -244,6 +244,11 @@
  (modules test_function_validation)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_tail_call)
+ (modules test_tail_call)
+ (libraries kernelscript alcotest))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -423,6 +428,10 @@
  (alias runtest_integer_literal_codegen)
  (action (run ./test_integer_literal_codegen.exe)))
 
+(rule
+ (alias runtest_tail_call)
+ (action (run ./test_tail_call.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -498,7 +507,8 @@
   test_evaluator.exe
   test_safety_checker.exe
   test_program_ref.exe
-  test_return_path_analysis.exe)
+  test_return_path_analysis.exe
+  test_tail_call.exe)
  (action
   (progn
    (run ./test_lexer.exe)
@@ -525,7 +535,8 @@
    (run ./test_evaluator.exe)
    (run ./test_safety_checker.exe)
    (run ./test_program_ref.exe)
-   (run ./test_return_path_analysis.exe))))
+   (run ./test_return_path_analysis.exe)
+   (run ./test_tail_call.exe))))
 
 (rule
  (alias ir-tests)

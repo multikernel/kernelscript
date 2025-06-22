@@ -138,8 +138,6 @@ let compile opts source_file =
     ) ast in
     Printf.printf "📋 Found %d config declarations\n" (List.length config_declarations);
     
-
-    
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := TypeChecking;
     Printf.printf "Phase 4: %s\n" (string_of_phase !current_phase);
@@ -155,8 +153,8 @@ let compile opts source_file =
     (* Phase 6: Advanced multi-target code generation *)
     current_phase := CodeGeneration;
     Printf.printf "Phase 6: %s\n" (string_of_phase !current_phase);
-    let resource_plan = plan_system_resources optimized_ir.programs multi_prog_analysis in
-    let optimization_strategies = generate_optimization_strategies multi_prog_analysis in
+    let _resource_plan = plan_system_resources optimized_ir.programs multi_prog_analysis in
+    let _optimization_strategies = generate_optimization_strategies multi_prog_analysis in
     
     (* Extract type aliases from original AST *)
     let type_aliases = List.filter_map (function
@@ -195,13 +193,9 @@ let compile opts source_file =
     in
     let variable_type_aliases = extract_variable_declarations ast in
     
-    (* Generate eBPF C code using enhanced existing generator *)
-    let ebpf_c_code = 
-      if List.length config_declarations > 0 then
-        Ebpf_c_codegen.compile_multi_to_c ~config_declarations ~type_aliases ~variable_type_aliases optimized_ir
-      else
-        Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-          ~type_aliases ~variable_type_aliases optimized_ir multi_prog_analysis resource_plan optimization_strategies in
+    (* Generate eBPF C code (with automatic tail call detection) *)
+    let (ebpf_c_code, tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
+      ~config_declarations ~type_aliases ~variable_type_aliases optimized_ir in
       
     (* Determine output directory *)
     let base_name = Filename.remove_extension (Filename.basename source_file) in
@@ -210,9 +204,9 @@ let compile opts source_file =
       | None -> base_name
     in
     
-    (* Generate userspace coordinator directly to output directory *)
+    (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases optimized_ir ~output_dir source_file;
+      ~config_declarations ~type_aliases ~tail_call_analysis optimized_ir ~output_dir source_file;
     
     (* Read the generated userspace code for preview *)
     let userspace_file = output_dir ^ "/" ^ base_name ^ ".c" in

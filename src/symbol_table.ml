@@ -563,6 +563,14 @@ and process_expression table expr =
             | None -> symbol_error ("Undefined function: " ^ name) expr.expr_pos));
       List.iter (process_expression table) args
       
+  | TailCall (name, args) ->
+      (* Validate tail call target exists (similar to function call) *)
+      (match lookup_symbol table name with
+       | Some { kind = Function _; _ } -> ()
+       | Some _ -> symbol_error (name ^ " is not a function") expr.expr_pos
+       | None -> symbol_error ("Undefined tail call target: " ^ name) expr.expr_pos);
+      List.iter (process_expression table) args
+      
   | ArrayAccess (arr, idx) ->
       process_expression table arr;
       process_expression table idx
@@ -666,6 +674,24 @@ let get_accessible_maps table =
   ) table.global_maps [] in
   
   global_maps
+
+(** Lookup function by name *)
+let lookup_function table func_name =
+  match lookup_symbol table func_name with
+  | Some { kind = Function (param_types, return_type); _ } ->
+      (* Create a function record from the symbol information *)
+      let params = List.mapi (fun i param_type -> ("param" ^ string_of_int i, param_type)) param_types in
+      Some {
+        func_name = func_name;
+        func_params = params;
+        func_return_type = Some return_type;
+        func_body = [];
+        func_scope = Ast.Userspace;
+        func_pos = {filename = ""; line = 1; column = 1};
+        tail_call_targets = [];
+        is_tail_callable = false;
+      }
+  | _ -> None
 
 (** Pretty printing for debugging *)
 let string_of_symbol_kind = function

@@ -721,6 +721,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
        | Some result -> sprintf "%s = %s(%s);" (generate_c_value_from_ir ctx result) actual_name args_str
        | None -> sprintf "%s(%s);" actual_name args_str)
   
+  | IRTailCall (name, _args, _index) ->
+      (* Tail calls are not supported in userspace - this should not happen *)
+      sprintf "/* ERROR: Tail call to %s not supported in userspace */" name
+  
   | IRReturn value_opt ->
       (match value_opt with
        | Some value -> sprintf "return %s;" (generate_c_value_from_ir ctx value)
@@ -1228,8 +1232,88 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   
   String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
 
+(** Generate userspace code with tail call dependency management *)
+let generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code =
+  if all_usage.uses_load then
+    let dep_loading_code = 
+      if tail_call_analysis.Tail_call_analyzer.prog_array_size > 0 then
+        sprintf {|
+    // Load tail call dependencies automatically
+    struct bpf_map *prog_array_map = bpf_object__find_map_by_name(bpf_obj, "prog_array");
+    if (!prog_array_map) {
+        fprintf(stderr, "Failed to find prog_array map\n");
+        return -1;
+    }
+    
+    int prog_array_fd = bpf_map__fd(prog_array_map);
+    if (prog_array_fd < 0) {
+        fprintf(stderr, "Failed to get prog_array map file descriptor\n");
+        return -1;
+    }
+    
+    // Load and register tail call targets
+    %s
+    |}
+        (String.concat "\n    " 
+          (Hashtbl.fold (fun target index acc ->
+            (sprintf {|{
+        struct bpf_program *target_prog = bpf_object__find_program_by_name(bpf_obj, "%s");
+        if (target_prog) {
+            int target_fd = bpf_program__fd(target_prog);
+            if (target_fd >= 0) {
+                __u32 prog_index = %d;
+                if (bpf_map_update_elem(prog_array_fd, &prog_index, &target_fd, BPF_ANY) < 0) {
+                    fprintf(stderr, "Failed to update prog_array for %s\n");
+                }
+            }
+        }
+    }|} target index target) :: acc
+          ) tail_call_analysis.Tail_call_analyzer.index_mapping []))
+      else
+        "" 
+    in
+
+    let combined_setup_code = 
+      if all_setup_code <> "" && dep_loading_code <> "" then
+        all_setup_code ^ "\n" ^ dep_loading_code
+      else if all_setup_code <> "" then
+        all_setup_code
+      else
+        dep_loading_code
+    in
+    
+    sprintf {|int load_bpf_program(const char *program_name) {
+    if (!bpf_obj) {
+        bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
+        if (libbpf_get_error(bpf_obj)) {
+            fprintf(stderr, "Failed to open BPF object\n");
+            return -1;
+        }
+        if (bpf_object__load(bpf_obj)) {
+            fprintf(stderr, "Failed to load BPF object\n");
+            return -1;
+        }
+        %s
+    }
+    
+    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
+    if (!prog) {
+        fprintf(stderr, "Failed to find program '%%s' in BPF object\n", program_name);
+        return -1;
+    }
+    
+    int prog_fd = bpf_program__fd(prog);
+    if (prog_fd < 0) {
+        fprintf(stderr, "Failed to get file descriptor for program '%%s'\n", program_name);
+        return -1;
+    }
+    
+    return prog_fd;
+}|} base_name combined_setup_code
+  else ""
+
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function func in
@@ -1391,36 +1475,7 @@ void cleanup_bpf_maps(void) {
   
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
-    let load_function = if all_usage.uses_load then
-      sprintf {|int load_bpf_program(const char *program_name) {
-    if (!bpf_obj) {
-        bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
-        if (libbpf_get_error(bpf_obj)) {
-            fprintf(stderr, "Failed to open BPF object\\n");
-            return -1;
-        }
-        if (bpf_object__load(bpf_obj)) {
-            fprintf(stderr, "Failed to load BPF object\\n");
-            return -1;
-        }
-        %s
-    }
-    
-    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
-    if (!prog) {
-        fprintf(stderr, "Failed to find program '%%s' in BPF object\\n", program_name);
-        return -1;
-    }
-    
-    int prog_fd = bpf_program__fd(prog);
-    if (prog_fd < 0) {
-        fprintf(stderr, "Failed to get file descriptor for program '%%s'\\n", program_name);
-        return -1;
-    }
-    
-    return prog_fd;
-}|} base_name all_setup_code
-    else "" in
+    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code in
     
     let attach_function = if all_usage.uses_attach then
       {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
@@ -1496,10 +1551,10 @@ void cleanup_bpf_maps(void) {
 |} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases userspace_prog ir_multi_prog.global_maps source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis userspace_prog ir_multi_prog.global_maps source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 

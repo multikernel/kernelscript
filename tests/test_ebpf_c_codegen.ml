@@ -488,6 +488,10 @@ let test_type_alias_struct_ordering () =
       visibility = Kernelscript.Ir.Public;
       is_main = true;
       func_pos = dummy_pos;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     };
     ir_pos = dummy_pos;
   } in
@@ -604,6 +608,10 @@ let test_complete_type_alias_fix_integration () =
       visibility = Kernelscript.Ir.Public;
       is_main = true;
       func_pos = dummy_pos;
+      tail_call_targets = [];
+      tail_call_index_map = Hashtbl.create 16;
+      is_tail_callable = false;
+      func_program_type = None;
     };
     ir_pos = dummy_pos;
   } in

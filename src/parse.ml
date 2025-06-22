@@ -60,6 +60,7 @@ let validate_ast ast =
     | UnaryOp (_, expr) -> validate_expr expr
     | StructLiteral (_, field_assignments) -> 
         List.for_all (fun (_, field_expr) -> validate_expr field_expr) field_assignments
+    | TailCall (_, args) -> List.for_all validate_expr args
   in
   
   let rec validate_stmt stmt =

@@ -46,7 +46,7 @@ let test_all_paths_return () =
   let return_instr = make_simple_instruction (IRReturn (Some const_42)) in
   let entry_block = make_simple_basic_block "entry" [return_instr] in
   
-  let test_function = {
+  let test_function =   {
     func_name = "all_paths_return";
     parameters = [];
     return_type = Some IRU32;
@@ -57,6 +57,10 @@ let test_all_paths_return () =
     visibility = Public;
     is_main = false;
     func_pos = make_test_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
@@ -94,6 +98,10 @@ let test_missing_return_branch () =
     visibility = Public;
     is_main = false;
     func_pos = make_test_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
@@ -116,6 +124,10 @@ let test_no_return () =
     visibility = Public;
     is_main = false;
     func_pos = make_test_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
@@ -166,6 +178,10 @@ let test_multiple_exit_blocks_all_return () =
     visibility = Public;
     is_main = false;
     func_pos = make_test_position;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in

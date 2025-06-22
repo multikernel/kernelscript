@@ -1,10 +1,10 @@
 (library
- (public_name kernelscript)
  (name kernelscript)
- (modules ast lexer parser parse ir type_checker evaluator symbol_table 
-          ir_generator ir_analysis ir_function_system ebpf_c_codegen userspace_codegen 
-          loop_analysis multi_program_analyzer multi_program_ir_optimizer
-          maps safety_checker map_operations map_assignment stdlib builtin_compiler builtin_loader)
+ (modules ast parser lexer parse type_checker symbol_table maps map_assignment 
+          map_operations ir ir_generator ir_analysis loop_analysis ir_function_system
+          multi_program_analyzer multi_program_ir_optimizer ebpf_c_codegen
+          userspace_codegen evaluator safety_checker stdlib builtin_loader
+          builtin_compiler tail_call_analyzer)
  (libraries unix str kernelscript_context))
 
 (executable
@@ -12,8 +12,6 @@
  (name main)
  (modules main)
  (libraries kernelscript unix))
-
-
 
 (rule
  (targets lexer.ml)

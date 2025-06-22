@@ -41,6 +41,10 @@ let create_test_function name is_main params ret_type =
     visibility = Public;
     is_main;
     func_pos = { line = 1; column = 1; filename = "test.ks" };
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   }
 
 let create_test_program () =
@@ -77,6 +81,10 @@ let test_invalid_main_signature _ =
     visibility = Public;
     is_main = true;
     func_pos = { line = 1; column = 1; filename = "test.ks" };
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
   } in
   let sig_info = validate_function_signature invalid_func in
   check bool "Invalid main function should be invalid" true (not sig_info.is_valid);

@@ -1109,7 +1109,153 @@ fn main() -> i32 {
 }
 ```
 
-### 6.4 Control Flow Statements
+### 6.4 eBPF Tail Calls
+
+KernelScript provides transparent eBPF tail call support that automatically converts function calls to tail calls when appropriate. Tail calls enable efficient program chaining without stack overhead and are especially useful for packet processing pipelines.
+
+#### 6.4.1 Automatic Tail Call Detection
+
+The compiler automatically converts function calls to eBPF tail calls when **all** of the following conditions are met:
+
+1. **Return position**: The function call is in a return statement
+2. **Same program type**: Both functions have the same attribute (e.g., both `@xdp`)  
+3. **Compatible signature**: Same context parameter and return type
+4. **eBPF context**: The call is within an attributed eBPF function
+
+```kernelscript
+// eBPF programs that can be tail-called
+@xdp
+fn packet_classifier(ctx: XdpContext) -> XdpAction {
+    let protocol = get_protocol(ctx)  // Regular call (kernel fn)
+    
+    return match protocol {
+        HTTP => process_http(ctx),    // Tail call - meets all conditions
+        DNS => process_dns(ctx),     // Tail call - meets all conditions  
+        ICMP => handle_icmp(ctx),    // Tail call - meets all conditions
+        _ => XDP_DROP                // Regular return
+    }
+}
+
+@xdp  
+fn process_http(ctx: XdpContext) -> XdpAction {
+    // HTTP processing logic
+    if (is_malicious_http(ctx)) {    // Regular call (kernel fn)
+        return XDP_DROP
+    }
+    
+    return filter_by_policy(ctx)     // Tail call - another @xdp function
+}
+
+@xdp
+fn filter_by_policy(ctx: XdpContext) -> XdpAction {
+    // Policy enforcement
+    return XDP_PASS 
+}
+
+// Kernel helper function (not tail-callable)
+kernel fn get_protocol(ctx: XdpContext) -> u16 {
+    // Extract protocol from packet
+    return 6  // TCP
+}
+
+kernel fn is_malicious_http(ctx: XdpContext) -> bool {
+    // Security analysis
+    return false
+}
+```
+
+#### 6.4.2 Tail Call Rules and Restrictions
+
+**✅ Valid Tail Calls:**
+```kernelscript
+@xdp 
+fn main_filter(ctx: XdpContext) -> XdpAction {
+    return specialized_filter(ctx)   // ✅ Same type (@xdp), return position
+}
+
+@tc
+fn ingress_handler(ctx: TcContext) -> TcAction {
+    return security_check(ctx)       // ✅ Same type (@tc), return position  
+}
+```
+
+**❌ Invalid Tail Calls (Become Regular Calls or Errors):**
+```kernelscript
+@xdp
+fn invalid_examples(ctx: XdpContext) -> XdpAction {
+    // ❌ ERROR: Cannot call eBPF program function directly
+    let result = process_http(ctx)
+    
+    // ❌ ERROR: Mixed program types (@xdp calling @tc)  
+    return security_check(ctx)  // security_check is @tc
+    
+    // ✅ Regular call: kernel function
+    validate_packet(ctx)
+    
+    // ✅ Regular call: kernel function  
+    return if (validate_packet(ctx)) { XDP_PASS } else { XDP_DROP }
+}
+```
+
+#### 6.4.3 Implementation Details
+
+**Automatic ProgArray Management:**
+The compiler automatically generates and manages eBPF program arrays behind the scenes:
+
+```kernelscript
+// User writes this clean code:
+@xdp fn classifier(ctx: XdpContext) -> XdpAction {
+    return match get_protocol(ctx) {
+        HTTP => process_http(ctx),
+        DNS => process_dns(ctx),
+        _ => XDP_DROP
+    }
+}
+
+// Compiler generates (hidden from user):
+// 1. Program array for tail call targets
+// 2. Initialization code to populate the array  
+// 3. bpf_tail_call() instead of regular function calls
+// 4. Proper error handling for failed tail calls
+```
+
+**Userspace Transparency:**
+Tail calls are completely transparent to userspace code. Each attributed function remains a complete, independent eBPF program that can be loaded and attached individually:
+
+```kernelscript
+struct Args {
+    interface: str<16>,
+    mode: str<16>,
+}
+
+fn main(args: Args) -> i32 {
+    if (args.mode == "simple") {
+        // Load individual program (no tail calls)
+        let http_handle = load(process_http)
+        attach(http_handle, args.interface, 0)
+    } else {
+        // Load main program (automatically sets up tail calls)
+        let main_handle = load(packet_classifier)  
+        attach(main_handle, args.interface, 0)
+    }
+    
+    return 0
+}
+```
+
+#### 6.4.4 Performance and Limitations
+
+**Benefits:**
+- **Zero stack overhead**: Tail calls replace the current program rather than adding stack frames
+- **Efficient chaining**: Ideal for packet processing pipelines
+- **Resource sharing**: All programs in the chain share the same context and maps
+
+**eBPF Limitations (automatically handled by compiler):**
+- **Maximum chain depth**: eBPF enforces a limit of 33 tail calls per execution
+- **No return to caller**: Tail calls are terminal - they replace the current program
+- **Same context type**: All programs in the chain must accept the same context
+
+### 6.5 Control Flow Statements
 ```kernelscript
 // Conditional statements
 if (condition) {

@@ -328,6 +328,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
       emit_instruction ctx config_access_instr;
       result_val
       
+  | Ast.TailCall (name, _args) ->
+      (* This shouldn't be reached during normal IR generation *)
+      (* Tail calls are handled specifically in return statements *)
+      failwith ("Tail call to " ^ name ^ " should only appear in return statements")
+      
   | Ast.FunctionCall (name, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
       
@@ -673,7 +678,53 @@ let rec lower_statement ctx stmt =
       
   | Ast.Return expr_opt ->
       let return_val = match expr_opt with
-        | Some expr -> Some (lower_expression ctx expr)
+        | Some expr -> 
+            (* Check if this is a tail call in return position *)
+            (match expr.expr_desc with
+             | Ast.TailCall (name, args) ->
+                 (* This is a tail call - generate tail call instruction *)
+                 let arg_vals = List.map (lower_expression ctx) args in
+                 let tail_call_index = 0 in  (* This will be set by tail call analyzer *)
+                 let instr = make_ir_instruction
+                   (IRTailCall (name, arg_vals, tail_call_index))
+                   stmt.stmt_pos
+                 in
+                 emit_instruction ctx instr;
+                 None  (* Tail calls don't return to caller *)
+             | Ast.FunctionCall (name, args) ->
+                 (* Check if this should be a tail call *)
+                 let should_be_tail_call = 
+                   (* Check if we're in an attributed function context *)
+                   match ctx.current_function with
+                   | Some _current_func_name ->
+                       (* Check if target function is an attributed function *)
+                       let target_is_attributed = 
+                         try
+                           let _ = Symbol_table.lookup_function ctx.symbol_table name in
+                           (* Simple heuristic: if function name appears in context, it might be attributed *)
+                           true  (* This will be refined by actual tail call analysis *)
+                         with _ -> false
+                       in
+                       target_is_attributed
+                   | None -> false
+                 in
+                 
+                 if should_be_tail_call then
+                   (* Generate tail call instruction *)
+                   let arg_vals = List.map (lower_expression ctx) args in
+                   let tail_call_index = 0 in  (* This will be set by tail call analyzer *)
+                   let instr = make_ir_instruction
+                     (IRTailCall (name, arg_vals, tail_call_index))
+                     stmt.stmt_pos
+                   in
+                   emit_instruction ctx instr;
+                   None  (* Tail calls don't return to caller *)
+                 else
+                   (* Regular function call in return position *)
+                   Some (lower_expression ctx expr)
+             | _ -> 
+                 (* Regular return expression *)
+                 Some (lower_expression ctx expr))
         | None -> None
       in
       let instr = make_ir_instruction (IRReturn return_val) stmt.stmt_pos in
@@ -1522,11 +1573,8 @@ let validate_multiple_programs prog_defs =
   if List.length names <> List.length unique_names then
     failwith "Multiple programs cannot have the same name";
   
-  (* Check for duplicate program types *)
-  let types = List.map (fun p -> p.prog_type) prog_defs in
-  let unique_types = List.sort_uniq compare types in
-  if List.length types <> List.length unique_types then
-    failwith "Multiple programs cannot have the same type";
+  (* Allow multiple programs of the same type - needed for tail calls *)
+  (* Note: Multiple programs of the same type are valid and needed for tail call chains *)
   
   (* Each attributed function serves as the entry function for its program type *)
   List.iter (fun prog_def ->

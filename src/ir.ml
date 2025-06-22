@@ -215,6 +215,7 @@ and ir_instr_desc =
   | IRAssign of ir_value * ir_expr
   | IRConstAssign of ir_value * ir_expr (* Dedicated const assignment instruction *)
   | IRCall of string * ir_value list * ir_value option
+  | IRTailCall of string * ir_value list * int  (* function_name, args, prog_array_index *)
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
   | IRMapDelete of ir_value * ir_value
@@ -296,6 +297,11 @@ and ir_function = {
   visibility: visibility;
   is_main: bool;
   func_pos: ir_position;
+  (* Tail call dependency tracking *)
+  mutable tail_call_targets: string list; (* Functions this function tail calls *)
+  mutable tail_call_index_map: (string, int) Hashtbl.t; (* Map function name to ProgArray index *)
+  mutable is_tail_callable: bool; (* Whether this function can be tail-called *)
+  mutable func_program_type: program_type option; (* For attributed functions *)
 }
 
 and visibility = Public | Private
@@ -405,6 +411,10 @@ let make_ir_function name params return_type blocks ?(total_stack_usage = 0)
   visibility;
   is_main;
   func_pos = pos;
+  tail_call_targets = [];
+  tail_call_index_map = Hashtbl.create 16;
+  is_tail_callable = false;
+  func_program_type = None;
 }
 
 let make_ir_map_def name key_type value_type map_type max_entries 
@@ -646,10 +656,13 @@ let rec string_of_ir_instruction instr =
   | IRCall (name, args, ret_opt) ->
       let args_str = String.concat ", " (List.map string_of_ir_value args) in
       let ret_str = match ret_opt with
+        | Some ret_val -> string_of_ir_value ret_val ^ " = "
         | None -> ""
-        | Some ret -> Printf.sprintf "%s = " (string_of_ir_value ret)
       in
       Printf.sprintf "%s%s(%s)" ret_str name args_str
+  | IRTailCall (name, args, index) ->
+      let args_str = String.concat ", " (List.map string_of_ir_value args) in
+      Printf.sprintf "bpf_tail_call(ctx, &prog_array, %d) /* %s(%s) */" index name args_str
   | IRMapLoad (map, key, dest, load_type) ->
       let type_str = match load_type with
         | DirectLoad -> "direct_load" | MapLookup -> "lookup" | MapPeek -> "peek"

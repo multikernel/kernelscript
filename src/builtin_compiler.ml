@@ -4,7 +4,6 @@
 *)
 
 open Ast
-open Parse
 
 (** Generate C enum definition from KernelScript enum *)
 let generate_c_enum enum_name enum_values =
@@ -103,7 +102,7 @@ let compile_builtin_file input_file output_file =
       content
     in
     
-    let ast = parse_string content in
+    let ast = Parse.parse_string content in
     
     (* Extract builtin name from filename *)
     let builtin_name = Filename.remove_extension (Filename.basename input_file) in
@@ -122,7 +121,7 @@ let compile_builtin_file input_file output_file =
   | Sys_error msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1
-  | Parse_error (msg, pos) ->
+  | Parse.Parse_error (msg, pos) ->
       Printf.eprintf "Parse error in %s: %s at line %d, column %d\n" 
         input_file msg pos.line pos.column;
       exit 1
@@ -178,7 +177,7 @@ let load_builtin_definitions_for_type_checking builtin_dir program_type =
            close_in ic;
            content
          in
-         Some (parse_string content)
+         Some (Parse.parse_string content)
        with
        | _ -> None)
   | _ -> None 
