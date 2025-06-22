@@ -130,7 +130,7 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops"
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kmod"
 attribute_args = string_literal | identifier
 
 parameter_list = parameter { "," parameter }
@@ -402,25 +402,147 @@ fn egress_monitor(ctx: TcContext) -> TcAction { return TC_ACT_OK }
 @lsm("socket_connect")
 fn security_check(ctx: LsmContext) -> i32 { return 0 }
 
-// Struct_ops example using module-based approach
+// Struct_ops example using attributed struct approach
 @struct_ops("tcp_congestion_ops")
-mod my_bbr {
-    fn init(sk: *TcpSock) -> void {
-        // Initialize BBR state
-    }
-    
-    fn cong_avoid(sk: *TcpSock, ack: u32, acked: u32) -> void {
-        // BBR congestion avoidance
-    }
-    
-    fn cong_control(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
-        // BBR control logic
-    }
-    
-    fn set_state(sk: *TcpSock, new_state: u32) -> void {
-        // State transitions
-    }
+struct tcp_congestion_ops {
+    init: fn(sk: *TcpSock) -> void,
+    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void,
+    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void,
+    set_state: fn(sk: *TcpSock, new_state: u32) -> void,
+    name: string,
 }
+
+let my_bbr = tcp_congestion_ops {
+    init: fn(sk: *TcpSock) -> void {
+        // Initialize BBR state
+    },
+    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void {
+        // BBR congestion avoidance
+    },
+    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
+        // BBR control logic
+    },
+    set_state: fn(sk: *TcpSock, new_state: u32) -> void {
+        // State transitions
+    },
+    name: "my_bbr",
+}
+
+### 3.4 Struct_ops and Kernel Module Function Pointers
+
+KernelScript supports both eBPF struct_ops and kernel module function pointer registration through attributed structs.
+
+#### 3.4.1 eBPF Struct_ops
+
+eBPF struct_ops allow implementing kernel interfaces using eBPF programs:
+
+```kernelscript
+// Define the struct_ops type
+@struct_ops("tcp_congestion_ops")
+struct tcp_congestion_ops {
+    init: fn(sk: *TcpSock) -> void,
+    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void,
+    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void,
+    set_state: fn(sk: *TcpSock, new_state: u32) -> void,
+    name: string,
+}
+
+// Initialize shared state before registration
+map<u32, BbrState> connection_state : HashMap(1024)
+
+// Create an instance with function implementations
+let my_bbr = tcp_congestion_ops {
+    init: fn(sk: *TcpSock) -> void {
+        // eBPF constraints: limited stack, restricted helpers
+        let state = BbrState::new()
+        connection_state[sk.id] = state
+    },
+    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void {
+        // eBPF congestion avoidance logic
+        let state = connection_state[sk.id]
+        // ... BBR logic with eBPF constraints
+    },
+    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
+        // eBPF control logic
+    },
+    set_state: fn(sk: *TcpSock, new_state: u32) -> void {
+        // eBPF state transition logic
+    },
+    name: "my_bbr",
+}
+
+// Register the eBPF struct_ops
+register(my_bbr)
+```
+
+#### 3.4.2 Kernel Module Function Pointers
+
+For kernel modules, use the `@kmod` attribute to define function pointer structs:
+
+```kernelscript
+// Define the kernel module function pointer struct
+@kmod("file_operations")
+struct file_operations {
+    open: fn(inode: *Inode, file: *File) -> i32,
+    read: fn(file: *File, buf: *u8, count: usize) -> ssize_t,
+    write: fn(file: *File, buf: *u8, count: usize) -> ssize_t,
+    release: fn(inode: *Inode, file: *File) -> i32,
+}
+
+// Create an instance with full kernel privileges
+let my_fops = file_operations {
+    open: fn(inode: *Inode, file: *File) -> i32 {
+        // Full kernel privileges, unlimited capabilities
+        printk(KERN_INFO, "Device opened")
+        return 0
+    },
+    read: fn(file: *File, buf: *u8, count: usize) -> ssize_t {
+        // Full kernel read implementation
+        if (copy_to_user(buf, kernel_buffer, count) != 0) {
+            return -EFAULT
+        }
+        return count
+    },
+    write: fn(file: *File, buf: *u8, count: usize) -> ssize_t {
+        // Full kernel write implementation
+        if (copy_from_user(kernel_buffer, buf, count) != 0) {
+            return -EFAULT
+        }
+        return count
+    },
+    release: fn(inode: *Inode, file: *File) -> i32 {
+        printk(KERN_INFO, "Device closed")
+        return 0
+    },
+}
+
+// Register the kernel module function pointers
+register(my_fops)
+```
+
+#### 3.4.3 Key Differences
+
+| Aspect | `@struct_ops` (eBPF) | `@kmod` (Kernel Module) |
+|--------|---------------------|------------------------|
+| **Execution Context** | eBPF sandbox with restrictions | Full kernel privileges |
+| **Stack Size** | Limited (512 bytes) | Unlimited |
+| **Function Calls** | Restricted to eBPF helpers | All kernel functions |
+| **Compilation** | eBPF bytecode | Native machine code |
+| **Verification** | eBPF verifier enforced | Manual verification |
+| **Registration** | `bpf_map__attach_struct_ops()` | Kernel registration APIs |
+
+#### 3.4.4 Registration Function
+
+The `register()` function is type-aware and generates the appropriate registration code:
+
+```kernelscript
+fn register<T>(ops: T) -> Result<Link, Error>
+```
+
+- For `@struct_ops`: Generates libbpf registration using `bpf_map__attach_struct_ops()`
+- For `@kmod`: Generates kernel module registration using appropriate kernel APIs
+- Returns a `Link` handle for later unregistration
+- The compiler determines the registration method based on the struct attribute
 
 // Multi-program userspace coordination
 fn main() -> i32 {
@@ -434,9 +556,8 @@ fn main() -> i32 {
     attach(ingress_handle, "eth0", 0)
     attach(egress_handle, "eth0", 1)  // Egress direction
     
-    // Load and attach struct_ops
-    let bbr_handle = load(my_bbr)
-    attach_struct_ops(bbr_handle)
+    // Register struct_ops
+    register(my_bbr)
     
     print("Multi-program monitoring system with BBR congestion control active")
     
@@ -1642,8 +1763,8 @@ mod program {
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
     pub fn attach(handle: ProgramHandle, target: string, flags: u32) -> u32
     
-    // Attach a struct_ops program to the kernel
-    pub fn attach_struct_ops(handle: ProgramHandle) -> u32
+    // Register struct_ops or kernel module function pointers
+    pub fn register<T>(ops: T) -> Result<Link, Error>
 }
 ```
 
@@ -1940,7 +2061,7 @@ map_attribute = identifier [ "=" literal ]
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops"
+                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kmod"
 attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)
