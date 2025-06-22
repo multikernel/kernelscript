@@ -15,6 +15,7 @@ type type_context = {
   variables: (string, bpf_type) Hashtbl.t;
   functions: (string, bpf_type list * bpf_type) Hashtbl.t;
   function_scopes: (string, Ast.function_scope) Hashtbl.t; (* Track function scopes *)
+  attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
   types: (string, type_def) Hashtbl.t;
   maps: (string, map_declaration) Hashtbl.t;
   configs: (string, config_declaration) Hashtbl.t;
@@ -89,6 +90,7 @@ let create_context symbol_table = {
   variables = Hashtbl.create 32;
   functions = Hashtbl.create 16;
   function_scopes = Hashtbl.create 16;
+  attributed_functions = Hashtbl.create 16;
   types = Hashtbl.create 16;
   maps = Hashtbl.create 16;
   configs = Hashtbl.create 16;
@@ -406,6 +408,10 @@ let rec type_check_function_call ctx name args pos =
   | None ->
       try
         let (expected_params, return_type) = Hashtbl.find ctx.functions name in
+        
+        (* Check attributed function call restrictions - attributed functions cannot be called directly *)
+        if Hashtbl.mem ctx.attributed_functions name then
+          type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Attributed functions (like @xdp, @tc, @kprobe) can only be loaded and attached via the runtime system using load() and attach().") pos;
         
         (* Check kernel/userspace function call restrictions *)
         (try
@@ -1540,6 +1546,9 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
                type_error ("@kprobe attributed function must have signature (ctx: KprobeContext) -> u32") attr_func.attr_pos
          | Some _ -> () (* Other program types - validation can be added later *)
          | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
+        
+        (* Track this as an attributed function that cannot be called directly *)
+        Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ();
         
         (* Set current program type for context *)
         ctx.current_program_type <- prog_type;

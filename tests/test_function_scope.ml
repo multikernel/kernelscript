@@ -503,6 +503,115 @@ let test_no_duplicate_kernel_functions () =
   check bool "xdp_filter contains shared_validation call" true (String.contains ebpf_code 's' && String.contains ebpf_code 'h');
   check bool "tc_filter contains shared_logging call" true (String.contains ebpf_code 'l' && String.contains ebpf_code 'o')
 
+(** Test 13: Attributed functions cannot be called from userspace *)
+let test_attributed_function_userspace_restriction () =
+  let source = {|
+    @xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+      return 2
+    }
+    
+    fn main() -> i32 {
+      let dummy_ctx: XdpContext = null
+      let result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
+      return result
+    }
+  |} in
+  
+  let test_fn () =
+    let ast = Kernelscript.Parse.parse_string source in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
+  in
+  
+  try
+    test_fn ();
+    check bool "attributed function call from userspace should fail" false true
+  with
+  | Kernelscript.Type_checker.Type_error (msg, _) ->
+      Printf.printf "Type error caught: %s\n" msg;
+      check bool "correctly rejected attributed function call from userspace" true true
+  | Failure msg ->
+      Printf.printf "Failure caught: %s\n" msg;
+      check bool "correctly rejected attributed function call from userspace" true true
+  | _ ->
+      check bool "unexpected error type for attributed/userspace restriction" false true
+
+(** Test 14: Attributed functions cannot be called from kernel functions *)
+let test_attributed_function_kernel_restriction () =
+  let source = {|
+    @xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+      return 2
+    }
+    
+    kernel fn helper() -> u32 {
+      let dummy_ctx: XdpContext = null
+      let result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
+      return result
+    }
+    
+    fn main() -> i32 {
+      return 0
+    }
+  |} in
+  
+  let test_fn () =
+    let ast = Kernelscript.Parse.parse_string source in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
+  in
+  
+  try
+    test_fn ();
+    check bool "attributed function call from kernel function should fail" false true
+  with
+  | Kernelscript.Type_checker.Type_error (msg, _) ->
+      Printf.printf "Type error caught: %s\n" msg;
+      check bool "correctly rejected attributed function call from kernel function" true true
+  | Failure msg ->
+      Printf.printf "Failure caught: %s\n" msg;
+      check bool "correctly rejected attributed function call from kernel function" true true
+  | _ ->
+      check bool "unexpected error type for attributed/kernel restriction" false true
+
+(** Test 15: Attributed functions cannot be called from other attributed functions *)
+let test_attributed_function_cross_call_restriction () =
+  let source = {|
+    @xdp fn helper_filter(ctx: XdpContext) -> XdpAction {
+      return 2
+    }
+    
+    @tc fn main_filter(ctx: TcContext) -> TcAction {
+      let result = helper_filter(ctx)  // This should fail
+      return result
+    }
+    
+    fn main() -> i32 {
+      return 0
+    }
+  |} in
+  
+  let test_fn () =
+    let ast = Kernelscript.Parse.parse_string source in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
+  in
+  
+  try
+    test_fn ();
+    check bool "attributed function call from other attributed function should fail" false true
+  with
+  | Kernelscript.Type_checker.Type_error (msg, _) ->
+      Printf.printf "Type error caught: %s\n" msg;
+      check bool "correctly rejected cross-attributed function call" true true
+  | Failure msg ->
+      Printf.printf "Failure caught: %s\n" msg;
+      check bool "correctly rejected cross-attributed function call" true true
+  | _ ->
+      check bool "unexpected error type for cross-attributed restriction" false true
+
 let () =
   run "Function Scope Tests" [
     "kernel_function_parsing", [
@@ -540,5 +649,10 @@ let () =
     ];
     "no_duplicate_kernel_functions", [
       test_case "no duplicate kernel functions in generated code" `Quick test_no_duplicate_kernel_functions;
+    ];
+    "attributed_function_restrictions", [
+      test_case "attributed functions cannot be called from userspace" `Quick test_attributed_function_userspace_restriction;
+      test_case "attributed functions cannot be called from kernel functions" `Quick test_attributed_function_kernel_restriction;
+      test_case "attributed functions cannot call other attributed functions" `Quick test_attributed_function_cross_call_restriction;
     ];
   ]
