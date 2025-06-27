@@ -58,7 +58,7 @@ let kernelscript_type_to_c_type = function
   | UserType "void" -> "void"
   | _ -> "void *"  (* Fallback for complex types *)
 
-(** Generate function signature for kernel module functions *)
+(** Generate function signature for regular kernel module functions *)
 let generate_function_signature func_def =
   let return_type = match func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
@@ -70,7 +70,19 @@ let generate_function_signature func_def =
   let params_str = if params = [] then "void" else String.concat ", " params in
   sprintf "static %s %s(%s)" return_type func_def.func_name params_str
 
-(** Generate function prototype for kernel module functions *)
+(** Generate function signature for kfunc kernel module functions with proper annotations *)
+let generate_kfunc_signature func_def =
+  let return_type = match func_def.func_return_type with
+    | Some ret_type -> kernelscript_type_to_c_type ret_type
+    | None -> "void"
+  in
+  let params = List.map (fun (param_name, param_type) ->
+    sprintf "%s %s" (kernelscript_type_to_c_type param_type) param_name
+  ) func_def.func_params in
+  let params_str = if params = [] then "void" else String.concat ", " params in
+  sprintf "__bpf_kfunc %s %s(%s)" return_type func_def.func_name params_str
+
+(** Generate function prototype for regular kernel module functions *)
 let generate_function_prototype func_def =
   let return_type = match func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
@@ -81,6 +93,18 @@ let generate_function_prototype func_def =
   ) func_def.func_params in
   let params_str = if params = [] then "void" else String.concat ", " params in
   sprintf "static %s %s(%s);" return_type func_def.func_name params_str
+
+(** Generate function prototype for kfunc kernel module functions with proper annotations *)
+let generate_kfunc_prototype func_def =
+  let return_type = match func_def.func_return_type with
+    | Some ret_type -> kernelscript_type_to_c_type ret_type
+    | None -> "void"
+  in
+  let params = List.map (fun (param_name, param_type) ->
+    sprintf "%s %s" (kernelscript_type_to_c_type param_type) param_name
+  ) func_def.func_params in
+  let params_str = if params = [] then "void" else String.concat ", " params in
+  sprintf "__bpf_kfunc %s %s(%s);" return_type func_def.func_name params_str
 
 (** Generate statement translation *)
 let rec generate_statement_translation stmt =
@@ -166,9 +190,15 @@ and generate_expression_translation expr =
       sprintf "%s[%s]" (generate_expression_translation array) (generate_expression_translation index)
   | _ -> "/* TODO: Implement expression translation */"
 
-(** Generate function implementation for kernel module *)
+(** Generate function implementation for regular kernel module functions *)
 let generate_function_implementation func_def =
   let signature = generate_function_signature func_def in
+  let body = String.concat "\n" (List.map generate_statement_translation func_def.func_body) in
+  sprintf "%s\n{\n%s\n}" signature body
+
+(** Generate function implementation for kfunc kernel module functions *)
+let generate_kfunc_implementation func_def =
+  let signature = generate_kfunc_signature func_def in
   let body = String.concat "\n" (List.map generate_statement_translation func_def.func_body) in
   sprintf "%s\n{\n%s\n}" signature body
 
@@ -209,14 +239,29 @@ MODULE_VERSION("1.0");
 |} context.module_name context.module_name in
 
   (* Generate function prototypes *)
-  let all_functions = context.private_functions @ context.kfunc_functions in
-  let function_prototypes = String.concat "\n" (List.map generate_function_prototype all_functions) in
+  let private_prototypes = String.concat "\n" (List.map generate_function_prototype context.private_functions) in
+  let kfunc_prototypes = String.concat "\n" (List.map generate_kfunc_prototype context.kfunc_functions) in
+  let function_prototypes = 
+    if private_prototypes = "" then kfunc_prototypes
+    else if kfunc_prototypes = "" then private_prototypes
+    else sprintf "%s\n%s" private_prototypes kfunc_prototypes
+  in
   
   (* Generate private function implementations first (so kfuncs can call them) *)
   let private_implementations = String.concat "\n\n" (List.map generate_function_implementation context.private_functions) in
   
   (* Generate kfunc implementations *)
-  let kfunc_implementations = String.concat "\n\n" (List.map generate_function_implementation context.kfunc_functions) in
+  let kfunc_implementations = 
+    if context.kfunc_functions = [] then ""
+    else sprintf {|
+/* Begin kfunc definitions */
+__bpf_kfunc_start_defs();
+
+%s
+
+/* End kfunc definitions */
+__bpf_kfunc_end_defs();
+|} (String.concat "\n\n" (List.map generate_kfunc_implementation context.kfunc_functions)) in
   
   let btf_declarations = String.concat "\n" (List.map generate_btf_info context.kfunc_functions) in
   
@@ -226,15 +271,15 @@ MODULE_VERSION("1.0");
   
   let btf_id_set = sprintf {|
 /* BTF ID set for kfuncs */
-BTF_SET8_START(kfunc_btf_ids)
+BTF_KFUNCS_START(%s_kfunc_btf_ids)
 %s
-BTF_SET8_END(kfunc_btf_ids)
+BTF_KFUNCS_END(%s_kfunc_btf_ids)
 
-static const struct btf_kfunc_id_set kfunc_set = {
+static const struct btf_kfunc_id_set %s_kfunc_set = {
     .owner = THIS_MODULE,
-    .set   = &kfunc_btf_ids,
+    .set   = &%s_kfunc_btf_ids,
 };
-|} kfunc_btf_ids in
+|} context.module_name kfunc_btf_ids context.module_name context.module_name context.module_name in
 
   let init_function = sprintf {|
 static int __init %s_init(void)
@@ -244,7 +289,7 @@ static int __init %s_init(void)
     pr_info("Loading %s kfunc module\n");
     
     /* Register BTF kfunc set */
-    ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &kfunc_set);
+    ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &%s_kfunc_set);
     if (ret < 0) {
         pr_err("Failed to register kfunc set: %%d\n", ret);
         return ret;
@@ -256,13 +301,13 @@ static int __init %s_init(void)
 
 static void __exit %s_exit(void)
 {
-    pr_info("Unloading %s kfunc module\n");
-    /* Cleanup is handled automatically by the kernel */
+    /* BTF kfunc set cleanup is handled automatically by the kernel */
+    pr_info("%s kfunc module unloaded successfully\n");
 }
 
 module_init(%s_init);
 module_exit(%s_exit);
-|} context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name in
+|} context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name in
 
   (* Combine all function implementations *)
   let all_implementations = if private_implementations = "" then
