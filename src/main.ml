@@ -17,6 +17,7 @@ type options = {
   verbose: bool;
   generate_makefile: bool;
   builtin_path: string option;
+  btf_vmlinux_path: string option;
 }
 
 let default_opts = {
@@ -25,6 +26,7 @@ let default_opts = {
   verbose = false;
   generate_makefile = true;
   builtin_path = None;
+  btf_vmlinux_path = None;
 }
 
 (** Argument parsing *)
@@ -36,16 +38,18 @@ let rec parse_args_aux opts = function
   | "--verbose" :: rest -> parse_args_aux { opts with verbose = true } rest
   | "--no-makefile" :: rest -> parse_args_aux { opts with generate_makefile = false } rest
   | "--builtin-path" :: path :: rest -> parse_args_aux { opts with builtin_path = Some path } rest
+  | "--btf-vmlinux-path" :: path :: rest -> parse_args_aux { opts with btf_vmlinux_path = Some path } rest
   | arg :: rest when not (String.starts_with ~prefix:"-" arg) ->
       parse_args_aux { opts with input_file = arg } rest
   | unknown :: _ ->
       printf "Unknown option: %s\n" unknown;
       printf "Usage: kernelscript [options] <input_file>\n";
       printf "Options:\n";
-      printf "  -o, --output <dir>     Specify output directory\n";
-      printf "  -v, --verbose          Enable verbose output\n";
-      printf "  --no-makefile          Don't generate Makefile\n";
-      printf "  --builtin-path <path>  Specify path to builtin KernelScript files\n";
+      printf "  -o, --output <dir>            Specify output directory\n";
+      printf "  -v, --verbose                 Enable verbose output\n";
+      printf "  --no-makefile                 Don't generate Makefile\n";
+      printf "  --builtin-path <path>         Specify path to builtin KernelScript files\n";
+      printf "  --btf-vmlinux-path <path>     Specify path to BTF vmlinux file for kernel module compilation\n";
       exit 1
 
 let parse_args () =
@@ -330,14 +334,41 @@ let compile opts source_file =
     
     (* Generate Makefile *)
     let kmod_targets = match kernel_module_code with
-      | Some _ -> Printf.sprintf {|
+      | Some _ -> 
+        let btf_vmlinux_make_var = match opts.btf_vmlinux_path with
+          | Some path -> Printf.sprintf " BTF_VMLINUX_PATH=%s" path
+          | None -> ""
+        in
+        let btf_vmlinux_cflags = match opts.btf_vmlinux_path with
+          | Some path -> Printf.sprintf " -DBTF_VMLINUX_PATH=\\\"%s\\\"" path
+          | None -> ""
+        in
+        let btf_post_process = match opts.btf_vmlinux_path with
+          | Some path -> Printf.sprintf {|
+	@echo "Adding BTF information using custom vmlinux..."
+	@if command -v pahole >/dev/null 2>&1; then \
+		pahole -J --btf_base %s $@; \
+		echo "BTF information added successfully"; \
+	else \
+		echo "Warning: pahole not found, BTF information not added"; \
+	fi
+	@RESOLVE_BTFIDS="/lib/modules/$(shell uname -r)/build/tools/bpf/resolve_btfids/resolve_btfids"; \
+	if [ -f "$$RESOLVE_BTFIDS" ]; then \
+		$$RESOLVE_BTFIDS -b %s $@; \
+		echo "BTF IDs resolved successfully"; \
+	else \
+		echo "Warning: resolve_btfids not found at $$RESOLVE_BTFIDS, BTF IDs not resolved"; \
+	fi|} path path
+          | None -> ""
+        in
+        Printf.sprintf {|
 # Kernel module targets
 KMOD_SRC = %s.mod.c
 KMOD_OBJ = %s.mod.ko
 
 # Build kernel module
 $(KMOD_OBJ): $(KMOD_SRC)
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules%s%s
 
 # Clean kernel module
 clean-kmod:
@@ -353,7 +384,10 @@ unload-kmod:
 
 # Kernel module Makefile for external build
 obj-m := %s.mod.o
-|} base_name base_name base_name base_name
+
+# Enable debug info for BTF generation
+KBUILD_CFLAGS += -g -O2%s
+|} base_name base_name btf_vmlinux_make_var btf_post_process base_name base_name btf_vmlinux_cflags
       | None -> ""
     in
     

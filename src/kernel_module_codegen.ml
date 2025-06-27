@@ -301,7 +301,7 @@ static int __init %s_init(void)
 
 static void __exit %s_exit(void)
 {
-    /* BTF kfunc set cleanup is handled automatically by the kernel */
+    /* Cleanup is handled automatically by the kernel during module unload */
     pr_info("%s kfunc module unloaded successfully\n");
 }
 
@@ -318,14 +318,13 @@ module_exit(%s_exit);
     sprintf "%s\n\n%s" private_implementations kfunc_implementations
   in
   
-  sprintf "%s\n/* Function prototypes */\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n%s" 
+  sprintf "%s\n/* Function prototypes */\n%s\n\n%s\n\n%s\n\n%s\n\n%s" 
     header 
     function_prototypes
     btf_declarations 
     all_implementations 
     btf_id_set 
     init_function
-    ""
 
 (** Extract kfunc functions from AST *)
 let extract_kfunc_functions ast =
