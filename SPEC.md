@@ -34,7 +34,7 @@ map<IpAddress, PacketStats> flows : HashMap(1024)
 ### 1.3 Intuitive Scoping Model
 KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 
-- **`kernel fn` functions**: Kernel-shared functions - accessible by all eBPF programs, compile to eBPF bytecode
+- **`@helper` functions**: Kernel-shared functions - accessible by all eBPF programs, compile to eBPF bytecode
 - **Attributed functions** (e.g., `@xdp`, `@tc`): eBPF program entry points - compile to eBPF bytecode
 - **Regular functions**: User space - functions and data structures compile to native executable
 - **Maps and global configs**: Shared resources accessible from both kernel and user space
@@ -46,11 +46,13 @@ config system { debug: bool = false }
 map<u32, u64> counters : Array(256)
 
 // Kernel-shared functions (accessible by all eBPF programs)
-kernel fn update_counters(index: u32) {
+@helper
+fn update_counters(index: u32) {
     counters[index] += 1
 }
 
-kernel fn should_log() -> bool {
+@helper
+fn should_log() -> bool {
     return system.debug
 }
 
@@ -97,7 +99,7 @@ for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
 as          is          try         catch       throw       defer       go
-delete      kernel
+delete
 ```
 
 ### 2.2 Identifiers
@@ -130,7 +132,7 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kmod" | "kfunc" | "private"
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kmod" | "kfunc" | "private" | "helper"
 attribute_args = string_literal | identifier
 
 parameter_list = parameter { "," parameter }
@@ -219,7 +221,8 @@ struct Args {
 }
 
 // Kernel-shared functions (accessible by all eBPF programs)
-kernel fn update_stats(ctx: XdpContext) {
+@helper
+fn update_stats(ctx: XdpContext) {
     let key = ctx.hash() % 1024
     global_stats[key].packets += 1
 }
@@ -567,7 +570,7 @@ fn data_processor(ctx: XdpContext) -> XdpAction {
 
 #### 3.4.4 kfunc vs Other Function Types
 
-| Aspect | `@kfunc` | `kernel fn` | `@xdp/@tc/etc` | Regular `fn` |
+| Aspect | `@kfunc` | `@helper` | `@xdp/@tc/etc` | Regular `fn` |
 |--------|----------|-------------|----------------|--------------|
 | **Execution Context** | Kernel space (full privileges) | eBPF sandbox | eBPF sandbox | Userspace |
 | **Compilation Target** | Kernel module | eBPF bytecode | eBPF bytecode | Native executable |
@@ -649,11 +652,122 @@ fn advanced_security_monitor(ctx: LsmContext) -> i32 {
 }
 ```
 
-### 3.5 Private Kernel Module Functions (@private)
+### 3.5 Helper Functions (@helper)
+
+KernelScript supports kernel-shared helper functions using the `@helper` attribute. These functions compile to eBPF bytecode and are shared across all eBPF programs within the same compilation unit, providing a way to reuse common logic without duplicating code.
+
+#### 3.5.1 @helper Declaration and Usage
+
+Helper functions are declared using the `@helper` attribute and can be called from any eBPF program:
+
+```kernelscript
+// Shared helper functions - accessible by all eBPF programs
+@helper
+fn validate_packet_size(size: u32) -> bool {
+    return size >= 64 && size <= 1500
+}
+
+@helper
+fn calculate_hash(src_ip: u32, dst_ip: u32) -> u32 {
+    return src_ip ^ dst_ip ^ (src_ip >> 16) ^ (dst_ip >> 16)
+}
+
+@helper
+fn update_packet_stats(proto: u8, size: u32) {
+    let key = proto as u32
+    if (packet_stats.contains_key(key)) {
+        packet_stats[key].count += 1
+        packet_stats[key].total_bytes += size
+    }
+}
+
+// eBPF programs can call helper functions
+@xdp
+fn packet_filter(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()
+    
+    // Call shared helper
+    if (!validate_packet_size(packet.len)) {
+        return XDP_DROP
+    }
+    
+    // Call another helper
+    update_packet_stats(packet.protocol, packet.len)
+    
+    return XDP_PASS
+}
+
+@tc
+fn traffic_shaper(ctx: TcContext) -> TcAction {
+    let packet = ctx.packet()
+    
+    // Reuse the same helpers
+    if (!validate_packet_size(packet.len)) {
+        return TC_ACT_SHOT
+    }
+    
+    let hash = calculate_hash(packet.src_ip, packet.dst_ip)
+    update_packet_stats(packet.protocol, packet.len)
+    
+    return TC_ACT_OK
+}
+```
+
+#### 3.5.2 @helper vs Other Function Types
+
+| Aspect | `@helper` | `@kfunc` | `@xdp/@tc/etc` | Regular `fn` |
+|--------|-----------|----------|----------------|--------------|
+| **Execution Context** | eBPF sandbox | Kernel space (full privileges) | eBPF sandbox | Userspace |
+| **Callable From** | eBPF programs | eBPF programs | Not callable | Userspace functions |
+| **Compilation Target** | eBPF bytecode | Kernel module | eBPF bytecode | Native executable |
+| **Shared Across Programs** | Yes | Yes | No | No |
+| **Memory Access** | eBPF-restricted | Unrestricted kernel | eBPF-restricted | Userspace-restricted |
+
+#### 3.5.3 Code Organization Benefits
+
+Using `@helper` functions provides several benefits:
+
+**1. Code Reuse**
+```kernelscript
+@helper
+fn extract_tcp_info(ctx: XdpContext) -> option TcpInfo {
+    let packet = ctx.packet()
+    if (packet.protocol != IPPROTO_TCP) {
+        return null
+    }
+    
+    return TcpInfo {
+        src_port: packet.tcp_header().src_port,
+        dst_port: packet.tcp_header().dst_port,
+        flags: packet.tcp_header().flags
+    }
+}
+
+@xdp
+fn ddos_protection(ctx: XdpContext) -> XdpAction {
+    let tcp_info = extract_tcp_info(ctx)
+    if (tcp_info != null && tcp_info.flags & TCP_SYN) {
+        // SYN flood protection logic
+        return rate_limit_syn(tcp_info.dst_port) ? XDP_PASS : XDP_DROP
+    }
+    return XDP_PASS
+}
+
+@tc
+fn connection_tracker(ctx: TcContext) -> TcAction {
+    let tcp_info = extract_tcp_info(ctx)  // Reuse same helper
+    if (tcp_info != null) {
+        track_connection(tcp_info.src_port, tcp_info.dst_port)
+    }
+    return TC_ACT_OK
+}
+```
+
+### 3.6 Private Kernel Module Functions (@private)
 
 KernelScript supports private helper functions within kernel modules using the `@private` attribute. These functions execute in kernel space but are internal to the module - they cannot be called by eBPF programs and are not registered via BTF. They serve as utility functions for `@kfunc` implementations.
 
-#### 3.5.1 @private Declaration and Usage
+#### 3.6.1 @private Declaration and Usage
 
 Private functions are declared using the `@private` attribute and can only be called by other functions within the same kernel module:
 
@@ -744,7 +858,7 @@ fn packet_filter(ctx: XdpContext) -> XdpAction {
 }
 ```
 
-#### 3.5.2 Function Visibility and Call Hierarchy
+#### 3.6.2 Function Visibility and Call Hierarchy
 
 ```kernelscript
 // Example showing function call hierarchy
@@ -784,7 +898,7 @@ fn traffic_analyzer(ctx: TcContext) -> TcAction {
 }
 ```
 
-#### 3.5.3 @private vs @kfunc Comparison
+#### 3.6.3 @private vs @kfunc Comparison
 
 | Aspect | `@private` | `@kfunc` |
 |--------|-----------|----------|
@@ -795,7 +909,7 @@ fn traffic_analyzer(ctx: TcContext) -> TcAction {
 | **Use Case** | Internal implementation details | Public API functions |
 | **Performance** | Direct function call | BTF-mediated call |
 
-#### 3.5.4 Code Organization Benefits
+#### 3.6.4 Code Organization Benefits
 
 Using `@private` functions provides several architectural benefits:
 
@@ -1470,17 +1584,19 @@ fn simple_xdp(ctx: XdpContext) -> XdpAction {
 
 KernelScript supports two types of functions with different scoping rules:
 
-1. **Kernel-shared functions** (`kernel fn`) - Shared across all eBPF programs
+1. **Kernel-shared functions** (`@helper`) - Shared across all eBPF programs
 2. **Userspace functions** (no `kernel` qualifier, no attributes) - Native userspace code
 
 ```kernelscript
 // Kernel-shared functions - accessible by all eBPF programs
-kernel fn validate_packet(packet: *PacketHeader) -> bool {
+@helper
+fn validate_packet(packet: *PacketHeader) -> bool {
     packet.len >= 64 && packet.len <= 1500
 }
 
 // Public kernel-shared function
-pub kernel fn calculate_checksum(data: *u8, len: u32) -> u16 {
+@helper
+pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
     let mut sum: u32 = 0
     for (i in 0..(len / 2)) {
         sum += data[i * 2] + (data[i * 2 + 1] << 8)
@@ -1492,7 +1608,8 @@ pub kernel fn calculate_checksum(data: *u8, len: u32) -> u16 {
 }
 
 // Private kernel-shared function
-priv kernel fn internal_kernel_helper() -> u32 {
+@helper
+priv fn internal_kernel_helper() -> u32 {
     return 42
 }
 
@@ -1556,7 +1673,7 @@ The compiler automatically converts function calls to eBPF tail calls when **all
 // eBPF programs that can be tail-called
 @xdp
 fn packet_classifier(ctx: XdpContext) -> XdpAction {
-    let protocol = get_protocol(ctx)  // Regular call (kernel fn)
+    let protocol = get_protocol(ctx)  // Regular call (@helper)
     
     return match protocol {
         HTTP => process_http(ctx),    // Tail call - meets all conditions
@@ -1569,7 +1686,7 @@ fn packet_classifier(ctx: XdpContext) -> XdpAction {
 @xdp  
 fn process_http(ctx: XdpContext) -> XdpAction {
     // HTTP processing logic
-    if (is_malicious_http(ctx)) {    // Regular call (kernel fn)
+    if (is_malicious_http(ctx)) {    // Regular call (@helper)
         return XDP_DROP
     }
     
@@ -1583,12 +1700,14 @@ fn filter_by_policy(ctx: XdpContext) -> XdpAction {
 }
 
 // Kernel helper function (not tail-callable)
-kernel fn get_protocol(ctx: XdpContext) -> u16 {
+@helper
+fn get_protocol(ctx: XdpContext) -> u16 {
     // Extract protocol from packet
     return 6  // TCP
 }
 
-kernel fn is_malicious_http(ctx: XdpContext) -> bool {
+@helper
+fn is_malicious_http(ctx: XdpContext) -> bool {
     // Security analysis
     return false
 }
@@ -2393,7 +2512,8 @@ fn advanced_port_check(port: u16, protocol: u8, src_ip: u32) -> i32 {
 }
 
 // Kernel-shared functions - accessible by all eBPF programs
-kernel fn is_port_blocked(port: u16) -> bool {
+@helper
+fn is_port_blocked(port: u16) -> bool {
     for (i in 0..4) {
         if (port == filtering.blocked_ports[i]) {
             return true
@@ -2402,7 +2522,8 @@ kernel fn is_port_blocked(port: u16) -> bool {
     return false
 }
 
-kernel fn log_blocked_port(port: u16) {
+@helper
+fn log_blocked_port(port: u16) {
     if (filtering.enable_logging) {
         bpf_printk("Blocked port %d", port)
     }
@@ -2547,7 +2668,8 @@ fn analyze_syscall_performance(pid: u32, syscall_nr: u32, bytes: u32, duration: 
 }
 
 // Kernel-shared function for measuring write time
-kernel fn measure_write_time(ctx: KprobeContext) -> u64 {
+@helper
+fn measure_write_time(ctx: KprobeContext) -> u64 {
     return bpf_ktime_get_ns()
 }
 
@@ -2868,12 +2990,12 @@ whitespace = " " | "\t" | "\n" | "\r"
 - `function_declaration` defines functions with optional attributes
 - Functions with attributes (e.g., `@xdp`, `@tc`) are eBPF programs
 - Functions without attributes are userspace functions
-- `kernel fn` functions are shared across all eBPF programs
+- `@helper` functions are shared across all eBPF programs
 
 **Scoping Rules:**
 - **Global scope**: Maps, types, configs, and all function declarations
 - **Function scope**: Variables and parameters within functions
-- **Kernel scope**: `kernel fn` functions accessible to all eBPF programs
+- **Kernel scope**: `@helper` functions accessible to all eBPF programs
 - **Userspace scope**: Regular functions (no attributes, no `kernel` qualifier)
 
 This specification provides a comprehensive foundation for KernelScript while addressing the concerns about template complexity and userspace integration. The simplified type system avoids complex template metaprograming while still providing safety, and the top-level userspace section enables seamless coordination of multiple eBPF programs with centralized control plane management.

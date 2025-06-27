@@ -5,7 +5,8 @@ map<u32, u64> test_map : HashMap(1024)
 // 1 = Invalid data (error condition, not absence)
 // 2 = Overflow detected (error condition)
 
-kernel fn process_key(key: u32) -> u32 {
+@helper
+fn process_key(key: u32) -> u32 {
     // Example of defer for resource cleanup
     let lock_acquired = true
     defer cleanup_lock()
@@ -34,7 +35,8 @@ kernel fn process_key(key: u32) -> u32 {
     }
 }
 
-kernel fn cleanup_lock() {
+@helper
+fn cleanup_lock() {
     // Simulate cleanup operation
     let result = 0
 }

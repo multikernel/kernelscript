@@ -2,7 +2,8 @@
 // Shows both regular kernel function calls and actual eBPF tail calls
 
 // KERNEL FUNCTION - can be called normally from eBPF programs
-kernel fn validate_packet(size: u32) -> bool {
+@helper
+fn validate_packet(size: u32) -> bool {
     return size >= 64 && size <= 1500
 }
 

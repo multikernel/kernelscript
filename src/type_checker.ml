@@ -17,6 +17,7 @@ type context = {
   types: (string, type_def) Hashtbl.t;
   functions: (string, bpf_type list * bpf_type) Hashtbl.t;
   function_scopes: (string, Ast.function_scope) Hashtbl.t;
+  helper_functions: (string, unit) Hashtbl.t; (* Track @helper functions *)
   maps: (string, Ast.map_declaration) Hashtbl.t;
   configs: (string, Ast.config_declaration) Hashtbl.t;
   attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
@@ -92,6 +93,7 @@ let create_context symbol_table = {
   variables = Hashtbl.create 32;
   functions = Hashtbl.create 16;
   function_scopes = Hashtbl.create 16;
+  helper_functions = Hashtbl.create 16;
   attributed_functions = Hashtbl.create 16;
   types = Hashtbl.create 16;
   maps = Hashtbl.create 16;
@@ -708,6 +710,18 @@ and type_check_expression ctx expr =
              (* Check attributed function call restrictions - attributed functions cannot be called directly, but kfuncs are allowed *)
              if Hashtbl.mem ctx.attributed_functions name then
                type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos;
+             
+             (* Check @helper function call restrictions *)
+             if Hashtbl.mem ctx.helper_functions name then (
+               (* @helper functions can only be called from eBPF programs or other @helper functions *)
+               let in_ebpf_program = ctx.current_program_type <> None in
+               let in_helper_function = match ctx.current_function with
+                 | Some current_func_name -> Hashtbl.mem ctx.helper_functions current_func_name
+                 | None -> false
+               in
+               if not in_ebpf_program && not in_helper_function then
+                 type_error ("Helper function '" ^ name ^ "' can only be called from eBPF programs or other helper functions, not from userspace code") expr.expr_pos
+             );
              
              (* Check kernel/userspace function call restrictions *)
              (try
@@ -1334,9 +1348,20 @@ let type_check_ast ?builtin_path ast =
           | None -> U32  (* default return type *)
         in
         Hashtbl.replace ctx.functions attr_func.attr_function.func_name (param_types, return_type);
-        Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name attr_func.attr_function.func_scope;
         
-        (* Track non-kfunc and non-private attributed functions as non-callable *)
+        (* Check if this is a @helper function and update scope accordingly *)
+        let is_helper = List.exists (function
+          | SimpleAttribute "helper" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let actual_scope = if is_helper then Ast.Kernel else attr_func.attr_function.func_scope in
+        Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name actual_scope;
+        
+        (* Track @helper functions separately *)
+        if is_helper then
+          Hashtbl.add ctx.helper_functions attr_func.attr_function.func_name ();
+        
+        (* Track non-kfunc, non-private, and non-helper attributed functions as non-callable *)
         let is_kfunc = List.exists (function
           | SimpleAttribute "kfunc" -> true
           | _ -> false
@@ -1345,7 +1370,7 @@ let type_check_ast ?builtin_path ast =
           | SimpleAttribute "private" -> true
           | _ -> false
         ) attr_func.attr_list in
-        if not is_kfunc && not is_private then
+        if not is_kfunc && not is_private && not is_helper then
           Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ()
     | _ -> ()
   ) ast;
@@ -1585,7 +1610,18 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
           | None -> U32  (* default return type *)
         in
         Hashtbl.replace ctx.functions attr_func.attr_function.func_name (param_types, return_type);
-        Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name attr_func.attr_function.func_scope
+        
+        (* Check if this is a @helper function and update scope accordingly *)
+        let is_helper = List.exists (function
+          | SimpleAttribute "helper" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let actual_scope = if is_helper then Ast.Kernel else attr_func.attr_function.func_scope in
+        Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name actual_scope;
+        
+        (* Track @helper functions separately *)
+        if is_helper then
+          Hashtbl.add ctx.helper_functions attr_func.attr_function.func_name ()
     | GlobalFunction func ->
         (* Register global function signature in context *)
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
@@ -1601,13 +1637,17 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
   let (typed_attributed_functions, typed_userspace_functions) = List.fold_left (fun (attr_acc, userspace_acc) decl ->
     match decl with
     | AttributedFunction attr_func ->
-        (* Check if this is a kfunc or private function - handle differently *)
+        (* Check if this is a kfunc, private, or helper function - handle differently *)
         let is_kfunc = List.exists (function
           | SimpleAttribute "kfunc" -> true
           | _ -> false
         ) attr_func.attr_list in
         let is_private = List.exists (function
           | SimpleAttribute "private" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let is_helper = List.exists (function
+          | SimpleAttribute "helper" -> true
           | _ -> false
         ) attr_func.attr_list in
         
@@ -1624,6 +1664,7 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
                | "cgroup_skb" -> Some CgroupSkb
                | "kfunc" -> None  (* kfuncs don't have program types *)
                | "private" -> None  (* private functions don't have program types *)
+               | "helper" -> None  (* helper functions don't have program types *)
                | _ -> None)
           | _ -> None
         in
@@ -1634,6 +1675,9 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
           ()
         else if is_private then
           (* For private functions, we don't enforce specific context types - any valid C types are allowed *)
+          ()
+        else if is_helper then
+          (* For helper functions, we don't enforce specific context types - any valid eBPF types are allowed *)
           ()
         else
           (match prog_type with
@@ -1679,17 +1723,25 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         
-        (* Track this as an attributed function that cannot be called directly, but exclude kfuncs and private functions *)
-        if not is_kfunc && not is_private then
+        (* Track this as an attributed function that cannot be called directly, but exclude kfuncs, private, and helper functions *)
+        if not is_kfunc && not is_private && not is_helper then
           Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ();
         
-        (* Add to attributed function map for tail call detection (exclude kfuncs and private functions) *)
-        if not is_kfunc && not is_private then
+        (* Add to attributed function map for tail call detection (exclude kfuncs, private, and helper functions) *)
+        if not is_kfunc && not is_private && not is_helper then
           Hashtbl.replace ctx.attributed_function_map attr_func.attr_function.func_name attr_func;
         
         (* Set current program type for context *)
         ctx.current_program_type <- prog_type;
-        let typed_func = type_check_function ctx attr_func.attr_function in
+        
+        (* Update the function scope before type checking if it's a helper function *)
+        let func_to_check = if is_helper then
+          { attr_func.attr_function with func_scope = Ast.Kernel }
+        else
+          attr_func.attr_function
+        in
+        
+        let typed_func = type_check_function ctx func_to_check in
         ctx.current_program_type <- None;
         ((attr_func.attr_list, typed_func) :: attr_acc, userspace_acc)
     | GlobalFunction func ->

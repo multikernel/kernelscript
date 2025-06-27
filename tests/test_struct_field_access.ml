@@ -23,7 +23,8 @@ struct GlobalConfig {
   timeout_ms: u32
 }
 
-kernel fn process_packet(cfg: GlobalConfig) -> u32 {
+@helper
+fn process_packet(cfg: GlobalConfig) -> u32 {
   let max_size = cfg.max_packet_size
   let timeout = cfg.timeout_ms
   if (max_size > 1500) {
@@ -57,7 +58,8 @@ struct LocalConfig {
   mode: u32
 }
 
-kernel fn check_threshold(settings: LocalConfig) -> u32 {
+@helper
+fn check_threshold(settings: LocalConfig) -> u32 {
   let val = settings.threshold
   let m = settings.mode
   if (val > 100 && m > 0) {
@@ -91,7 +93,8 @@ struct NetworkLimits {
   bandwidth_limit: u32
 }
 
-kernel fn enforce_limits(limits: NetworkLimits) -> u32 {
+@helper
+fn enforce_limits(limits: NetworkLimits) -> u32 {
   let max_conn = limits.max_connections
   let bandwidth = limits.bandwidth_limit
   
@@ -164,7 +167,8 @@ struct Config2 {
   value2: u32
 }
 
-kernel fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
+@helper
+fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
   let val1 = cfg1.value1
   let val2 = cfg2.value2
   
@@ -200,7 +204,8 @@ struct PacketLimits {
   strict_mode: u32
 }
 
-kernel fn validate_packet(limits: PacketLimits) -> u32 {
+@helper
+fn validate_packet(limits: PacketLimits) -> u32 {
   let packet_size: u32 = 800
   
   if (packet_size > limits.max_size || packet_size < limits.min_size) {
@@ -217,7 +222,7 @@ kernel fn validate_packet(limits: PacketLimits) -> u32 {
   return 0  // Valid
 }
 
-@xdp fn validate_packet(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
   return 2
 }
 
@@ -229,7 +234,7 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let symbol_table = build_symbol_table ast in
     let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "validate_packet" in
+    let _ir = generate_ir annotated_ast symbol_table "packet_filter" in
     check bool "struct field access in expressions" true true
   with
   | exn -> fail ("Struct field access in expressions test failed: " ^ Printexc.to_string exn)
@@ -245,7 +250,8 @@ struct LocalSettings {
   local_limit: u32
 }
 
-kernel fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
+@helper
+fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
   let g_limit = global.global_limit
   let l_limit = local.local_limit
   return g_limit + l_limit
@@ -276,7 +282,8 @@ struct PacketInfo {
   proto: u32
 }
 
-kernel fn should_drop(info: PacketInfo) -> u32 {
+@helper
+fn should_drop(info: PacketInfo) -> u32 {
   let size = info.size
   let proto = info.proto
   if (size > 1500 || proto == 17) {
@@ -310,7 +317,8 @@ struct SimpleConfig {
   value: u32
 }
 
-kernel fn helper(cfg: SimpleConfig) -> u32 {
+@helper
+fn helper(cfg: SimpleConfig) -> u32 {
   let value = cfg.nonexistent_field  // Should cause error
   return value
 }
@@ -336,7 +344,8 @@ fn main() -> i32 {
 (** Test 10: Error case - using undefined struct *)
 let test_undefined_struct_error () =
   let program_text = {|
-kernel fn helper(cfg: UndefinedStruct) -> u32 {
+@helper
+fn helper(cfg: UndefinedStruct) -> u32 {
   return cfg.value
 }
 
@@ -371,7 +380,8 @@ struct LocalStats {
   drop_count: u32
 }
 
-kernel fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
+@helper
+fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
   let packets = stats.packet_count
   let drops = stats.drop_count
   let max_entries = cfg.max_entries

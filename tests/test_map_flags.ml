@@ -270,15 +270,18 @@ map<u32, u64> frequent_map : HashMap(1024)
 map<u32, u64> sparse_map : HashMap(65536)
 map<u32, u64> small_array : Array(16)
 
-kernel fn process_frequent() -> u64 {
+@helper
+fn process_frequent() -> u64 {
   frequent_map[1] = 100 return frequent_map[1]
 }
 
-kernel fn process_sparse() -> u64 {
+@helper
+fn process_sparse() -> u64 {
   sparse_map[12345] = 200 return sparse_map[12345]
 }
 
-kernel fn process_array() -> u64 {
+@helper
+fn process_array() -> u64 {
   small_array[5] = 300 return small_array[5]
 }
 
@@ -310,7 +313,8 @@ map<u32, u64> packet_count : HashMap(4096)
 map<u16, u32> port_stats : Array(65536)
 map<u32, u64> flow_cache : LruHash(1024)
 
-kernel fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
+@helper
+fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
   let protocol = 6  // TCP
   let current_count = packet_count[protocol]
   packet_count[protocol] = current_count + 1

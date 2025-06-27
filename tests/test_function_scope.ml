@@ -2,7 +2,8 @@ open Alcotest
 
 let test_kernel_function_parsing () =
   let source = {|
-    kernel fn helper_func(x: u32) -> u32 {
+    @helper
+fn helper_func(x: u32) -> u32 {
       return x + 1
     }
     
@@ -13,20 +14,22 @@ let test_kernel_function_parsing () =
   
   let ast = Kernelscript.Parse.parse_string source in
   
-  (* Count functions by scope *)
-  let (kernel_count, userspace_count) = List.fold_left (fun (k, u) decl ->
+  (* Count functions by type - @helper functions are now AttributedFunction, not GlobalFunction *)
+  let (helper_count, userspace_count) = List.fold_left (fun (h, u) decl ->
     match decl with
-    | Kernelscript.Ast.GlobalFunction func when func.func_scope = Kernelscript.Ast.Kernel -> (k + 1, u)
-    | Kernelscript.Ast.GlobalFunction func when func.func_scope = Kernelscript.Ast.Userspace -> (k, u + 1)
-    | _ -> (k, u)
+    | Kernelscript.Ast.AttributedFunction attr_func when 
+        List.exists (function Kernelscript.Ast.SimpleAttribute "helper" -> true | _ -> false) attr_func.attr_list -> (h + 1, u)
+    | Kernelscript.Ast.GlobalFunction func when func.func_scope = Kernelscript.Ast.Userspace -> (h, u + 1)
+    | _ -> (h, u)
   ) (0, 0) ast in
   
-  check int "kernel function count" 1 kernel_count;
+  check int "kernel function count" 1 helper_count;
   check int "userspace function count" 1 userspace_count
 
 let test_kernel_function_ir_generation () =
   let source = {|
-    kernel fn calculate_hash(seed: u32) -> u32 {
+    @helper
+fn calculate_hash(seed: u32) -> u32 {
       return seed * 31 + 42
     }
     
@@ -51,11 +54,13 @@ let test_kernel_function_ir_generation () =
 (** Test 3: Kernel functions shared across multiple programs *)
 let test_kernel_function_shared_across_programs () =
   let source = {|
-    kernel fn increment_counter(index: u32) {
+    @helper
+fn increment_counter(index: u32) {
       return
     }
     
-    kernel fn get_counter(index: u32) -> u64 {
+    @helper
+fn get_counter(index: u32) -> u64 {
       return 42
     }
     
@@ -77,17 +82,21 @@ let test_kernel_function_shared_across_programs () =
   
   let ast = Kernelscript.Parse.parse_string source in
   
-  (* Verify both kernel functions are parsed correctly *)
-  let kernel_functions = List.filter_map (function
-    | Kernelscript.Ast.GlobalFunction func when func.func_scope = Kernelscript.Ast.Kernel -> Some func.func_name
+  (* Verify both helper functions are parsed correctly *)
+  let helper_functions = List.filter_map (function
+    | Kernelscript.Ast.AttributedFunction attr_func when 
+        List.exists (function Kernelscript.Ast.SimpleAttribute "helper" -> true | _ -> false) attr_func.attr_list -> 
+        Some attr_func.attr_function.func_name
     | _ -> None
   ) ast in
   
-  check (list string) "kernel functions" ["increment_counter"; "get_counter"] kernel_functions;
+  check (list string) "kernel functions" ["increment_counter"; "get_counter"] helper_functions;
   
-  (* Verify attributed functions are parsed correctly *)
+  (* Verify eBPF program functions are parsed correctly (excluding @helper) *)
   let programs = List.filter_map (function
-    | Kernelscript.Ast.AttributedFunction attr_func -> Some attr_func.attr_function.func_name
+    | Kernelscript.Ast.AttributedFunction attr_func when 
+        not (List.exists (function Kernelscript.Ast.SimpleAttribute "helper" -> true | _ -> false) attr_func.attr_list) -> 
+        Some attr_func.attr_function.func_name
     | _ -> None
   ) ast in
   
@@ -110,7 +119,8 @@ let test_kernel_function_shared_across_programs () =
 (** Test 4: Kernel functions cannot be called by userspace functions *)
 let test_kernel_function_userspace_restriction () =
   let source = {|
-    kernel fn kernel_helper(x: u32) -> u32 {
+    @helper
+fn kernel_helper(x: u32) -> u32 {
       return x + 100
     }
     
@@ -134,21 +144,22 @@ let test_kernel_function_userspace_restriction () =
   
   try
     test_fn ();
-    check bool "kernel function call from userspace should fail" false true
+    check bool "helper function call from userspace should fail" false true
   with
   | Kernelscript.Type_checker.Type_error (msg, _) ->
       Printf.printf "Type error caught: %s\n" msg;
-      check bool "correctly rejected kernel function call from userspace" true true
+      check bool "correctly rejected helper function call from userspace" true true
   | Failure msg ->
       Printf.printf "Failure caught: %s\n" msg;
-      check bool "correctly rejected kernel function call from userspace" true true
+      check bool "correctly rejected helper function call from userspace" true true
   | _ ->
-      check bool "unexpected error type for kernel/userspace restriction" false true
+      check bool "unexpected error type for helper/userspace restriction" false true
 
 (** Test 5: Mixed kernel and userspace functions *)
 let test_mixed_kernel_userspace_functions () =
   let source = {|
-    kernel fn kernel_helper(x: u32) -> u32 {
+    @helper
+fn kernel_helper(x: u32) -> u32 {
       return x + 100
     }
     
@@ -170,8 +181,10 @@ let test_mixed_kernel_userspace_functions () =
   let ast = Kernelscript.Parse.parse_string source in
   
   (* Verify correct scoping *)
-  let kernel_functions = List.filter_map (function
-    | Kernelscript.Ast.GlobalFunction func when func.func_scope = Kernelscript.Ast.Kernel -> Some func.func_name
+  let helper_functions = List.filter_map (function
+    | Kernelscript.Ast.AttributedFunction attr_func when 
+        List.exists (function Kernelscript.Ast.SimpleAttribute "helper" -> true | _ -> false) attr_func.attr_list -> 
+        Some attr_func.attr_function.func_name
     | _ -> None
   ) ast in
   
@@ -180,13 +193,14 @@ let test_mixed_kernel_userspace_functions () =
     | _ -> None
   ) ast in
   
-  check (list string) "kernel functions" ["kernel_helper"] kernel_functions;
+  check (list string) "kernel functions" ["kernel_helper"] helper_functions;
   check (list string) "userspace functions" ["userspace_helper"; "main"] userspace_functions
 
 (** Test 6: Kernel function type checking *)
 let test_kernel_function_type_checking () =
   let source = {|
-    kernel fn validate_packet(size: u32) -> bool {
+    @helper
+fn validate_packet(size: u32) -> bool {
       return size >= 64 && size <= 1500
     }
     
@@ -209,22 +223,26 @@ let test_kernel_function_type_checking () =
   (* Type check the AST *)
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
   
-  (* Verify the kernel function is properly type-checked *)
-  let kernel_func = List.find_map (function
-    | Kernelscript.Ast.GlobalFunction func when func.func_name = "validate_packet" -> Some func
+  (* Verify the helper function is properly type-checked *)
+  let helper_func = List.find_map (function
+    | Kernelscript.Ast.AttributedFunction attr_func when 
+        attr_func.attr_function.func_name = "validate_packet" &&
+        List.exists (function Kernelscript.Ast.SimpleAttribute "helper" -> true | _ -> false) attr_func.attr_list -> 
+        Some attr_func.attr_function
     | _ -> None
   ) annotated_ast in
   
-  match kernel_func with
+  match helper_func with
   | Some func ->
-      check bool "kernel function scope preserved" true (func.func_scope = Kernelscript.Ast.Kernel);
-      check bool "kernel function return type correct" true (func.func_return_type = Some Kernelscript.Ast.Bool)
-  | None -> failwith "Kernel function not found after type checking"
+      check bool "helper function scope preserved" true (func.func_scope = Kernelscript.Ast.Kernel);
+      check bool "helper function return type correct" true (func.func_return_type = Some Kernelscript.Ast.Bool)
+  | None -> failwith "Helper function not found after type checking"
 
 (** Test 7: Kernel functions with complex types *)
 let test_kernel_function_complex_types () =
   let source = {|
-    kernel fn analyze_packet(size: u32, protocol: u16, valid: bool) -> bool {
+    @helper
+fn analyze_packet(size: u32, protocol: u16, valid: bool) -> bool {
       return valid && size > 64
     }
     
@@ -250,11 +268,13 @@ let test_kernel_function_complex_types () =
 (** Test 8: Kernel function calling other kernel functions *)
 let test_kernel_function_calling_kernel_function () =
   let source = {|
-    kernel fn basic_validation(size: u32) -> bool {
+    @helper
+fn basic_validation(size: u32) -> bool {
       return size >= 64
     }
     
-    kernel fn advanced_validation(size: u32, protocol: u16) -> bool {
+    @helper
+fn advanced_validation(size: u32, protocol: u16) -> bool {
       if (!basic_validation(size)) {
         return false
       }
@@ -352,19 +372,23 @@ let test_comprehensive_kernel_function_system () =
   let source = {|
     map<u32, u64> global_counters : Array(1024)
     
-    kernel fn increment_global_counter(index: u32) {
+    @helper
+fn increment_global_counter(index: u32) {
       global_counters[index] = global_counters[index] + 1
     }
     
-    kernel fn get_global_counter(index: u32) -> u64 {
+    @helper
+fn get_global_counter(index: u32) -> u64 {
       return global_counters[index]
     }
     
-    kernel fn validate_index(index: u32) -> bool {
+    @helper
+fn validate_index(index: u32) -> bool {
       return index < 1024
     }
     
-    kernel fn safe_increment(index: u32) -> bool {
+    @helper
+fn safe_increment(index: u32) -> bool {
       if (validate_index(index)) {
         increment_global_counter(index)
         return true
@@ -403,14 +427,16 @@ let test_comprehensive_kernel_function_system () =
   (* Generate IR *)
   let multi_ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "comprehensive_test" in
   
-  (* Verify kernel functions *)
-  let kernel_functions = List.filter_map (function
-    | Kernelscript.Ast.GlobalFunction func when func.func_scope = Kernelscript.Ast.Kernel -> Some func.func_name
+  (* Verify helper functions *)
+  let helper_functions = List.filter_map (function
+    | Kernelscript.Ast.AttributedFunction attr_func when 
+        List.exists (function Kernelscript.Ast.SimpleAttribute "helper" -> true | _ -> false) attr_func.attr_list -> 
+        Some attr_func.attr_function.func_name
     | _ -> None
   ) annotated_ast in
   
   let expected_kernel_funcs = ["increment_global_counter"; "get_global_counter"; "validate_index"; "safe_increment"] in
-  check (list string) "all kernel functions present" expected_kernel_funcs kernel_functions;
+  check (list string) "all kernel functions present" expected_kernel_funcs helper_functions;
   
   (* Verify userspace functions *)
   let userspace_functions = List.filter_map (function
@@ -435,11 +461,13 @@ let test_comprehensive_kernel_function_system () =
 (** Test 12: No duplicate kernel functions in generated code *)
 let test_no_duplicate_kernel_functions () =
   let source = {|
-    kernel fn shared_validation(size: u32) -> bool {
+    @helper
+fn shared_validation(size: u32) -> bool {
       return size >= 64 && size <= 1500
     }
     
-    kernel fn shared_logging(message: u32) {
+    @helper
+fn shared_logging(message: u32) {
       print("Log:", message)
     }
     
@@ -544,7 +572,8 @@ let test_attributed_function_kernel_restriction () =
       return 2
     }
     
-    kernel fn helper() -> u32 {
+    @helper
+fn helper() -> u32 {
       let dummy_ctx: XdpContext = null
       let result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
       return result

@@ -1602,6 +1602,7 @@ let lower_multi_program ast symbol_table source_name =
              (match prog_type_str with
               | "kfunc" -> None  (* Skip kfunc functions - they're not eBPF programs *)
               | "private" -> None  (* Skip private functions - they're not eBPF programs *)
+              | "helper" -> None  (* Skip helper functions - they're shared eBPF functions, not individual programs *)
               | _ ->
                   let prog_type = match prog_type_str with
                     | "xdp" -> Ast.Xdp
@@ -1654,9 +1655,23 @@ let lower_multi_program ast symbol_table source_name =
     ) ir_program_maps
   ) prog_defs;
   
-  (* Separate global functions by scope *)
+  (* Separate global functions by scope and extract @helper attributed functions as kernel shared functions *)
   let all_global_functions = List.filter_map (function
     | Ast.GlobalFunction func -> Some func
+    | _ -> None
+  ) ast in
+  
+  (* Extract @helper attributed functions and treat them as kernel shared functions *)
+  let helper_functions = List.filter_map (function
+    | Ast.AttributedFunction attr_func ->
+        let is_helper = List.exists (function
+          | Ast.SimpleAttribute "helper" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        if is_helper then
+          Some attr_func.attr_function
+        else
+          None
     | _ -> None
   ) ast in
   
@@ -1664,14 +1679,17 @@ let lower_multi_program ast symbol_table source_name =
     func.Ast.func_scope = Ast.Kernel
   ) all_global_functions in
   
+  (* Combine regular kernel functions with helper functions *)
+  let all_kernel_shared_functions = kernel_shared_functions @ helper_functions in
+  
   (* Lower kernel functions once - they are shared across all programs *)
-  let ir_kernel_functions = List.map (lower_function ctx "kernel") kernel_shared_functions in
+  let ir_kernel_functions = List.map (lower_function ctx "kernel") all_kernel_shared_functions in
   
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
     let prog_ctx = create_context symbol_table in
-    lower_single_program prog_ctx prog_def ir_global_maps kernel_shared_functions
+    lower_single_program prog_ctx prog_def ir_global_maps all_kernel_shared_functions
   ) prog_defs in
   
   (* Convert AST userspace functions to IR userspace program *)

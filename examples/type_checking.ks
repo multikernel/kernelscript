@@ -29,7 +29,8 @@ map<IpAddress, u64> connection_stats : hash_map(1024) {
   pinned = "/sys/fs/bpf/stats"
 }
 
-kernel fn extract_header(ctx: XdpContext) -> XdpAction {
+@helper
+fn extract_header(ctx: XdpContext) -> XdpAction {
   // Type checker validates that ctx is xdp_context type
   let data = ctx.data
   let data_end = ctx.data_end
@@ -52,7 +53,8 @@ kernel fn extract_header(ctx: XdpContext) -> XdpAction {
   return 2
 }
 
-kernel fn classify_protocol(proto: u8) -> ProtocolType {
+@helper
+fn classify_protocol(proto: u8) -> ProtocolType {
   // Type checker validates enum constant access
   if (proto == 6) {
     return some PROTOCOL_TYPE_TCP
@@ -64,7 +66,8 @@ kernel fn classify_protocol(proto: u8) -> ProtocolType {
   return none
 }
 
-kernel fn update_statistics(header: PacketHeader) {
+@helper
+fn update_statistics(header: PacketHeader) {
   // Type checker validates map operations and key/value types
   let current_count = connection_stats[header.src_ip]
   
@@ -77,7 +80,8 @@ kernel fn update_statistics(header: PacketHeader) {
   }
 }
 
-kernel fn make_decision(header: PacketHeader) -> FilterDecision {
+@helper
+fn make_decision(header: PacketHeader) -> FilterDecision {
   // Type checker validates function call signatures
   let proto_type = classify_protocol(header.protocol)
   

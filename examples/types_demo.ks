@@ -45,7 +45,8 @@ map<u32, result PacketInfo u8> packet_cache : PercpuHash(128)
 // Local maps for program-specific data
 map<Protocol, Counter> protocol_stats : PercpuArray(32)
 
-kernel fn extract_packet_info(ctx: XdpContext) -> option PacketInfo {
+@helper
+fn extract_packet_info(ctx: XdpContext) -> option PacketInfo {
   // This would contain actual packet parsing logic
   // For now, return a dummy PacketInfo
   let info: PacketInfo = PacketInfo {
@@ -59,7 +60,8 @@ kernel fn extract_packet_info(ctx: XdpContext) -> option PacketInfo {
   return some info
 }
 
-kernel fn get_filter_action(info: PacketInfo) -> FilterAction {
+@helper
+fn get_filter_action(info: PacketInfo) -> FilterAction {
   // Look up in the filter map
   let action = packet_filter[info]
   if (action != null) {
@@ -69,7 +71,8 @@ kernel fn get_filter_action(info: PacketInfo) -> FilterAction {
   }
 }
 
-kernel fn update_stats(info: PacketInfo) {
+@helper
+fn update_stats(info: PacketInfo) {
   // Update connection count
   let current_count = connection_count[info.src_ip]
   if (current_count != null) {

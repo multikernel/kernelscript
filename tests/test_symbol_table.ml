@@ -664,7 +664,8 @@ let test_symbol_table_scoping () =
 (** Test function symbol management *)
 let test_function_symbol_management () =
   let program_text = {|
-kernel fn add(a: u32, b: u32) -> u32 {
+@helper
+fn add(a: u32, b: u32) -> u32 {
   let sum = a + b
   return sum
 }
@@ -797,7 +798,8 @@ map<u16, bool> flags : Array(256) { }
 (** Test type checking integration *)
 let test_type_checking_integration () =
   let program_text = {|
-kernel fn calculate(x: u32, y: u32) -> u64 {
+@helper
+fn calculate(x: u32, y: u32) -> u64 {
   let result: u64 = x + y
   return result
 }
@@ -862,14 +864,16 @@ let test_comprehensive_symbol_analysis () =
   let program_text = {|
 map<u32, u64> stats : HashMap(1024) { }
 
-kernel fn update_counter(key: u32, increment: u64) -> u64 {
+@helper
+fn update_counter(key: u32, increment: u64) -> u64 {
   let current = stats[key]
   let new_value = current + increment
   stats[key] = new_value
   return new_value
 }
 
-kernel fn validate_packet(size: u32) -> bool {
+@helper
+fn validate_packet(size: u32) -> bool {
   return size > 64 && size < 1500
 }
 

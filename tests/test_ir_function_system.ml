@@ -122,7 +122,8 @@ let test_basic_function_system () =
 (** Test function registration *)
 let test_function_registration () =
   let program_text = {|
-kernel fn helper(x: u32, y: u32) -> u32 {
+@helper
+fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
@@ -155,7 +156,8 @@ kernel fn helper(x: u32, y: u32) -> u32 {
 let test_function_signature_validation () =
   (* Test with actual IR functions using the real validation system *)
   let program_text = {|
-kernel fn valid_function(a: u32, b: u32) -> u32 {
+@helper
+fn valid_function(a: u32, b: u32) -> u32 {
   return a + b
 }
 
@@ -194,7 +196,8 @@ kernel fn valid_function(a: u32, b: u32) -> u32 {
 let test_function_call_resolution () =
   (* This test should focus on what the IR function system actually provides *)
   let program_text = {|
-kernel fn multiply(x: u32, factor: u32) -> u32 {
+@helper
+fn multiply(x: u32, factor: u32) -> u32 {
   return x * factor
 }
 
@@ -232,7 +235,8 @@ kernel fn multiply(x: u32, factor: u32) -> u32 {
 let test_recursive_function_detection () =
   (* Test with a simple non-recursive program since we don't have actual recursion detection *)
   let simple_program = {|
-kernel fn helper() -> u32 {
+@helper
+fn helper() -> u32 {
   return 42
 }
 
@@ -270,16 +274,19 @@ kernel fn helper() -> u32 {
 let test_function_dependency_analysis () =
   (* Test with a multi-level function call hierarchy *)
   let program_text = {|
-kernel fn level3() -> u32 {
+@helper
+fn level3() -> u32 {
   return 3
 }
 
-kernel fn level2() -> u32 {
+@helper
+fn level2() -> u32 {
   let val3 = level3()
   return val3 + 2
 }
 
-kernel fn level1() -> u32 {
+@helper
+fn level1() -> u32 {
   let val2 = level2()
   return val2 + 1
 }
@@ -322,11 +329,13 @@ kernel fn level1() -> u32 {
 let test_function_optimization () =
   (* Test with simple functions that could theoretically be optimized *)
   let program_text = {|
-kernel fn constant_function() -> u32 {
+@helper
+fn constant_function() -> u32 {
   return 42
 }
 
-kernel fn simple_math(x: u32) -> u32 {
+@helper
+fn simple_math(x: u32) -> u32 {
   return x + 1
 }
 
@@ -371,16 +380,19 @@ kernel fn simple_math(x: u32) -> u32 {
 let test_comprehensive_function_system () =
   (* Test with a comprehensive program that exercises multiple aspects *)
   let program_text = {|
-kernel fn validate_packet(size: u32) -> bool {
+@helper
+fn validate_packet(size: u32) -> bool {
   return size > 64 && size < 1500
 }
 
-kernel fn calculate_hash(data: u32) -> u32 {
+@helper
+fn calculate_hash(data: u32) -> u32 {
   let hash = data * 31
   return hash % 1024
 }
 
-kernel fn process_protocol(protocol: u8) -> u32 {
+@helper
+fn process_protocol(protocol: u8) -> u32 {
   if (protocol == 6) {
     return 1
   } else if (protocol == 17) {

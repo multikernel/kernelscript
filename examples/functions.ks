@@ -1,10 +1,12 @@
 type IpAddress = u32
 
-kernel fn helper_function(value: u32) -> u32 {
+@helper
+fn helper_function(value: u32) -> u32 {
   return value + 10
 }
 
-kernel fn another_helper() -> u32 {
+@helper
+fn another_helper() -> u32 {
   return 42
 }
 

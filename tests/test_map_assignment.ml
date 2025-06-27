@@ -304,7 +304,8 @@ let test_comprehensive_assignment_analysis () =
 map<u32, u64> packet_stats : HashMap(1024) { }
 map<u16, u32> port_counts : Array(65536) { }
 
-kernel fn update_packet_stats(protocol: u32, size: u32) -> u64 {
+@helper
+fn update_packet_stats(protocol: u32, size: u32) -> u64 {
   let current_count = packet_stats[protocol]
   let new_count = current_count + 1
   packet_stats[protocol] = new_count
@@ -314,7 +315,8 @@ kernel fn update_packet_stats(protocol: u32, size: u32) -> u64 {
   return new_count
 }
 
-kernel fn update_port_stats(port: u16) -> u32 {
+@helper
+fn update_port_stats(port: u16) -> u32 {
   let current = port_counts[port]
   port_counts[port] = current + 1
   return current + 1

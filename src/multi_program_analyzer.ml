@@ -103,6 +103,7 @@ let extract_programs (ast: declaration list) : program_def list =
              (match prog_type_str with
               | "kfunc" -> None  (* Skip kfunc functions - they're not eBPF programs *)
               | "private" -> None  (* Skip private functions - they're not eBPF programs *)
+              | "helper" -> None  (* Skip helper functions - they're shared eBPF functions, not individual programs *)
               | _ ->
                   let prog_type = match prog_type_str with
                     | "xdp" -> Xdp

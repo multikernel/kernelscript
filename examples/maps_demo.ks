@@ -37,23 +37,28 @@ map<u32, u64> bandwidth_usage : PercpuArray(256) {
   pinned: "/sys/fs/bpf/bandwidth"
 }
 
-kernel fn get_cpu_id() -> u32 {
+@helper
+fn get_cpu_id() -> u32 {
     return 0 // Demo CPU ID
 }
 
-kernel fn get_src_ip(ctx: XdpContext) -> IpAddress {
+@helper
+fn get_src_ip(ctx: XdpContext) -> IpAddress {
   return 0x7f000001 // 127.0.0.1 for demo
 }
 
-kernel fn get_packet_len_xdp(ctx: XdpContext) -> PacketSize {
+@helper
+fn get_packet_len_xdp(ctx: XdpContext) -> PacketSize {
   return 64 // Demo packet size
 }
 
-kernel fn get_packet_len_tc(ctx: TcContext) -> u64 {
+@helper
+fn get_packet_len_tc(ctx: TcContext) -> u64 {
   return 128 // Demo packet size
 }
 
-kernel fn get_timestamp() -> u64 {
+@helper
+fn get_timestamp() -> u64 {
   return 1234567890 // Demo timestamp
 }
 

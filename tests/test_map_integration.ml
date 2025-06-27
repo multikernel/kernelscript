@@ -185,7 +185,8 @@ let test_complex_map_expressions () =
   let program = {|
 map<u32, u64> stats : HashMap(1024)
 
-kernel fn compute_key(base: u32) -> u32 {
+@helper
+fn compute_key(base: u32) -> u32 {
   return base * 2 + 1
 }
 
@@ -216,7 +217,7 @@ kernel fn compute_key(base: u32) -> u32 {
       | _ -> None
     ) ast in
     
-    check int "one attributed function" 1 (List.length attributed_functions);
+    check int "two attributed functions" 2 (List.length attributed_functions);
     (* Attributed functions don't have multiple program functions - just the one function *)
     
     (* Compile and verify complex operations were generated *)

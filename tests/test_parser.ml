@@ -168,7 +168,8 @@ let test_statement_parsing () =
 (** Test function declaration parsing *)
 let test_function_declaration () =
   let program_text = {|
-kernel fn helper(x: u32, y: u32) -> u32 {
+@helper
+fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
@@ -179,13 +180,18 @@ kernel fn helper(x: u32, y: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    (* First item should be the kernel function *)
+    (* First item should be the helper attributed function *)
     match List.hd ast with
-    | GlobalFunction helper_func -> 
-        check string "helper function name" "helper" helper_func.func_name;
-        check int "helper parameters" 2 (List.length helper_func.func_params);
-        check bool "helper return type" true (helper_func.func_return_type = Some U32)
-    | _ -> fail "Expected global function declaration"
+    | AttributedFunction attr_func -> 
+        check string "helper function name" "helper" attr_func.attr_function.func_name;
+        check int "helper parameters" 2 (List.length attr_func.attr_function.func_params);
+        check bool "helper return type" true (attr_func.attr_function.func_return_type = Some U32);
+        let has_helper_attr = List.exists (function 
+          | SimpleAttribute "helper" -> true 
+          | _ -> false
+        ) attr_func.attr_list in
+        check bool "has helper attribute" true has_helper_attr
+    | _ -> fail "Expected attributed function declaration"
   with
   | _ -> fail "Failed to parse function declarations"
 
@@ -318,7 +324,8 @@ let test_complete_program_parsing () =
   let program_text = {|
 map<u32, u64> packet_count : HashMap(1024) { }
 
-kernel fn process_packet(src_ip: u32) -> u64 {
+@helper
+fn process_packet(src_ip: u32) -> u64 {
   let count = packet_count[src_ip]
   packet_count[src_ip] = count + 1
   return count
@@ -347,13 +354,18 @@ kernel fn process_packet(src_ip: u32) -> u64 {
          check bool "map value type" true (map_decl.value_type = U64)
      | _ -> fail "Expected map declaration");
     
-    (* Check kernel function declaration *)
+    (* Check helper function declaration *)
     (match List.nth ast 1 with
-     | GlobalFunction kernel_func -> 
-         check string "kernel function name" "process_packet" kernel_func.func_name;
-         check int "kernel function parameters" 1 (List.length kernel_func.func_params);
-         check bool "kernel function return type" true (kernel_func.func_return_type = Some U64)
-     | _ -> fail "Expected kernel function declaration");
+     | AttributedFunction attr_func -> 
+         check string "helper function name" "process_packet" attr_func.attr_function.func_name;
+         check int "helper function parameters" 1 (List.length attr_func.attr_function.func_params);
+         check bool "helper function return type" true (attr_func.attr_function.func_return_type = Some U64);
+         let has_helper_attr = List.exists (function 
+           | SimpleAttribute "helper" -> true 
+           | _ -> false
+         ) attr_func.attr_list in
+         check bool "has helper attribute" true has_helper_attr
+     | _ -> fail "Expected helper attributed function declaration");
     
     (* Check attributed function declaration *)
     (match List.nth ast 2 with

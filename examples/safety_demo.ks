@@ -18,7 +18,8 @@ map<u32, Counter> packet_stats : HashMap(1024) {
 }
 
 // Kernel-shared functions accessible by all eBPF programs
-kernel fn safe_function(ctx: XdpContext) -> XdpAction {
+@helper
+fn safe_function(ctx: XdpContext) -> XdpAction {
   // Small local variables - safe stack usage
   let counter: u64 = 0
   let packet_size: u16 = 1500
@@ -35,7 +36,8 @@ kernel fn safe_function(ctx: XdpContext) -> XdpAction {
 }
 
 // Function demonstrating bounds checking
-kernel fn bounds_demo(ctx: XdpContext) -> XdpAction {
+@helper
+fn bounds_demo(ctx: XdpContext) -> XdpAction {
   let data_array: u32[10] = [0; 10]
   
   // Safe accesses
@@ -50,7 +52,8 @@ kernel fn bounds_demo(ctx: XdpContext) -> XdpAction {
 }
 
 // Function with moderate stack usage
-kernel fn moderate_stack_usage(ctx: XdpContext) -> XdpAction {
+@helper
+fn moderate_stack_usage(ctx: XdpContext) -> XdpAction {
   // Moderate buffer size - should be within eBPF limits
   let buffer: u8[256] = [0; 256]
   let info: PacketInfo = PacketInfo {
@@ -67,7 +70,8 @@ kernel fn moderate_stack_usage(ctx: XdpContext) -> XdpAction {
 }
 
 // Function that would trigger stack overflow warning
-kernel fn large_stack_usage(ctx: XdpContext) -> XdpAction {
+@helper
+fn large_stack_usage(ctx: XdpContext) -> XdpAction {
   // Large buffer - would exceed eBPF 512-byte stack limit
   // This would be flagged by the safety analyzer
   let large_buffer: u8[600] = [0; 600] // WARNING: Stack overflow
@@ -78,7 +82,8 @@ kernel fn large_stack_usage(ctx: XdpContext) -> XdpAction {
 }
 
 // Function demonstrating array size validation
-kernel fn array_validation_demo(ctx: XdpContext) -> XdpAction {
+@helper
+fn array_validation_demo(ctx: XdpContext) -> XdpAction {
   // Valid array sizes
   let valid_small: u32[10] = [0; 10]     // OK
   let valid_medium: u8[100] = [0; 100]   // OK

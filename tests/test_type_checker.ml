@@ -96,7 +96,8 @@ let test_binary_operations () =
 (** Test function calls *)
 let test_function_calls () =
   let program_text = {|
-kernel fn helper(x: u32, y: u32) -> u32 {
+@helper
+fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
@@ -163,7 +164,8 @@ let test_statement_type_checking () =
 (** Test function type checking *)
 let test_function_type_checking () =
   let program_text = {|
-kernel fn calculate(a: u32, b: u32) -> u32 {
+@helper
+fn calculate(a: u32, b: u32) -> u32 {
   let result = a + b
   return result
 }
@@ -240,7 +242,8 @@ let test_builtin_function_return_types () =
 (** Test built-in vs user-defined function precedence *)
 let test_builtin_vs_user_function_precedence () =
   let program_text = {|
-kernel fn my_function(x: u32) -> u32 {
+@helper
+fn my_function(x: u32) -> u32 {
   return x + 1
 }
 
@@ -306,7 +309,8 @@ let test_error_handling () =
 (** Test program type checking *)
 let test_program_type_checking () =
   let program_text = {|
-kernel fn is_tcp(protocol: u8) -> bool {
+@helper
+fn is_tcp(protocol: u8) -> bool {
   return protocol == 6
 }
 
@@ -321,10 +325,14 @@ kernel fn is_tcp(protocol: u8) -> bool {
   try
     let ast = parse_string program_text in
     let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast ast in
-    check int "program type checking" 1 (List.length typed_attributed_functions);
+    check int "program type checking" 2 (List.length typed_attributed_functions);
     
     (* Verify that type checking completed without errors *)
-    match List.hd typed_attributed_functions with
+    (* Find the XDP attributed function *)
+    let xdp_func = List.find (fun (attr_list, _) -> 
+      List.exists (function SimpleAttribute "xdp" -> true | _ -> false) attr_list
+    ) typed_attributed_functions in
+    match xdp_func with
     | (attr_list, typed_func) -> 
         check string "typed program name" "packet_filter" typed_func.tfunc_name;
         check int "typed function parameters" 1 (List.length typed_func.tfunc_params);
@@ -387,14 +395,16 @@ let test_comprehensive_type_checking () =
   let program_text = {|
 map<u32, u64> counter : HashMap(1024) { }
 
-kernel fn increment_counter(key: u32) -> u64 {
+@helper
+fn increment_counter(key: u32) -> u64 {
   let current = counter[key]
   let new_value = current + 1
   counter[key] = new_value
   return new_value
 }
 
-kernel fn process_packet(size: u32) -> bool {
+@helper
+fn process_packet(size: u32) -> bool {
   return size > 1500
 }
 
@@ -413,10 +423,14 @@ kernel fn process_packet(size: u32) -> bool {
   try
     let ast = parse_string program_text in
     let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast ast in
-    check int "comprehensive AST length" 1 (List.length typed_attributed_functions);
+    check int "comprehensive AST length" 3 (List.length typed_attributed_functions);
     
     (* Verify that type checking completed without errors *)
-    match List.hd typed_attributed_functions with
+    (* Find the XDP attributed function *)
+    let xdp_func = List.find (fun (attr_list, _) -> 
+      List.exists (function SimpleAttribute "xdp" -> true | _ -> false) attr_list
+    ) typed_attributed_functions in
+    match xdp_func with
     | (attr_list, typed_func) -> 
         check string "comprehensive program name" "comprehensive_test" typed_func.tfunc_name;
         check int "comprehensive function parameters" 1 (List.length typed_func.tfunc_params);
@@ -626,7 +640,8 @@ let test_type_promotion_edge_cases () =
     
     (* Function parameters with promotion *)
     ({|
-kernel fn process(value: u64) -> u64 {
+@helper
+fn process(value: u64) -> u64 {
   return value * 2
 }
 
@@ -838,7 +853,8 @@ map<u32, u64> cache : HashMap(100)
     
     (* Correct: error checking (simplified without throw) *)
     ({|
-kernel fn validate_input(value: u32) -> u32 {
+@helper
+fn validate_input(value: u32) -> u32 {
   if (value > 1000) {
     return 0  // Error case
   }
@@ -855,7 +871,8 @@ kernel fn validate_input(value: u32) -> u32 {
     ({|
 map<u32, u32> data : HashMap(100)
 
-kernel fn lookup_value(key: u32) -> u32 {
+@helper
+fn lookup_value(key: u32) -> u32 {
   let value = data[key]
   if (value == null) {
     return 0  // Default value for missing key
@@ -1015,7 +1032,8 @@ let test_xdp_signature_validation () =
 let test_kernel_function_calls_from_attributed () =
   (* Test the specific bug case: kernel function called from attributed function *)
   let program_text = {|
-kernel fn get_src_ip(ctx: XdpContext) -> IpAddress {
+@helper
+fn get_src_ip(ctx: XdpContext) -> IpAddress {
     return 0x08080808  // 8.8.8.8 as u32
 }
 
@@ -1036,15 +1054,18 @@ kernel fn get_src_ip(ctx: XdpContext) -> IpAddress {
 (** Test multiple kernel function calls with different parameter types *)
 let test_multiple_kernel_function_calls () =
   let program_text = {|
-kernel fn process_packet(ctx: XdpContext, flags: u32) -> u32 {
+@helper
+fn process_packet(ctx: XdpContext, flags: u32) -> u32 {
     return flags + 1
 }
 
-kernel fn get_packet_size(ctx: XdpContext) -> u32 {
+@helper
+fn get_packet_size(ctx: XdpContext) -> u32 {
     return 1500
 }
 
-kernel fn validate_headers(ctx: XdpContext, min_size: u32, max_size: u32) -> bool {
+@helper
+fn validate_headers(ctx: XdpContext, min_size: u32, max_size: u32) -> bool {
     let size = get_packet_size(ctx)
     return size >= min_size && size <= max_size
 }
@@ -1073,11 +1094,13 @@ kernel fn validate_headers(ctx: XdpContext, min_size: u32, max_size: u32) -> boo
 (** Test kernel functions calling other kernel functions *)
 let test_kernel_to_kernel_function_calls () =
   let program_text = {|
-kernel fn helper_function(value: u32) -> u32 {
+@helper
+fn helper_function(value: u32) -> u32 {
     return value * 2
 }
 
-kernel fn main_kernel_function(ctx: XdpContext) -> u32 {
+@helper
+fn main_kernel_function(ctx: XdpContext) -> u32 {
     let base_value = 42
     let result = helper_function(base_value)
     return result
@@ -1100,11 +1123,13 @@ kernel fn main_kernel_function(ctx: XdpContext) -> u32 {
 (** Test function call type resolution with user-defined types *)
 let test_function_call_user_type_resolution () =
   let program_text = {|
-kernel fn extract_ip_from_context(ctx: XdpContext) -> IpAddress {
+@helper
+fn extract_ip_from_context(ctx: XdpContext) -> IpAddress {
     return 0x7f000001  // 127.0.0.1 as u32
 }
 
-kernel fn convert_ip_to_u32(addr: IpAddress) -> u32 {
+@helper
+fn convert_ip_to_u32(addr: IpAddress) -> u32 {
     return addr
 }
 
