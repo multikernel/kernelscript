@@ -199,6 +199,16 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_kfunc_attribute)
+ (modules test_kfunc_attribute)
+ (libraries kernelscript alcotest str))
+
+(executable
+ (name test_private_attribute)
+ (modules test_private_attribute)
+ (libraries kernelscript alcotest str))
+
+(executable
  (name test_function_scope)
  (modules test_function_scope)
  (libraries kernelscript alcotest))
@@ -501,6 +511,8 @@
   test_error_handling.exe
   test_function_scope.exe
   test_function_validation.exe
+  test_kfunc_attribute.exe
+  test_private_attribute.exe
   test_enum.exe
   test_type_alias.exe
   test_const_variables.exe
@@ -529,6 +541,8 @@
    (run ./test_error_handling.exe)
    (run ./test_function_scope.exe)
    (run ./test_function_validation.exe)
+   (run ./test_kfunc_attribute.exe)
+   (run ./test_private_attribute.exe)
    (run ./test_enum.exe)
    (run ./test_type_alias.exe)
    (run ./test_const_variables.exe)

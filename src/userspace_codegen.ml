@@ -6,6 +6,22 @@
 open Ir
 open Printf
 
+(** Dependency information for a single eBPF program *)
+type program_dependencies = {
+  program_name: string;
+  program_type: string;  (* xdp, tc, kprobe, etc *)
+  required_kfuncs: string list;
+  required_modules: string list;
+}
+
+(** System-wide kfunc dependency information *)
+type kfunc_dependency_info = {
+  kfunc_definitions: (string * Ast.function_def) list;  (* kfunc_name -> function_def *)
+  private_functions: (string * Ast.function_def) list;   (* private function_name -> function_def *)
+  program_dependencies: program_dependencies list;
+  module_name: string;
+}
+
 (** Function usage tracking for optimization *)
 type function_usage = {
   mutable uses_load: bool;
@@ -20,6 +36,202 @@ let create_function_usage () = {
   uses_map_operations = false;
   used_maps = [];
 }
+
+(** Extract kfunc and private function definitions from AST *)
+let extract_kfunc_and_private_functions ast =
+  let kfuncs = ref [] in
+  let privates = ref [] in
+  
+  List.iter (function
+    | Ast.AttributedFunction attr_func ->
+        let is_kfunc = List.exists (function
+          | Ast.SimpleAttribute "kfunc" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let is_private = List.exists (function
+          | Ast.SimpleAttribute "private" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        
+        if is_kfunc then
+          kfuncs := (attr_func.attr_function.func_name, attr_func.attr_function) :: !kfuncs
+        else if is_private then
+          privates := (attr_func.attr_function.func_name, attr_func.attr_function) :: !privates
+    | _ -> ()
+  ) ast;
+  
+  (!kfuncs, !privates)
+
+(** Extract function calls from IR instructions *)
+let rec extract_function_calls_from_ir_instrs instrs =
+  let calls = ref [] in
+  
+  List.iter (fun instr ->
+    match instr.instr_desc with
+    | IRCall (func_name, _, _) ->
+        calls := func_name :: !calls
+    | IRIf (_, then_body, else_body) ->
+        calls := (extract_function_calls_from_ir_instrs then_body) @ !calls;
+        (match else_body with
+         | Some else_instrs -> calls := (extract_function_calls_from_ir_instrs else_instrs) @ !calls
+         | None -> ())
+    | IRBpfLoop (_, _, _, _, body_instrs) ->
+        calls := (extract_function_calls_from_ir_instrs body_instrs) @ !calls
+    | IRTry (try_instrs, catch_clauses) ->
+        calls := (extract_function_calls_from_ir_instrs try_instrs) @ !calls;
+        List.iter (fun clause ->
+          calls := (extract_function_calls_from_ir_instrs clause.catch_body) @ !calls
+        ) catch_clauses
+    | _ -> ()
+  ) instrs;
+  
+  !calls
+
+(** Extract function calls from an IR function *)
+let extract_function_calls_from_ir_function ir_func =
+  List.fold_left (fun acc block ->
+    acc @ (extract_function_calls_from_ir_instrs block.instructions)
+  ) [] ir_func.basic_blocks
+
+(** Determine program type from function attributes *)
+let get_program_type_from_attributes attr_list =
+  List.fold_left (fun acc attr ->
+    match attr with
+    | Ast.SimpleAttribute attr_name when List.mem attr_name ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] ->
+        Some attr_name
+    | _ -> acc
+  ) None attr_list
+
+(** Extract eBPF program information from AST *)
+let extract_ebpf_programs ast =
+  List.filter_map (function
+    | Ast.AttributedFunction attr_func ->
+        (match get_program_type_from_attributes attr_func.attr_list with
+         | Some prog_type -> 
+             Some (attr_func.attr_function.func_name, prog_type)
+         | None -> None)
+    | _ -> None
+  ) ast
+
+(** Analyze kfunc dependencies for all eBPF programs *)
+let analyze_kfunc_dependencies module_name ast ir_programs =
+  let (kfunc_definitions, private_functions) = extract_kfunc_and_private_functions ast in
+  let ebpf_programs = extract_ebpf_programs ast in
+  let kfunc_names = List.map fst kfunc_definitions in
+  
+  (* For each eBPF program, find which kfuncs it calls *)
+  let program_dependencies = List.filter_map (fun (prog_name, prog_type) ->
+    (* Find the corresponding IR function *)
+    match List.find_opt (fun ir_func -> ir_func.func_name = prog_name) ir_programs with
+    | Some ir_func ->
+        let all_calls = extract_function_calls_from_ir_function ir_func in
+        (* Filter to only kfunc calls *)
+        let kfunc_calls = List.filter (fun call_name -> 
+          List.mem call_name kfunc_names
+        ) all_calls in
+        
+        if kfunc_calls <> [] then
+          (* Remove duplicates *)
+          let unique_kfuncs = List.sort_uniq String.compare kfunc_calls in
+          Some {
+            program_name = prog_name;
+            program_type = prog_type;
+            required_kfuncs = unique_kfuncs;
+            required_modules = [module_name];  (* Currently all kfuncs are in one module *)
+          }
+        else
+          None
+    | None -> None
+  ) ebpf_programs in
+  
+  {
+    kfunc_definitions;
+    private_functions;
+    program_dependencies;
+    module_name;
+  }
+
+(** Check if any eBPF programs have kfunc dependencies *)
+let has_kfunc_dependencies dependency_info =
+  dependency_info.program_dependencies <> []
+
+(** Generate kernel module loading code for userspace *)
+let generate_kmodule_loading_code dependency_info =
+  if dependency_info.program_dependencies = [] then
+    ""
+  else
+    let program_checks = String.concat "\n" (List.map (fun prog_dep ->
+      let module_loads = String.concat "\n        " (List.map (fun module_name ->
+        sprintf {|if (load_kernel_module("%s") != 0) return -1;|} module_name
+      ) prog_dep.required_modules) in
+      
+      sprintf {|    if (strcmp(program_name, "%s") == 0) {
+        /* Program %s requires modules: %s */
+        %s
+    }|} 
+        prog_dep.program_name
+        prog_dep.program_name
+        (String.concat ", " prog_dep.required_modules)
+        module_loads
+    ) dependency_info.program_dependencies) in
+    
+    sprintf {|
+/* Kernel module loading for kfunc dependencies */
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+
+#ifndef __NR_finit_module
+#define __NR_finit_module 313
+#endif
+
+static int finit_module(int fd, const char *param_values, int flags) {
+    return syscall(__NR_finit_module, fd, param_values, flags);
+}
+
+static int load_kernel_module(const char *module_name) {
+    char module_path[256];
+    snprintf(module_path, sizeof(module_path), "%%s.mod.ko", module_name);
+    
+    /* Open the kernel module file */
+    int fd = open(module_path, O_RDONLY);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            printf("Warning: Kernel module file %%s not found (may already be loaded)\n", module_path);
+            return 0;  /* Don't fail - module might already be loaded or available via modprobe */
+        }
+        printf("Failed to open kernel module file %%s: %%s\n", module_path, strerror(errno));
+        return -1;
+    }
+    
+    /* Load the module using finit_module syscall */
+    int ret = finit_module(fd, "", 0);
+    close(fd);
+    
+    if (ret == 0) {
+        printf("Loaded kernel module: %%s\n", module_name);
+        return 0;
+    } else {
+        if (errno == EEXIST) {
+            printf("Kernel module %%s already loaded\n", module_name);
+            return 0;  /* Module already loaded - this is fine */
+        } else if (errno == EPERM) {
+            printf("Permission denied loading kernel module %%s (try running as root)\n", module_name);
+            return -1;
+        } else {
+            printf("Warning: Failed to load kernel module %%s: %%s (may already be loaded)\n", module_name, strerror(errno));
+            return 0;  /* Don't fail - module might be loaded via different means */
+        }
+    }
+}
+
+static int ensure_kfunc_dependencies_loaded(const char *program_name) {
+    /* Check which modules this program depends on */
+%s
+    return 0;
+}
+|} program_checks
 
 (** Context for C code generation *)
 type userspace_context = {
@@ -1233,7 +1445,9 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
 
 (** Generate userspace code with tail call dependency management *)
-let generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code =
+let generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies =
+  (* kfunc_dependencies is used implicitly in the generated C code via ensure_kfunc_dependencies_loaded call *)
+  let _ensure_deps_exist = kfunc_dependencies in  (* Suppress unused warning *)
   if all_usage.uses_load then
     let dep_loading_code = 
       if tail_call_analysis.Tail_call_analyzer.prog_array_size > 0 then
@@ -1283,6 +1497,12 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
     in
     
     sprintf {|int load_bpf_program(const char *program_name) {
+    /* Ensure kfunc dependencies are loaded before loading eBPF program */
+    if (ensure_kfunc_dependencies_loaded(program_name) != 0) {
+        fprintf(stderr, "Failed to load required kernel modules for program '%%s'\n", program_name);
+        return -1;
+    }
+    
     if (!bpf_obj) {
         bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
         if (libbpf_get_error(bpf_obj)) {
@@ -1313,7 +1533,7 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
   else ""
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function func in
@@ -1340,7 +1560,11 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
 
 /* Generated from KernelScript IR */
 |} in
-  let includes = base_includes ^ "\n" ^ additional_includes in
+  
+  (* Add kfunc dependency loading code if needed *)
+  let kmodule_loading_code = generate_kmodule_loading_code kfunc_dependencies in
+  
+  let includes = base_includes ^ "\n" ^ additional_includes ^ kmodule_loading_code in
 
   (* Reset and use the global config names collector *)
   global_config_names := [];
@@ -1475,7 +1699,7 @@ void cleanup_bpf_maps(void) {
   
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
-    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code in
+    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies in
     
     let attach_function = if all_usage.uses_attach then
       {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
@@ -1551,10 +1775,10 @@ void cleanup_bpf_maps(void) {
 |} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis userspace_prog ir_multi_prog.global_maps source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies userspace_prog ir_multi_prog.global_maps source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 

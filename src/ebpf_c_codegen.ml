@@ -1785,7 +1785,7 @@ let generate_prog_array_map ctx prog_array_size =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
-    ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[])
+    ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[])
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -1796,6 +1796,30 @@ let compile_multi_to_c_with_tail_calls
   
   (* Store variable type aliases for later lookup *)
   ctx.variable_type_aliases <- variable_type_aliases;
+  
+  (* Generate kfunc declarations *)
+  let rec ast_type_to_c_type ast_type =
+    match ast_type with
+    | Ast.U8 -> "__u8" | Ast.U16 -> "__u16" | Ast.U32 -> "__u32" | Ast.U64 -> "__u64"
+    | Ast.I8 -> "__s8" | Ast.I16 -> "__s16" | Ast.I32 -> "__s32" | Ast.I64 -> "__s64"
+    | Ast.Bool -> "bool" | Ast.Char -> "char"
+    | Ast.Pointer inner_type -> sprintf "%s*" (ast_type_to_c_type inner_type)
+    | _ -> "void"
+  in
+  List.iter (fun kfunc ->
+    let params_str = String.concat ", " (List.map (fun (name, param_type) ->
+      let c_type = ast_type_to_c_type param_type in
+      sprintf "%s %s" c_type name
+    ) kfunc.Ast.func_params) in
+    let return_type_str = match kfunc.Ast.func_return_type with
+      | Some ret_type -> ast_type_to_c_type ret_type
+      | None -> "void"
+    in
+    emit_line ctx (sprintf "/* kfunc declaration */");
+    emit_line ctx (sprintf "%s %s(%s);" return_type_str kfunc.Ast.func_name params_str);
+  ) kfunc_declarations;
+  
+  if kfunc_declarations <> [] then emit_blank_line ctx;
   
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_prog;
@@ -1897,10 +1921,10 @@ let compile_multi_to_c ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_t
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
 
-let compile_multi_to_c_with_analysis ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+let compile_multi_to_c_with_analysis ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
   let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-    ~config_declarations ~type_aliases ~variable_type_aliases ir_multi_program in
+    ~config_declarations ~type_aliases ~variable_type_aliases ~kfunc_declarations ir_multi_program in
   
   (* Print tail call analysis results *)
   Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 

@@ -1,0 +1,321 @@
+(** Kernel Module Code Generation for @kfunc Functions
+    
+    This module generates kernel module C code for functions annotated with @kfunc.
+    The generated module automatically registers kfuncs with the eBPF subsystem.
+*)
+
+open Ast
+open Printf
+
+(** Kernel module generation context *)
+type kmodule_context = {
+  module_name: string;
+  kfunc_functions: function_def list;
+  private_functions: function_def list;
+  dependencies: string list;
+}
+
+(** Create a new kernel module context *)
+let create_context module_name = {
+  module_name;
+  kfunc_functions = [];
+  private_functions = [];
+  dependencies = [];
+}
+
+(** Add a kfunc to the context *)
+let add_kfunc context func_def = {
+  context with kfunc_functions = func_def :: context.kfunc_functions
+}
+
+(** Add a private function to the context *)
+let add_private context func_def = {
+  context with private_functions = func_def :: context.private_functions
+}
+
+(** Convert KernelScript type to C type for kernel module *)
+let kernelscript_type_to_c_type = function
+  | U8 -> "u8"
+  | U16 -> "u16"
+  | U32 -> "u32"
+  | U64 -> "u64"
+  | I8 -> "s8"
+  | I16 -> "s16"
+  | I32 -> "s32"
+  | I64 -> "s64"
+  | Bool -> "bool"
+  | Char -> "char"
+  | Pointer U8 -> "u8 *"
+  | Pointer U16 -> "u16 *"
+  | Pointer U32 -> "u32 *"
+  | Pointer U64 -> "u64 *"
+  | Pointer I8 -> "s8 *"
+  | Pointer I16 -> "s16 *"
+  | Pointer I32 -> "s32 *"
+  | Pointer I64 -> "s64 *"
+  | Pointer Char -> "char *"
+  | Pointer (UserType "void") -> "void *"
+  | UserType "void" -> "void"
+  | _ -> "void *"  (* Fallback for complex types *)
+
+(** Generate function signature for kernel module functions *)
+let generate_function_signature func_def =
+  let return_type = match func_def.func_return_type with
+    | Some ret_type -> kernelscript_type_to_c_type ret_type
+    | None -> "void"
+  in
+  let params = List.map (fun (param_name, param_type) ->
+    sprintf "%s %s" (kernelscript_type_to_c_type param_type) param_name
+  ) func_def.func_params in
+  let params_str = if params = [] then "void" else String.concat ", " params in
+  sprintf "static %s %s(%s)" return_type func_def.func_name params_str
+
+(** Generate function prototype for kernel module functions *)
+let generate_function_prototype func_def =
+  let return_type = match func_def.func_return_type with
+    | Some ret_type -> kernelscript_type_to_c_type ret_type
+    | None -> "void"
+  in
+  let params = List.map (fun (param_name, param_type) ->
+    sprintf "%s %s" (kernelscript_type_to_c_type param_type) param_name
+  ) func_def.func_params in
+  let params_str = if params = [] then "void" else String.concat ", " params in
+  sprintf "static %s %s(%s);" return_type func_def.func_name params_str
+
+(** Generate statement translation *)
+let rec generate_statement_translation stmt =
+  match stmt.stmt_desc with
+  | Return (Some expr) ->
+      sprintf "    return %s;" (generate_expression_translation expr)
+  | Return None ->
+      "    return;"
+  | Assignment (var_name, expr) ->
+      sprintf "    %s = %s;" var_name (generate_expression_translation expr)
+  | Declaration (var_name, Some var_type, expr) ->
+      sprintf "    %s %s = %s;" 
+        (kernelscript_type_to_c_type var_type) 
+        var_name 
+        (generate_expression_translation expr)
+  | Declaration (var_name, None, expr) ->
+      sprintf "    auto %s = %s;" var_name (generate_expression_translation expr)
+  | If (condition, then_stmts, else_stmts) ->
+      let condition_str = generate_expression_translation condition in
+      let then_block = String.concat "\n" (List.map generate_statement_translation then_stmts) in
+      let else_block = match else_stmts with
+        | Some stmts -> sprintf " else {\n%s\n    }" (String.concat "\n" (List.map generate_statement_translation stmts))
+        | None -> ""
+      in
+      sprintf "    if (%s) {\n%s\n    }%s" condition_str then_block else_block
+  | For (var_name, start_expr, end_expr, body_stmts) ->
+      let start_str = generate_expression_translation start_expr in
+      let end_str = generate_expression_translation end_expr in
+      let body_str = String.concat "\n" (List.map generate_statement_translation body_stmts) in
+      sprintf "    for (int %s = %s; %s < %s; %s++) {\n%s\n    }" 
+        var_name start_str var_name end_str var_name body_str
+  | While (condition, body_stmts) ->
+      let condition_str = generate_expression_translation condition in
+      let body_str = String.concat "\n" (List.map generate_statement_translation body_stmts) in
+      sprintf "    while (%s) {\n%s\n    }" condition_str body_str
+  | ExprStmt expr ->
+      sprintf "    %s;" (generate_expression_translation expr)
+  | Break -> "    break;"
+  | Continue -> "    continue;"
+  | _ -> "    /* TODO: Implement statement translation */"
+
+(** Generate expression translation *)
+and generate_expression_translation expr =
+  match expr.expr_desc with
+  | Literal (IntLit (value, _)) -> string_of_int value
+  | Literal (StringLit str) -> sprintf "\"%s\"" str
+  | Literal (BoolLit true) -> "true"
+  | Literal (BoolLit false) -> "false"
+  | Literal NullLit -> "NULL"
+  | Identifier name -> name
+  | BinaryOp (left, op, right) ->
+      let left_str = generate_expression_translation left in
+      let right_str = generate_expression_translation right in
+      let op_str = match op with
+        | Add -> "+"
+        | Sub -> "-"
+        | Mul -> "*"
+        | Div -> "/"
+        | Mod -> "%"
+        | Eq -> "=="
+        | Ne -> "!="
+        | Lt -> "<"
+        | Le -> "<="
+        | Gt -> ">"
+        | Ge -> ">="
+        | And -> "&&"
+        | Or -> "||"
+      in
+      sprintf "(%s %s %s)" left_str op_str right_str
+  | UnaryOp (op, operand) ->
+      let operand_str = generate_expression_translation operand in
+      let op_str = match op with
+        | Not -> "!"
+        | Neg -> "-"
+      in
+      sprintf "(%s%s)" op_str operand_str
+  | FunctionCall (func_name, args) ->
+      let args_str = String.concat ", " (List.map generate_expression_translation args) in
+      sprintf "%s(%s)" func_name args_str
+  | FieldAccess (obj, field) ->
+      sprintf "%s.%s" (generate_expression_translation obj) field
+  | ArrayAccess (array, index) ->
+      sprintf "%s[%s]" (generate_expression_translation array) (generate_expression_translation index)
+  | _ -> "/* TODO: Implement expression translation */"
+
+(** Generate function implementation for kernel module *)
+let generate_function_implementation func_def =
+  let signature = generate_function_signature func_def in
+  let body = String.concat "\n" (List.map generate_statement_translation func_def.func_body) in
+  sprintf "%s\n{\n%s\n}" signature body
+
+(** Generate BTF information for kfunc *)
+let generate_btf_info func_def =
+  let param_types = List.map (fun (_, param_type) ->
+    kernelscript_type_to_c_type param_type
+  ) func_def.func_params in
+  let return_type = match func_def.func_return_type with
+    | Some ret_type -> kernelscript_type_to_c_type ret_type
+    | None -> "void"
+  in
+  sprintf "/* BTF info for %s: %s(%s) */" 
+    func_def.func_name 
+    return_type 
+    (String.concat ", " param_types)
+
+(** Generate complete kernel module *)
+let generate_kernel_module context =
+  let header = sprintf {|/*
+ * Generated kernel module for kfunc definitions
+ * Module: %s
+ * Generated by KernelScript compiler
+ */
+
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/btf.h>
+#include <linux/btf_ids.h>
+#include <linux/bpf.h>
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("KernelScript Compiler");
+MODULE_DESCRIPTION("Auto-generated kfunc module for %s");
+MODULE_VERSION("1.0");
+
+|} context.module_name context.module_name in
+
+  (* Generate function prototypes *)
+  let all_functions = context.private_functions @ context.kfunc_functions in
+  let function_prototypes = String.concat "\n" (List.map generate_function_prototype all_functions) in
+  
+  (* Generate private function implementations first (so kfuncs can call them) *)
+  let private_implementations = String.concat "\n\n" (List.map generate_function_implementation context.private_functions) in
+  
+  (* Generate kfunc implementations *)
+  let kfunc_implementations = String.concat "\n\n" (List.map generate_function_implementation context.kfunc_functions) in
+  
+  let btf_declarations = String.concat "\n" (List.map generate_btf_info context.kfunc_functions) in
+  
+  let kfunc_btf_ids = String.concat "\n" (List.map (fun func_def ->
+    sprintf "BTF_ID_FLAGS(func, %s)" func_def.func_name
+  ) context.kfunc_functions) in
+  
+  let btf_id_set = sprintf {|
+/* BTF ID set for kfuncs */
+BTF_SET8_START(kfunc_btf_ids)
+%s
+BTF_SET8_END(kfunc_btf_ids)
+
+static const struct btf_kfunc_id_set kfunc_set = {
+    .owner = THIS_MODULE,
+    .set   = &kfunc_btf_ids,
+};
+|} kfunc_btf_ids in
+
+  let init_function = sprintf {|
+static int __init %s_init(void)
+{
+    int ret;
+    
+    pr_info("Loading %s kfunc module\n");
+    
+    /* Register BTF kfunc set */
+    ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &kfunc_set);
+    if (ret < 0) {
+        pr_err("Failed to register kfunc set: %%d\n", ret);
+        return ret;
+    }
+    
+    pr_info("%s kfunc module loaded successfully\n");
+    return 0;
+}
+
+static void __exit %s_exit(void)
+{
+    pr_info("Unloading %s kfunc module\n");
+    /* Cleanup is handled automatically by the kernel */
+}
+
+module_init(%s_init);
+module_exit(%s_exit);
+|} context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name context.module_name in
+
+  (* Combine all function implementations *)
+  let all_implementations = if private_implementations = "" then
+    kfunc_implementations
+  else if kfunc_implementations = "" then  
+    private_implementations
+  else
+    sprintf "%s\n\n%s" private_implementations kfunc_implementations
+  in
+  
+  sprintf "%s\n/* Function prototypes */\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n%s" 
+    header 
+    function_prototypes
+    btf_declarations 
+    all_implementations 
+    btf_id_set 
+    init_function
+    ""
+
+(** Extract kfunc functions from AST *)
+let extract_kfunc_functions ast =
+  List.filter_map (function
+    | AttributedFunction attr_func ->
+        (* Check if this is a kfunc *)
+        let is_kfunc = List.exists (function
+          | SimpleAttribute "kfunc" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        if is_kfunc then Some attr_func.attr_function else None
+    | _ -> None
+  ) ast
+
+(** Extract private functions from AST *)
+let extract_private_functions ast =
+  List.filter_map (function
+    | AttributedFunction attr_func ->
+        (* Check if this is a private function *)
+        let is_private = List.exists (function
+          | SimpleAttribute "private" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        if is_private then Some attr_func.attr_function else None
+    | _ -> None
+  ) ast
+
+(** Main entry point for kernel module generation *)
+let generate_kernel_module_from_ast module_name ast =
+  let kfunc_functions = extract_kfunc_functions ast in
+  let private_functions = extract_private_functions ast in
+  if kfunc_functions = [] && private_functions = [] then
+    None  (* No kernel module functions found, don't generate module *)
+  else
+    let context = create_context module_name in
+    let context_with_kfuncs = List.fold_left add_kfunc context kfunc_functions in
+    let context_with_all = List.fold_left add_private context_with_kfuncs private_functions in
+    Some (generate_kernel_module context_with_all) 

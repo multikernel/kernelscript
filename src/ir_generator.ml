@@ -1599,24 +1599,28 @@ let lower_multi_program ast symbol_table source_name =
         (* Convert attributed function to program_def for compatibility *)
         (match attr_func.attr_list with
          | SimpleAttribute prog_type_str :: _ ->
-             let prog_type = match prog_type_str with
-               | "xdp" -> Ast.Xdp
-               | "tc" -> Ast.Tc  
-               | "kprobe" -> Ast.Kprobe
-               | "uprobe" -> Ast.Uprobe
-               | "tracepoint" -> Ast.Tracepoint
-               | "lsm" -> Ast.Lsm
-               | "cgroup_skb" -> Ast.CgroupSkb
-               | _ -> failwith ("Unknown program type: " ^ prog_type_str)
-             in
-             Some {
-               Ast.prog_name = attr_func.attr_function.func_name;
-               prog_type = prog_type;
-               prog_functions = [attr_func.attr_function];
-               prog_maps = [];
-               prog_structs = [];
-               prog_pos = attr_func.attr_pos;
-             }
+             (match prog_type_str with
+              | "kfunc" -> None  (* Skip kfunc functions - they're not eBPF programs *)
+              | "private" -> None  (* Skip private functions - they're not eBPF programs *)
+              | _ ->
+                  let prog_type = match prog_type_str with
+                    | "xdp" -> Ast.Xdp
+                    | "tc" -> Ast.Tc  
+                    | "kprobe" -> Ast.Kprobe
+                    | "uprobe" -> Ast.Uprobe
+                    | "tracepoint" -> Ast.Tracepoint
+                    | "lsm" -> Ast.Lsm
+                    | "cgroup_skb" -> Ast.CgroupSkb
+                    | _ -> failwith ("Unknown program type: " ^ prog_type_str)
+                  in
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = prog_type;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_pos = attr_func.attr_pos;
+                  })
          | _ -> None)
     | _ -> None
   ) ast in

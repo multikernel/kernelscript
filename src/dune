@@ -4,7 +4,7 @@
           map_operations ir ir_generator ir_analysis loop_analysis ir_function_system
           multi_program_analyzer multi_program_ir_optimizer ebpf_c_codegen
           userspace_codegen evaluator safety_checker stdlib builtin_loader
-          builtin_compiler tail_call_analyzer)
+          builtin_compiler tail_call_analyzer kernel_module_codegen)
  (libraries unix str kernelscript_context))
 
 (executable

@@ -130,7 +130,7 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kmod"
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kmod" | "kfunc" | "private"
 attribute_args = string_literal | identifier
 
 parameter_list = parameter { "," parameter }
@@ -191,6 +191,8 @@ fn network_monitor(ctx: XdpContext) -> XdpAction {
 
 KernelScript uses a simple and intuitive scoping model:
 - **Attributed functions** (e.g., `@xdp`, `@tc`): Kernel space (eBPF) - compiles to eBPF bytecode
+- **`@kfunc` functions**: Kernel modules (full privileges) - exposed to eBPF programs via BTF
+- **`@private` functions**: Kernel modules (full privileges) - internal helpers for kfuncs
 - **Regular functions**: User space - compiles to native executable
 - **Maps and global configs**: Shared between both kernel and user space
 
@@ -428,11 +430,439 @@ let my_bbr = tcp_congestion_ops {
     name: "my_bbr",
 }
 
-### 3.4 Struct_ops and Kernel Module Function Pointers
+### 3.4 Custom Kernel Functions (kfunc)
+
+KernelScript allows users to define custom kernel functions using the `@kfunc` attribute. These functions execute in kernel space with full privileges and can be called from eBPF programs. The compiler automatically generates a kernel module containing the kfunc implementation and loads it transparently when needed.
+
+#### 3.4.1 kfunc Declaration and Usage
+
+kfunc functions are declared using the `@kfunc` attribute and are registered with the same name as the function:
+
+```kernelscript
+// Custom kernel function - registered as "advanced_packet_analysis"
+@kfunc
+fn advanced_packet_analysis(data: *u8, len: u32) -> u32 {
+    // Full kernel privileges - can access any kernel API
+    let skb = alloc_skb(len, GFP_KERNEL)
+    if (skb == null) {
+        return 0
+    }
+    
+    // Complex analysis using kernel subsystems
+    let result = deep_packet_inspection(data, len)
+    kfree_skb(skb)
+    
+    return result
+}
+
+// Rate limiting kernel function
+@kfunc
+fn rate_limit_flow(flow_id: u64, current_time: u64) -> bool {
+    // Access kernel data structures directly
+    let bucket = get_rate_limit_bucket(flow_id)
+    if (bucket == null) {
+        bucket = create_rate_limit_bucket(flow_id)
+    }
+    
+    // Token bucket algorithm with kernel timers
+    update_token_bucket(bucket, current_time)
+    return consume_token(bucket)
+}
+
+// Crypto verification kernel function
+@kfunc
+fn verify_packet_signature(packet: *u8, len: u32, signature: *u8) -> i32 {
+    // Use kernel crypto subsystem
+    let tfm = crypto_alloc_shash("sha256", 0, 0)
+    if (IS_ERR(tfm)) {
+        return -ENOMEM
+    }
+    
+    let result = crypto_verify_signature(tfm, packet, len, signature)
+    crypto_free_shash(tfm)
+    
+    return result
+}
+
+// eBPF program calling kfuncs
+@xdp
+fn secure_packet_filter(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()
+    if (packet == null) {
+        return XDP_PASS
+    }
+    
+    // Call custom kernel function using function name
+    let analysis_result = advanced_packet_analysis(packet.data, packet.len)
+    if (analysis_result == 0) {
+        return XDP_DROP
+    }
+    
+    // Call rate limiter kfunc using function name
+    let flow_id = compute_flow_id(packet)
+    if (!rate_limit_flow(flow_id, bpf_ktime_get_ns())) {
+        return XDP_DROP
+    }
+    
+    // Verify packet signature for critical flows
+    if (packet.is_critical_flow()) {
+        let signature = extract_signature(packet)
+        if (verify_packet_signature(packet.data, packet.len, signature) != 0) {
+            return XDP_DROP
+        }
+    }
+    
+    return XDP_PASS
+}
+```
+
+#### 3.4.2 Automatic Kernel Module Generation
+
+The compiler automatically generates a kernel module for each kfunc:
+
+**Generated Module Components:**
+- **Function implementation**: Full kernel privileges, access to all kernel APIs
+- **Registration code**: Registers kfunc with eBPF subsystem using BTF
+- **Module metadata**: Proper module init/exit, dependencies, licensing
+- **BTF information**: Type signatures for eBPF verifier integration
+
+**Transparent Loading Process:**
+1. User calls `load(secure_packet_filter)` in userspace
+2. Compiler detects kfunc dependencies in the eBPF program
+3. Kernel module containing kfuncs is loaded automatically
+4. kfuncs are registered and made available to eBPF programs
+5. eBPF program is loaded and can call the kfuncs
+6. Module remains loaded as long as eBPF programs reference it
+
+#### 3.4.3 kfunc Registration
+
+```kernelscript
+// kfunc registered as "packet_decrypt"
+@kfunc
+fn packet_decrypt(data: *u8, len: u32, key: *u8) -> i32 {
+    // Registered as "packet_decrypt" in eBPF subsystem
+    return kernel_crypto_decrypt(data, len, key)
+}
+
+// kfunc registered as "optimized_checksum_calculation"
+@kfunc
+fn optimized_checksum_calculation(data: *u8, len: u32) -> u32 {
+    // Registered as "optimized_checksum_calculation" in eBPF subsystem
+    // Can use hardware acceleration, SIMD, etc.
+    return hardware_accelerated_checksum(data, len)
+}
+
+// eBPF program usage
+@xdp
+fn data_processor(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()
+    
+    // Call using function names
+    let checksum = optimized_checksum_calculation(packet.data, packet.len)
+    let decrypt_result = packet_decrypt(packet.data, packet.len, get_key())
+    
+    return XDP_PASS
+}
+```
+
+#### 3.4.4 kfunc vs Other Function Types
+
+| Aspect | `@kfunc` | `kernel fn` | `@xdp/@tc/etc` | Regular `fn` |
+|--------|----------|-------------|----------------|--------------|
+| **Execution Context** | Kernel space (full privileges) | eBPF sandbox | eBPF sandbox | Userspace |
+| **Compilation Target** | Kernel module | eBPF bytecode | eBPF bytecode | Native executable |
+| **Callable From** | eBPF programs only | eBPF programs | N/A (entry points) | Userspace only |
+| **Kernel API Access** | Full access | eBPF helpers only | eBPF helpers only | System calls only |
+| **Resource Limits** | None | eBPF verifier limits | eBPF verifier limits | Process limits |
+| **Loading** | Automatic module load | Part of eBPF program | Part of eBPF program | Part of executable |
+
+#### 3.4.5 Advanced kfunc Examples
+
+```kernelscript
+// Network policy enforcement with kernel integration
+@kfunc
+fn enforce_network_policy(src_ip: u32, dst_ip: u32, port: u16, protocol: u8) -> i32 {
+    // Access kernel network namespaces
+    let ns = get_current_net_ns()
+    let policy = lookup_network_policy(ns, src_ip, dst_ip, port)
+    
+    if (policy == null) {
+        return -ENOENT  // No policy found
+    }
+    
+    // Check with netfilter subsystem
+    return netfilter_check_policy(policy, protocol)
+}
+
+// File system integration
+@kfunc
+fn check_file_access(path: *char, mode: u32) -> i32 {
+    // Interact with VFS and security modules
+    let dentry = kern_path_lookup(path)
+    if (IS_ERR(dentry)) {
+        return PTR_ERR(dentry)
+    }
+    
+    let result = security_inode_permission(dentry.d_inode, mode)
+    path_put(&dentry)
+    
+    return result
+}
+
+// Memory management integration
+@kfunc
+fn allocate_secure_buffer(size: u32) -> *u8 {
+    // Use kernel memory allocators with security considerations
+    let buffer = kzalloc(size, GFP_KERNEL | __GFP_ZERO)
+    if (buffer != null) {
+        // Mark as secure/encrypted region
+        mark_buffer_secure(buffer, size)
+    }
+    
+    return buffer
+}
+
+// Usage in complex eBPF program
+@lsm("socket_connect")
+fn advanced_security_monitor(ctx: LsmContext) -> i32 {
+    let sock = ctx.socket()
+    let addr = ctx.address()
+    
+    // Use kfunc for complex policy checking
+    let policy_result = enforce_network_policy(
+        sock.src_ip, addr.dst_ip, addr.port, sock.protocol
+    )
+    
+    if (policy_result != 0) {
+        return -EPERM
+    }
+    
+    // Use kfunc for file access checks if connection involves file transfer
+    if (is_file_transfer_protocol(addr.port)) {
+        let file_check = check_file_access("/tmp/allowed_transfers", R_OK)
+        if (file_check != 0) {
+            return -EACCES
+        }
+    }
+    
+    return 0
+}
+```
+
+### 3.5 Private Kernel Module Functions (@private)
+
+KernelScript supports private helper functions within kernel modules using the `@private` attribute. These functions execute in kernel space but are internal to the module - they cannot be called by eBPF programs and are not registered via BTF. They serve as utility functions for `@kfunc` implementations.
+
+#### 3.5.1 @private Declaration and Usage
+
+Private functions are declared using the `@private` attribute and can only be called by other functions within the same kernel module:
+
+```kernelscript
+// Private helper functions - internal to kernel module
+@private
+fn validate_ip_address(addr: u32) -> bool {
+    // IP validation logic with full kernel privileges
+    return addr != 0 && addr != 0xFFFFFFFF && !is_reserved_ip(addr)
+}
+
+@private
+fn calculate_flow_hash(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -> u64 {
+    // Complex hashing algorithm using kernel crypto
+    let hash_state = crypto_alloc_shash("xxhash64", 0, 0)
+    if (IS_ERR(hash_state)) {
+        return simple_hash(src_ip ^ dst_ip ^ (src_port << 16) ^ dst_port)
+    }
+    
+    let result = crypto_hash_flow(hash_state, src_ip, dst_ip, src_port, dst_port)
+    crypto_free_shash(hash_state)
+    return result
+}
+
+@private  
+fn check_rate_limit_bucket(flow_id: u64, current_time: u64) -> bool {
+    // Token bucket implementation with kernel timers
+    let bucket = find_bucket(flow_id)
+    if (bucket == null) {
+        bucket = create_bucket(flow_id, current_time)
+    }
+    
+    update_bucket_tokens(bucket, current_time)
+    return bucket.tokens > 0
+}
+
+// Public kfunc API that uses private helpers
+@kfunc
+fn advanced_flow_filter(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -> i32 {
+    // Validate inputs using private helper
+    if (!validate_ip_address(src_ip) || !validate_ip_address(dst_ip)) {
+        return -EINVAL
+    }
+    
+    // Calculate flow hash using private helper
+    let flow_id = calculate_flow_hash(src_ip, dst_ip, src_port, dst_port)
+    
+    // Check rate limiting using private helper
+    if (!check_rate_limit_bucket(flow_id, bpf_ktime_get_ns())) {
+        return -EAGAIN  // Rate limited
+    }
+    
+    return 0  // Allow flow
+}
+
+// Another kfunc using the same private helpers
+@kfunc
+fn flow_statistics(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -> u64 {
+    if (!validate_ip_address(src_ip) || !validate_ip_address(dst_ip)) {
+        return 0
+    }
+    
+    // Reuse the same flow hash calculation
+    return calculate_flow_hash(src_ip, dst_ip, src_port, dst_port)
+}
+
+// eBPF program that can call kfuncs but NOT private functions
+@xdp
+fn packet_filter(ctx: XdpContext) -> XdpAction {
+    let packet = ctx.packet()
+    if (packet == null) {
+        return XDP_PASS
+    }
+    
+    // Can call public kfunc
+    let filter_result = advanced_flow_filter(
+        packet.src_ip, packet.dst_ip, packet.src_port, packet.dst_port
+    )
+    
+    if (filter_result != 0) {
+        return XDP_DROP
+    }
+    
+    // ERROR: Cannot call private functions directly
+    // let is_valid = validate_ip_address(packet.src_ip)  // Compilation error!
+    
+    return XDP_PASS
+}
+```
+
+#### 3.5.2 Function Visibility and Call Hierarchy
+
+```kernelscript
+// Example showing function call hierarchy
+@private
+fn low_level_crypto(data: *u8, len: u32) -> u32 {
+    // Low-level cryptographic operations
+    return kernel_crypto_hash(data, len)
+}
+
+@private
+fn mid_level_validation(packet: *u8, len: u32) -> bool {
+    // Can call other private functions in same module
+    let hash = low_level_crypto(packet, len)
+    return hash != 0 && validate_packet_structure(packet, len)
+}
+
+@kfunc
+fn high_level_filter(packet: *u8, len: u32) -> i32 {
+    // Public API that orchestrates private functions
+    if (!mid_level_validation(packet, len)) {
+        return -EINVAL
+    }
+    
+    let hash = low_level_crypto(packet, len)
+    return store_packet_hash(hash)
+}
+
+// eBPF usage
+@tc
+fn traffic_analyzer(ctx: TcContext) -> TcAction {
+    let packet = ctx.packet()
+    
+    // Can only call the public kfunc
+    let result = high_level_filter(packet.data, packet.len)
+    
+    return result == 0 ? TC_ACT_OK : TC_ACT_SHOT
+}
+```
+
+#### 3.5.3 @private vs @kfunc Comparison
+
+| Aspect | `@private` | `@kfunc` |
+|--------|-----------|----------|
+| **Visibility** | Internal to kernel module | Exposed to eBPF programs |
+| **BTF Registration** | Not registered | Registered with BTF |
+| **Callable From** | Other functions in same module | eBPF programs |
+| **Compilation Target** | Kernel module only | Kernel module + BTF |
+| **Use Case** | Internal implementation details | Public API functions |
+| **Performance** | Direct function call | BTF-mediated call |
+
+#### 3.5.4 Code Organization Benefits
+
+Using `@private` functions provides several architectural benefits:
+
+**1. Modularity**
+```kernelscript
+// Clean separation of concerns
+@private fn parse_headers(packet: *u8) -> PacketHeaders { }
+@private fn validate_headers(headers: PacketHeaders) -> bool { }
+@private fn apply_policy(headers: PacketHeaders) -> PolicyResult { }
+
+@kfunc
+fn packet_policy_check(packet: *u8, len: u32) -> i32 {
+    let headers = parse_headers(packet)
+    if (!validate_headers(headers)) {
+        return -EINVAL
+    }
+    
+    let policy = apply_policy(headers)
+    return policy.action
+}
+```
+
+**2. Security**
+```kernelscript
+// Hide sensitive implementation details
+@private fn decrypt_with_master_key(data: *u8, len: u32) -> bool {
+    // Sensitive key operations not exposed to eBPF
+    return crypto_decrypt_master(data, len, get_master_key())
+}
+
+@kfunc  
+fn secure_packet_process(encrypted_packet: *u8, len: u32) -> i32 {
+    // Only expose safe, validated interface
+    if (!decrypt_with_master_key(encrypted_packet, len)) {
+        return -EACCES
+    }
+    return 0
+}
+```
+
+**3. Performance**
+```kernelscript
+// Optimize hot paths with private helpers
+@private fn fast_checksum(data: *u8, len: u32) -> u32 {
+    // Optimized assembly or SIMD operations
+    return simd_checksum(data, len)
+}
+
+@private fn cache_lookup(key: u64) -> *CacheEntry {
+    // Efficient kernel cache operations
+    return rcu_dereference(cache_table[hash(key)])
+}
+
+@kfunc
+fn optimized_packet_check(packet: *u8, len: u32) -> bool {
+    let checksum = fast_checksum(packet, len)
+    let cache_entry = cache_lookup(checksum)
+    
+    return cache_entry != null && cache_entry.is_valid
+}
+```
+
+### 3.6 Struct_ops and Kernel Module Function Pointers
 
 KernelScript supports both eBPF struct_ops and kernel module function pointer registration through attributed structs.
 
-#### 3.4.1 eBPF Struct_ops
+#### 3.5.1 eBPF Struct_ops
 
 eBPF struct_ops allow implementing kernel interfaces using eBPF programs:
 
@@ -475,7 +905,7 @@ let my_bbr = tcp_congestion_ops {
 register(my_bbr)
 ```
 
-#### 3.4.2 Kernel Module Function Pointers
+#### 3.5.2 Kernel Module Function Pointers
 
 For kernel modules, use the `@kmod` attribute to define function pointer structs:
 
@@ -520,7 +950,7 @@ let my_fops = file_operations {
 register(my_fops)
 ```
 
-#### 3.4.3 Key Differences
+#### 3.5.3 Key Differences
 
 | Aspect | `@struct_ops` (eBPF) | `@kmod` (Kernel Module) |
 |--------|---------------------|------------------------|
@@ -531,7 +961,7 @@ register(my_fops)
 | **Verification** | eBPF verifier enforced | Manual verification |
 | **Registration** | `bpf_map__attach_struct_ops()` | Kernel registration APIs |
 
-#### 3.4.4 Registration Function
+#### 3.5.4 Registration Function
 
 The `register()` function is type-aware and generates the appropriate registration code:
 
@@ -1012,7 +1442,7 @@ function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" ident
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops"
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kfunc"
 attribute_args = string_literal | identifier
 
 visibility = "pub" | "priv" 
@@ -1947,6 +2377,21 @@ config system {
     mut packets_processed: u64 = 0,
 }
 
+// Custom kernel function for advanced port analysis
+@kfunc
+fn advanced_port_check(port: u16, protocol: u8, src_ip: u32) -> i32 {
+    // Full kernel privileges - access to network namespaces, security modules
+    let ns = get_current_net_ns()
+    let policy = lookup_port_policy(ns, port, protocol)
+    
+    if (policy == null) {
+        return 0  // No policy, allow
+    }
+    
+    // Check with kernel firewall subsystem
+    return netfilter_check_port_policy(policy, src_ip, port)
+}
+
 // Kernel-shared functions - accessible by all eBPF programs
 kernel fn is_port_blocked(port: u16) -> bool {
     for (i in 0..4) {
@@ -1974,8 +2419,18 @@ fn simple_filter(ctx: XdpContext) -> XdpAction {
     
     if (packet.is_tcp()) {
         let tcp = packet.tcp_header()
-        if (is_port_blocked(tcp.dst_port)) {  // Call kernel-shared function
-            log_blocked_port(tcp.dst_port)    // Call another kernel-shared function
+        
+        // First check simple blocked ports (kernel-shared function)
+        if (is_port_blocked(tcp.dst_port)) {
+            log_blocked_port(tcp.dst_port)
+            system.packets_dropped += 1
+            return XDP_DROP
+        }
+        
+        // Advanced analysis using kfunc for complex policy checking
+        let policy_result = advanced_port_check(tcp.dst_port, packet.protocol(), packet.src_ip())
+        if (policy_result != 0) {
+            log_blocked_port(tcp.dst_port)
             system.packets_dropped += 1
             return XDP_DROP
         }
@@ -1993,7 +2448,16 @@ fn security_monitor(ctx: TcContext) -> TcAction {
     
     if (packet.is_tcp()) {
         let tcp = packet.tcp_header()
-        if (is_port_blocked(tcp.src_port)) {  // Same kernel-shared function
+        
+        // Check simple blocked ports first
+        if (is_port_blocked(tcp.src_port)) {
+            log_blocked_port(tcp.src_port)
+            return TC_ACT_SHOT
+        }
+        
+        // Use the same kfunc for advanced policy checking
+        let policy_result = advanced_port_check(tcp.src_port, packet.protocol(), packet.dst_ip())
+        if (policy_result != 0) {
             log_blocked_port(tcp.src_port)
             return TC_ACT_SHOT
         }
@@ -2033,8 +2497,9 @@ fn main(args: Args) -> i32 {
     
     if (!args.quiet_mode) {
         print("Multi-program packet filtering started on interface: ", args.interface)
-        print("XDP filter and TC monitor both using shared kernel functions")
+        print("XDP filter and TC monitor using shared kernel functions and custom kfuncs")
         print("Blocking ports: 22, 23, 135, 445")
+        print("Advanced policy checking enabled via kfunc")
         if (args.strict_mode) {
             print("Strict mode enabled - max packet size: 1000")
         }
@@ -2064,6 +2529,23 @@ struct CallInfo {
     bytes_requested: u32,
 }
 
+// Custom kernel function for advanced performance analysis
+@kfunc
+fn analyze_syscall_performance(pid: u32, syscall_nr: u32, bytes: u32, duration: u64) -> i32 {
+    // Full kernel privileges - access to process information, scheduler data
+    let task = pid_task(find_vpid(pid), PIDTYPE_PID)
+    if (task == null) {
+        return -ESRCH
+    }
+    
+    // Access kernel scheduler information
+    let cpu_usage = task.utime + task.stime
+    let context_switches = task.nvcsw + task.nivcsw
+    
+    // Log to kernel performance subsystem
+    return perf_event_record_syscall(task, syscall_nr, bytes, duration, cpu_usage, context_switches)
+}
+
 // Kernel-shared function for measuring write time
 kernel fn measure_write_time(ctx: KprobeContext) -> u64 {
     return bpf_ktime_get_ns()
@@ -2089,6 +2571,10 @@ fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
     if (call_info != null) {
         let duration = bpf_ktime_get_ns() - call_info.start_time
         read_stats[pid % 1024] += duration
+        
+        // Use kfunc for detailed analysis and logging
+        analyze_syscall_performance(pid, __NR_read, call_info.bytes_requested, duration)
+        
         delete active_calls[pid]
     }
     
@@ -2138,7 +2624,7 @@ fn main(args: Args) -> i32 {
         return 1
     }
     
-    print("Performance monitoring active - read and write syscalls")
+    print("Performance monitoring active - read and write syscalls with advanced kfunc analysis")
     
     while (true) {
         if (show_details) {
@@ -2207,7 +2693,7 @@ map_attribute = identifier [ "=" literal ]
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kmod"
+                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kmod" | "kfunc"
 attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)

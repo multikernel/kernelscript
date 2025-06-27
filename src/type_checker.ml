@@ -705,7 +705,7 @@ and type_check_expression ctx expr =
            try
              let (expected_params, return_type) = Hashtbl.find ctx.functions name in
              
-             (* Check attributed function call restrictions - attributed functions cannot be called directly *)
+             (* Check attributed function call restrictions - attributed functions cannot be called directly, but kfuncs are allowed *)
              if Hashtbl.mem ctx.attributed_functions name then
                type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos;
              
@@ -1007,6 +1007,7 @@ let rec type_check_statement ctx stmt =
                   (* But first check if it's an attributed function being called directly *)
                   (match expr.expr_desc with
                    | FunctionCall (name, _) when Hashtbl.mem ctx.attributed_functions name ->
+                       (* This check already excludes kfuncs since they're not in attributed_functions *)
                        type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos
                    | _ ->
                        Some (type_check_expression ctx expr)))
@@ -1315,7 +1316,7 @@ let type_check_ast ?builtin_path ast =
     | _ -> ()
   ) ast;
   
-  (* Second pass: First register ALL global function signatures *)
+  (* Second pass: First register ALL function signatures (global and attributed) *)
   List.iter (function
     | GlobalFunction func ->
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
@@ -1325,6 +1326,27 @@ let type_check_ast ?builtin_path ast =
         in
         Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
         Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
+    | AttributedFunction attr_func ->
+        (* Register attributed function signatures, including kfuncs *)
+        let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) attr_func.attr_function.func_params in
+        let return_type = match attr_func.attr_function.func_return_type with
+          | Some t -> resolve_user_type ctx t
+          | None -> U32  (* default return type *)
+        in
+        Hashtbl.replace ctx.functions attr_func.attr_function.func_name (param_types, return_type);
+        Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name attr_func.attr_function.func_scope;
+        
+        (* Track non-kfunc and non-private attributed functions as non-callable *)
+        let is_kfunc = List.exists (function
+          | SimpleAttribute "kfunc" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let is_private = List.exists (function
+          | SimpleAttribute "private" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        if not is_kfunc && not is_private then
+          Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ()
     | _ -> ()
   ) ast;
   
@@ -1344,8 +1366,8 @@ let type_check_ast ?builtin_path ast =
     | _ -> ()
   ) ast;
   
-  (* Return empty list - this is a simple type checking function, not the full multi-program analysis *)
-  []
+  (* Return the original AST - this is a simple type checking function, not the full multi-program analysis *)
+  ast
 
 (** Utility functions *)
 let check_function_call name arg_types =
@@ -1579,6 +1601,16 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
   let (typed_attributed_functions, typed_userspace_functions) = List.fold_left (fun (attr_acc, userspace_acc) decl ->
     match decl with
     | AttributedFunction attr_func ->
+        (* Check if this is a kfunc or private function - handle differently *)
+        let is_kfunc = List.exists (function
+          | SimpleAttribute "kfunc" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let is_private = List.exists (function
+          | SimpleAttribute "private" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        
         (* Extract program type from attribute for context *)
         let prog_type = match attr_func.attr_list with
           | SimpleAttribute prog_type_str :: _ ->
@@ -1590,12 +1622,21 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
                | "tracepoint" -> Some Tracepoint
                | "lsm" -> Some Lsm
                | "cgroup_skb" -> Some CgroupSkb
+               | "kfunc" -> None  (* kfuncs don't have program types *)
+               | "private" -> None  (* private functions don't have program types *)
                | _ -> None)
           | _ -> None
         in
         
         (* Validate attributed function signatures based on program type *)
-        (match prog_type with
+        if is_kfunc then
+          (* For kfunc, we don't enforce specific context types - any valid C types are allowed *)
+          ()
+        else if is_private then
+          (* For private functions, we don't enforce specific context types - any valid C types are allowed *)
+          ()
+        else
+          (match prog_type with
          | Some Xdp ->
              let params = attr_func.attr_function.func_params in
              let resolved_param_type = if List.length params = 1 then 
@@ -1635,14 +1676,16 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
                 resolved_param_type <> KprobeContext ||
                 resolved_return_type <> Some U32 then
                type_error ("@kprobe attributed function must have signature (ctx: KprobeContext) -> u32") attr_func.attr_pos
-         | Some _ -> () (* Other program types - validation can be added later *)
-         | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
+           | Some _ -> () (* Other program types - validation can be added later *)
+           | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         
-        (* Track this as an attributed function that cannot be called directly *)
-        Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ();
+        (* Track this as an attributed function that cannot be called directly, but exclude kfuncs and private functions *)
+        if not is_kfunc && not is_private then
+          Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ();
         
-        (* Add to attributed function map for tail call detection *)
-        Hashtbl.replace ctx.attributed_function_map attr_func.attr_function.func_name attr_func;
+        (* Add to attributed function map for tail call detection (exclude kfuncs and private functions) *)
+        if not is_kfunc && not is_private then
+          Hashtbl.replace ctx.attributed_function_map attr_func.attr_function.func_name attr_func;
         
         (* Set current program type for context *)
         ctx.current_program_type <- prog_type;
