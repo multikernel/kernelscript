@@ -235,6 +235,8 @@ let rec collect_string_sizes_from_instr ir_instr =
   | IRTailCall (_, args, _) ->
       List.fold_left (fun acc arg ->
         acc @ (collect_string_sizes_from_value arg)) [] args
+  | IRStructOpsRegister (instance_val, struct_ops_val) ->
+      (collect_string_sizes_from_value instance_val) @ (collect_string_sizes_from_value struct_ops_val)
 
 let collect_string_sizes_from_function ir_func =
   List.fold_left (fun acc block ->
@@ -560,6 +562,64 @@ let generate_ast_type_alias_definitions ctx type_aliases =
     emit_blank_line ctx
   )
 
+(** Generate config struct definition and map *)
+let generate_config_map_definition ctx config_decl =
+  let config_name = config_decl.config_name in
+  let struct_name = sprintf "%s_config" config_name in
+  
+  (* Generate C struct for config *)
+  emit_line ctx (sprintf "struct %s {" struct_name);
+  increase_indent ctx;
+  
+  List.iter (fun field ->
+    let field_declaration = match field.field_type with
+      | IRU8 -> sprintf "__u8 %s;" field.field_name
+      | IRU16 -> sprintf "__u16 %s;" field.field_name
+      | IRU32 -> sprintf "__u32 %s;" field.field_name
+      | IRU64 -> sprintf "__u64 %s;" field.field_name
+      | IRI8 -> sprintf "__s8 %s;" field.field_name
+      | IRBool -> sprintf "__u8 %s;" field.field_name  (* bool -> u8 for BPF compatibility *)
+      | IRChar -> sprintf "char %s;" field.field_name
+      | IRArray (IRU16, size, _) -> sprintf "__u16 %s[%d];" field.field_name size
+      | IRArray (IRU32, size, _) -> sprintf "__u32 %s[%d];" field.field_name size
+      | IRArray (IRU64, size, _) -> sprintf "__u64 %s[%d];" field.field_name size
+      | _ -> sprintf "__u32 %s;" field.field_name  (* fallback *)
+    in
+    emit_line ctx field_declaration
+  ) config_decl.config_fields;
+  
+  decrease_indent ctx;
+  emit_line ctx "};";
+  emit_blank_line ctx;
+  
+  (* Generate array map for config (single entry at index 0) *)
+  let map_name = sprintf "%s_config_map" config_name in
+  emit_line ctx "struct {";
+  increase_indent ctx;
+  emit_line ctx "__uint(type, BPF_MAP_TYPE_ARRAY);";
+  emit_line ctx "__uint(max_entries, 1);";
+  emit_line ctx "__uint(key_size, sizeof(__u32));";
+  emit_line ctx (sprintf "__uint(value_size, sizeof(struct %s));" struct_name);
+  decrease_indent ctx;
+  emit_line ctx (sprintf "} %s SEC(\".maps\");" map_name);
+  emit_blank_line ctx;
+  
+  (* Generate helper function to access config *)
+  emit_line ctx (sprintf "static inline struct %s* get_%s_config(void) {" struct_name config_name);
+  increase_indent ctx;
+  emit_line ctx "__u32 key = 0;";
+  emit_line ctx (sprintf "struct %s *config = bpf_map_lookup_elem(&%s, &key);" struct_name map_name);
+  emit_line ctx "if (!config) {";
+  increase_indent ctx;
+  emit_line ctx "/* Config not initialized - this should not happen in normal operation */";
+  emit_line ctx "return NULL;";
+  decrease_indent ctx;
+  emit_line ctx "}";
+  emit_line ctx "return config;";
+  decrease_indent ctx;
+  emit_line ctx "}";
+  emit_blank_line ctx
+
 (** Generate declarations in original AST order to preserve source order *)
 let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
   (* We need to generate declarations in the order they appeared in the original source.
@@ -571,7 +631,40 @@ let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
   
   (* Generate struct definitions (only non-empty ones that are real structs) *)
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
-  generate_struct_definitions ctx struct_defs
+  generate_struct_definitions ctx struct_defs;
+  
+  (* Generate type alias definitions *)
+  let type_aliases = collect_type_aliases_from_multi_program ir_multi_program in
+  generate_type_alias_definitions ctx type_aliases;
+  
+  (* Generate config maps if provided *)
+  if ir_multi_program.global_configs <> [] then
+    List.iter (generate_config_map_definition ctx) ir_multi_program.global_configs;
+
+  (* With attributed functions, all maps are global - no program-scoped maps *)
+  
+  (* Generate entry function - this will collect callbacks *)
+  (* generate_c_function ctx ir_multi_program.entry_function; *)
+  
+  (* Now emit any pending callbacks before other functions *)
+  if ctx.pending_callbacks <> [] then (
+    (* Insert callbacks at the beginning of the output, after includes and maps *)
+    let current_output = ctx.output_lines in
+    ctx.output_lines <- [];
+    List.iter (emit_line ctx) ctx.pending_callbacks;
+    ctx.pending_callbacks <- [];
+    emit_blank_line ctx;
+    (* Reverse and prepend current output *)
+    ctx.output_lines <- (List.rev current_output) @ ctx.output_lines;
+  );
+  
+  (* With attributed functions, each program has only the entry function - no nested functions *)
+  
+  (* Add license (required for eBPF) *)
+  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
+  
+  (* Function has side effects on ctx, no return value needed *)
+  ()
 
 (** Generate standard eBPF includes *)
 
@@ -648,66 +741,23 @@ let generate_map_definition ctx map_def =
   emit_line ctx (sprintf "} %s SEC(\".maps\");" map_def.map_name);
   emit_blank_line ctx
 
-(** Generate config struct definition and map *)
-let generate_config_map_definition ctx config_decl =
-  let config_name = config_decl.Ast.config_name in
-  let struct_name = sprintf "%s_config" config_name in
+(** Generate struct_ops definitions and instances for eBPF *)
+let generate_struct_ops ctx ir_multi_program =
+  (* Generate struct_ops declarations *)
+  List.iter (fun struct_ops_decl ->
+    emit_line ctx (sprintf "/* eBPF struct_ops declaration for %s */" struct_ops_decl.ir_kernel_struct_name);
+    (* In eBPF, struct_ops are typically implemented as BPF_MAP_TYPE_STRUCT_OPS maps *)
+    emit_line ctx (sprintf "/* struct %s_ops implementation would be auto-generated by libbpf */" struct_ops_decl.ir_struct_ops_name);
+    emit_blank_line ctx
+  ) ir_multi_program.struct_ops_declarations;
   
-  (* Generate C struct for config *)
-  emit_line ctx (sprintf "struct %s {" struct_name);
-  increase_indent ctx;
-  
-  List.iter (fun field ->
-    let field_declaration = match field.Ast.field_type with
-      | Ast.U8 -> sprintf "__u8 %s;" field.Ast.field_name
-      | Ast.U16 -> sprintf "__u16 %s;" field.Ast.field_name
-      | Ast.U32 -> sprintf "__u32 %s;" field.Ast.field_name
-      | Ast.U64 -> sprintf "__u64 %s;" field.Ast.field_name
-      | Ast.I8 -> sprintf "__s8 %s;" field.Ast.field_name
-      | Ast.I16 -> sprintf "__s16 %s;" field.Ast.field_name
-      | Ast.I32 -> sprintf "__s32 %s;" field.Ast.field_name
-      | Ast.I64 -> sprintf "__s64 %s;" field.Ast.field_name
-      | Ast.Bool -> sprintf "__u8 %s;" field.Ast.field_name  (* bool -> u8 for BPF compatibility *)
-      | Ast.Char -> sprintf "char %s;" field.Ast.field_name
-      | Ast.Array (Ast.U16, size) -> sprintf "__u16 %s[%d];" field.Ast.field_name size
-      | Ast.Array (Ast.U32, size) -> sprintf "__u32 %s[%d];" field.Ast.field_name size
-      | Ast.Array (Ast.U64, size) -> sprintf "__u64 %s[%d];" field.Ast.field_name size
-      | _ -> sprintf "__u32 %s;" field.Ast.field_name  (* fallback *)
-    in
-    emit_line ctx field_declaration
-  ) config_decl.Ast.config_fields;
-  
-  decrease_indent ctx;
-  emit_line ctx "};";
-  emit_blank_line ctx;
-  
-  (* Generate array map for config (single entry at index 0) *)
-  let map_name = sprintf "%s_config_map" config_name in
-  emit_line ctx "struct {";
-  increase_indent ctx;
-  emit_line ctx "__uint(type, BPF_MAP_TYPE_ARRAY);";
-  emit_line ctx "__uint(max_entries, 1);";
-  emit_line ctx "__uint(key_size, sizeof(__u32));";
-  emit_line ctx (sprintf "__uint(value_size, sizeof(struct %s));" struct_name);
-  decrease_indent ctx;
-  emit_line ctx (sprintf "} %s SEC(\".maps\");" map_name);
-  emit_blank_line ctx;
-  
-  (* Generate helper function to access config *)
-  emit_line ctx (sprintf "static inline struct %s* get_%s_config(void) {" struct_name config_name);
-  increase_indent ctx;
-  emit_line ctx "__u32 key = 0;";
-  emit_line ctx (sprintf "struct %s *config = bpf_map_lookup_elem(&%s, &key);" struct_name map_name);
-  emit_line ctx "if (!config) {";
-  increase_indent ctx;
-  emit_line ctx "/* Config not initialized - this should not happen in normal operation */";
-  emit_line ctx "return NULL;";
-  decrease_indent ctx;
-  emit_line ctx "}";
-  emit_line ctx "return config;";
-  decrease_indent ctx;
-  emit_line ctx "}";
-  emit_blank_line ctx
+  (* Generate struct_ops instances *)
+  List.iter (fun struct_ops_inst ->
+    emit_line ctx (sprintf "/* eBPF struct_ops instance %s */" struct_ops_inst.ir_instance_name);
+    (* TODO: Generate actual struct_ops map definition *)
+    emit_line ctx (sprintf "/* struct_ops map for %s would be defined here */" struct_ops_inst.ir_instance_name);
+    emit_blank_line ctx
+  ) ir_multi_program.struct_ops_instances
 
 (** Generate C expression from IR value *)
 
@@ -1361,7 +1411,7 @@ let rec generate_c_instruction ctx ir_instr =
        | None ->
            emit_line ctx "}")
 
-  | IRTry (try_instructions, catch_clauses) ->
+  | IRTry (try_instructions, _catch_clauses) ->
       (* For eBPF, generate structured try/catch with error status variable and if() checks *)
       let error_var = sprintf "__error_status_%d" ctx.next_label_id in
       ctx.next_label_id <- ctx.next_label_id + 1;
@@ -1401,7 +1451,7 @@ let rec generate_c_instruction ctx ir_instr =
         
         decrease_indent ctx;
         emit_line ctx "}";
-      ) catch_clauses;
+      ) _catch_clauses;
       
       emit_line ctx "/* try block end */"
 
@@ -1423,6 +1473,9 @@ let rec generate_c_instruction ctx ir_instr =
       List.iter (fun instr ->
         emit_line ctx (sprintf "/* deferred: %s */" (string_of_ir_instruction instr))
       ) defer_instructions
+  | IRStructOpsRegister (_instance_val, _struct_ops_val) ->
+      (* For eBPF, struct_ops registration is handled by userspace loader *)
+      emit_line ctx (sprintf "/* struct_ops_register - handled by userspace */")
 
 (** Generate C code for basic block *)
 
@@ -1538,6 +1591,8 @@ let collect_registers_in_function ir_func =
         List.iter collect_in_instr defer_instructions
     | IRTailCall (_, args, _) ->
         List.iter collect_in_value args
+    | IRStructOpsRegister (instance_val, struct_ops_val) ->
+        collect_in_value instance_val; collect_in_value struct_ops_val
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -1625,6 +1680,8 @@ let generate_c_program ?config_declarations ir_prog =
     kernel_functions = [];
     global_maps = [];
     global_configs = [];
+    struct_ops_declarations = [];
+    struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
     multi_pos = ir_prog.ir_pos;
@@ -1706,6 +1763,9 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
+  
+  (* Generate struct_ops definitions and instances *)
+  generate_struct_ops ctx ir_multi_program;
   
   (* With attributed functions, all maps are global - no program-scoped maps *)
   
@@ -1834,6 +1894,9 @@ let compile_multi_to_c_with_tail_calls
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
   generate_struct_definitions ctx struct_defs;
   
+  (* Generate struct_ops definitions and instances *)
+  generate_struct_ops ctx ir_multi_prog;
+  
   (* Generate kernel functions once - they are shared across all programs *)
   List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
 
@@ -1931,4 +1994,6 @@ let compile_multi_to_c_with_analysis ?(config_declarations=[]) ?(type_aliases=[]
     (List.length tail_call_analysis.dependencies) tail_call_analysis.prog_array_size;
   
   (c_code, tail_call_analysis)
+
+(** Generate config struct definition and map *)
 

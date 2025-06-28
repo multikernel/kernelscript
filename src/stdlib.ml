@@ -55,6 +55,15 @@ let builtin_functions = [
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_attach";
   };
+  {
+    name = "register";
+    param_types = [UserType "struct_ops"]; (* Accept any struct_ops instance *)
+    return_type = U32; (* Returns 0 on success *)
+    description = "Register a struct_ops instance with the kernel";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "bpf_map__attach_struct_ops";
+  };
 ]
 
 (** Get built-in function definition by name *)

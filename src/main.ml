@@ -208,7 +208,7 @@ let compile opts source_file =
     
     (* Generate eBPF C code (with automatic tail call detection and kfunc declarations) *)
     let (ebpf_c_code, tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      ~config_declarations ~type_aliases ~variable_type_aliases ~kfunc_declarations optimized_ir in
+      ~config_declarations:optimized_ir.global_configs ~type_aliases ~variable_type_aliases ~kfunc_declarations optimized_ir in
       
     (* Determine output directory *)
     let base_name = Filename.remove_extension (Filename.basename source_file) in

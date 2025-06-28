@@ -193,10 +193,15 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
- (public_name test_error_handling)
+ (public_name test_error_handling)  
  (name test_error_handling)
  (modules test_error_handling)
  (libraries kernelscript alcotest))
+
+(executable
+ (name test_struct_ops)
+ (modules test_struct_ops)
+ (libraries kernelscript alcotest str))
 
 (executable
  (name test_kfunc_attribute)
@@ -520,7 +525,8 @@
   test_safety_checker.exe
   test_program_ref.exe
   test_return_path_analysis.exe
-  test_tail_call.exe)
+  test_tail_call.exe
+  test_struct_ops.exe)
  (action
   (progn
    (run ./test_lexer.exe)
@@ -550,7 +556,8 @@
    (run ./test_safety_checker.exe)
    (run ./test_program_ref.exe)
    (run ./test_return_path_analysis.exe)
-   (run ./test_tail_call.exe))))
+   (run ./test_tail_call.exe)
+   (run ./test_struct_ops.exe))))
 
 (rule
  (alias ir-tests)

@@ -471,6 +471,8 @@ flag_item:
 struct_declaration:
   | STRUCT IDENTIFIER LBRACE struct_fields RBRACE
     { make_struct_def $2 $4 (make_pos ()) }
+  | attribute_list STRUCT IDENTIFIER LBRACE struct_fields RBRACE
+    { make_struct_def ~attributes:$1 $3 $5 (make_pos ()) }
 
 struct_fields:
   | /* empty */ { [] }
@@ -479,6 +481,7 @@ struct_fields:
 
 struct_field:
   | IDENTIFIER COLON bpf_type { ($1, $3) }
+
 
 /* Enum declaration: enum name { variants } - Fixed to eliminate unused production */
 enum_declaration:

@@ -1073,6 +1073,11 @@ let rec generate_c_instruction_from_ir ctx instruction =
       (* For userspace, generate defer using function-scope cleanup *)
       let defer_body = String.concat "\n    " (List.map (generate_c_instruction_from_ir ctx) defer_instructions) in
       sprintf "/* defer block - executed at function exit */\n    {\n    %s\n    }" defer_body
+  | IRStructOpsRegister (result_val, struct_ops_val) ->
+      (* Generate struct_ops registration call *)
+      let struct_ops_str = generate_c_value_from_ir ctx struct_ops_val in
+      let result_str = generate_c_value_from_ir ctx result_val in
+      sprintf "%s = bpf_map__attach_struct_ops(%s);" result_str struct_ops_str
 
 (** Generate C struct from IR struct definition *)
 let generate_c_struct_from_ir ir_struct =
@@ -1185,6 +1190,37 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     sprintf {|%s %s(%s) {
 %s    %s
 }|} adjusted_return_type ir_func.func_name adjusted_params var_decls body_c
+
+(** Generate struct_ops registration code *)
+let generate_struct_ops_registration_code ir_multi_program =
+  if ir_multi_program.struct_ops_instances = [] then
+    ""
+  else
+    let registration_code = List.map (fun struct_ops_inst ->
+      let instance_name = struct_ops_inst.ir_instance_name in
+      sprintf {|    /* Register struct_ops instance %s */
+    if (bpf_map__attach_struct_ops(bpf_object__find_map_by_name(bpf_obj, "%s"))) {
+        fprintf(stderr, "Failed to register struct_ops instance %s\n");
+        return -1;
+    }
+    printf("✅ Registered struct_ops instance: %s\n");|} 
+        instance_name instance_name instance_name instance_name
+    ) ir_multi_program.struct_ops_instances in
+    
+    "\n    /* Register eBPF struct_ops instances */\n" ^ 
+    (String.concat "\n" registration_code) ^ "\n"
+
+(** Generate struct_ops attachment functions for userspace *)
+let generate_struct_ops_attach_functions ir_multi_program =
+  if ir_multi_program.struct_ops_instances = [] then
+    ""
+  else
+    let attach_functions = List.map (fun struct_ops_inst ->
+      let instance_name = struct_ops_inst.ir_instance_name in
+      sprintf "int attach_struct_ops_%s(void) { return 0; }\nint detach_struct_ops_%s(void) { return 0; }" 
+        instance_name instance_name
+    ) ir_multi_program.struct_ops_instances in
+    String.concat "\n" attach_functions
 
 (** Generate command line argument parsing for struct parameter *)
 let generate_getopt_parsing (struct_name : string) (param_name : string) (struct_fields : (string * ir_type) list) =
@@ -1533,7 +1569,7 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
   else ""
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function func in
@@ -1657,9 +1693,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     ) config_declarations |> String.concat "\n"
   else "" in
   
+  (* Generate struct_ops registration code *)
+  let struct_ops_registration_code = generate_struct_ops_registration_code ir_multi_prog in
+  
   let all_setup_code = map_setup_code ^ 
     (if map_setup_code <> "" && config_setup_code <> "" then "\n" else "") ^ 
-    config_setup_code in
+    config_setup_code ^
+    (if config_setup_code <> "" && struct_ops_registration_code <> "" then "\n" else "") ^
+    struct_ops_registration_code in
   
   (* Extract base name from source filename *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
@@ -1751,6 +1792,9 @@ void cleanup_bpf_maps(void) {
       sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 
         bpf_obj_decl (String.concat "\n\n" functions_list) in
   
+  (* Generate struct_ops attach functions *)
+  let struct_ops_attach_functions = generate_struct_ops_attach_functions ir_multi_prog in
+
   sprintf {|%s
 
 %s
@@ -1772,13 +1816,15 @@ void cleanup_bpf_maps(void) {
 %s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions functions
+
+%s
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies userspace_prog ir_multi_prog.global_maps source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 
@@ -1803,5 +1849,3 @@ int main(void) {
 
 (** Compatibility functions for tests *)
 let generate_c_statement _stmt = "/* IR-based statement generation */"
-
-let generate_c_statement_with_context _ctx _stmt = "/* IR-based statement generation */"

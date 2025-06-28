@@ -314,13 +314,13 @@ let compile_to_ebpf_c ast =
   let symbol_table = build_symbol_table ast in
   let (enhanced_ast, _) = type_check_and_annotate_ast ast in
   let ir_result = generate_ir enhanced_ast symbol_table "test" in
-  let config_declarations = 
+  let _config_declarations = 
     List.filter_map (fun decl -> match decl with
       | ConfigDecl config -> Some config
       | _ -> None
     ) ast
   in
-  compile_to_c ~config_declarations (List.hd ir_result.programs)
+  compile_to_c (List.hd ir_result.programs)
 
 (** Test config struct generation *)
 let test_config_struct_generation () =

@@ -336,8 +336,20 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.FunctionCall (name, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
       
+      (* Special handling for register() builtin function *)
+      if name = "register" then
+        (* Generate struct_ops registration instruction *)
+        if List.length arg_vals = 1 then
+          let struct_val = List.hd arg_vals in
+          let result_reg = allocate_register ctx in
+          let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
+          let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr.expr_pos in
+          emit_instruction ctx instr;
+          result_val
+        else
+          failwith "register() takes exactly one argument"
       (* Check for built-in context methods *)
-      if String.contains name '.' then
+      else if String.contains name '.' then
         let parts = String.split_on_char '.' name in
         match parts with
         | ["ctx"; method_name] ->
@@ -1786,6 +1798,45 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> None
   ) ast in
   
+  (* Collect struct_ops declarations from regular structs with @struct_ops attribute *)
+  let struct_ops_declarations = List.filter_map (function
+    | Ast.StructDecl struct_def ->
+        (* Check if this struct has @struct_ops attribute *)
+        let has_struct_ops_attr = List.exists (function
+          | Ast.AttributeWithArg ("struct_ops", _) -> true
+          | _ -> false
+        ) struct_def.struct_attributes in
+        if has_struct_ops_attr then Some struct_def else None
+    | _ -> None
+  ) ast in
+  
+  (* Note: struct_ops instances are now just regular variable declarations with struct literals *)
+  
+  (* Lower struct_ops declarations to IR *)
+  let ir_struct_ops_declarations = List.map (fun struct_def ->
+    (* Extract kernel struct name from @struct_ops attribute *)
+    let kernel_struct_name = List.fold_left (fun acc attr ->
+      match attr with
+      | Ast.AttributeWithArg ("struct_ops", name) -> name
+      | _ -> acc
+    ) "" struct_def.struct_attributes in
+    
+    let ir_methods = List.map (fun (field_name, field_type) ->
+      make_ir_struct_ops_method 
+        field_name
+        (ast_type_to_ir_type field_type)
+        struct_def.Ast.struct_pos
+    ) struct_def.Ast.struct_fields in
+    make_ir_struct_ops_declaration
+      struct_def.Ast.struct_name
+      kernel_struct_name
+      ir_methods
+      struct_def.Ast.struct_pos
+  ) struct_ops_declarations in
+  
+  (* Lower struct_ops instances to IR (empty for now - handled through regular variable declarations) *)
+  let ir_struct_ops_instances = [] in
+  
   (* Generate userspace bindings *)
   let userspace_bindings = 
     generate_userspace_bindings_from_multi_programs prog_defs userspace_functions map_flag_infos config_declarations
@@ -1802,6 +1853,8 @@ let lower_multi_program ast symbol_table source_name =
     ir_programs 
     ir_kernel_functions 
     ir_global_maps 
+    ~struct_ops_declarations:ir_struct_ops_declarations
+    ~struct_ops_instances:ir_struct_ops_instances
     ?userspace_program:userspace_program 
     ~userspace_bindings:userspace_bindings 
     multi_pos

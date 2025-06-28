@@ -385,6 +385,7 @@ and process_declaration_accumulate table declaration =
       add_type_def table type_def pos;
       table
 
+
 and process_declaration table = function
   | Ast.TypeDef type_def ->
       let pos = { line = 1; column = 1; filename = "" } in  (* TODO: get actual position *)

@@ -26,6 +26,7 @@ type context = {
   mutable current_program_type: program_type option;
   mutable multi_program_analysis: Multi_program_analyzer.multi_program_analysis option;
   in_tail_call_context: bool; (* Flag to indicate we're processing a potential tail call *)
+  ast_context: Ast.declaration list; (* Store original AST for struct_ops attribute checking *)
 }
 
 (** Typed AST nodes *)
@@ -89,7 +90,7 @@ type typed_program = {
 }
 
 (** Create type checking context *)
-let create_context symbol_table = {
+let create_context symbol_table ast = {
   variables = Hashtbl.create 32;
   functions = Hashtbl.create 16;
   function_scopes = Hashtbl.create 16;
@@ -104,6 +105,7 @@ let create_context symbol_table = {
   multi_program_analysis = None;
   in_tail_call_context = false;
   attributed_function_map = Hashtbl.create 16;
+  ast_context = ast;
 }
 
 (** Track loop nesting depth to prevent nested loops *)
@@ -692,6 +694,29 @@ and type_check_expression ctx expr =
             | Some builtin_func when builtin_func.is_variadic ->
                 (* Variadic function - accept any number of arguments *)
                 { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = expr.expr_pos }
+            | Some _ when name = "register" ->
+                (* Special handling for register() - only accept struct_ops types *)
+                if List.length typed_args = 1 then
+                  let arg_type = (List.hd typed_args).texpr_type in
+                  (match arg_type with
+                   | Struct struct_name | UserType struct_name -> 
+                       (* Check if this struct has @struct_ops attribute by looking in AST declarations *)
+                       let has_struct_ops_attr = List.exists (function
+                         | Ast.StructDecl struct_def when struct_def.struct_name = struct_name ->
+                             List.exists (function
+                               | Ast.AttributeWithArg ("struct_ops", _) -> true
+                               | _ -> false
+                             ) struct_def.struct_attributes
+                         | _ -> false
+                       ) ctx.ast_context in
+                       if has_struct_ops_attr then
+                         { texpr_desc = TFunctionCall (name, typed_args); texpr_type = U32; texpr_pos = expr.expr_pos }
+                       else
+                         type_error ("register() can only be used with struct_ops structs (structs with @struct_ops attribute). '" ^ struct_name ^ "' is not a struct_ops.") expr.expr_pos
+                   | _ -> 
+                       type_error "register() requires a struct_ops struct argument" expr.expr_pos)
+                else
+                  type_error "register() takes exactly one argument" expr.expr_pos
             | _ ->
                 (* Regular built-in function - check argument count and types *)
                 if List.length expected_params = List.length arg_types then
@@ -1290,7 +1315,7 @@ let type_check_ast ?builtin_path ast =
   (* Create symbol table with builtin definitions *)
   let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
   let builtin_asts = Builtin_loader.load_standard_builtins ?builtin_path () in
-  let ctx = create_context symbol_table in
+  let ctx = create_context symbol_table ast in
   
   (* Process builtin types into type context *)
   List.iter (fun builtin_ast ->
@@ -1560,7 +1585,7 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
   (* Load builtin definitions and create symbol table *)
   let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
   let builtin_asts = Builtin_loader.load_standard_builtins ?builtin_path () in
-  let ctx = create_context symbol_table in
+  let ctx = create_context symbol_table ast in
   
   (* Process builtin types into type context *)
   List.iter (fun builtin_ast ->

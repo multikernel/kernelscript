@@ -198,6 +198,7 @@ type function_def = {
 and struct_def = {
   struct_name: string;
   struct_fields: (string * bpf_type) list;
+  struct_attributes: attribute list;  (* Added attributes for @struct_ops etc. *)
   struct_pos: position;
 }
 
@@ -340,9 +341,10 @@ let make_map_declaration name key_type value_type map_type config is_global pos 
   map_pos = pos;
 }
 
-let make_struct_def name fields pos = {
+let make_struct_def ?(attributes=[]) name fields pos = {
   struct_name = name;
   struct_fields = fields;
+  struct_attributes = attributes;
   struct_pos = pos;
 }
 
@@ -614,10 +616,13 @@ let string_of_declaration = function
       ) config_decl.config_fields) in
       Printf.sprintf "config %s {\n    %s\n}" config_decl.config_name fields_str
   | StructDecl struct_def ->
+      let attrs_str = if struct_def.struct_attributes = [] then "" else
+        (String.concat " " (List.map string_of_attribute struct_def.struct_attributes)) ^ "\n" in
       let fields_str = String.concat ",\n    " (List.map (fun (name, typ) ->
         Printf.sprintf "%s: %s" name (string_of_bpf_type typ)
       ) struct_def.struct_fields) in
-      Printf.sprintf "struct %s {\n    %s\n}" struct_def.struct_name fields_str
+      Printf.sprintf "%sstruct %s {\n    %s\n}" attrs_str struct_def.struct_name fields_str
+  (* StructOpsDecl and StructOpsInstance cases removed - now handled as regular StructDecl with attributes *)
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

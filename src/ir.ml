@@ -15,6 +15,8 @@ type ir_multi_program = {
   kernel_functions: ir_function list; (* Kernel functions shared across all programs *)
   global_maps: ir_map_def list; (* Maps shared across programs *)
   global_configs: ir_global_config list; (* Named configuration blocks *)
+  struct_ops_declarations: ir_struct_ops_declaration list; (* Struct_ops type declarations *)
+  struct_ops_instances: ir_struct_ops_instance list; (* Struct_ops instances *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
   userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
   multi_pos: ir_position;
@@ -140,6 +142,27 @@ and ir_struct_ops_def = {
   target_kernel_struct: string; (* Which kernel struct this implements *)
 }
 
+(** IR struct_ops declarations and instances *)
+and ir_struct_ops_declaration = {
+  ir_struct_ops_name: string;
+  ir_kernel_struct_name: string;
+  ir_struct_ops_methods: ir_struct_ops_method list;
+  ir_struct_ops_pos: ir_position;
+}
+
+and ir_struct_ops_method = {
+  ir_method_name: string;
+  ir_method_type: ir_type;
+  ir_method_pos: ir_position;
+}
+
+and ir_struct_ops_instance = {
+  ir_instance_name: string;
+  ir_instance_type: string;
+  ir_instance_fields: (string * ir_value) list;
+  ir_instance_pos: ir_position;
+}
+
 (** Enhanced map representation with full eBPF map configuration *)
 and ir_map_def = {
   map_name: string;
@@ -236,6 +259,7 @@ and ir_instr_desc =
   | IRTry of ir_instruction list * ir_catch_clause list  (* try_block, catch_clauses *)
   | IRThrow of error_code  (* throw with error code *)
   | IRDefer of ir_instruction list  (* deferred instructions *)
+  | IRStructOpsRegister of ir_value * ir_value  (* instance_value, struct_ops_type_name *)
 
 (** Error handling types *)
 and error_code = 
@@ -439,12 +463,15 @@ let make_ir_program name prog_type entry_function pos = {
 }
 
 let make_ir_multi_program source_name programs kernel_functions global_maps 
-                          ?(global_configs = []) ?userspace_program ?(userspace_bindings = []) pos = {
+                          ?(global_configs = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = []) 
+                          ?userspace_program ?(userspace_bindings = []) pos = {
   source_name;
   programs;
   kernel_functions;
   global_maps;
   global_configs;
+  struct_ops_declarations;
+  struct_ops_instances;
   userspace_program;
   userspace_bindings;
   multi_pos = pos;
@@ -491,6 +518,26 @@ let make_ir_config_field name field_type default is_mutable pos = {
   field_default = default;
   is_mutable = is_mutable;
   field_pos = pos;
+}
+
+let make_ir_struct_ops_method name method_type pos = {
+  ir_method_name = name;
+  ir_method_type = method_type;
+  ir_method_pos = pos;
+}
+
+let make_ir_struct_ops_declaration name kernel_name methods pos = {
+  ir_struct_ops_name = name;
+  ir_kernel_struct_name = kernel_name;
+  ir_struct_ops_methods = methods;
+  ir_struct_ops_pos = pos;
+}
+
+let make_ir_struct_ops_instance name instance_type fields pos = {
+  ir_instance_name = name;
+  ir_instance_type = instance_type;
+  ir_instance_fields = fields;
+  ir_instance_pos = pos;
 }
 
 let make_ir_config_management loads updates sync = {
@@ -746,6 +793,8 @@ let rec string_of_ir_instruction instr =
       let instr_str = String.concat "\n  " 
         (List.map string_of_ir_instruction instructions) in
       Printf.sprintf "defer {\n%s\n}" instr_str
+  | IRStructOpsRegister (instance_name, struct_ops_type) ->
+      Printf.sprintf "struct_ops_register(%s, %s)" (string_of_ir_value instance_name) (string_of_ir_value struct_ops_type)
 
 let string_of_ir_basic_block block =
   let instrs_str = String.concat "\n  " 
