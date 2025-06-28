@@ -62,7 +62,7 @@ fn monitor(ctx: XdpContext) -> XdpAction {
     update_counters(0)  // Call kernel-shared function
     
     if (should_log()) {  // Call another kernel-shared function
-        bpf_printk("Processing packet")
+        print("Processing packet")
     }
     
     return XDP_PASS
@@ -165,7 +165,7 @@ fn network_monitor(ctx: XdpContext) -> XdpAction {
     // Use named configuration values
     if (packet.size > network.max_packet_size) {
         if (network.enable_logging) {
-            bpf_printk("Packet too large: %d", packet.size)
+            print("Packet too large: %d", packet.size)
         }
         return XDP_DROP
     }
@@ -1337,7 +1337,7 @@ program user_monitor : kprobe("sys_open") {
         // String operations work the same in kernel space
         if (process_name == "malware") {
             let log_msg: LogMessage = "Blocked process: " + process_name
-            bpf_printk(log_msg)
+            print(log_msg)
             return -1
         }
         
@@ -2525,7 +2525,7 @@ fn is_port_blocked(port: u16) -> bool {
 @helper
 fn log_blocked_port(port: u16) {
     if (filtering.enable_logging) {
-        bpf_printk("Blocked port %d", port)
+        print("Blocked port %d", port)
     }
 }
 
@@ -2872,7 +2872,7 @@ if_statement = "if" "(" expression ")" "{" statement_list "}"
                [ "else" "{" statement_list "}" ] 
 
 for_statement = "for" "(" identifier "in" expression ".." expression ")" "{" statement_list "}" |
-                "for" "(" identifier "," identifier ")" "in" expression ".iter()" "{" statement_list "}" 
+                "for" "(" identifier "," identifier ")" "in" expression "{" statement_list "}" 
 
 while_statement = "while" "(" expression ")" "{" statement_list "}" 
 
