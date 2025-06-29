@@ -65,9 +65,9 @@ let test_enum_symbol_table () =
   | None -> check bool "enum symbol not found" false true);
   
   (* Verify enum constants are registered *)
-  let const1 = lookup_symbol symbol_table "XdpAction::XDP_ABORTED" in
-  let const2 = lookup_symbol symbol_table "XdpAction::XDP_DROP" in
-  let const3 = lookup_symbol symbol_table "XdpAction::XDP_PASS" in
+  let const1 = lookup_symbol symbol_table "XDP_ABORTED" in
+  let const2 = lookup_symbol symbol_table "XDP_DROP" in
+  let const3 = lookup_symbol symbol_table "XDP_PASS" in
   
   check bool "enum constant 1 found" true (const1 <> None);
   check bool "enum constant 2 found" true (const2 <> None);
@@ -114,7 +114,7 @@ let test_enum_constants () =
   add_type_def symbol_table enum_def dummy_pos;
   
   (* Test constant lookup *)
-  let tcp_const = lookup_symbol symbol_table "Protocol::PROTOCOL_TCP" in
+  let tcp_const = lookup_symbol symbol_table "PROTOCOL_TCP" in
   check bool "TCP constant found" true (tcp_const <> None);
   
   (match tcp_const with
@@ -127,7 +127,7 @@ let test_enum_constants () =
   | None -> check bool "TCP constant not found" false true);
   
   (* Test invalid constant lookup *)
-  let invalid_const = lookup_symbol symbol_table "Protocol::INVALID" in
+  let invalid_const = lookup_symbol symbol_table "INVALID" in
   check bool "invalid constant not found" true (invalid_const = None)
 
 (** Test enum code generation *)
@@ -170,7 +170,7 @@ let test_enum_expressions () =
   add_type_def symbol_table enum_def dummy_pos;
   
   (* Verify the constant can be looked up *)
-  let symbol = lookup_symbol symbol_table "XdpAction::XDP_PASS" in
+  let symbol = lookup_symbol symbol_table "XDP_PASS" in
   check bool "enum constant accessible" true (symbol <> None);
   
   match symbol with
@@ -199,7 +199,7 @@ let test_enum_edge_cases () =
   try
     add_type_def symbol_table duplicate_enum dummy_pos;
     (* If it succeeds, verify the behavior *)
-    let dup_symbol = lookup_symbol symbol_table "Duplicate::SAME" in
+    let dup_symbol = lookup_symbol symbol_table "SAME" in
     check bool "duplicate handled" true (dup_symbol <> None)
   with
   | Symbol_error _ -> 

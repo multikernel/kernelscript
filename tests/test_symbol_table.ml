@@ -579,7 +579,7 @@ let test_complex_integration () =
   let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)]) in
   add_type_def table struct_def dummy_pos;
   
-  let enum_def = EnumDef ("XdpAction", [("Pass", Some 0); ("Drop", Some 1)]) in
+  let enum_def = EnumDef ("XdpAction", [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)]) in
   add_type_def table enum_def dummy_pos;
   
   (* Program scope *)
@@ -600,9 +600,9 @@ let test_complex_integration () =
    | Some { kind = TypeDef _; _ } -> check bool "packet info type" true true
    | _ -> fail "expected to find PacketInfo type");
    
-  (match lookup_symbol table_func "XdpAction::Pass" with
-   | Some { kind = EnumConstant _; _ } -> check bool "XdpAction::Pass enum constant" true true
-   | _ -> fail "expected to find XdpAction::Pass enum constant");
+  (match lookup_symbol table_func "XDP_PASS" with
+   | Some { kind = EnumConstant _; _ } -> check bool "XDP_PASS enum constant" true true
+   | _ -> fail "expected to find XDP_PASS enum constant");
    
   (match lookup_symbol table_func "ctx" with
    | Some { kind = Variable XdpContext; _ } -> check bool "ctx variable" true true

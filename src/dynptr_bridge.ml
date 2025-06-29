@@ -91,10 +91,12 @@ let analyze_memory_usage_patterns _eval_ctx ir_multi_program =
 let test_memory_bridge () =
   Printf.printf "Testing memory bridge integration...\n";
   
-  (* Create a test evaluator context *)
+  (* Create a test evaluator context with builtin symbol table *)
   let maps = Hashtbl.create 16 in
   let functions = Hashtbl.create 16 in
-  let eval_ctx = Evaluator.create_eval_context maps functions in
+  let empty_ast = [] in
+  let symbol_table = Builtin_loader.build_symbol_table_with_builtins empty_ast in
+  let eval_ctx = Evaluator.create_eval_context symbol_table maps functions in
   
   (* Add some test variables *)
   let _ = Evaluator.allocate_variable_address eval_ctx "packet_ptr" (Evaluator.PointerValue 0x2000) in

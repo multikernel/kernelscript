@@ -1,6 +1,8 @@
 (** Unit Tests for Expression Evaluator *)
 
 open Kernelscript.Parse
+open Kernelscript.Builtin_loader
+open Kernelscript.Evaluator
 open Alcotest
 
 (** Test basic expression evaluation *)
@@ -20,8 +22,86 @@ let test_basic_evaluation () =
   with
   | _ -> fail "Failed basic evaluation test"
 
+(** Helper function to create a test expression *)
+let make_test_expr expr_desc =
+  let pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  {
+    Kernelscript.Ast.expr_desc = expr_desc;
+    expr_pos = pos;
+    expr_type = None;
+    type_checked = false;
+    program_context = None;
+    map_scope = None;
+  }
+
+(** Test enum constant evaluation using symbol table *)
+let test_enum_constant_evaluation () =
+  let program_text = {|
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let symbol_table = build_symbol_table_with_builtins ast in
+    
+    (* Create evaluator context with symbol table *)
+    let maps = Hashtbl.create 16 in
+    let functions = Hashtbl.create 16 in
+    let eval_ctx = create_eval_context symbol_table maps functions in
+    
+    (* Create a simple expression to test enum lookup *)
+    let xdp_pass_expr = make_test_expr (Kernelscript.Ast.Identifier "XDP_PASS") in
+    
+    match eval_expression eval_ctx xdp_pass_expr with
+    | EnumValue ("XdpAction", 2) -> 
+        check bool "XDP_PASS correctly evaluated from symbol table" true true
+    | _ -> 
+        fail "XDP_PASS should evaluate to EnumValue(XdpAction, 2)"
+  with
+  | Evaluation_error (msg, _) -> 
+      fail ("Evaluation error: " ^ msg)
+  | e -> 
+      fail ("Unexpected exception: " ^ Printexc.to_string e)
+
+(** Test different enum constants *)  
+let test_various_enum_constants () =
+  let program_text = {|
+@xdp fn test(ctx: XdpContext) -> XdpAction {
+  return XDP_DROP
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let symbol_table = build_symbol_table_with_builtins ast in
+    
+    (* Create evaluator context with symbol table *)
+    let maps = Hashtbl.create 16 in
+    let functions = Hashtbl.create 16 in
+    let eval_ctx = create_eval_context symbol_table maps functions in
+    
+    (* Test XDP_DROP *)
+    let xdp_drop_expr = make_test_expr (Kernelscript.Ast.Identifier "XDP_DROP") in
+    (match eval_expression eval_ctx xdp_drop_expr with
+    | EnumValue ("XdpAction", 1) ->
+        check bool "XDP_DROP correctly evaluated" true true  
+    | _ ->
+        fail "XDP_DROP should evaluate to EnumValue(XdpAction, 1)");
+    
+    (* Test TC enum constant *)
+    let tc_ok_expr = make_test_expr (Kernelscript.Ast.Identifier "TC_ACT_OK") in
+    (match eval_expression eval_ctx tc_ok_expr with
+    | EnumValue ("TcAction", 0) ->
+        check bool "TC_ACT_OK correctly evaluated" true true  
+    | _ ->
+        fail "TC_ACT_OK should evaluate to EnumValue(TcAction, 0)")
+  with
+  | e -> fail ("Unexpected exception: " ^ Printexc.to_string e)
+
 let evaluator_tests = [
   "basic_evaluation", `Quick, test_basic_evaluation;
+  "enum_constant_evaluation", `Quick, test_enum_constant_evaluation;
+  "various_enum_constants", `Quick, test_various_enum_constants;
 ]
 
 let () =

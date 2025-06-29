@@ -48,7 +48,17 @@ type bounds_info = {
   verified: bool;
 }
 
-(** Evaluation context *)
+(** Enhanced evaluator context with mandatory symbol table
+    
+    The evaluator now requires a symbol table to properly resolve enum constants
+    from builtin AST files (builtin/xdp.ks, builtin/tc.ks, etc.) instead of 
+    hardcoding them. This eliminates code duplication and ensures consistency.
+    
+    Usage:
+    - Symbol table must be created using Builtin_loader.build_symbol_table_with_builtins
+    - All enum constants (XDP_PASS, TC_ACT_OK, etc.) are loaded from builtin definitions
+    - No hardcoded fallback - all callers must provide proper symbol tables
+*)
 type eval_context = {
   variables: (string, runtime_value) Hashtbl.t;
   maps: (string, map_declaration) Hashtbl.t;
@@ -66,44 +76,25 @@ type eval_context = {
   (* Memory region tracking for dynptr integration *)
   memory_regions: (int, memory_region_info) Hashtbl.t;  (* address -> region info *)
   region_bounds: (memory_region_type, bounds_info) Hashtbl.t;  (* region -> bounds *)
+  symbol_table: Symbol_table.symbol_table option; (* Add symbol table *)
 }
 
 (** Create evaluation context *)
-let create_eval_context maps functions =
+let create_eval_context symbol_table maps functions =
   let builtin_funcs = Hashtbl.create 32 in
   
-  (* Built-in XDP context functions *)
-  Hashtbl.add builtin_funcs "ctx.packet" (function
-    | [] -> PointerValue 0x1000  (* Mock packet data pointer *)
-    | _ -> raise (Evaluation_error ("ctx.packet takes no arguments", make_position 0 0 "")));
-    
-  Hashtbl.add builtin_funcs "ctx.data_end" (function
-    | [] -> PointerValue 0x2000  (* Mock data end pointer *)
-    | _ -> raise (Evaluation_error ("ctx.data_end takes no arguments", make_position 0 0 "")));
-    
-  Hashtbl.add builtin_funcs "ctx.get_packet_id" (function
-    | [] -> IntValue 12345  (* Mock packet ID *)
-    | _ -> raise (Evaluation_error ("ctx.get_packet_id takes no arguments", make_position 0 0 "")));
-  
-  (* Built-in utility functions *)
+  (* Initialize builtin functions *)
   Hashtbl.add builtin_funcs "bpf_trace_printk" (function
     | [StringValue msg; IntValue _len] -> 
         Printf.printf "[BPF]: %s\n" msg;
         IntValue 0
     | _ -> raise (Evaluation_error ("bpf_trace_printk requires string and length", make_position 0 0 "")));
-    
-  Hashtbl.add builtin_funcs "bpf_get_current_pid_tgid" (function
-    | [] -> IntValue 0x12345678  (* Mock PID/TGID *)
-    | _ -> raise (Evaluation_error ("bpf_get_current_pid_tgid takes no arguments", make_position 0 0 "")));
-    
-  Hashtbl.add builtin_funcs "bpf_ktime_get_ns" (function
-    | [] -> IntValue 1234567890  (* Mock timestamp *)
-    | _ -> raise (Evaluation_error ("bpf_ktime_get_ns takes no arguments", make_position 0 0 "")));
   
-  let map_storage = Hashtbl.create 32 in
-  (* Initialize storage for each map *)
-  Hashtbl.iter (fun map_name _map_decl ->
-    Hashtbl.add map_storage map_name (Hashtbl.create 64)
+  (* Initialize map storage for each map *)
+  let map_storage = Hashtbl.create 16 in
+  Hashtbl.iter (fun name _map_decl ->
+    let storage = Hashtbl.create 32 in
+    Hashtbl.add map_storage name storage
   ) maps;
   
   {
@@ -116,10 +107,11 @@ let create_eval_context maps functions =
     max_call_depth = 100;
     map_storage = map_storage;
     memory = Hashtbl.create 256;  (* Memory storage for pointer operations *)
-    variable_addresses = Hashtbl.create 64;  (* Variable name to address mapping *)
-    next_address = 0x1000;  (* Start allocating addresses from 0x1000 *)
+    variable_addresses = Hashtbl.create 32;  (* Variable address tracking *)
+    next_address = 0x1000;  (* Next available address *)
     memory_regions = Hashtbl.create 64;  (* Memory region tracking *)
     region_bounds = Hashtbl.create 16;  (* Region bounds information *)
+    symbol_table = Some symbol_table;
   }
 
 (** Helper to create evaluation error *)
@@ -572,25 +564,22 @@ and eval_expression ctx expr =
   | Literal lit -> runtime_value_of_literal lit
   
   | Identifier name ->
-      (* Handle special constants *)
-      if String.contains name ':' then
-        let parts = String.split_on_char ':' name in
-        let filtered_parts = List.filter (fun s -> s <> "") parts in
-        (match filtered_parts with
-         | ["XdpAction"; "Pass"] -> EnumValue ("XdpAction", 2)
-         | ["XdpAction"; "Drop"] -> EnumValue ("XdpAction", 1)
-         | ["XdpAction"; "Aborted"] -> EnumValue ("XdpAction", 0)
-         | ["XdpAction"; "Redirect"] -> EnumValue ("XdpAction", 3)
-         | ["XdpAction"; "Tx"] -> EnumValue ("XdpAction", 4)
-         | ["TcAction"; "Ok"] -> EnumValue ("TcAction", 0)
-         | ["TcAction"; "Shot"] -> EnumValue ("TcAction", 2)
-         | [enum_name; _variant] -> EnumValue (enum_name, 0)  (* Default enum value *)
-         | _ -> eval_error ("Invalid constant: " ^ name) expr.expr_pos)
-      else
-        (try
-          Hashtbl.find ctx.variables name
-        with Not_found ->
-          eval_error ("Undefined variable: " ^ name) expr.expr_pos)
+      (* Dynamic enum constant lookup - uses builtin definitions only *)
+      (match ctx.symbol_table with
+       | Some symbol_table ->
+           (* Look up enum constants from loaded builtin AST files *)
+           (match Symbol_table.lookup_symbol symbol_table name with
+            | Some { kind = Symbol_table.EnumConstant (enum_name, Some value); _ } ->
+                EnumValue (enum_name, value)
+            | _ ->
+                (* Not an enum constant, try variables *)
+                (try
+                  Hashtbl.find ctx.variables name
+                with Not_found ->
+                  eval_error ("Undefined variable: " ^ name) expr.expr_pos))
+       | None ->
+           (* This should never happen since symbol_table is now mandatory *)
+           eval_error ("Internal error: no symbol table available") expr.expr_pos)
   
   | FunctionCall (name, args) -> eval_function_call ctx name args expr.expr_pos
   
@@ -884,8 +873,8 @@ let evaluate_statements ctx stmts =
   | exn -> Error (Printexc.to_string exn, make_position 0 0 "")
 
 (** Evaluate a complete program *)
-let evaluate_program maps functions prog =
-  let ctx = create_eval_context maps functions in
+let evaluate_program symbol_table maps functions prog =
+  let ctx = create_eval_context symbol_table maps functions in
   try
     let result = eval_program ctx prog in
     Ok result

@@ -128,7 +128,7 @@ let test_simple_program () =
   let code = {|
     program test : xdp {
       fn main(ctx: XdpContext) -> XdpAction {
-        return XdpAction::Pass;
+        return XDP_PASS;
       }
     }
   |} in
@@ -210,7 +210,7 @@ let test_context_types () =
   let code = {|
     fn main(ctx: XdpContext) -> XdpAction {
       let packet = ctx.packet();
-      return XdpAction::Pass;
+      return XDP_PASS;
     }
   |} in
   assert_no_type_errors (type_check_function code)
@@ -233,7 +233,7 @@ let test_global_scoping () =
     @xdp fn test(ctx: XdpContext) -> XdpAction {
         global_counter[0] = 1;
         data_map[1] = LocalData::new();
-        return XdpAction::Pass;
+        return XDP_PASS;
     }
   |} in
   let symbol_table = build_symbol_table code in
