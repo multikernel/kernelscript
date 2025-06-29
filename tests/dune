@@ -49,6 +49,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_dynptr_bridge)
+ (modules test_dynptr_bridge)
+ (libraries kernelscript alcotest))
+
+(executable
  (public_name test_ir)
  (name test_ir)
  (modules test_ir)
@@ -308,6 +313,11 @@
  (action (run ./test_evaluator.exe)))
 
 (rule
+ (alias runtest_dynptr_bridge)
+ (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks)
+ (action (run ./test_dynptr_bridge.exe)))
+
+(rule
  (alias runtest_ir)
  (action (run ./test_ir.exe)))
 
@@ -531,6 +541,7 @@
   test_type_alias.exe
   test_const_variables.exe
   test_evaluator.exe
+  test_dynptr_bridge.exe
   test_safety_checker.exe
   test_program_ref.exe
   test_return_path_analysis.exe
@@ -563,6 +574,7 @@
    (run ./test_type_alias.exe)
    (run ./test_const_variables.exe)
    (run ./test_evaluator.exe)
+   (run ./test_dynptr_bridge.exe)
    (run ./test_safety_checker.exe)
    (run ./test_program_ref.exe)
    (run ./test_return_path_analysis.exe)

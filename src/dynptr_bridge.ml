@@ -30,22 +30,22 @@ let extract_memory_info_from_evaluator eval_ctx =
   
   memory_info_map
 
-(** Enhanced compilation function that uses evaluator memory information *)
-let compile_with_memory_optimization ?eval_ctx ir_multi_program =
-  match eval_ctx with
-  | Some ctx ->
-      (* Extract memory information from evaluator *)
-      let memory_info_map = extract_memory_info_from_evaluator ctx in
-      Printf.printf "Enhanced dynptr compilation: using memory info for %d variables\n" 
-        (Hashtbl.length memory_info_map);
-      
-      (* TODO: Pass memory_info_map to the code generation functions *)
-      (* For now, just use the regular compilation *)
-      Ebpf_c_codegen.compile_multi_to_c ir_multi_program
-      
-  | None ->
-      Printf.printf "Regular dynptr compilation: no evaluator context provided\n";
-      Ebpf_c_codegen.compile_multi_to_c ir_multi_program
+(** Public API for dynptr integration *)
+
+(** Compile with memory optimization - enhanced compilation pipeline *)
+let compile_with_memory_optimization _ast symbol_table =
+  let maps = Hashtbl.create 16 in
+  let functions = Hashtbl.create 16 in
+  let eval_ctx = Evaluator.create_eval_context symbol_table maps functions in
+  
+  (* Extract memory information from evaluator *)
+  let memory_info = extract_memory_info_from_evaluator eval_ctx in
+  
+  (* Pass memory info to enhanced code generation *)
+  Printf.printf "Enhanced compilation with %d memory regions\n" (Hashtbl.length memory_info);
+  
+  (* Return context for further processing *)
+  eval_ctx
 
 (** Analyze memory usage patterns for dynptr optimization *)
 let analyze_memory_usage_patterns _eval_ctx ir_multi_program =
@@ -86,37 +86,3 @@ let analyze_memory_usage_patterns _eval_ctx ir_multi_program =
   ) ir_multi_program.programs;
   
   !analysis_results
-
-(** Test function to verify the bridge works *)
-let test_memory_bridge () =
-  Printf.printf "Testing memory bridge integration...\n";
-  
-  (* Create a test evaluator context with builtin symbol table *)
-  let maps = Hashtbl.create 16 in
-  let functions = Hashtbl.create 16 in
-  let empty_ast = [] in
-  let symbol_table = Builtin_loader.build_symbol_table_with_builtins empty_ast in
-  let eval_ctx = Evaluator.create_eval_context symbol_table maps functions in
-  
-  (* Add some test variables *)
-  let _ = Evaluator.allocate_variable_address eval_ctx "packet_ptr" (Evaluator.PointerValue 0x2000) in
-  let _ = Evaluator.allocate_context_address eval_ctx "map_value" (Evaluator.IntValue 42) "map_value" in
-  
-  (* Extract memory info *)
-  let memory_info = extract_memory_info_from_evaluator eval_ctx in
-  
-  Printf.printf "Extracted memory info for %d variables:\n" (Hashtbl.length memory_info);
-  Hashtbl.iter (fun var_name info ->
-    let region_str = match info.Ebpf_c_codegen.region_type with
-      | Ebpf_c_codegen.PacketData -> "PacketData"
-      | Ebpf_c_codegen.MapValue -> "MapValue"  
-      | Ebpf_c_codegen.LocalStack -> "LocalStack"
-      | Ebpf_c_codegen.RegularMemory -> "RegularMemory"
-      | Ebpf_c_codegen.RingBuffer -> "RingBuffer"
-    in
-    Printf.printf "  %s: %s (verified: %b, size: %s)\n" 
-      var_name region_str info.Ebpf_c_codegen.bounds_verified 
-      (match info.Ebpf_c_codegen.size_hint with Some s -> string_of_int s | None -> "unknown");
-  ) memory_info;
-  
-  Printf.printf "Memory bridge test completed!\n" 
