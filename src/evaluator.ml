@@ -27,6 +27,27 @@ exception Return_value of runtime_value
 exception Break_loop
 exception Continue_loop
 
+(** Memory region types for enhanced dynptr integration *)
+type memory_region_type =
+  | PacketDataRegion of int  (* Base address of packet data *)
+  | MapValueRegion of string  (* Map name for map value regions *)
+  | StackRegion  (* Local stack variables *)
+  | ContextRegion of string  (* eBPF context regions *)
+  | RegularMemoryRegion  (* Other memory regions *)
+
+type memory_region_info = {
+  region_type: memory_region_type;
+  base_address: int;
+  size: int;
+  bounds_verified: bool;
+}
+
+type bounds_info = {
+  min_offset: int;
+  max_offset: int;
+  verified: bool;
+}
+
 (** Evaluation context *)
 type eval_context = {
   variables: (string, runtime_value) Hashtbl.t;
@@ -38,6 +59,13 @@ type eval_context = {
   max_call_depth: int;
   (* Map storage: map_name -> (key -> value) hashtable *)
   map_storage: (string, (string, runtime_value) Hashtbl.t) Hashtbl.t;
+  (* Memory model for pointer operations *)
+  memory: (int, runtime_value) Hashtbl.t;  (* address -> value *)
+  variable_addresses: (string, int) Hashtbl.t;  (* variable_name -> address *)
+  mutable next_address: int;  (* Next available memory address *)
+  (* Memory region tracking for dynptr integration *)
+  memory_regions: (int, memory_region_info) Hashtbl.t;  (* address -> region info *)
+  region_bounds: (memory_region_type, bounds_info) Hashtbl.t;  (* region -> bounds *)
 }
 
 (** Create evaluation context *)
@@ -87,10 +115,158 @@ let create_eval_context maps functions =
     call_depth = 0;
     max_call_depth = 100;
     map_storage = map_storage;
+    memory = Hashtbl.create 256;  (* Memory storage for pointer operations *)
+    variable_addresses = Hashtbl.create 64;  (* Variable name to address mapping *)
+    next_address = 0x1000;  (* Start allocating addresses from 0x1000 *)
+    memory_regions = Hashtbl.create 64;  (* Memory region tracking *)
+    region_bounds = Hashtbl.create 16;  (* Region bounds information *)
   }
 
 (** Helper to create evaluation error *)
 let eval_error msg pos = raise (Evaluation_error (msg, pos))
+
+(** Memory region management helpers for dynptr integration *)
+
+(** Initialize default memory regions for eBPF context *)
+let initialize_default_memory_regions ctx =
+  (* Only initialize if not already initialized *)
+  if Hashtbl.length ctx.memory_regions = 0 then (
+    (* Packet data region (XDP context) *)
+    let packet_region = {
+      region_type = PacketDataRegion 0x2000;
+      base_address = 0x2000;
+      size = 1500;  (* Typical packet size *)
+      bounds_verified = true;
+    } in
+    Hashtbl.add ctx.memory_regions 0x2000 packet_region;
+    Hashtbl.add ctx.region_bounds (PacketDataRegion 0x2000) { min_offset = 0; max_offset = 1500; verified = true };
+    
+    (* Context region *)
+    let context_region = {
+      region_type = ContextRegion "xdp";
+      base_address = 0x3000;
+      size = 64;  (* Size of context struct *)
+      bounds_verified = true;
+    } in
+    Hashtbl.add ctx.memory_regions 0x3000 context_region;
+    Hashtbl.add ctx.region_bounds (ContextRegion "xdp") { min_offset = 0; max_offset = 64; verified = true };
+    
+    (* Stack region starts from 0x1000 *)
+    Hashtbl.add ctx.region_bounds StackRegion { min_offset = 0; max_offset = 4096; verified = true }
+  )
+
+(** Find memory region for a given address *)
+let find_memory_region_by_address ctx addr =
+  try
+    Some (Hashtbl.find ctx.memory_regions addr)
+  with Not_found ->
+    (* Try to find region containing this address *)
+    let regions = Hashtbl.to_seq_values ctx.memory_regions |> List.of_seq in
+    List.find_opt (fun region ->
+      addr >= region.base_address && addr < (region.base_address + region.size)
+    ) regions
+
+(** Register a new memory region *)
+let register_memory_region ctx addr region_info =
+  Hashtbl.replace ctx.memory_regions addr region_info;
+  let bounds = { min_offset = 0; max_offset = region_info.size; verified = region_info.bounds_verified } in
+  Hashtbl.replace ctx.region_bounds region_info.region_type bounds
+
+(** Get bounds information for a memory region *)
+let get_region_bounds ctx region_type =
+  try
+    Some (Hashtbl.find ctx.region_bounds region_type)
+  with Not_found -> None
+
+(** Analyze pointer bounds based on memory region *)
+let analyze_pointer_bounds ctx addr =
+  match find_memory_region_by_address ctx addr with
+  | Some region_info ->
+      let offset_from_base = addr - region_info.base_address in
+      let remaining_size = region_info.size - offset_from_base in
+      { min_offset = 0; max_offset = remaining_size; verified = region_info.bounds_verified }
+  | None ->
+      { min_offset = 0; max_offset = max_int; verified = false }
+
+(** Memory management helpers for pointer operations *)
+
+(** Allocate a new memory address for a variable *)
+let allocate_variable_address ctx var_name value =
+  let addr = ctx.next_address in
+  let size = match value with
+    | ArrayValue arr -> Array.length arr * 4  (* Estimate size *)
+    | StructValue _ -> 64  (* Estimate struct size *)
+    | StringValue s -> String.length s + 1
+    | _ -> 4  (* Default size *)
+  in
+  ctx.next_address <- addr + size;
+  Hashtbl.replace ctx.variable_addresses var_name addr;
+  Hashtbl.replace ctx.memory addr value;
+  
+  (* Register memory region for this variable (stack region) *)
+  let region_info = {
+    region_type = StackRegion;
+    base_address = addr;
+    size = size;
+    bounds_verified = true;
+  } in
+  register_memory_region ctx addr region_info;
+  addr
+
+(** Allocate address for context-derived values (packet data, map values) *)
+let allocate_context_address ctx var_name value context_type =
+  let (base_addr, region_type) = match context_type with
+    | "packet_data" -> (0x2000, PacketDataRegion 0x2000)
+    | "map_value" -> (ctx.next_address, MapValueRegion var_name)
+    | _ -> (ctx.next_address, StackRegion)
+  in
+  
+  let addr = match context_type with
+    | "packet_data" -> base_addr  (* Use fixed packet data address *)
+    | _ -> 
+        let addr = ctx.next_address in
+        ctx.next_address <- addr + 64;  (* Default allocation size *)
+        addr
+  in
+  
+  Hashtbl.replace ctx.variable_addresses var_name addr;
+  Hashtbl.replace ctx.memory addr value;
+  
+  (* Register appropriate memory region *)
+  let region_info = {
+    region_type = region_type;
+    base_address = addr;
+    size = 64;  (* Default size *)
+    bounds_verified = (context_type = "packet_data");
+  } in
+  register_memory_region ctx addr region_info;
+  addr
+
+(** Get the address of a variable, allocating if necessary *)
+let get_variable_address ctx var_name =
+  if Hashtbl.mem ctx.variable_addresses var_name then
+    Hashtbl.find ctx.variable_addresses var_name
+  else
+    (* Variable doesn't have an address yet - this shouldn't happen in normal execution *)
+    eval_error ("Cannot get address of undefined variable: " ^ var_name) (make_position 0 0 "")
+
+(** Store a value at a memory address *)
+let store_at_address ctx addr value =
+  Hashtbl.replace ctx.memory addr value
+
+(** Load a value from a memory address *)
+let load_from_address ctx addr pos =
+  try
+    Hashtbl.find ctx.memory addr
+  with Not_found ->
+    eval_error (Printf.sprintf "Invalid memory access at address 0x%x" addr) pos
+
+(** Update variable value and its memory location *)
+let update_variable ctx var_name value =
+  Hashtbl.replace ctx.variables var_name value;
+  if Hashtbl.mem ctx.variable_addresses var_name then
+    let addr = Hashtbl.find ctx.variable_addresses var_name in
+    store_at_address ctx addr value
 
 (** Convert runtime value to string for debugging *)
 let rec string_of_runtime_value = function
@@ -184,14 +360,19 @@ let eval_binary_op left_val op right_val pos =
                       (string_of_runtime_value right_val)) pos
 
 (** Evaluate unary operations *)
-let eval_unary_op op val_ pos =
+let eval_unary_op ctx op val_ pos =
   match op, val_ with
   | Not, BoolValue b -> BoolValue (not b)
   | Neg, IntValue i -> IntValue (-i)
-  | Deref, PointerValue addr -> (* TODO: Implement proper memory dereferencing *)
-      IntValue (Int32.to_int (Int32.of_int addr))  (* Simplified for evaluator *)
-  | AddressOf, _ -> (* TODO: Implement proper address-of operation *)
-      PointerValue 0x1234  (* Simplified for evaluator *)
+  | Deref, PointerValue addr -> 
+      (* Properly dereference pointer by loading value from memory *)
+      if addr = 0 then
+        eval_error "Cannot dereference null pointer" pos
+      else
+        load_from_address ctx addr pos
+  | AddressOf, _ -> 
+      (* AddressOf should be handled in expression evaluation, not here *)
+      eval_error "AddressOf operation should be handled at expression level" pos
   | Not, _ -> eval_error ("Cannot apply logical not to " ^ string_of_runtime_value val_) pos
   | Neg, _ -> eval_error ("Cannot negate " ^ string_of_runtime_value val_) pos
   | Deref, _ -> eval_error ("Cannot dereference " ^ string_of_runtime_value val_) pos
@@ -291,7 +472,9 @@ and eval_user_function ctx func_def arg_values pos =
   
   (* Bind parameters *)
   List.iter2 (fun (param_name, _) arg_value ->
-    Hashtbl.replace ctx.variables param_name arg_value
+    Hashtbl.replace ctx.variables param_name arg_value;
+    let _ = allocate_variable_address ctx param_name arg_value in
+    ()
   ) func_def.func_params arg_values;
   
   (* Execute function body *)
@@ -383,6 +566,8 @@ and eval_field_access ctx obj_expr field pos =
 
 (** Evaluate expression *)
 and eval_expression ctx expr =
+  (* Initialize memory regions if not already initialized *)
+  initialize_default_memory_regions ctx;
   match expr.expr_desc with
   | Literal lit -> runtime_value_of_literal lit
   
@@ -427,8 +612,21 @@ and eval_expression ctx expr =
       eval_binary_op left_val op right_val expr.expr_pos
   
   | UnaryOp (op, expr) ->
-      let val_ = eval_expression ctx expr in
-      eval_unary_op op val_ expr.expr_pos
+      (match op with
+       | AddressOf ->
+           (* Handle AddressOf specially to get variable address *)
+           (match expr.expr_desc with
+            | Identifier var_name ->
+                if Hashtbl.mem ctx.variables var_name then
+                  let addr = get_variable_address ctx var_name in
+                  PointerValue addr
+                else
+                  eval_error ("Cannot get address of undefined variable: " ^ var_name) expr.expr_pos
+            | _ ->
+                eval_error "AddressOf operator can only be applied to variables" expr.expr_pos)
+       | _ ->
+           let val_ = eval_expression ctx expr in
+           eval_unary_op ctx op val_ expr.expr_pos)
       
   | ConfigAccess (_config_name, _field_name) ->
       (* For evaluation purposes, return a mock value *)
@@ -456,7 +654,7 @@ and eval_statement ctx stmt =
   
   | Assignment (name, expr) ->
       let value = eval_expression ctx expr in
-      Hashtbl.replace ctx.variables name value
+      update_variable ctx name value
   
   | FieldAssignment (obj_expr, field, value_expr) ->
       (* For evaluation purposes, treat config field assignment as no-op with debug output *)
@@ -498,11 +696,15 @@ and eval_statement ctx stmt =
   
   | Declaration (name, _, expr) ->
       let value = eval_expression ctx expr in
-      Hashtbl.add ctx.variables name value
+      Hashtbl.add ctx.variables name value;
+      let _ = allocate_variable_address ctx name value in
+      ()
   
   | ConstDeclaration (name, _, expr) ->
       let value = eval_expression ctx expr in
-      Hashtbl.add ctx.variables name value
+      Hashtbl.add ctx.variables name value;
+      let _ = allocate_variable_address ctx name value in
+      ()
   
   | Return None ->
       raise (Return_value UnitValue)

@@ -21,6 +21,18 @@ type memory_region_type =
   | LocalStack        (* Local stack variables - use regular access *)
   | RegularMemory     (* Other memory - use enhanced safety *)
 
+(** Enhanced memory region detection using provided region information *)
+type enhanced_memory_info = {
+  region_type: memory_region_type;
+  bounds_verified: bool;
+  size_hint: int option;
+}
+
+(** Variable name to enhanced memory info mapping *)
+type memory_info_map = (string, enhanced_memory_info) Hashtbl.t
+
+type bounds_hint = { verified: bool; size_hint: int }
+
 (** Detect memory region type from IR value semantics *)
 let detect_memory_region_type ir_val =
   match ir_val.value_desc with
@@ -55,6 +67,43 @@ let is_local_stack_value ir_val =
   match detect_memory_region_type ir_val with
   | LocalStack -> true
   | _ -> false
+
+(** Enhanced memory region detection using provided memory info *)
+let detect_memory_region_enhanced ?(memory_info_map=None) ir_val =
+  match memory_info_map with
+  | Some info_map ->
+      (* Use provided memory region information *)
+      (match ir_val.value_desc with
+       | IRVariable var_name ->
+           (try
+             let info = Hashtbl.find info_map var_name in
+             info.region_type
+           with
+           | Not_found -> LocalStack)  (* Default for unknown variables *)
+       | IRContextField (XdpCtx, ("data" | "data_end" | "data_meta")) -> PacketData
+       | IRContextField (TcCtx, ("data" | "data_end")) -> PacketData
+       | IRMapRef _ -> RegularMemory
+       | IRLiteral _ -> RegularMemory
+       | IRRegister _ -> RegularMemory
+       | _ -> RegularMemory)
+  | None ->
+      (* Fallback to heuristic detection *)
+      detect_memory_region_type ir_val
+
+(** Get enhanced bounds information *)
+let get_enhanced_bounds_info ?(memory_info_map=None) ir_val =
+  match memory_info_map with
+  | Some info_map ->
+      (match ir_val.value_desc with
+       | IRVariable var_name ->
+           (try
+             let info = Hashtbl.find info_map var_name in
+             Some { verified = info.bounds_verified; size_hint = 
+               match info.size_hint with Some s -> s | None -> 0 }
+           with
+           | Not_found -> None)
+       | _ -> None)
+  | None -> None
 
 (** C code generation context *)
 type c_context = {
@@ -960,8 +1009,8 @@ let generate_c_expression ctx ir_expr =
       let val_str = generate_c_value ctx ir_val in
       (match op with
        | IRDeref ->
-           (* Use semantic analysis to determine appropriate access method *)
-           (match detect_memory_region_type ir_val with
+           (* Use enhanced semantic analysis to determine appropriate access method *)
+           (match detect_memory_region_enhanced ir_val with
             | PacketData ->
                 (* Packet data - use bpf_dynptr_from_xdp *)
                 (match ir_val.val_type with
@@ -1016,8 +1065,8 @@ let generate_c_expression ctx ir_expr =
       sprintf "((%s)%s)" type_str val_str
   | IRFieldAccess (obj_val, field) ->
       let obj_str = generate_c_value ctx obj_val in
-      (* Use semantic analysis for field access *)
-      (match detect_memory_region_type obj_val with
+      (* Use enhanced semantic analysis for field access *)
+      (match detect_memory_region_enhanced obj_val with
        | PacketData ->
            (* Packet data field access - use bpf_dynptr_from_xdp *)
            (match obj_val.val_type with
@@ -1314,8 +1363,8 @@ let rec generate_c_instruction ctx ir_instr =
       let obj_str = generate_c_value ctx obj_val in
       let value_str = generate_c_value ctx value_val in
       
-      (* Use semantic analysis for field assignment *)
-      (match detect_memory_region_type obj_val with
+      (* Use enhanced semantic analysis for field assignment *)
+      (match detect_memory_region_enhanced obj_val with
                | PacketData ->
             (* Packet data field assignment - use dynptr API for safe write *)
             (match obj_val.val_type with
@@ -2219,6 +2268,3 @@ let compile_multi_to_c_with_analysis ?(config_declarations=[]) ?(type_aliases=[]
     (List.length tail_call_analysis.dependencies) tail_call_analysis.prog_array_size;
   
   (c_code, tail_call_analysis)
-
-(** Generate config struct definition and map *)
-
