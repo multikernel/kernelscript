@@ -892,13 +892,3 @@ let get_variable ctx name =
   try
     Some (Hashtbl.find ctx.variables name)
   with Not_found -> None
-
-(** Debug: print context state *)
-let print_context_state ctx =
-  Printf.printf "=== Evaluation Context ===\n";
-  Printf.printf "Variables:\n";
-  Hashtbl.iter (fun name value ->
-    Printf.printf "  %s = %s\n" name (string_of_runtime_value value)
-  ) ctx.variables;
-  Printf.printf "Call depth: %d\n" ctx.call_depth;
-  Printf.printf "========================\n"
