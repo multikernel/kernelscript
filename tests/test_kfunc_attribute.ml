@@ -152,11 +152,92 @@ let test_ebpf_kfunc_declarations () =
   check bool "Contains kfunc call" true
     (try ignore (Str.search_forward (Str.regexp "security_check(") generated_code 0); true with Not_found -> false)
 
+(** Test kernel module print function translation *)
+let test_kernel_print_translation () =
+  let program_text = {|
+@kfunc
+fn my_kfunc() -> u32 {
+    print("Hello from kernel module")
+    print("Value: ", 42)
+    return 0
+}
+|} in
+  try
+    let ast = Parse.parse_string program_text in
+    match Kernel_module_codegen.generate_kernel_module_from_ast "test_module" ast with
+    | Some module_code ->
+        (* Check that printk is used instead of print *)
+        let contains_printk = try Str.search_forward (Str.regexp "printk") module_code 0 >= 0 with Not_found -> false in
+        let contains_kern_info = try Str.search_forward (Str.regexp "KERN_INFO") module_code 0 >= 0 with Not_found -> false in
+        let contains_raw_print = try Str.search_forward (Str.regexp "print(") module_code 0 >= 0 with Not_found -> false in
+        check bool "Contains printk call" true contains_printk;
+        check bool "Contains KERN_INFO prefix" true contains_kern_info;
+        check bool "Doesn't contain raw print" true (not contains_raw_print)
+    | None ->
+        fail "Should generate kernel module code"
+  with
+  | e -> fail ("Failed to generate kernel module: " ^ Printexc.to_string e)
+
+(** Test kernel module print with no arguments *)
+let test_kernel_print_no_args () =
+  let program_text = {|
+@kfunc
+fn test_empty_print() -> u32 {
+    print()
+    return 0
+}
+|} in
+  try
+    let ast = Parse.parse_string program_text in
+    match Kernel_module_codegen.generate_kernel_module_from_ast "test_module" ast with
+    | Some module_code ->
+        (* Check for empty printk call with KERN_INFO *)
+        let contains_empty_printk = try Str.search_forward (Str.regexp "printk") module_code 0 >= 0 with Not_found -> false in
+        let contains_kern_info_empty = try Str.search_forward (Str.regexp "KERN_INFO") module_code 0 >= 0 with Not_found -> false in
+        check bool "Contains empty printk" true contains_empty_printk;
+        check bool "Contains KERN_INFO for empty call" true contains_kern_info_empty
+    | None ->
+        fail "Should generate kernel module code"
+  with
+  | e -> fail ("Failed to generate kernel module: " ^ Printexc.to_string e)
+
+(** Test regular function calls are not affected *)
+let test_regular_function_calls_printk () =
+  let program_text = {|
+@kfunc
+fn helper_func() -> u32 {
+    return 1
+}
+
+@kfunc  
+fn main_kfunc() -> u32 {
+    let result = helper_func()
+    return result
+}
+|} in
+  try
+    let ast = Parse.parse_string program_text in
+    match Kernel_module_codegen.generate_kernel_module_from_ast "test_module" ast with
+    | Some module_code ->
+        (* Check that regular function calls are preserved *)
+        let contains_helper_func = try Str.search_forward (Str.regexp "helper_func(") module_code 0 >= 0 with Not_found -> false in
+        let contains_printk_calls = try Str.search_forward (Str.regexp "printk") module_code 0 >= 0 with Not_found -> false in
+        check bool "Contains helper_func call" true contains_helper_func;
+        (* But no printk calls should be present *)
+        check bool "No printk calls" true (not contains_printk_calls)
+    | None ->
+        fail "Should generate kernel module code"
+  with
+  | e -> fail ("Failed to generate kernel module: " ^ Printexc.to_string e)
+
 let tests = [
   "kfunc parsing", `Quick, test_kfunc_parsing;
   "kfunc type checking", `Quick, test_kfunc_type_checking;
   "kernel module generation", `Quick, test_kernel_module_generation;
   "eBPF kfunc declarations", `Quick, test_ebpf_kfunc_declarations;
+  "kernel print translation", `Quick, test_kernel_print_translation;
+  "kernel print no args", `Quick, test_kernel_print_no_args;
+  "regular function calls printk", `Quick, test_regular_function_calls_printk;
 ]
 
 let () = Alcotest.run "KernelScript @kfunc attribute tests" [

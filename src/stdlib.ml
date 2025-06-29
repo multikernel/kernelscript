@@ -24,6 +24,7 @@ type builtin_function = {
   (* Context-specific implementations *)
   ebpf_impl: string;      (* eBPF C implementation *)
   userspace_impl: string; (* Userspace C implementation *)
+  kernel_impl: string;    (* Kernel module C implementation *)
 }
 
 (** Standard library built-in functions *)
@@ -32,10 +33,11 @@ let builtin_functions = [
     name = "print";
     param_types = []; (* Variadic - accepts any number of arguments *)
     return_type = U32; (* Returns 0 on success, like printf *)
-    description = "Print formatted output to console (userspace) or trace log (eBPF)";
+    description = "Print formatted output to console (userspace), trace log (eBPF), or kernel log (kernel module)";
     is_variadic = true;
     ebpf_impl = "bpf_printk";
     userspace_impl = "printf";
+    kernel_impl = "printk";
   };
   {
     name = "load";
@@ -45,6 +47,7 @@ let builtin_functions = [
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_load";
+    kernel_impl = "";
   };
   {
     name = "attach";
@@ -54,6 +57,7 @@ let builtin_functions = [
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_attach";
+    kernel_impl = "";
   };
   {
     name = "register";
@@ -63,6 +67,7 @@ let builtin_functions = [
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_map__attach_struct_ops";
+    kernel_impl = "";
   };
 ]
 
@@ -94,6 +99,11 @@ let get_ebpf_implementation name =
 let get_userspace_implementation name =
   match get_builtin_function name with
   | Some func -> Some func.userspace_impl
+  | None -> None
+
+let get_kernel_implementation name =
+  match get_builtin_function name with
+  | Some func -> Some func.kernel_impl
   | None -> None
 
 (** Format arguments for function call based on context *)

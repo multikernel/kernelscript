@@ -25,7 +25,12 @@ let test_context_implementations () =
   (* Test userspace implementation *)
   (match get_userspace_implementation "print" with
    | Some impl -> check string "userspace implementation" "printf" impl
-   | None -> fail "userspace implementation should exist")
+   | None -> fail "userspace implementation should exist");
+  
+  (* Test kernel implementation *)
+  (match get_kernel_implementation "print" with
+   | Some impl -> check string "kernel implementation" "printk" impl
+   | None -> fail "kernel implementation should exist")
 
 (** Test argument formatting for different contexts *)
 let test_argument_formatting () =

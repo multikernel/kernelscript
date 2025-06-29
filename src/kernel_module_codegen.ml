@@ -184,8 +184,33 @@ and generate_expression_translation expr =
       in
       sprintf "(%s%s)" op_str operand_str
   | FunctionCall (func_name, args) ->
-      let args_str = String.concat ", " (List.map generate_expression_translation args) in
-      sprintf "%s(%s)" func_name args_str
+      (* Check if this is a built-in function that needs context-specific translation *)
+      let (actual_name, translated_args) = match Stdlib.get_kernel_implementation func_name with
+        | Some kernel_impl when kernel_impl <> "" ->
+            (* This is a built-in function - translate for kernel module context *)
+            (match func_name with
+             | "print" -> 
+                 (* For kernel modules, printk needs KERN_INFO prefix and proper formatting *)
+                 let c_args = List.map generate_expression_translation args in
+                 (match c_args with
+                  | [] -> (kernel_impl, ["KERN_INFO \"\""])
+                  | [first] -> (kernel_impl, [sprintf "KERN_INFO %s" first])
+                  | first :: rest -> 
+                      (* For multiple args, format as: printk(KERN_INFO format, args...) *)
+                      let format_specifiers = List.map (fun _ -> "%s") rest in
+                      let format_str = sprintf "KERN_INFO %s %s" first (String.concat " " format_specifiers) in
+                      (kernel_impl, format_str :: rest))
+             | _ -> 
+                 (* For other built-in functions, use standard conversion *)
+                 let c_args = List.map generate_expression_translation args in
+                 (kernel_impl, c_args))
+        | _ ->
+            (* Regular function call *)
+            let c_args = List.map generate_expression_translation args in
+            (func_name, c_args)
+      in
+      let args_str = String.concat ", " translated_args in
+      sprintf "%s(%s)" actual_name args_str
   | FieldAccess (obj, field) ->
       sprintf "%s.%s" (generate_expression_translation obj) field
   | ArrowAccess (obj, field) ->
