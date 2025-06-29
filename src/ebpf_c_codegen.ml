@@ -13,6 +13,49 @@
 open Ir
 open Printf
 
+(** Memory region types for dynptr API selection *)
+type memory_region_type =
+  | PacketData        (* XDP/TC packet data - use bpf_dynptr_from_xdp/skb *)
+  | MapValue          (* Map lookup result - use bpf_dynptr_from_mem *)
+  | RingBuffer        (* Ring buffer data - use bpf_dynptr_from_ringbuf *)
+  | LocalStack        (* Local stack variables - use regular access *)
+  | RegularMemory     (* Other memory - use enhanced safety *)
+
+(** Detect memory region type from IR value semantics *)
+let detect_memory_region_type ir_val =
+  match ir_val.value_desc with
+  | IRContextField (XdpCtx, ("data" | "data_end" | "data_meta")) -> PacketData
+  | IRContextField (TcCtx, ("data" | "data_end")) -> PacketData
+  | IRVariable _ -> LocalStack  (* Variables are typically stack-allocated *)
+  | IRMapRef _ -> RegularMemory  (* Map references *)
+  | IRLiteral _ -> RegularMemory  (* Literals *)
+  | IRRegister _ -> RegularMemory  (* Registers *)
+  | _ -> RegularMemory
+
+(** Check if IR value represents packet data *)
+let is_packet_data_value ir_val =
+  match detect_memory_region_type ir_val with
+  | PacketData -> true
+  | _ -> false
+
+(** Check if IR value represents map-derived data - heuristic approach *)
+let is_map_value_parameter ir_val =
+  match ir_val.val_type with
+  | IRPointer (IRStruct _, _) -> 
+      (* Struct pointers that are variables could be from map lookups *)
+      (match ir_val.value_desc with
+       | IRVariable name -> 
+           (* Heuristic: variables with certain names are likely map-derived *)
+           String.contains name '_' && (String.length name > 3)
+       | _ -> false)
+  | _ -> false
+
+(** Check if IR value is local stack memory *)
+let is_local_stack_value ir_val =
+  match detect_memory_region_type ir_val with
+  | LocalStack -> true
+  | _ -> false
+
 (** C code generation context *)
 type c_context = {
   (* Generated C code lines *)
@@ -367,7 +410,7 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   
   (* No more hardcoded cheating - structs should have their fields properly resolved in IR *)
   
-  let collect_from_type ir_type =
+  let rec collect_from_type ir_type =
     match ir_type with
     | IRStruct (name, fields) ->
         if not (List.mem_assoc name !struct_defs) then (
@@ -376,6 +419,9 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
             struct_defs := (name, fields) :: !struct_defs
           (* Remove warning - empty structs are expected for type aliases *)
         )
+    | IRPointer (inner_type, _) -> 
+        (* Recursively collect from the pointed-to type *)
+        collect_from_type inner_type
     | _ -> ()
   in
   
@@ -435,6 +481,9 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
+  (* Also collect from kernel functions *)
+  List.iter collect_from_function ir_multi_prog.kernel_functions;
+  
   List.rev !struct_defs
 
 (** Generate struct definitions *)
@@ -445,9 +494,19 @@ let generate_struct_definitions ctx struct_defs =
       emit_line ctx (sprintf "struct %s {" struct_name);
       increase_indent ctx;
       List.iter (fun (field_name, field_type) ->
-        (* For struct fields, use type alias names to match original source code *)
-        let c_type = ebpf_type_from_ir_type field_type in
-        emit_line ctx (sprintf "%s %s;" c_type field_name)
+        (* Handle array fields with correct C syntax, preserving type aliases *)
+        let field_declaration = match field_type with
+        | IRArray (inner_type, size, _) ->
+            let inner_c_type = ebpf_type_from_ir_type inner_type in
+            sprintf "%s %s[%d];" inner_c_type field_name size
+        | IRTypeAlias (alias_name, _) ->
+            (* Preserve type alias names in struct fields to match original source code *)
+            sprintf "%s %s;" alias_name field_name
+        | _ ->
+            let c_type = ebpf_type_from_ir_type field_type in
+            sprintf "%s %s;" c_type field_name
+        in
+        emit_line ctx field_declaration
       ) fields;
       decrease_indent ctx;
       emit_line ctx "};"
@@ -629,14 +688,6 @@ let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
   (* Generate type alias definitions from AST first *)
   generate_ast_type_alias_definitions ctx type_aliases;
   
-  (* Generate struct definitions (only non-empty ones that are real structs) *)
-  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
-  generate_struct_definitions ctx struct_defs;
-  
-  (* Generate type alias definitions *)
-  let type_aliases = collect_type_aliases_from_multi_program ir_multi_program in
-  generate_type_alias_definitions ctx type_aliases;
-  
   (* Generate config maps if provided *)
   if ir_multi_program.global_configs <> [] then
     List.iter (generate_config_map_definition ctx) ir_multi_program.global_configs;
@@ -660,9 +711,6 @@ let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
   
   (* With attributed functions, each program has only the entry function - no nested functions *)
   
-  (* Add license (required for eBPF) *)
-  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
-  
   (* Function has side effects on ctx, no return value needed *)
   ()
 
@@ -676,8 +724,7 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     "#include <linux/ip.h>";
     "#include <linux/in.h>";
     "#include <linux/if_xdp.h>";
-    "#include <stdint.h>";
-    "#include <stdbool.h>";
+    "#include <linux/types.h>";
   ] in
   
   (* Get context-specific includes *)
@@ -911,17 +958,98 @@ let generate_c_expression ctx ir_expr =
            sprintf "(%s %s %s)" left_str op_str right_str)
   | IRUnOp (op, ir_val) ->
       let val_str = generate_c_value ctx ir_val in
-      let op_str = match op with
-        | IRNot -> "!" | IRNeg -> "-" | IRBitNot -> "~"
-      in
-      sprintf "(%s%s)" op_str val_str
+      (match op with
+       | IRDeref ->
+           (* Use semantic analysis to determine appropriate access method *)
+           (match detect_memory_region_type ir_val with
+            | PacketData ->
+                (* Packet data - use bpf_dynptr_from_xdp *)
+                (match ir_val.val_type with
+                 | IRPointer (inner_type, _) ->
+                     let c_type = ebpf_type_from_ir_type inner_type in
+                     let size = match inner_type with
+                       | IRI8 | IRU8 -> 1 | IRU16 -> 2 | IRU32 -> 4 | IRU64 -> 8 | _ -> 4
+                     in
+                     sprintf "({ %s __pkt_val = 0; struct bpf_dynptr __pkt_dynptr; if (bpf_dynptr_from_xdp(&__pkt_dynptr, ctx) == 0) { void* __pkt_data = bpf_dynptr_data(&__pkt_dynptr, (%s - (void*)(long)ctx->data), %d); if (__pkt_data) __pkt_val = *(%s*)__pkt_data; } __pkt_val; })" 
+                       c_type val_str size c_type
+                 | _ -> sprintf "SAFE_DEREF(%s)" val_str)
+            
+            | LocalStack ->
+                (* Local stack variables - use direct access *)
+                sprintf "*%s" val_str
+            
+            | _ when is_map_value_parameter ir_val ->
+                (* Map value parameters - use bpf_dynptr_from_mem *)
+                (match ir_val.val_type with
+                 | IRPointer (inner_type, _) ->
+                     let c_type = ebpf_type_from_ir_type inner_type in
+                     let size = match inner_type with
+                       | IRI8 | IRU8 -> 1 | IRU16 -> 2 | IRU32 -> 4 | IRU64 -> 8 | _ -> 4
+                     in
+                     sprintf "({ %s __mem_val = 0; struct bpf_dynptr __mem_dynptr; if (bpf_dynptr_from_mem(%s, %d, 0, &__mem_dynptr) == 0) { void* __mem_data = bpf_dynptr_data(&__mem_dynptr, 0, %d); if (__mem_data) __mem_val = *(%s*)__mem_data; } __mem_val; })" 
+                       c_type val_str size size c_type
+                 | _ -> sprintf "SAFE_DEREF(%s)" val_str)
+            
+            | _ ->
+                (* Regular memory - use enhanced safety *)
+                (match ir_val.val_type with
+                 | IRPointer (inner_type, bounds_info) ->
+                     let c_type = ebpf_type_from_ir_type inner_type in
+                     if bounds_info.nullable then
+                       sprintf "({ %s __val = {0}; if (%s && (void*)%s >= (void*)0x1000) { __builtin_memcpy(&__val, %s, sizeof(%s)); } __val; })" c_type val_str val_str val_str c_type
+                     else
+                       sprintf "SAFE_DEREF(%s)" val_str
+                 | _ -> sprintf "SAFE_DEREF(%s)" val_str))
+       | IRAddressOf ->
+           (* Address-of operation *)
+           sprintf "(&%s)" val_str
+       | IRNot | IRNeg | IRBitNot ->
+           (* Standard unary operations *)
+           let op_str = match op with
+             | IRNot -> "!" | IRNeg -> "-" | IRBitNot -> "~" 
+             | _ -> failwith "Unexpected unary op"
+           in
+           sprintf "(%s%s)" op_str val_str)
   | IRCast (ir_val, target_type) ->
       let val_str = generate_c_value ctx ir_val in
       let type_str = ebpf_type_from_ir_type target_type in
       sprintf "((%s)%s)" type_str val_str
   | IRFieldAccess (obj_val, field) ->
       let obj_str = generate_c_value ctx obj_val in
-      sprintf "%s.%s" obj_str field
+      (* Use semantic analysis for field access *)
+      (match detect_memory_region_type obj_val with
+       | PacketData ->
+           (* Packet data field access - use bpf_dynptr_from_xdp *)
+           (match obj_val.val_type with
+            | IRPointer (IRStruct (struct_name, _), _) ->
+                let field_size = 4 in (* Default - should be calculated from struct *)
+                let full_struct_name = sprintf "struct %s" struct_name in
+                sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __pkt_dynptr; if (bpf_dynptr_from_xdp(&__pkt_dynptr, ctx) == 0) { void* __field_data = bpf_dynptr_data(&__pkt_dynptr, (%s - (void*)(long)ctx->data) + __builtin_offsetof(%s, %s), %d); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
+                  full_struct_name field obj_str full_struct_name field field_size full_struct_name field
+            | _ -> sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field)
+       
+               | _ when is_map_value_parameter obj_val ->
+            (* Map value field access - use bpf_dynptr_from_mem *)
+            (match obj_val.val_type with
+             | IRPointer (IRStruct (struct_name, _), _) ->
+                 let field_size = 4 in (* Default - should be calculated from struct *)
+                 let full_struct_name = sprintf "struct %s" struct_name in
+                 sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __mem_dynptr; if (bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr) == 0) { void* __field_data = bpf_dynptr_data(&__mem_dynptr, __builtin_offsetof(%s, %s), %d); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
+                   full_struct_name field obj_str full_struct_name full_struct_name field field_size full_struct_name field
+             | _ -> sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field)
+       
+                | _ ->
+            (* Regular field access with enhanced safety checks for pointers *)
+            (match obj_val.val_type with
+             | IRPointer (_, bounds_info) ->
+                 (* Use enhanced pointer field access with null and bounds checking *)
+                 if bounds_info.nullable then
+                   sprintf "({ typeof((%s)->%s) __field_val = {0}; if (%s && (void*)%s >= (void*)0x1000) { __field_val = (%s)->%s; } __field_val; })" obj_str field obj_str obj_str obj_str field
+                 else
+                   sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field
+             | _ -> 
+                 (* Direct struct field access *)
+                 sprintf "%s.%s" obj_str field))
       
   | IRStructLiteral (_struct_name, field_assignments) ->
       (* Generate C struct literal: {.field1 = value1, .field2 = value2} *)
@@ -966,7 +1094,12 @@ let generate_map_load ctx map_val key_val dest_val load_type =
       (* bpf_map_lookup_elem returns a pointer, so we need to dereference it *)
       emit_line ctx (sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);" map_str key_var);
       emit_line ctx (sprintf "  if (__tmp_ptr) %s = *(%s*)__tmp_ptr;" dest_str (ebpf_type_from_ir_type dest_val.val_type));
-      emit_line ctx (sprintf "  else %s = 0; }" dest_str)
+      (* Handle fallback value based on type *)
+      let fallback_value = match dest_val.val_type with
+        | IRStruct (_, _) -> sprintf "(%s){0}" (ebpf_type_from_ir_type dest_val.val_type)
+        | _ -> "0"
+      in
+      emit_line ctx (sprintf "  else %s = %s; }" dest_str fallback_value)
   | MapPeek ->
       emit_line ctx (sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str)
 
@@ -1020,6 +1153,8 @@ let generate_map_delete ctx map_val key_val =
   in
   
   emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
+
+
 
 (** Generate C code for IR instruction *)
 
@@ -1175,10 +1310,51 @@ let rec generate_c_instruction ctx ir_instr =
       failwith "Internal error: Config field updates in eBPF programs should have been caught during type checking - configs are read-only in kernel space"
 
   | IRStructFieldAssignment (obj_val, field_name, value_val) ->
-      (* Generate struct field assignment: obj.field = value *)
+      (* Enhanced struct field assignment with safety checks *)
       let obj_str = generate_c_value ctx obj_val in
       let value_str = generate_c_value ctx value_val in
-      emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str)
+      
+      (* Use semantic analysis for field assignment *)
+      (match detect_memory_region_type obj_val with
+               | PacketData ->
+            (* Packet data field assignment - use dynptr API for safe write *)
+            (match obj_val.val_type with
+             | IRPointer (IRStruct (struct_name, _), _) ->
+                 let field_size = 4 in (* Default - should be calculated from struct *)
+                 let full_struct_name = sprintf "struct %s" struct_name in
+                 emit_line ctx (sprintf "{ struct bpf_dynptr __pkt_dynptr; bpf_dynptr_from_xdp(&__pkt_dynptr, ctx);");
+                 emit_line ctx (sprintf "  __u32 __field_offset = (%s - ctx->data) + __builtin_offsetof(%s, %s);" obj_str full_struct_name field_name);
+                 emit_line ctx (sprintf "  bpf_dynptr_write(&__pkt_dynptr, __field_offset, &%s, %d, 0); }" value_str field_size)
+             | _ ->
+                 emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str))
+        
+        | _ when is_map_value_parameter obj_val ->
+            (* Map value field assignment - use dynptr API *)
+            (match obj_val.val_type with
+             | IRPointer (IRStruct (struct_name, _), _) ->
+                 let field_size = 4 in
+                 let full_struct_name = sprintf "struct %s" struct_name in
+                 emit_line ctx (sprintf "{ struct bpf_dynptr __mem_dynptr; bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr);" obj_str full_struct_name);
+                 emit_line ctx (sprintf "  bpf_dynptr_write(&__mem_dynptr, __builtin_offsetof(%s, %s), &%s, %d, 0); }" full_struct_name field_name value_str field_size)
+             | _ ->
+                 emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str))
+        
+        | _ ->
+            (* Regular field assignment with enhanced pointer safety checks *)
+            (match obj_val.val_type with
+             | IRPointer (_, bounds_info) ->
+                 if bounds_info.nullable then (
+                   emit_line ctx (sprintf "if (%s && (void*)%s >= (void*)0x1000) {" obj_str obj_str);
+                   increase_indent ctx;
+                   emit_line ctx (sprintf "%s->%s = %s;" obj_str field_name value_str);
+                   decrease_indent ctx;
+                   emit_line ctx "}"
+                 ) else (
+                   emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str)
+                 )
+             | _ ->
+                 (* Direct struct field assignment *)
+                 emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str)))
       
   | IRConfigAccess (config_name, field_name, result_val) ->
       (* For eBPF, config access goes through global maps *)
@@ -1691,9 +1867,7 @@ let generate_c_program ?config_declarations ir_prog =
   (* Generate enum definitions *)
   generate_enum_definitions ctx temp_multi_prog;
   
-  (* Generate struct definitions *)
-  let struct_defs = collect_struct_definitions_from_multi_program temp_multi_prog in
-  generate_struct_definitions ctx struct_defs;
+  (* Struct definitions are generated in the main entry point to avoid duplication *)
   
   (* Generate type alias definitions *)
   let type_aliases = collect_type_aliases_from_multi_program temp_multi_prog in
@@ -1754,6 +1928,10 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   
   (* Generate declarations in original AST order to preserve source order *)
   generate_declarations_in_source_order ctx ir_multi_program type_aliases;
+  
+  (* Generate struct definitions *)
+  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
+  generate_struct_definitions ctx struct_defs;
   
   (* Generate config maps if provided *)
   begin match config_declarations with
@@ -1853,6 +2031,53 @@ let compile_multi_to_c_with_tail_calls
   (* Generate headers and includes *)
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
   generate_includes ctx ~program_types ();
+  
+  (* Generate dynptr safety macros and helper functions *)
+  emit_line ctx "/* eBPF Dynptr API integration for enhanced pointer safety */";
+  emit_line ctx "/* Using system-provided bpf_dynptr_* helper functions from bpf_helpers.h */";
+  emit_blank_line ctx;
+  
+  (* Generate enhanced dynptr safety macros *)
+  emit_line ctx "/* Enhanced dynptr safety macros */";
+  emit_line ctx "#define DYNPTR_SAFE_ACCESS(dynptr, offset, size, type) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        type *__ptr = (type*)bpf_dynptr_data(dynptr, offset, sizeof(type)); \\";
+  emit_line ctx "        __ptr ? *__ptr : (type){0}; \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
+  
+  emit_line ctx "#define DYNPTR_SAFE_WRITE(dynptr, offset, value, type) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        type __tmp = (value); \\";
+  emit_line ctx "        bpf_dynptr_write(dynptr, offset, &__tmp, sizeof(type), 0); \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
+  
+  emit_line ctx "#define DYNPTR_SAFE_READ(dst, dynptr, offset, type) \\";
+  emit_line ctx "    bpf_dynptr_read(dst, sizeof(type), dynptr, offset, 0)";
+  emit_blank_line ctx;
+  
+  (* Fallback macros for regular pointers *)
+  emit_line ctx "/* Fallback macros for regular pointer operations */";
+  emit_line ctx "#define SAFE_DEREF(ptr) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        typeof(*ptr) __val = {0}; \\";
+  emit_line ctx "        if (ptr) { \\";
+  emit_line ctx "            __builtin_memcpy(&__val, ptr, sizeof(__val)); \\";
+  emit_line ctx "        } \\";
+  emit_line ctx "        __val; \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
+  
+  emit_line ctx "#define SAFE_PTR_ACCESS(ptr, field) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        typeof((ptr)->field) __val = {0}; \\";
+  emit_line ctx "        if (ptr) { \\";
+  emit_line ctx "            __val = (ptr)->field; \\";
+  emit_line ctx "        } \\";
+  emit_line ctx "        __val; \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
   
   (* Store variable type aliases for later lookup *)
   ctx.variable_type_aliases <- variable_type_aliases;

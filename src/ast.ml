@@ -107,7 +107,7 @@ type binary_op =
 
 (** Unary operators *)
 type unary_op =
-  | Not | Neg
+  | Not | Neg | Deref | AddressOf  (* Added Deref and AddressOf operators *)
 
 (** Map scope for multi-program analysis *)
 type map_scope =
@@ -143,6 +143,7 @@ and expr_desc =
   | TailCall of string * expr list  (* function_name, arguments - for explicit tail calls *)
   | ArrayAccess of expr * expr
   | FieldAccess of expr * string
+  | ArrowAccess of expr * string  (* pointer->field *)
   | BinaryOp of expr * binary_op * expr
   | UnaryOp of unary_op * expr
   | StructLiteral of string * (string * expr) list
@@ -157,6 +158,7 @@ and stmt_desc =
   | ExprStmt of expr
   | Assignment of string * expr
   | FieldAssignment of expr * string * expr  (* object.field = value *)
+  | ArrowAssignment of expr * string * expr  (* pointer->field = value *)
   | IndexAssignment of expr * expr * expr  (* map[key] = value *)
   | Declaration of string * bpf_type option * expr
   | ConstDeclaration of string * bpf_type option * expr  (* const name : type = value *)
@@ -462,6 +464,8 @@ let string_of_binary_op = function
 let string_of_unary_op = function
   | Not -> "!"
   | Neg -> "-"
+  | Deref -> "*"
+  | AddressOf -> "&"
 
 let rec string_of_expr expr =
   match expr.expr_desc with
@@ -479,6 +483,8 @@ let rec string_of_expr expr =
       Printf.sprintf "%s[%s]" (string_of_expr arr) (string_of_expr idx)
   | FieldAccess (obj, field) ->
       Printf.sprintf "%s.%s" (string_of_expr obj) field
+  | ArrowAccess (obj, field) ->
+      Printf.sprintf "%s->%s" (string_of_expr obj) field
   | BinaryOp (left, op, right) ->
       Printf.sprintf "(%s %s %s)" 
         (string_of_expr left) (string_of_binary_op op) (string_of_expr right)
@@ -497,6 +503,8 @@ let rec string_of_stmt stmt =
       Printf.sprintf "%s = %s;" name (string_of_expr expr)
   | FieldAssignment (obj_expr, field, value_expr) ->
       Printf.sprintf "%s.%s = %s;" (string_of_expr obj_expr) field (string_of_expr value_expr)
+  | ArrowAssignment (obj_expr, field, value_expr) ->
+      Printf.sprintf "%s->%s = %s;" (string_of_expr obj_expr) field (string_of_expr value_expr)
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       Printf.sprintf "%s[%s] = %s;" (string_of_expr map_expr) (string_of_expr key_expr) (string_of_expr value_expr)
   | Declaration (name, typ_opt, expr) ->

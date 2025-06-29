@@ -145,6 +145,7 @@ rule token = parse
   | '<' { LT }
   | '>' { GT }
   | '!' { NOT }
+  | '&' { AMPERSAND }
   | '@' { AT }
   | '|' { PIPE }
   | '{' { LBRACE }

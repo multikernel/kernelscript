@@ -44,6 +44,7 @@ and typed_expr_desc =
   | TTailCall of string * typed_expr list  (* Tail call detected in return position *)
   | TArrayAccess of typed_expr * typed_expr
   | TFieldAccess of typed_expr * string
+  | TArrowAccess of typed_expr * string  (* pointer->field *)
   | TBinaryOp of typed_expr * binary_op * typed_expr
   | TUnaryOp of unary_op * typed_expr
   | TStructLiteral of string * (string * typed_expr) list
@@ -57,6 +58,7 @@ and typed_stmt_desc =
   | TExprStmt of typed_expr
   | TAssignment of string * typed_expr
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
+  | TArrowAssignment of typed_expr * string * typed_expr  (* pointer, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
   | TDeclaration of string * bpf_type * typed_expr
   | TConstDeclaration of string * bpf_type * typed_expr
@@ -484,12 +486,43 @@ and type_check_field_access ctx obj field pos =
   | XdpContext | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext ->
       (* Built-in context field access *)
       (match field with
-       | "data" | "data_end" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = U64; texpr_pos = pos }
-       | "ingress_ifindex" | "rx_queue_index" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
+       | "data" | "data_end" | "data_meta" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
+       | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
        | _ -> type_error ("Unknown context field: " ^ field) pos)
   
   | _ ->
       type_error "Cannot access field of non-struct type" pos)
+
+(** Type check arrow access (pointer->field) *)
+and type_check_arrow_access ctx obj field pos =
+  let typed_obj = type_check_expression ctx obj in
+  
+  match typed_obj.texpr_type with
+  | Pointer (Struct struct_name) | Pointer (UserType struct_name) ->
+      (* Look up struct definition and field type *)
+      (try
+         let type_def = Hashtbl.find ctx.types struct_name in
+         match type_def with
+         | StructDef (_, fields) ->
+             (try
+                let field_type = List.assoc field fields in
+                { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
+              with Not_found ->
+                type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) pos)
+         | _ ->
+             type_error (struct_name ^ " is not a struct") pos
+       with Not_found ->
+         type_error ("Undefined struct: " ^ struct_name) pos)
+  
+  | Pointer (XdpContext | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext) ->
+      (* Built-in context field access through pointer *)
+      (match field with
+       | "data" | "data_end" | "data_meta" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
+       | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
+       | _ -> type_error ("Unknown context field: " ^ field) pos)
+  
+  | _ ->
+      type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
 
 (** Type check binary operation *)
 and type_check_binary_op ctx left op right pos =
@@ -600,6 +633,15 @@ and type_check_unary_op ctx op expr pos =
          | U16 -> I32
          | U32 -> I64
          | _ -> type_error "Negation requires numeric type" pos)
+    
+    | Deref ->
+        (match typed_expr.texpr_type with
+         | Pointer t -> t  (* Dereference pointer to get underlying type *)
+         | _ -> type_error "Dereference requires pointer type" pos)
+    
+    | AddressOf ->
+        (* Address-of operation creates a pointer to the operand type *)
+        Pointer typed_expr.texpr_type
   in
   
   { texpr_desc = TUnaryOp (op, typed_expr); texpr_type = result_type; texpr_pos = pos }
@@ -790,6 +832,9 @@ and type_check_expression ctx expr =
              type_error ("Undefined function: " ^ name) expr.expr_pos)
   | ArrayAccess (arr, idx) -> type_check_array_access ctx arr idx expr.expr_pos
   | FieldAccess (obj, field) -> type_check_field_access ctx obj field expr.expr_pos
+  | ArrowAccess (obj, field) -> 
+      (* Arrow access (pointer->field) - for pointer-to-struct access *)
+      type_check_arrow_access ctx obj field expr.expr_pos
   | BinaryOp (left, op, right) -> type_check_binary_op ctx left op right expr.expr_pos
   | UnaryOp (op, expr) -> type_check_unary_op ctx op expr expr.expr_pos
   | StructLiteral (struct_name, field_assignments) -> type_check_struct_literal ctx struct_name field_assignments expr.expr_pos
@@ -905,6 +950,39 @@ let rec type_check_statement ctx stmt =
                    type_error ("Undefined struct: " ^ struct_name) stmt.stmt_pos)
             | _ ->
                 type_error ("Field assignment can only be used on struct objects or config objects") stmt.stmt_pos))
+  
+  | ArrowAssignment (obj_expr, field, value_expr) ->
+      (* Arrow assignment (pointer->field = value) - similar to field assignment but for pointers *)
+      let typed_value = type_check_expression ctx value_expr in
+      let typed_obj = type_check_expression ctx obj_expr in
+      
+      (* Check if this is pointer field assignment *)
+      (match typed_obj.texpr_type with
+       | Pointer (Struct struct_name) | Pointer (UserType struct_name) ->
+           (* Look up struct definition and field type *)
+           (try
+              let type_def = Hashtbl.find ctx.types struct_name in
+              match type_def with
+              | StructDef (_, fields) ->
+                  (try
+                     let field_type = List.assoc field fields in
+                     let resolved_field_type = resolve_user_type ctx field_type in
+                     let resolved_value_type = resolve_user_type ctx typed_value.texpr_type in
+                     (* Check if the value type is compatible with the field type *)
+                     (match unify_types resolved_field_type resolved_value_type with
+                      | Some _ ->
+                          { tstmt_desc = TArrowAssignment (typed_obj, field, typed_value); tstmt_pos = stmt.stmt_pos }
+                      | None ->
+                          type_error ("Cannot assign " ^ string_of_bpf_type resolved_value_type ^ 
+                                     " to field of type " ^ string_of_bpf_type resolved_field_type) stmt.stmt_pos)
+                   with Not_found ->
+                     type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) stmt.stmt_pos)
+              | _ ->
+                  type_error (struct_name ^ " is not a struct") stmt.stmt_pos
+            with Not_found ->
+              type_error ("Undefined struct: " ^ struct_name) stmt.stmt_pos)
+       | _ ->
+           type_error ("Arrow assignment can only be used on pointer-to-struct types") stmt.stmt_pos)
   
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       let typed_key = type_check_expression ctx key_expr in
@@ -1450,6 +1528,7 @@ let rec typed_expr_to_expr texpr =
     | TTailCall (name, args) -> TailCall (name, List.map typed_expr_to_expr args)
     | TArrayAccess (arr, idx) -> ArrayAccess (typed_expr_to_expr arr, typed_expr_to_expr idx)
     | TFieldAccess (obj, field) -> FieldAccess (typed_expr_to_expr obj, field)
+    | TArrowAccess (obj, field) -> ArrowAccess (typed_expr_to_expr obj, field)
     | TBinaryOp (left, op, right) -> BinaryOp (typed_expr_to_expr left, op, typed_expr_to_expr right)
     | TUnaryOp (op, expr) -> UnaryOp (op, typed_expr_to_expr expr)
     | TStructLiteral (struct_name, field_assignments) -> 
@@ -1479,6 +1558,8 @@ let rec typed_stmt_to_stmt tstmt =
     | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)
     | TFieldAssignment (obj_expr, field, value_expr) ->
         FieldAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
+    | TArrowAssignment (obj_expr, field, value_expr) ->
+        ArrowAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TIndexAssignment (map_expr, key_expr, value_expr) -> 
         IndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, typed_expr_to_expr value_expr)
     | TDeclaration (name, typ, expr) -> Declaration (name, Some typ, typed_expr_to_expr expr)
@@ -1835,6 +1916,9 @@ and populate_multi_program_context ast multi_prog_analysis =
     | FieldAssignment (obj_expr, _, value_expr) ->
         enhance_expr prog_type obj_expr;
         enhance_expr prog_type value_expr
+    | ArrowAssignment (obj_expr, _, value_expr) ->
+        enhance_expr prog_type obj_expr;
+        enhance_expr prog_type value_expr
     | IndexAssignment (map_expr, key_expr, value_expr) ->
         (* This is a write operation *)
         enhance_expr prog_type map_expr;
@@ -1929,6 +2013,9 @@ and populate_multi_program_context ast multi_prog_analysis =
     | Assignment (_, expr) ->
         enhance_userspace_expr expr
     | FieldAssignment (obj_expr, _, value_expr) ->
+        enhance_userspace_expr obj_expr;
+        enhance_userspace_expr value_expr
+    | ArrowAssignment (obj_expr, _, value_expr) ->
         enhance_userspace_expr obj_expr;
         enhance_userspace_expr value_expr
     | IndexAssignment (map_expr, key_expr, value_expr) ->

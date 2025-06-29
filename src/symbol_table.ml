@@ -463,6 +463,10 @@ and process_statement table stmt =
       process_expression table obj_expr;
       process_expression table value_expr
       
+  | ArrowAssignment (obj_expr, _field, value_expr) ->
+      process_expression table obj_expr;
+      process_expression table value_expr
+      
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       process_expression table map_expr;
       process_expression table key_expr;
@@ -598,6 +602,10 @@ and process_expression table expr =
        | _ ->
            (* Not a simple identifier - regular field access *)
            process_expression table obj)
+      
+  | ArrowAccess (obj, _field) ->
+      (* Arrow access (pointer->field) - just process the object *)
+      process_expression table obj
       
   | BinaryOp (left, _op, right) ->
       process_expression table left;

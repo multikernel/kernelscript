@@ -722,6 +722,8 @@ let generate_c_expression_from_ir ctx ir_expr =
         | IRNot -> "!"
         | IRNeg -> "-"
         | IRBitNot -> "~"
+        | IRDeref -> "*"
+        | IRAddressOf -> "&"
       in
       sprintf "%s%s" op_str operand_str
   | IRCast (value, target_type) ->
@@ -738,7 +740,10 @@ let generate_c_expression_from_ir ctx ir_expr =
            sprintf "((%s)%s)" type_str value_str)
   | IRFieldAccess (obj_val, field) ->
       let obj_str = generate_c_value_from_ir ctx obj_val in
-      sprintf "%s.%s" obj_str field
+      (* Use arrow syntax for pointer types, dot syntax for others *)
+      (match obj_val.val_type with
+       | IRPointer _ -> sprintf "%s->%s" obj_str field
+       | _ -> sprintf "%s.%s" obj_str field)
   
   | IRStructLiteral (_struct_name, field_assignments) ->
       (* Generate C struct literal: {.field1 = value1, .field2 = value2} *)
@@ -959,10 +964,13 @@ let rec generate_c_instruction_from_ir ctx instruction =
       generate_config_field_update_from_ir ctx map_val key_val field value_val
 
   | IRStructFieldAssignment (obj_val, field_name, value_val) ->
-      (* Generate struct field assignment: obj.field = value *)
+      (* Generate struct field assignment: obj.field = value or obj->field = value *)
       let obj_str = generate_c_value_from_ir ctx obj_val in
       let value_str = generate_c_value_from_ir ctx value_val in
-      sprintf "%s.%s = %s;" obj_str field_name value_str
+      (* Use arrow syntax for pointer types, dot syntax for others *)
+      (match obj_val.val_type with
+       | IRPointer _ -> sprintf "%s->%s = %s;" obj_str field_name value_str
+       | _ -> sprintf "%s.%s = %s;" obj_str field_name value_str)
   
   | IRConfigAccess (config_name, field_name, result_val) ->
       (* Generate config access for userspace - direct struct field access *)

@@ -223,7 +223,7 @@ and ir_binary_op =
   | IRBitAnd | IRBitOr | IRBitXor | IRShiftL | IRShiftR
 
 and ir_unary_op =
-  | IRNot | IRNeg | IRBitNot
+  | IRNot | IRNeg | IRBitNot | IRDeref | IRAddressOf
 
 (** Instructions with verification hints and safety information *)
 and ir_instruction = {
@@ -608,9 +608,17 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
                   IRStruct (name, ir_fields)
               | Symbol_table.TypeDef (Ast.EnumDef (_, _)) -> IREnum (name, [])
               | _ -> ast_type_to_ir_type ast_type)
-         | None -> 
+         | None ->
              (* Fallback to regular conversion *)
              ast_type_to_ir_type ast_type)
+  | Pointer inner_type ->
+      (* Recursively handle pointer inner types with context *)
+      let bounds = make_bounds_info ~nullable:true () in
+      IRPointer (ast_type_to_ir_type_with_context symbol_table inner_type, bounds)
+  | Array (elem_type, size) ->
+      (* Recursively handle array element types with context *)
+      let bounds = make_bounds_info ~min_size:size ~max_size:size () in
+      IRArray (ast_type_to_ir_type_with_context symbol_table elem_type, size, bounds)
   | _ -> ast_type_to_ir_type ast_type
 
 let ast_map_type_to_ir_map_type = function
@@ -674,7 +682,7 @@ let string_of_ir_binary_op = function
   | IRShiftL -> "<<" | IRShiftR -> ">>"
 
 let string_of_ir_unary_op = function
-  | IRNot -> "!" | IRNeg -> "-" | IRBitNot -> "~"
+  | IRNot -> "!" | IRNeg -> "-" | IRBitNot -> "~" | IRDeref -> "*" | IRAddressOf -> "&"
 
 let string_of_ir_expr expr =
   match expr.expr_desc with

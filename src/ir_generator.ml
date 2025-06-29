@@ -160,6 +160,8 @@ let lower_binary_op = function
 let lower_unary_op = function
   | Not -> IRNot
   | Neg -> IRNeg
+  | Deref -> IRDeref
+  | AddressOf -> IRAddressOf
 
 (** Generate bounds check for array access *)
 let generate_array_bounds_check ctx array_val index_val pos =
@@ -482,6 +484,53 @@ let rec lower_expression ctx (expr : Ast.expr) =
            else
              failwith ("Field access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
            
+  | Ast.ArrowAccess (obj_expr, field) ->
+      (* Arrow access (pointer->field) - similar to field access but for pointers *)
+      let obj_val = lower_expression ctx obj_expr in
+      let result_reg = allocate_register ctx in
+      let result_type = match expr.expr_type with
+        | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+        | None -> IRU32
+      in
+      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      
+      (* Handle arrow access for different pointer types *)
+      (match obj_val.val_type with
+       | IRPointer (IRStruct (_, _), _) ->
+           (* Handle pointer-to-struct field access *)
+           let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
+           let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
+           emit_instruction ctx instr;
+           result_val
+       | IRPointer (IRContext _ctx_type, _) ->
+           (* Handle context pointer field access *)
+           let access_type = match field with
+             | "packet" | "data" -> PacketData
+             | "packet_end" | "data_end" -> PacketEnd
+             | "data_meta" -> DataMeta
+             | "ingress_ifindex" -> IngressIfindex
+             | "data_len" -> DataLen
+             | "mark" -> MarkField
+             | "priority" -> Priority
+             | "cb" -> CbField
+             | _ -> failwith ("Unknown context field: " ^ field)
+           in
+           let instr = make_ir_instruction
+             (IRContextAccess (result_val, access_type))
+             expr.expr_pos
+           in
+           emit_instruction ctx instr;
+           result_val
+       | _ ->
+           (* For userspace code, allow arrow access on other types *)
+           if ctx.is_userspace then
+             let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
+             let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
+             emit_instruction ctx instr;
+             result_val
+           else
+             failwith ("Arrow access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
+           
   | Ast.BinaryOp (left_expr, op, right_expr) ->
       let left_val = lower_expression ctx left_expr in
       let right_val = lower_expression ctx right_expr in
@@ -504,7 +553,20 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let ir_op = lower_unary_op op in
       
       let result_reg = allocate_register ctx in
-      let result_type = operand_val.val_type in
+      (* Calculate the correct result type based on the operation *)
+      let result_type = match op with
+        | AddressOf -> 
+            (* &T -> *T (pointer to the operand type) *)
+            IRPointer (operand_val.val_type, make_bounds_info ~nullable:false ())
+        | Deref ->
+            (* *T -> T (dereference the pointer to get the pointed-to type) *)
+            (match operand_val.val_type with
+             | IRPointer (inner_type, _) -> inner_type
+             | _ -> failwith ("Cannot dereference non-pointer type"))
+        | _ -> 
+            (* For other unary ops (Not, Neg), result type is same as operand *)
+            operand_val.val_type
+      in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
       let un_expr = make_ir_expr (IRUnOp (ir_op, operand_val)) result_type expr.expr_pos in
@@ -1108,6 +1170,17 @@ let rec lower_statement ctx stmt =
         emit_instruction ctx instr
       )
       
+  | Ast.ArrowAssignment (object_expr, field_name, value_expr) ->
+      (* Arrow assignment (pointer->field = value) - similar to field assignment but for pointers *)
+      let obj_val = lower_expression ctx object_expr in
+      let value_val = lower_expression ctx value_expr in
+      (* For arrow assignment, we treat it similar to struct field assignment *)
+      let instr = make_ir_instruction 
+        (IRStructFieldAssignment (obj_val, field_name, value_val)) 
+        stmt.stmt_pos 
+      in
+      emit_instruction ctx instr
+      
   | Ast.Continue ->
       (* Generate continue instruction for IR *)
       let instr = make_ir_instruction IRContinue stmt.stmt_pos in
@@ -1211,7 +1284,7 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   
   (* Store function parameters (don't allocate registers for them) *)
   let ir_params = List.map (fun (name, ast_type) ->
-    let ir_type = ast_type_to_ir_type ast_type in
+    let ir_type = ast_type_to_ir_type_with_context ctx.symbol_table ast_type in
     Hashtbl.add ctx.function_parameters name ir_type;
     (name, ir_type)
   ) func_def.func_params in
@@ -1246,7 +1319,7 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   
   (* Convert return type *)
   let ir_return_type = match func_def.func_return_type with
-    | Some ast_type -> Some (ast_type_to_ir_type ast_type)
+    | Some ast_type -> Some (ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
     | None -> None
   in
   

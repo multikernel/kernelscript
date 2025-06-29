@@ -56,6 +56,7 @@ let validate_ast ast =
     | FunctionCall (_, args) -> List.for_all validate_expr args
     | ArrayAccess (arr, idx) -> validate_expr arr && validate_expr idx
     | FieldAccess (obj, _) -> validate_expr obj
+    | ArrowAccess (obj, _) -> validate_expr obj
     | BinaryOp (left, _, right) -> validate_expr left && validate_expr right
     | UnaryOp (_, expr) -> validate_expr expr
     | StructLiteral (_, field_assignments) -> 
@@ -68,6 +69,8 @@ let validate_ast ast =
     | ExprStmt expr -> validate_expr expr
     | Assignment (_, expr) -> validate_expr expr
     | FieldAssignment (obj_expr, _, value_expr) ->
+        validate_expr obj_expr && validate_expr value_expr
+    | ArrowAssignment (obj_expr, _, value_expr) ->
         validate_expr obj_expr && validate_expr value_expr
     | IndexAssignment (map_expr, key_expr, value_expr) ->
         validate_expr map_expr && validate_expr key_expr && validate_expr value_expr

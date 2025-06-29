@@ -94,6 +94,10 @@ type code_target =
 let compile opts source_file =
   let current_phase = ref Parsing in
   
+  (* Initialize context code generators *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  
   try
     Printf.printf "\n🔥 KernelScript Compiler\n";
     Printf.printf "========================\n\n";

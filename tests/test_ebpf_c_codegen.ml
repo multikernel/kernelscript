@@ -75,7 +75,7 @@ let test_context_access () =
   
   let data_field = make_ir_value (IRContextField (XdpCtx, "data")) (IRPointer (IRU8, make_bounds_info ())) test_pos in
   let result = generate_c_value ctx data_field in
-  check string "context data field access" "(__u64)(long)ctx->data" result
+  check string "context data field access" "(void*)(long)ctx->data" result
 
 (** Test bounds checking generation *)
 let test_bounds_checking () =

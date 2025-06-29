@@ -9,23 +9,23 @@ open Context_codegen
 let xdp_field_mappings = [
   ("data", {
     field_name = "data";
-    c_expression = (fun ctx_var -> sprintf "(__u64)(long)%s->data" ctx_var);
+    c_expression = (fun ctx_var -> sprintf "(void*)(long)%s->data" ctx_var);
     requires_cast = true;
-    field_type = "__u64";
+    field_type = "__u8*";
   });
   
   ("data_end", {
     field_name = "data_end";
-    c_expression = (fun ctx_var -> sprintf "(__u64)(long)%s->data_end" ctx_var);
+    c_expression = (fun ctx_var -> sprintf "(void*)(long)%s->data_end" ctx_var);
     requires_cast = true;
-    field_type = "__u64";
+    field_type = "__u8*";
   });
   
   ("data_meta", {
     field_name = "data_meta";
-    c_expression = (fun ctx_var -> sprintf "(__u64)(long)%s->data_meta" ctx_var);
+    c_expression = (fun ctx_var -> sprintf "(void*)(long)%s->data_meta" ctx_var);
     requires_cast = true;
-    field_type = "__u64";
+    field_type = "__u8*";
   });
   
   ("ingress_ifindex", {

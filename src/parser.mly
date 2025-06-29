@@ -23,7 +23,7 @@
 
 /* Operators */
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
-%token EQ NE LT LE GT GE AND OR NOT
+%token EQ NE LT LE GT GE AND OR NOT AMPERSAND
 
 /* Punctuation */
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET
@@ -39,8 +39,8 @@
 %nonassoc LT LE GT GE /* Relational - NON-ASSOCIATIVE */
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
-%right NOT NEG  /* Unary operators */
-%left DOT       /* Field access */
+%right NOT NEG DEREF ADDR_OF  /* Unary operators */
+%left DOT ARROW   /* Field access - dot and arrow have same precedence */
 %left LBRACKET  /* Array access */
 
 /* Type declarations for non-terminals */
@@ -81,6 +81,7 @@
 %type <Ast.statement> const_declaration
 %type <Ast.statement> assignment_or_expression_statement
 %type <Ast.statement> field_assignment_statement
+%type <Ast.statement> arrow_assignment_statement
 %type <Ast.statement> index_assignment_statement
 %type <Ast.statement> return_statement
 %type <Ast.statement> if_statement
@@ -216,6 +217,7 @@ statement:
   | const_declaration { $1 }
   | assignment_or_expression_statement { $1 }
   | field_assignment_statement { $1 }
+  | arrow_assignment_statement { $1 }
   | index_assignment_statement { $1 }
   | return_statement { $1 }
   | if_statement { $1 }
@@ -248,6 +250,10 @@ assignment_or_expression_statement:
 field_assignment_statement:
   | expression DOT IDENTIFIER ASSIGN expression
     { make_stmt (FieldAssignment ($1, $3, $5)) (make_pos ()) }
+
+arrow_assignment_statement:
+  | expression ARROW IDENTIFIER ASSIGN expression
+    { make_stmt (ArrowAssignment ($1, $3, $5)) (make_pos ()) }
 
 index_assignment_statement:
   | expression LBRACKET expression RBRACKET ASSIGN expression
@@ -338,6 +344,8 @@ expression:
   /* Unary operations */
   | NOT expression %prec NOT { make_expr (UnaryOp (Not, $2)) (make_pos ()) }
   | MINUS expression %prec NEG { make_expr (UnaryOp (Neg, $2)) (make_pos ()) }
+  | MULTIPLY expression %prec DEREF { make_expr (UnaryOp (Deref, $2)) (make_pos ()) }
+  | AMPERSAND expression %prec ADDR_OF { make_expr (UnaryOp (AddressOf, $2)) (make_pos ()) }
 
 primary_expression:
   | literal { make_expr (Literal $1) (make_pos ()) }
@@ -352,6 +360,10 @@ field_access:
   | expression DOT IDENTIFIER { 
       (* Parse all identifier.field as FieldAccess - let type checker determine if it's a config *)
       make_expr (FieldAccess ($1, $3)) (make_pos ())
+    }
+  | expression ARROW IDENTIFIER {
+      (* Arrow access for pointer->field *)
+      make_expr (ArrowAccess ($1, $3)) (make_pos ())
     }
 
 array_access:

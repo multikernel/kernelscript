@@ -188,8 +188,13 @@ let eval_unary_op op val_ pos =
   match op, val_ with
   | Not, BoolValue b -> BoolValue (not b)
   | Neg, IntValue i -> IntValue (-i)
+  | Deref, PointerValue addr -> (* TODO: Implement proper memory dereferencing *)
+      IntValue (Int32.to_int (Int32.of_int addr))  (* Simplified for evaluator *)
+  | AddressOf, _ -> (* TODO: Implement proper address-of operation *)
+      PointerValue 0x1234  (* Simplified for evaluator *)
   | Not, _ -> eval_error ("Cannot apply logical not to " ^ string_of_runtime_value val_) pos
   | Neg, _ -> eval_error ("Cannot negate " ^ string_of_runtime_value val_) pos
+  | Deref, _ -> eval_error ("Cannot dereference " ^ string_of_runtime_value val_) pos
 
 (** Evaluate function call *)
 let rec eval_function_call ctx name args pos =
@@ -412,6 +417,10 @@ and eval_expression ctx expr =
   
   | FieldAccess (obj, field) -> eval_field_access ctx obj field expr.expr_pos
   
+  | ArrowAccess (obj, field) ->
+      (* Arrow access (pointer->field) - for evaluator, treat same as field access *)
+      eval_field_access ctx obj field expr.expr_pos
+  
   | BinaryOp (left, op, right) ->
       let left_val = eval_expression ctx left in
       let right_val = eval_expression ctx right in
@@ -457,6 +466,15 @@ and eval_statement ctx stmt =
            Printf.printf "[CONFIG ASSIGN]: %s.%s = %s\n" 
              config_name field (string_of_runtime_value value)
        | _ -> eval_error ("Field assignment only supported for config objects") stmt.stmt_pos)
+  
+  | ArrowAssignment (obj_expr, field, value_expr) ->
+      (* Arrow assignment (pointer->field = value) - for evaluator, treat same as field assignment *)
+      let value = eval_expression ctx value_expr in
+      (match obj_expr.expr_desc with
+       | Identifier name ->
+           Printf.printf "[ARROW ASSIGN]: %s->%s = %s\n" 
+             name field (string_of_runtime_value value)
+       | _ -> eval_error ("Arrow assignment only supported for simple identifiers") stmt.stmt_pos)
   
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       (* Handle map assignment: map[key] = value *)

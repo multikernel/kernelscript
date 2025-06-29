@@ -179,6 +179,8 @@ and generate_expression_translation expr =
       let op_str = match op with
         | Not -> "!"
         | Neg -> "-"
+        | Deref -> "*"
+        | AddressOf -> "&"
       in
       sprintf "(%s%s)" op_str operand_str
   | FunctionCall (func_name, args) ->
@@ -186,6 +188,8 @@ and generate_expression_translation expr =
       sprintf "%s(%s)" func_name args_str
   | FieldAccess (obj, field) ->
       sprintf "%s.%s" (generate_expression_translation obj) field
+  | ArrowAccess (obj, field) ->
+      sprintf "%s->%s" (generate_expression_translation obj) field
   | ArrayAccess (array, index) ->
       sprintf "%s[%s]" (generate_expression_translation array) (generate_expression_translation index)
   | _ -> "/* TODO: Implement expression translation */"

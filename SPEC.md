@@ -1129,8 +1129,8 @@ null                   // Represents expected absence of value
 // Fixed-size string types (same syntax for both kernel and userspace)
 str<N>                 // Fixed-size string with capacity N characters (N can be any positive integer)
 
-// Pointer types (restricted usage in kernel context)
-*u8, *u32, *void       // Pointers to specific types
+// Pointer types - unified syntax for all contexts
+*T                     // Pointer to type T (e.g., *u8, *PacketHeader, *[u8])
 
 // Program function reference types (for explicit program lifecycle control)
 FunctionRef            // Reference to an eBPF program function for loading/attachment
@@ -1359,6 +1359,262 @@ fn main(args: Args) -> i32 {
     }
     
     return 0
+}
+```
+
+### 4.5 Pointer Operations and Memory Access
+
+KernelScript uses a unified pointer syntax `*T` for all pointer types, with the compiler transparently handling different pointer semantics based on context. This provides simplicity while maintaining safety and performance.
+
+#### 4.5.1 Pointer Declaration and Basic Operations
+
+```kernelscript
+// Pointer declaration - unified syntax for all contexts
+let data_ptr: *u8 = get_data_source()
+let header_ptr: *PacketHeader = get_packet_header()
+let buffer_ptr: *[u8] = allocate_buffer(1024)
+
+// Address-of operator (&) - take address of a value
+let value: u32 = 42
+let value_ptr: *u32 = &value
+
+// Dereference operator (*) - access value through pointer
+let retrieved_value: u32 = *value_ptr
+
+// Null checking - required before dereference
+if (data_ptr != null) {
+    let first_byte = *data_ptr
+}
+```
+
+#### 4.5.2 Struct Field Access Through Pointers
+
+```kernelscript
+struct PacketHeader {
+    version: u8,
+    length: u16,
+    protocol: u8,
+    checksum: u32,
+    src_ip: u32,
+    dst_ip: u32,
+}
+
+// Arrow operator (->) for pointer-to-struct field access
+@helper
+fn process_packet_header(header_ptr: *PacketHeader) -> bool {
+    // Null check required
+    if (header_ptr == null) {
+        return false
+    }
+    
+    // Arrow operator for field access
+    if (header_ptr->version != 4) {
+        return false
+    }
+    
+    // Field modification through pointer
+    header_ptr->checksum = 0
+    header_ptr->checksum = calculate_checksum(header_ptr)
+    
+    return header_ptr->protocol == TCP || header_ptr->protocol == UDP
+}
+
+// Alternative explicit dereference syntax (also supported)
+@helper
+fn explicit_dereference_style(header_ptr: *PacketHeader) {
+    if (header_ptr != null) {
+        let version = (*header_ptr).version    // Explicit dereference
+        (*header_ptr).checksum = 0             // Explicit modification
+    }
+}
+```
+
+#### 4.5.3 Array Access Through Pointers
+
+```kernelscript
+struct DataBuffer {
+    header: BufferHeader,
+    data: [u8; 1500],
+    metadata: [u32; 16],
+}
+
+@helper
+fn process_buffer(buf_ptr: *DataBuffer) {
+    if (buf_ptr == null) return
+    
+    // Array field access through pointer
+    buf_ptr->data[0] = 0xFF                    // First data byte
+    buf_ptr->metadata[0] = bpf_ktime_get_ns() as u32
+    
+    // Iterate over array field
+    for (i in 0..16) {
+        buf_ptr->metadata[i] = i as u32
+    }
+    
+    // Get pointer to array element
+    let data_start: *u8 = &buf_ptr->data[0]
+    let metadata_ptr: *u32 = &buf_ptr->metadata[0]
+    
+    // Process with raw pointers
+    process_raw_data(data_start, buf_ptr->header.length)
+}
+```
+
+#### 4.5.4 Pointer Arithmetic
+
+```kernelscript
+@helper
+fn pointer_arithmetic_examples(base_ptr: *u8, len: u32) {
+    if (base_ptr == null) return
+    
+    // Pointer arithmetic - compiler inserts bounds checks
+    let next_byte_ptr = base_ptr + 1           // Move to next byte
+    let offset_ptr = base_ptr + 10             // Move by offset
+    
+    // Array-style indexing (preferred for readability)
+    let first_byte = base_ptr[0]               // Equivalent to *base_ptr
+    let tenth_byte = base_ptr[9]               // Equivalent to *(base_ptr + 9)
+    
+    // Pointer difference
+    let byte_distance = next_byte_ptr - base_ptr  // Returns 1
+}
+```
+
+#### 4.5.5 Context-Aware Pointer Semantics
+
+```kernelscript
+// eBPF Context - Automatic bounds checking and dynptr integration
+@xdp
+fn ebpf_pointer_usage(ctx: XdpContext) -> XdpAction {
+    // Context pointers - automatically bounded
+    let packet_data: *u8 = ctx.data()          // Bounded by ctx.data_end()
+    let packet_end: *u8 = ctx.data_end()       // End boundary
+    
+    // Compiler automatically inserts verifier-compliant bounds checks
+    if (packet_data + 14 <= packet_end) {
+        let eth_header = packet_data as *EthHeader
+        if (eth_header->eth_type == ETH_P_IP) {
+            // Safe access - bounds verified
+            process_ethernet_header(eth_header)
+        }
+    }
+    
+    // Dynptr-backed pointers (transparent to user)
+    let log_buffer: *u8 = event_log.reserve(256)  // Returns dynptr-backed pointer
+    if (log_buffer != null) {
+        // Regular pointer operations - compiler uses dynptr API internally
+        log_buffer[0] = EVENT_TYPE_PACKET
+        write_packet_summary(log_buffer + 1, packet_data, 255)
+        event_log.submit(log_buffer)
+    }
+    
+    return XDP_PASS
+}
+
+// Userspace Context - Full pointer functionality
+fn userspace_pointer_usage() -> i32 {
+    // Dynamic allocation
+    let buffer: *u8 = malloc(4096)
+    if (buffer == null) {
+        return -1
+    }
+    
+    // Full pointer arithmetic
+    let mid_ptr = buffer + 2048
+    let end_ptr = buffer + 4096
+    
+    // Direct memory operations
+    *buffer = 0xFF
+    buffer[100] = 0xAA
+    
+    // Cleanup
+    free(buffer)
+    return 0
+}
+```
+
+#### 4.5.6 Function Parameters with Pointers
+
+```kernelscript
+// Explicit parameter semantics - no transparent conversion
+
+// Value semantics - always copy (compiler warns for large structs in eBPF)
+fn process_by_value(data: PacketData) {
+    data.packets += 1  // Modifies local copy only
+}
+
+// Pointer semantics - explicit reference
+fn process_by_pointer(data: *PacketData) {
+    if (data != null) {
+        data->packets += 1  // Modifies original through pointer
+    }
+}
+
+// Example with compiler guidance
+@helper
+fn ebpf_function_parameters() {
+    let large_struct = LargePacketData { /* ... */ }
+    
+    // ⚠️ Compiler warning: "Large struct (1024 bytes) passed by value in eBPF context"
+    // process_by_value(large_struct)  
+    
+    // ✅ Recommended: use pointer for large structs in eBPF
+    process_by_pointer(&large_struct)
+}
+```
+
+#### 4.5.7 Map Integration with Pointers
+
+```kernelscript
+map<FlowKey, FlowData> flow_map : HashMap(1024)
+
+@helper
+fn map_pointer_operations(flow_key: FlowKey) {
+    // Map lookup returns pointer to value
+    let flow_data: *FlowData = flow_map.lookup(flow_key)
+    
+    if (flow_data != null) {
+        // Direct modification through pointer
+        flow_data->packet_count += 1
+        flow_data->byte_count += packet_size
+        flow_data->last_seen = bpf_ktime_get_ns()
+        
+        // Compiler tracks map value lifetime
+        // flow_data becomes invalid after certain map operations
+    }
+}
+```
+
+#### 4.5.8 Safety Rules and Compiler Enforcement
+
+```kernelscript
+// Automatic null checking enforcement
+@helper
+fn null_safety_example(ptr: *u8) -> u8 {
+    // ❌ Compilation error: potential null dereference
+    // return *ptr
+    
+    // ✅ Required null check
+    if (ptr != null) {
+        return *ptr
+    }
+    return 0
+}
+
+// Bounds checking in eBPF context
+@xdp
+fn bounds_safety_example(ctx: XdpContext) -> XdpAction {
+    let data = ctx.data()
+    let data_end = ctx.data_end()
+    
+    // Compiler automatically generates verifier-compliant bounds checks
+    if (data + sizeof(EthHeader) <= data_end) {
+        let eth = data as *EthHeader
+        // Safe to access eth->fields
+        return process_ethernet(eth)
+    }
+    
+    return XDP_DROP
 }
 ```
 
@@ -2329,40 +2585,221 @@ fn handle_system_events(verbose: bool) {
 
 ## 9. Memory Management and Safety
 
-### 9.1 Automatic Bounds Checking
+### 9.1 Pointer Safety and Bounds Checking
+
+KernelScript employs context-aware pointer safety mechanisms that adapt to the execution environment while maintaining a consistent programming model.
+
 ```kernelscript
-fn safe_packet_access(packet: &Packet, offset: usize, size: usize) -> *u8 {
-    // Compiler automatically inserts bounds checks
-    if (offset + size <= packet.len()) {
-        &packet.data()[offset]
-    } else {
-        null
+// eBPF Context - Automatic bounds checking with verifier compliance
+@xdp
+fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
+    let packet_data: *u8 = ctx.data()
+    let packet_end: *u8 = ctx.data_end()
+    
+    // Compiler automatically generates verifier-compliant bounds checks
+    if (packet_data + 20 <= packet_end) {
+        let ip_header = packet_data as *IpHeader
+        // Safe access - bounds verified by compiler-generated checks
+        if (ip_header->version == 4) {
+            return process_ipv4_packet(ip_header)
+        }
     }
+    
+    return XDP_DROP
 }
 
-// Array access with compile-time and runtime checks
-fn process_array(arr: &u32[256], index: usize) -> u32 {
-    // Compile-time check if index is constant
-    arr[index]  // Compiler generates bounds check if needed
+// Userspace Context - Traditional pointer safety
+fn safe_userspace_access(data: *u8, len: usize) -> Result<u8, Error> {
+    // Explicit null and bounds checking
+    if (data == null || len == 0) {
+        throw INVALID_POINTER_ERROR
+    }
+    
+    return data[0]  // Compiler may insert runtime bounds check
 }
 ```
 
-### 9.2 Stack Management
+### 9.2 Dynamic Pointer Integration (Transparent Dynptr)
+
+The compiler transparently uses eBPF's dynamic pointer (dynptr) APIs when beneficial, without exposing complexity to the programmer.
+
 ```kernelscript
-// Automatic stack usage tracking
-fn large_function() {
-    let buffer: u8[400] = [0; 400];  // Compiler tracks stack usage
-    // Compiler will automatically spill to map if stack limit exceeded
-    
-    process_buffer(&buffer)
-    
-    // Automatic cleanup
+map<Event> event_log : RingBuffer(1024 * 1024)
+
+@helper
+fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
+    // User writes simple pointer code
+    let log_entry: *u8 = event_log.reserve(data_len + 16)  // Dynptr-backed pointer
+    if (log_entry != null) {
+        // Regular pointer operations - compiler uses dynptr API internally
+        let header = log_entry as *EventHeader
+        header->timestamp = bpf_ktime_get_ns()
+        header->data_len = data_len
+        
+        // Memory copy using pointer arithmetic
+        memory_copy(event_data, log_entry + 16, data_len)
+        
+        event_log.submit(log_entry)  // Compiler ensures proper cleanup
+    }
 }
 
-// Explicit stack annotation for performance-critical code
-#[stack_limit(256)]
-fn performance_critical() {
-    // Compiler ensures this function uses at most 256 bytes of stack
+// What compiler generates (conceptually):
+// - bpf_ringbuf_reserve_dynptr() for allocation
+// - bpf_dynptr_data() for direct access when possible
+// - bpf_dynptr_write() for safe access when needed
+// - bpf_ringbuf_submit_dynptr() for submission
+```
+
+### 9.3 Stack Management and Large Struct Handling
+
+```kernelscript
+// Context-aware stack management
+@helper
+fn ebpf_stack_management() {
+    let small_struct = SmallData { x: 1, y: 2 }  // 8 bytes - fine
+    let medium_struct = MediumData { /* 128 bytes */ }  // ⚠️ Warning
+    let large_struct = LargeData { /* 1024 bytes */ }   // ❌ Error in eBPF
+    
+    // Compiler suggestions:
+    process_small(small_struct)      // ✅ Pass by value
+    process_medium(&medium_struct)   // ✅ Pass by pointer (recommended)
+    // process_large(large_struct)   // ❌ Compilation error
+    process_large(&large_struct)     // ✅ Must use pointer
+}
+
+// Userspace - relaxed stack rules
+fn userspace_stack_management() {
+    let large_struct = LargeData { /* 1024 bytes */ }
+    process_large(large_struct)      // ✅ Fine in userspace - plenty of stack
+}
+
+// Automatic stack tracking for eBPF
+@xdp
+fn stack_aware_function(ctx: XdpContext) -> XdpAction {
+    let buffer: [u8; 256] = [0; 256]  // Compiler tracks: 256 bytes used
+    let header_info = PacketInfo {    // Compiler tracks: +64 bytes
+        // ... fields
+    }
+    
+    // If total stack usage > 512 bytes, compiler may:
+    // 1. Issue warning about stack pressure
+    // 2. Suggest using pointers for large data
+    // 3. Automatically spill to map storage (advanced optimization)
+    
+    return process_packet_data(&buffer, &header_info)
+}
+```
+
+### 9.4 Memory Lifetime and Resource Management
+
+```kernelscript
+// Automatic resource tracking and cleanup
+@helper
+fn resource_safe_processing(input: *u8, len: u32) -> ProcessResult {
+    // Stack-based resource with automatic cleanup
+    let work_buffer: [u8; 512] = [0; 512]
+    let work_ptr: *u8 = &work_buffer[0]
+    
+    // Heap-like resource (userspace) or map-backed storage (eBPF)
+    let temp_storage: *u8 = allocate_temp_space(len * 2)
+    if (temp_storage == null) {
+        throw ALLOCATION_ERROR
+    }
+    
+    // Compiler ensures cleanup on all exit paths
+    defer {
+        deallocate_temp_space(temp_storage)  // Automatic cleanup
+    }
+    
+    // Process data safely
+    let result = transform_data(input, len, work_ptr, temp_storage)
+    
+    return result  // defer ensures cleanup
+}
+
+// Map value pointer lifetime tracking
+map<u32, DataCache> cache_map : HashMap(1024)
+
+@helper
+fn map_lifetime_safety(key: u32) {
+    let cache_entry: *DataCache = cache_map.lookup(key)
+    if (cache_entry != null) {
+        // Compiler tracks that cache_entry is valid here
+        cache_entry->access_count += 1
+        cache_entry->last_access = bpf_ktime_get_ns()
+        
+        // Compiler warns/errors if cache_entry used after invalidating operations
+        cache_map.update(other_key, other_value)  // Invalidates cache_entry
+        
+        // ❌ Compiler error: "Use of potentially invalidated map value pointer"
+        // cache_entry->access_count += 1
+    }
+}
+```
+
+### 9.5 Null Safety Enforcement
+
+```kernelscript
+// Compile-time null safety checks
+@helper
+fn null_safety_demonstration(maybe_ptr: *PacketData) -> u32 {
+    // ❌ Compilation error: "Potential null pointer dereference"
+    // return maybe_ptr->packet_count
+    
+    // ✅ Required null check
+    if (maybe_ptr != null) {
+        return maybe_ptr->packet_count  // Safe - null check verified
+    }
+    
+    return 0
+}
+
+// Optional pointer types for clarity
+@helper
+fn optional_pointer_example() -> ProcessResult {
+    let data_ptr: *u8 = try_get_data()  // May return null
+    
+    // Compiler enforces null checking
+    if (data_ptr != null) {
+        let result = process_data(data_ptr)
+        return ProcessResult::success(result)
+    } else {
+        return ProcessResult::no_data()
+    }
+}
+```
+
+### 9.6 Cross-Context Memory Safety
+
+```kernelscript
+// Context boundary safety
+@xdp 
+fn kernel_side_processing(ctx: XdpContext) -> XdpAction {
+    let packet_data = ctx.data()
+    
+    // Shared memory through maps - safe across contexts
+    let shared_buffer = shared_map.lookup(0)
+    if (shared_buffer != null) {
+        shared_buffer->kernel_processed_count += 1
+        memory_copy(packet_data, shared_buffer->data, min(packet_len, 64))
+    }
+    
+    return XDP_PASS
+}
+
+// Userspace cannot directly access kernel pointers
+fn userspace_processing() -> i32 {
+    // ❌ Cannot access kernel context pointers directly
+    // let packet_data = some_kernel_context.data()  // Compilation error
+    
+    // ✅ Access through shared maps
+    let shared_buffer = shared_map.lookup(0)
+    if (shared_buffer != null) {
+        shared_buffer->userspace_processed_count += 1
+        process_shared_data(shared_buffer->data)
+    }
+    
+    return 0
 }
 ```
 
@@ -2910,6 +3347,12 @@ multiplicative_operator = "*" | "/" | "%"
 unary_expression = [ unary_operator ] primary_expression 
 unary_operator = "!" | "-" | "*" | "&" 
 
+(* Pointer operations:
+   * "*" = dereference operator (access value through pointer)
+   * "&" = address-of operator (take address of value)
+   * "->" = arrow operator for struct field access through pointer (in field_access)
+*)
+
 primary_expression = config_access | identifier | literal | function_call | field_access | 
                      array_access | parenthesized_expression | struct_literal 
 
@@ -2918,7 +3361,7 @@ config_access = identifier "." identifier
 function_call = identifier "(" argument_list ")" 
 argument_list = [ expression { "," expression } ] 
 
-field_access = primary_expression "." identifier 
+field_access = primary_expression ("." identifier | "->" identifier)
 array_access = primary_expression "[" expression "]" 
 parenthesized_expression = "(" expression ")" 
 
@@ -2936,7 +3379,7 @@ compound_type = array_type | pointer_type | result_type
 string_type = "str" "<" integer_literal ">" 
 
 array_type = "[" type_annotation "" integer_literal "]" 
-pointer_type = "*" [ "const" | "mut" ] type_annotation 
+pointer_type = "*" type_annotation 
 result_type = "Result_" type_annotation "_" type_annotation 
 
 (* Literals *)
