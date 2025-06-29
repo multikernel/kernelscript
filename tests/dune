@@ -204,6 +204,11 @@
  (libraries kernelscript alcotest str))
 
 (executable
+ (name test_pointer_syntax)
+ (modules test_pointer_syntax)
+ (libraries kernelscript alcotest str))
+
+(executable
  (name test_kfunc_attribute)
  (modules test_kfunc_attribute)
  (libraries kernelscript alcotest str))
@@ -447,6 +452,10 @@
  (alias runtest_tail_call)
  (action (run ./test_tail_call.exe)))
 
+(rule
+ (alias runtest_pointer_syntax)
+ (action (run ./test_pointer_syntax.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -526,7 +535,8 @@
   test_program_ref.exe
   test_return_path_analysis.exe
   test_tail_call.exe
-  test_struct_ops.exe)
+  test_struct_ops.exe
+  test_pointer_syntax.exe)
  (action
   (progn
    (run ./test_lexer.exe)
@@ -557,7 +567,8 @@
    (run ./test_program_ref.exe)
    (run ./test_return_path_analysis.exe)
    (run ./test_tail_call.exe)
-   (run ./test_struct_ops.exe))))
+   (run ./test_struct_ops.exe)
+   (run ./test_pointer_syntax.exe))))
 
 (rule
  (alias ir-tests)
