@@ -136,7 +136,7 @@ let init_project prog_type project_name btf_path =
   
   (* Generate KernelScript source *)
   let source_content = Btf_parser.generate_kernelscript_source template project_name in
-  let source_filename = project_name ^ "/" ^ prog_type ^ ".ks" in
+  let source_filename = project_name ^ "/" ^ project_name ^ ".ks" in
   
   (* Write source file *)
   let oc = open_out source_filename in
@@ -170,7 +170,7 @@ cd %s && make run
 ## Program Type: %s
 
 %s
-|} project_name prog_type prog_type project_name project_name prog_type project_name prog_type (match prog_type with
+|} project_name prog_type project_name project_name project_name project_name project_name prog_type (match prog_type with
     | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
     | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
     | "kprobe" -> "Kprobe programs allow dynamic tracing of kernel functions."
@@ -190,11 +190,11 @@ cd %s && make run
   printf "\n🎉 Project '%s' initialized successfully!\n" project_name;
   printf "📁 Project structure:\n";
   printf "   %s/\n" project_name;
-  printf "   ├── %s.ks      # KernelScript source\n" prog_type;
+  printf "   ├── %s.ks      # KernelScript source\n" project_name;
   printf "   └── README.md      # Project documentation\n";
   printf "\n🚀 Next steps:\n";
-  printf "   1. Edit %s/%s.ks to implement your program logic\n" project_name prog_type;
-  printf "   2. Run 'kernelscript compile %s/%s.ks' to compile\n" project_name prog_type;
+  printf "   1. Edit %s/%s.ks to implement your program logic\n" project_name project_name;
+  printf "   2. Run 'kernelscript compile %s/%s.ks' to compile\n" project_name project_name;
   printf "   3. Run 'cd %s && make' to build the generated C code\n" project_name
 
 (** Compile KernelScript source (existing functionality) *)
