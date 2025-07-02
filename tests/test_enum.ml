@@ -46,20 +46,20 @@ let test_enum_symbol_table () =
   
   (* Create enum definition *)
   let enum_values = [("XDP_ABORTED", Some 0); ("XDP_DROP", Some 1); ("XDP_PASS", Some 2)] in
-  let enum_def = EnumDef ("XdpAction", enum_values) in
+  let enum_def = EnumDef ("xdp_action", enum_values) in
   
   (* Add to symbol table *)
   add_type_def symbol_table enum_def dummy_pos;
   
   (* Verify enum type is registered *)
-  let enum_symbol = lookup_symbol symbol_table "XdpAction" in
+  let enum_symbol = lookup_symbol symbol_table "xdp_action" in
   check bool "enum type found" true (enum_symbol <> None);
   
   (match enum_symbol with
   | Some symbol ->
       (match symbol.kind with
        | TypeDef (EnumDef (name, values)) ->
-           check string "enum name" "XdpAction" name;
+           check string "enum name" "xdp_action" name;
            check int "enum value count" 3 (List.length values)
        | _ -> check bool "wrong symbol kind" false true)
   | None -> check bool "enum symbol not found" false true);
@@ -79,10 +79,10 @@ let test_enum_type_checking () =
   
   (* Add enum type to context *)
   let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in
-  let enum_def = EnumDef ("XdpAction", enum_values) in
-  let enum_type = Enum "XdpAction" in
+  let enum_def = EnumDef ("xdp_action", enum_values) in
+  let enum_type = Enum "xdp_action" in
   let ctx = create_context empty_symbol_table [] in  (* Provide empty AST for tests *)
-  Hashtbl.replace ctx.types "XdpAction" enum_def;
+  Hashtbl.replace ctx.types "xdp_action" enum_def;
   
   (* Test enum-integer unification *)
   let unify_result1 = unify_types enum_type U32 in
@@ -92,7 +92,7 @@ let test_enum_type_checking () =
   check bool "u32 unifies with enum" true (unify_result2 = Some U32);
   
   (* Test enum-enum unification *)
-  let same_enum = Enum "XdpAction" in
+  let same_enum = Enum "xdp_action" in
   let unify_result3 = unify_types enum_type same_enum in
   check bool "enum unifies with same enum" true (unify_result3 = Some enum_type);
   
@@ -133,7 +133,7 @@ let test_enum_constants () =
 (** Test enum code generation *)
 let test_enum_code_generation () =
   (* Test enum definition generation for eBPF C *)
-  let enum_name = "XdpAction" in
+  let enum_name = "xdp_action" in
   let enum_values = [("XDP_ABORTED", 0); ("XDP_DROP", 1); ("XDP_PASS", 2); ("XDP_TX", 3)] in
   
   (* Simulate code generation *)
@@ -149,7 +149,7 @@ let test_enum_code_generation () =
   
   let generated = generate_enum_c enum_name enum_values in
   let expected_lines = [
-    "enum XdpAction {";
+    "enum xdp_action {";
     "    XDP_ABORTED = 0,";
     "    XDP_DROP = 1,";
     "    XDP_PASS = 2,";
@@ -166,7 +166,7 @@ let test_enum_expressions () =
   
   (* Add enum *)
   let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in
-  let enum_def = EnumDef ("XdpAction", enum_values) in
+  let enum_def = EnumDef ("xdp_action", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
   (* Verify the constant can be looked up *)

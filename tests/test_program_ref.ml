@@ -5,7 +5,7 @@ open Alcotest
 (** Test program reference type checking *)
 let test_program_reference_type () =
   let program_text = {|
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
@@ -89,7 +89,7 @@ fn main() -> i32 {
 (** Test program reference as variable *)
 let test_program_reference_as_variable () =
   let program_text = {|
-@xdp fn my_xdp(ctx: XdpContext) -> XdpAction {
+@xdp fn my_xdp(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
@@ -114,7 +114,7 @@ fn main() -> i32 {
 (** Test wrong argument types for program functions *)
 let test_wrong_argument_types () =
   let program_text = {|
-@xdp fn my_xdp(ctx: XdpContext) -> XdpAction {
+@xdp fn my_xdp(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
@@ -160,7 +160,7 @@ let test_stdlib_integration () =
 (** Test that calling attach without load fails *)
 let test_attach_without_load_fails () =
   let program_text = {|
-@xdp fn simple_xdp(ctx: XdpContext) -> XdpAction {
+@xdp fn simple_xdp(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
@@ -184,7 +184,7 @@ fn main() -> i32 {
 (** Test multiple program handles with proper resource management *)
 let test_multiple_program_handles () =
   let program_text = {|
-@xdp fn xdp_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn xdp_filter(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
@@ -217,7 +217,7 @@ fn main() -> i32 {
 (** Test that program handle variables can be named appropriately *)
 let test_program_handle_naming () =
   let program_text = {|
-@xdp fn simple_xdp(ctx: XdpContext) -> XdpAction {
+@xdp fn simple_xdp(ctx: xdp_md) -> xdp_action {
   return 2
 }
 

@@ -6,7 +6,7 @@ config demo {
 }
 
 // eBPF program that uses print()
-@xdp fn simple_logger(ctx: XdpContext) -> XdpAction {
+@xdp fn simple_logger(ctx: xdp_md) -> xdp_action {
     if (demo.enable_logging) {
         print("eBPF: Processing packet")
     }

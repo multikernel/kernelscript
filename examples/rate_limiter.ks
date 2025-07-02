@@ -4,7 +4,7 @@ config network {
   limit : u32,
 }
 
-@xdp fn rate_limiter(ctx: XdpContext) -> XdpAction {
+@xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
   let packet_start = ctx.data
   let packet_end = ctx.data_end
   let packet_size = packet_end - packet_start

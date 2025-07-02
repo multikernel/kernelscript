@@ -3,10 +3,15 @@ open Kernelscript.Type_checker
 open Kernelscript.Parse
 open Alcotest
 
-
 (** Helper function to create symbol table with builtin loading *)
 let create_symbol_table_with_builtins ast =
-  Kernelscript.Builtin_loader.build_symbol_table_with_builtins ast
+  Test_utils.Helpers.create_test_symbol_table ast
+
+(** Helper function to type check with builtin types loaded *)
+let type_check_and_annotate_ast_with_builtins ast =
+  (* For now, just use the regular function without builtin_path since we removed the files *)
+  (* The test utilities should handle providing the necessary types *)
+  Kernelscript.Type_checker.type_check_and_annotate_ast ast
 
 (** Helper function to check if two types can unify *)
 let can_unify t1 t2 =
@@ -26,7 +31,7 @@ let test_type_unification () =
 (** Test basic type inference *)
 let test_basic_type_inference () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let x = 42
   let y = true
   let z = "hello"
@@ -35,7 +40,7 @@ let test_basic_type_inference () =
 |} in
   try
     let ast = parse_string program_text in
-    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast ast in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
     check int "typed programs count" 1 (List.length typed_attributed_functions);
     
     (* Verify that type checking completed without errors *)
@@ -50,7 +55,7 @@ let test_basic_type_inference () =
 (** Test variable type checking *)
 let test_variable_type_checking () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let x: u32 = 42
   let y: bool = true
   let z = x + 10
@@ -59,7 +64,7 @@ let test_variable_type_checking () =
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "variable type checking" true true
   with
   | _ -> fail "Error occurred"
@@ -80,14 +85,14 @@ let test_binary_operations () =
   
   List.iter (fun (stmt, should_succeed) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   %s
   return 0
 }
 |} stmt in
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("binary operation: " ^ stmt) should_succeed true
     with
     | _ -> check bool ("binary operation: " ^ stmt) should_succeed false
@@ -101,14 +106,14 @@ fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let result = helper(10, 20)
   return result
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "function call type checking" true true
   with
   | _ -> fail "Error occurred"
@@ -116,13 +121,13 @@ fn helper(x: u32, y: u32) -> u32 {
 (** Test context types *)
 let test_context_types () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   return 2
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "context type checking" true true
   with
   | _ -> fail "Error occurred"
@@ -130,14 +135,14 @@ let test_context_types () =
 (** Test struct field access *)
 let test_struct_field_access () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let packet = ctx.data
   return 0
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "struct field access" true true
   with
   | _ -> check bool "struct field access" false true  (* Expected to fail for now *)
@@ -145,7 +150,7 @@ let test_struct_field_access () =
 (** Test statement type checking *)
 let test_statement_type_checking () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let x: u32 = 42
   x = 50
   if (x > 0) {
@@ -156,7 +161,7 @@ let test_statement_type_checking () =
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "statement type checking" true true
   with
   | _ -> fail "Error occurred"
@@ -170,14 +175,14 @@ fn calculate(a: u32, b: u32) -> u32 {
   return result
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let value = calculate(10, 20)
   return value
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "function type checking" true true
   with
   | _ -> fail "Error occurred"
@@ -185,7 +190,7 @@ fn calculate(a: u32, b: u32) -> u32 {
 (** Test built-in function type checking *)
 let test_builtin_function_type_checking () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     print("Hello from eBPF")
     print("Message with value: ", 42)
     print()
@@ -194,7 +199,7 @@ let test_builtin_function_type_checking () =
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "built-in function type checking" true true
   with
   | _ -> fail "Built-in function type checking failed"
@@ -211,14 +216,14 @@ let test_variadic_function_arguments () =
   
   List.iter (fun (call, should_succeed, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     %s
     return 0
 }
 |} call in
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("variadic function: " ^ desc) should_succeed true
     with
     | _ -> check bool ("variadic function: " ^ desc) should_succeed false
@@ -227,14 +232,14 @@ let test_variadic_function_arguments () =
 (** Test built-in function return types *)
 let test_builtin_function_return_types () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let result: u32 = print("test message")
     return result
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "built-in function return type" true true
   with
   | _ -> fail "Built-in function return type checking failed"
@@ -247,7 +252,7 @@ fn my_function(x: u32) -> u32 {
   return x + 1
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let user_result = my_function(10)
   print("User function result: ", user_result)
   return user_result
@@ -255,7 +260,7 @@ fn my_function(x: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "built-in vs user function precedence" true true
   with
   | _ -> fail "Built-in vs user function precedence test failed"
@@ -293,14 +298,14 @@ let test_error_handling () =
   
   List.iter (fun (stmt, description) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   %s
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |} stmt in
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       fail ("Should have failed for: " ^ description)
     with
     | _ -> check bool ("error handling: " ^ description) true true
@@ -314,17 +319,17 @@ fn is_tcp(protocol: u8) -> bool {
   return protocol == 6
 }
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
   let protocol: u8 = 6
   if (is_tcp(protocol)) {
-    return XDP_PASS
+    return 2  // 2 // XDP_PASS
   }
-  return XDP_DROP
+  return 1  // 1 // XDP_DROP
 }
 |} in
   try
     let ast = parse_string program_text in
-    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast ast in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
     check int "program type checking" 2 (List.length typed_attributed_functions);
     
     (* Verify that type checking completed without errors *)
@@ -345,7 +350,7 @@ let test_integer_type_promotion () =
   let program_text = {|
 map<u32, u64> counter : HashMap(1024) { }
 
-@xdp fn test_promotion(ctx: XdpContext) -> XdpAction {
+@xdp fn test_promotion(ctx: xdp_md) -> xdp_action {
   // Test U32 literal assignment to U64 map value
   counter[1] = 100     // U32 literal should promote to U64
   counter[2] = 200     // U32 literal should promote to U64
@@ -359,12 +364,12 @@ map<u32, u64> counter : HashMap(1024) { }
   let val1 = counter[1] + 50  // U64 + U32 -> U64
   counter[3] = val1
   
-  return XDP_PASS
+  return 2  // 2 // XDP_PASS
 }
 |} in
   try
     let ast = parse_string program_text in
-    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast ast in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
     check int "type promotion programs count" 1 (List.length typed_attributed_functions);
     
     (* Verify that type checking completed without errors *)
@@ -408,21 +413,21 @@ fn process_packet(size: u32) -> bool {
   return size > 1500
 }
 
-@xdp fn comprehensive_test(ctx: XdpContext) -> XdpAction {
+@xdp fn comprehensive_test(ctx: xdp_md) -> xdp_action {
   let packet_size: u32 = 1000
   let counter_val = increment_counter(packet_size)
   let is_large = process_packet(packet_size)
   
   if (is_large && counter_val > 100) {
-    return XDP_DROP
+    return 1 // XDP_DROP
   } else {
-    return XDP_PASS
+    return 2 // XDP_PASS
   }
 }
 |} in
   try
     let ast = parse_string program_text in
-    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast ast in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
     check int "comprehensive AST length" 3 (List.length typed_attributed_functions);
     
     (* Verify that type checking completed without errors *)
@@ -514,14 +519,14 @@ let test_arithmetic_promotion () =
   
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   %s
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |} stmt in
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("arithmetic promotion: " ^ desc) true true
     with
     | exn -> 
@@ -550,14 +555,14 @@ let test_comparison_promotion () =
   
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   %s
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |} stmt in
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("comparison promotion: " ^ desc) true true
     with
     | exn -> 
@@ -577,10 +582,10 @@ let test_map_operations_promotion () =
 type IpAddress = u32
 map<IpAddress, u64> counters : HashMap(1000)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
   counters[ip] = 100
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "map key promotion");
     
@@ -589,10 +594,10 @@ map<IpAddress, u64> counters : HashMap(1000)
 type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let value: u16 = 1500  // u16 should promote to u64 (Counter)
   stats[1] = value
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "map value promotion");
     
@@ -602,12 +607,12 @@ type PacketSize = u16
 type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let size: PacketSize = 1500
   let current = stats[1]  // u64
   let new_value = current + size  // u64 + u16 -> u64
   stats[1] = new_value
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "map access with arithmetic promotion");
   ] in
@@ -615,7 +620,7 @@ map<u32, Counter> stats : HashMap(1000)
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("map promotion: " ^ desc) true true
     with
     | exn -> 
@@ -628,13 +633,13 @@ let test_type_promotion_edge_cases () =
   let edge_case_tests = [
     (* Nested arithmetic with multiple promotions *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let a: u8 = 10
   let b: u16 = 100
   let c: u32 = 1000
   let d: u64 = 10000
   let result = a + b + c + d  // Chain of promotions
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "nested arithmetic with multiple promotions");
     
@@ -645,32 +650,32 @@ fn process(value: u64) -> u64 {
   return value * 2
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let small: u16 = 100
   let result = process(small)  // u16 -> u64 promotion in function call
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "function parameter promotion");
     
     (* Complex expression with promotions *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let a: u8 = 5
   let b: u16 = 10
   let c: u32 = 20
   let d: u64 = 40
   let result = (a + b) * (c + d)  // Mixed promotions in complex expression
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "complex expression with promotions");
     
     (* Assignment with promotion *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let big: u64 = 1000
   let small: u16 = 100
   big = big + small  // u64 = u64 + u16
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "assignment with promotion");
   ] in
@@ -678,7 +683,7 @@ fn process(value: u64) -> u64 {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("edge case promotion: " ^ desc) true true
     with
     | exn -> 
@@ -691,28 +696,28 @@ let test_null_literal_typing () =
   let null_tests = [
     (* Basic null literal *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let x = null
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "basic null literal");
     
     (* Null comparison with typed variable *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let x: u32 = 42
   if (x == null) {
-    return XDP_DROP
+    return 1 // XDP_DROP
   }
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "null comparison with u32");
     
     (* Null assignment in variable declaration *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let ptr = null
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "null assignment in declaration");
   ] in
@@ -721,7 +726,7 @@ let test_null_literal_typing () =
     try
       let ast = parse_string program_text in
       let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
       let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("null literal typing: " ^ desc) true true
     with
@@ -754,15 +759,15 @@ let test_null_comparisons () =
   
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   %s
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |} stmt in
     try
       let ast = parse_string program_text in
       let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
       let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("null comparison: " ^ desc) true true
     with
@@ -778,12 +783,12 @@ let test_map_null_semantics () =
     ({|
 map<u32, u64> test_map : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let value = test_map[42]
   if (value == null) {
-    return XDP_DROP
+    return 1 // XDP_DROP
   }
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "map access null check");
     
@@ -791,14 +796,14 @@ map<u32, u64> test_map : HashMap(100)
     ({|
 map<u32, u32> counters : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let count = counters[1]
   if (count == null) {
     counters[1] = 1
   } else {
     counters[1] = count + 1
   }
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "null initialization pattern");
     
@@ -807,15 +812,15 @@ map<u32, u32> counters : HashMap(100)
 map<u32, u64> flows : HashMap(100)
 map<u32, u32> packets : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let flow = flows[123]
   let packet_count = packets[123]
   
   if (flow == null || packet_count == null) {
-    return XDP_DROP
+    return 1 // XDP_DROP
   }
   
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "multiple map null checks");
   ] in
@@ -824,7 +829,7 @@ map<u32, u32> packets : HashMap(100)
     try
       let ast = parse_string program_text in
       let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
       let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
       check bool ("map null semantics: " ^ desc) true true
     with
@@ -840,12 +845,12 @@ let test_null_vs_throw_pattern () =
     ({|
 map<u32, u64> cache : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let cached_value = cache[42]
   if (cached_value == null) {
     // Key doesn't exist - expected case
     cache[42] = 100
-    return XDP_PASS
+    return 2 // XDP_PASS
   }
   return cached_value
 }
@@ -861,9 +866,9 @@ fn validate_input(value: u32) -> u32 {
   return value * 2
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let result = validate_input(500)
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "error validation pattern");
     
@@ -880,9 +885,9 @@ fn lookup_value(key: u32) -> u32 {
   return value
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let result = lookup_value(42)
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "function with nullable return pattern");
   ] in
@@ -890,7 +895,7 @@ fn lookup_value(key: u32) -> u32 {
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("null vs throw pattern: " ^ desc) true true
     with
     | exn -> 
@@ -905,7 +910,7 @@ let test_null_semantics () =
     ({|
 map<u32, u32> test_map : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let value = test_map[1]
   let result = 0
   if (value == null) {
@@ -913,7 +918,7 @@ map<u32, u32> test_map : HashMap(100)
   } else {
     result = value
   }
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "null in if-else expression");
     
@@ -922,26 +927,26 @@ map<u32, u32> test_map : HashMap(100)
 map<u32, u32> map1 : HashMap(100)
 map<u32, u32> map2 : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let val1 = map1[1]
   let val2 = map2[1]
   
   if (val1 != null && val2 != null) {
-    return XDP_PASS
+    return 2 // XDP_PASS
   }
   
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "null in logical AND");
     
     (* Basic null assignments *)
     ({|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let x = null
   if (x == null) {
-    return XDP_DROP
+    return 1 // XDP_DROP
   }
-  return XDP_PASS
+  return 2 // XDP_PASS
 }
 |}, "basic null assignment and check");
   ] in
@@ -949,7 +954,7 @@ map<u32, u32> map2 : HashMap(100)
   List.iter (fun (program_text, desc) ->
     try
       let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast ast in
+      let _ = type_check_and_annotate_ast_with_builtins ast in
       check bool ("comprehensive null: " ^ desc) true true
     with
     | exn -> 
@@ -969,15 +974,15 @@ let test_xdp_signature_validation () =
   let invalid_signature_tests = [
     (* Missing context parameter *)
     ({|
-@xdp fn test() -> XdpAction {
-  return XDP_PASS
+@xdp fn test() -> xdp_action {
+  return 2 // XDP_PASS
 }
 |}, "missing context parameter");
     
     (* Wrong parameter type *)
     ({|
-@xdp fn test(wrong_param: u32) -> XdpAction {
-  return XDP_PASS
+@xdp fn test(wrong_param: u32) -> xdp_action {
+  return 2 // XDP_PASS
 }
 |}, "wrong parameter type");
     
@@ -993,7 +998,7 @@ let test_xdp_signature_validation () =
     try
       let ast = parse_string program_text in
       let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
       let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
       let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
       (* If we get here, validation failed to catch the error *)
@@ -1012,14 +1017,14 @@ let test_xdp_signature_validation () =
   
   (* Test that valid signature passes *)
   let valid_program = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
-  return XDP_PASS
+@xdp fn test(ctx: xdp_md) -> xdp_action {
+  return 2 // XDP_PASS
 }
 |} in
   try
     let ast = parse_string valid_program in
     let symbol_table = create_symbol_table_with_builtins ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
     let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
     let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
     check bool "valid XDP signature should pass" true true
@@ -1033,18 +1038,18 @@ let test_kernel_function_calls_from_attributed () =
   (* Test the specific bug case: kernel function called from attributed function *)
   let program_text = {|
 @helper
-fn get_src_ip(ctx: XdpContext) -> IpAddress {
+fn get_src_ip(ctx: xdp_md) -> IpAddress {
     return 0x08080808  // 8.8.8.8 as u32
 }
 
-@xdp fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
     let src_ip: IpAddress = get_src_ip(ctx)
-    return XDP_PASS
+    return 2 // XDP_PASS
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "kernel function call from attributed function" true true
   with
   | exn -> 
@@ -1055,36 +1060,36 @@ fn get_src_ip(ctx: XdpContext) -> IpAddress {
 let test_multiple_kernel_function_calls () =
   let program_text = {|
 @helper
-fn process_packet(ctx: XdpContext, flags: u32) -> u32 {
+fn process_packet(ctx: xdp_md, flags: u32) -> u32 {
     return flags + 1
 }
 
 @helper
-fn get_packet_size(ctx: XdpContext) -> u32 {
+fn get_packet_size(ctx: xdp_md) -> u32 {
     return 1500
 }
 
 @helper
-fn validate_headers(ctx: XdpContext, min_size: u32, max_size: u32) -> bool {
+fn validate_headers(ctx: xdp_md, min_size: u32, max_size: u32) -> bool {
     let size = get_packet_size(ctx)
     return size >= min_size && size <= max_size
 }
 
-@xdp fn complex_handler(ctx: XdpContext) -> XdpAction {
+@xdp fn complex_handler(ctx: xdp_md) -> xdp_action {
     let flags = process_packet(ctx, 0x01)
     let size = get_packet_size(ctx)
     let is_valid = validate_headers(ctx, 64, 1500)
     
     if (is_valid) {
-        return XDP_PASS
+        return 2 // XDP_PASS
     } else {
-        return XDP_DROP
+        return 1 // XDP_DROP
     }
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "multiple kernel function calls" true true
   with
   | exn -> 
@@ -1100,20 +1105,20 @@ fn helper_function(value: u32) -> u32 {
 }
 
 @helper
-fn main_kernel_function(ctx: XdpContext) -> u32 {
+fn main_kernel_function(ctx: xdp_md) -> u32 {
     let base_value = 42
     let result = helper_function(base_value)
     return result
 }
 
-@xdp fn test_program(ctx: XdpContext) -> XdpAction {
+@xdp fn test_program(ctx: xdp_md) -> xdp_action {
     let computed = main_kernel_function(ctx)
-    return XDP_PASS
+    return 2 // XDP_PASS
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "kernel to kernel function calls" true true
   with
   | exn -> 
@@ -1124,7 +1129,7 @@ fn main_kernel_function(ctx: XdpContext) -> u32 {
 let test_function_call_user_type_resolution () =
   let program_text = {|
 @helper
-fn extract_ip_from_context(ctx: XdpContext) -> IpAddress {
+fn extract_ip_from_context(ctx: xdp_md) -> IpAddress {
     return 0x7f000001  // 127.0.0.1 as u32
 }
 
@@ -1133,20 +1138,20 @@ fn convert_ip_to_u32(addr: IpAddress) -> u32 {
     return addr
 }
 
-@xdp fn packet_processor(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_processor(ctx: xdp_md) -> xdp_action {
     let ip_addr = extract_ip_from_context(ctx)
     let converted_value = convert_ip_to_u32(ip_addr)
     
     if (converted_value > 0) {
-        return XDP_PASS
+        return 2 // XDP_PASS
     } else {
-        return XDP_DROP
+        return 1 // XDP_DROP
     }
 }
 |} in
   try
     let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "function call user type resolution" true true
   with
   | exn -> 
@@ -1161,7 +1166,7 @@ let test_tail_call_cross_program_type_restriction _ =
       return 1  // TC_ACT_SHOT
     }
 
-    @xdp fn xdp_filter(ctx: XdpContext) -> XdpAction {
+    @xdp fn xdp_filter(ctx: xdp_md) -> xdp_action {
       // INVALID: @xdp trying to tail call to @tc function
       return tc_drop_handler(ctx)
     }
@@ -1175,7 +1180,7 @@ let test_tail_call_cross_program_type_restriction _ =
   
   (* This should fail with incompatible program type error *)
   (try
-     let _ = type_check_and_annotate_ast ast in
+     let _ = type_check_and_annotate_ast_with_builtins ast in
      failwith "Expected type checking to fail for cross-program-type tail call"
    with
    | Type_error (msg, _) ->

@@ -117,7 +117,7 @@ map<u32, u64> pinned_local : HashMap(512) {
     pinned: "/sys/fs/bpf/local_map"
 }
 
-@xdp fn test_syntax(ctx: XdpContext) -> XdpAction {
+@xdp fn test_syntax(ctx: xdp_md) -> xdp_action {
   // Test all map types can be used
   simple_counter[42] = 100
   lookup_array[10] = 200
@@ -145,7 +145,7 @@ map<u32, u64> pinned_map : HashMap(1024) {
     pinned: "/sys/fs/bpf/test"
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   // Test type checking works with new syntax
   let key: u32 = 42
   let value1: u64 = blockless_map[key]
@@ -173,7 +173,7 @@ map<u32, u64> attr_map : HashMap(1024) {
     pinned: "/sys/fs/bpf/test_map"
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   simple_map[42] = 100
   attr_map[42] = 200
   
@@ -204,7 +204,7 @@ map<u32, u64> pinned_stats : HashMap(1024) {
     pinned: "/sys/fs/bpf/stats"
 }
 
-@xdp fn counter(ctx: XdpContext) -> XdpAction {
+@xdp fn counter(ctx: xdp_md) -> xdp_action {
   let key = 42
   blockless_counter[key] = blockless_counter[key] + 1
   pinned_stats[key] = pinned_stats[key] + 1
@@ -282,7 +282,7 @@ let test_complete_map_program_parsing () =
 map<u32, u64> packet_counts : HashMap(1024) {
 }
 
-@xdp fn rate_limiter(ctx: XdpContext) -> XdpAction {
+@xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
   let src_ip = 0x08080808
   let current_count = packet_counts[src_ip]
   let new_count = current_count + 1
@@ -363,7 +363,7 @@ let test_map_identifier_resolution () =
 map<u32, u64> global_map : HashMap(1024) {
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let value = global_map[42]
   return 2
 }
@@ -384,7 +384,7 @@ let test_map_ir_generation () =
 map<u32, u64> test_map : HashMap(1024) {
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let key = 42
   let value = test_map[key]
   test_map[key] = value + 1
@@ -410,7 +410,7 @@ let test_map_c_generation () =
 map<u32, u64> packet_counter : HashMap(1024) {
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let src_ip = 0x12345678
   let count = packet_counter[src_ip]
   packet_counter[src_ip] = count + 1
@@ -452,7 +452,7 @@ let test_different_map_types () =
 map<u32, u64> test_map : %s(1024) {
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   let key = 42
   let value = test_map[key]
   return 2

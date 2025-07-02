@@ -50,7 +50,7 @@ let create_test_function name is_main params ret_type =
 let create_test_program () =
   let main_func = create_test_function "main" true 
     [("ctx", IRContext XdpCtx)] 
-    (Some (IRAction XdpActionType)) in
+    (Some (IRAction Xdp_actionType)) in
   {
     name = "test_program";
     program_type = Xdp;
@@ -63,7 +63,7 @@ let create_test_program () =
 let test_valid_main_signature _ =
   let main_func = create_test_function "main" true 
     [("ctx", IRContext XdpCtx)] 
-    (Some (IRAction XdpActionType)) in
+    (Some (IRAction Xdp_actionType)) in
   let sig_info = validate_function_signature main_func in
   check bool "Main function should be valid" true sig_info.is_valid;
       check string "Function name" "main" sig_info.func_name;
@@ -73,7 +73,7 @@ let test_invalid_main_signature _ =
   let invalid_func = {
     func_name = "main";
     parameters = [];  (* Missing context parameter *)
-    return_type = Some (IRAction XdpActionType);
+    return_type = Some (IRAction Xdp_actionType);
     basic_blocks = [];
     total_stack_usage = 0;
     max_loop_depth = 0;
@@ -127,7 +127,7 @@ fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
-@xdp fn func_test(ctx: XdpContext) -> XdpAction {
+@xdp fn func_test(ctx: xdp_md) -> xdp_action {
   let result = helper(10, 20)
   return 2
 }
@@ -161,7 +161,7 @@ fn valid_function(a: u32, b: u32) -> u32 {
   return a + b
 }
 
-@xdp fn signature_test(ctx: XdpContext) -> XdpAction {
+@xdp fn signature_test(ctx: xdp_md) -> xdp_action {
   let result = valid_function(10, 20)
   if (result > 25) {
     return 2
@@ -201,7 +201,7 @@ fn multiply(x: u32, factor: u32) -> u32 {
   return x * factor
 }
 
-@xdp fn call_test(ctx: XdpContext) -> XdpAction {
+@xdp fn call_test(ctx: xdp_md) -> xdp_action {
   let result = multiply(10, 2)
   if (result > 15) {
     return 2
@@ -240,7 +240,7 @@ fn helper() -> u32 {
   return 42
 }
 
-@xdp fn simple(ctx: XdpContext) -> XdpAction {
+@xdp fn simple(ctx: xdp_md) -> xdp_action {
   let result = helper()
   if (result > 40) {
     return 2
@@ -291,7 +291,7 @@ fn level1() -> u32 {
   return val2 + 1
 }
 
-@xdp fn dependency(ctx: XdpContext) -> XdpAction {
+@xdp fn dependency(ctx: xdp_md) -> xdp_action {
   let result = level1()
   if (result > 5) {
     return 2
@@ -339,7 +339,7 @@ fn simple_math(x: u32) -> u32 {
   return x + 1
 }
 
-@xdp fn optimization(ctx: XdpContext) -> XdpAction {
+@xdp fn optimization(ctx: xdp_md) -> xdp_action {
   let const_val = constant_function()
   let result = simple_math(const_val)
   if (result > 40) {
@@ -402,7 +402,7 @@ fn process_protocol(protocol: u8) -> u32 {
   }
 }
 
-@xdp fn comprehensive(ctx: XdpContext) -> XdpAction {
+@xdp fn comprehensive(ctx: xdp_md) -> xdp_action {
   let packet_size = 1000
   
   if (!validate_packet(packet_size)) {

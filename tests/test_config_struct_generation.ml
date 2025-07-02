@@ -67,7 +67,7 @@ config network {
     port_number: u16 = 8080,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -112,7 +112,7 @@ config security {
     max_connections: u64 = 1000,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -155,7 +155,7 @@ config network {
     allowed_ips: u32[2] = [192168001001, 192168001002],
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -182,7 +182,7 @@ config test_config {
     value: u32 = 42,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -212,7 +212,7 @@ config network {
     enable_logging: bool = true,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -248,7 +248,7 @@ config network {
     enable_logging: bool = true,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     network.enable_logging = false  // This should cause a type error
     return 2
 }
@@ -279,7 +279,7 @@ config network {
     max_packet_size: u32 = 1500,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     if (network.enable_logging) {  // This should be allowed
         return 2
     }
@@ -309,7 +309,7 @@ config demo {
     timeout_ms: u16 = 5000,
 }
 
-@xdp fn simple_logger(ctx: XdpContext) -> XdpAction {
+@xdp fn simple_logger(ctx: xdp_md) -> xdp_action {
     if (demo.enable_logging) {
         print("eBPF: Processing packet")
     }
@@ -375,7 +375,7 @@ config settings {
     max_entries: u32 = 1024,
 }
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     if (settings.debug_mode) {
         print("Debug mode enabled")
     }
@@ -421,7 +421,7 @@ config security {
     max_attempts: u32 = 5,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     if (network.enable_logging && security.strict_mode) {
         print("Strict logging enabled")
     }

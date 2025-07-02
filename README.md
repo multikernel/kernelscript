@@ -17,7 +17,7 @@ map<u32, u32> shared_counter : HashMap(1024) {
 
 // XDP program for packet counting
 program packet_counter : xdp {
-  fn main(ctx: XdpContext) -> XdpAction {
+  fn main(ctx: xdp_md) -> xdp_action {
     shared_counter[1] = 100;
     return XDP_PASS;
   }

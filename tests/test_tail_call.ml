@@ -22,11 +22,11 @@ let make_test_attr_func attrs func =
 
 (** Test tail call detection *)
 let test_tail_call_detection _ =
-  let xdp_func1 = make_test_func "process_http" [("ctx", XdpContext)] (Some XdpAction) [
+  let xdp_func1 = make_test_func "process_http" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("log_request", [])) make_test_position))) make_test_position
   ] in
   
-  let xdp_func2 = make_test_func "log_request" [("ctx", XdpContext)] (Some XdpAction) [
+  let xdp_func2 = make_test_func "log_request" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -48,7 +48,7 @@ let test_tail_call_detection _ =
 
 (** Test program type compatibility *)
 let test_program_type_compatibility _ =
-  let xdp_func = make_test_func "xdp_handler" [("ctx", XdpContext)] (Some XdpAction) [
+  let xdp_func = make_test_func "xdp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("tc_handler", [])) make_test_position))) make_test_position
   ] in
   
@@ -67,12 +67,12 @@ let test_program_type_compatibility _ =
 
 (** Test signature compatibility *)
 let test_signature_compatibility _ =
-  let func1 = make_test_func "handler1" [("ctx", XdpContext)] (Some XdpAction) [
+  let func1 = make_test_func "handler1" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("handler2", [])) make_test_position))) make_test_position
   ] in
   
   (* Different signature - incompatible *)
-  let func2 = make_test_func "handler2" [("ctx", XdpContext); ("data", U32)] (Some XdpAction) [
+  let func2 = make_test_func "handler2" [("ctx", Xdp_md); ("data", U32)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -87,15 +87,15 @@ let test_signature_compatibility _ =
 
 (** Test ProgArray index mapping *)
 let test_prog_array_mapping _ =
-  let func1 = make_test_func "main_handler" [("ctx", XdpContext)] (Some XdpAction) [
+  let func1 = make_test_func "main_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("process_tcp", [])) make_test_position))) make_test_position
   ] in
   
-  let func2 = make_test_func "process_tcp" [("ctx", XdpContext)] (Some XdpAction) [
+  let func2 = make_test_func "process_tcp" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("log_tcp", [])) make_test_position))) make_test_position
   ] in
   
-  let func3 = make_test_func "log_tcp" [("ctx", XdpContext)] (Some XdpAction) [
+  let func3 = make_test_func "log_tcp" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -115,15 +115,15 @@ let test_prog_array_mapping _ =
 
 (** Test dependency chain analysis *)
 let test_dependency_chains _ =
-  let func1 = make_test_func "entry" [("ctx", XdpContext)] (Some XdpAction) [
+  let func1 = make_test_func "entry" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("stage1", [])) make_test_position))) make_test_position
   ] in
   
-  let func2 = make_test_func "stage1" [("ctx", XdpContext)] (Some XdpAction) [
+  let func2 = make_test_func "stage1" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("stage2", [])) make_test_position))) make_test_position
   ] in
   
-  let func3 = make_test_func "stage2" [("ctx", XdpContext)] (Some XdpAction) [
+  let func3 = make_test_func "stage2" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -143,7 +143,7 @@ let test_dependency_chains _ =
 
 (** Test no tail calls *)
 let test_no_tail_calls _ =
-  let func1 = make_test_func "simple_handler" [("ctx", XdpContext)] (Some XdpAction) [
+  let func1 = make_test_func "simple_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -157,7 +157,7 @@ let test_no_tail_calls _ =
 
 (** Test validation errors *)
 let test_validation_errors _ =
-  let func1 = make_test_func "xdp_handler" [("ctx", XdpContext)] (Some XdpAction) [
+  let func1 = make_test_func "xdp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
     make_stmt (Return (Some (make_expr (FunctionCall ("tc_handler", [])) make_test_position))) make_test_position
   ] in
   

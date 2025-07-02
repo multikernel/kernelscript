@@ -26,7 +26,7 @@ config network {
     timeout: u32 = 5000,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -50,7 +50,7 @@ config network {
 
 map<u32, u64> network : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -76,7 +76,7 @@ fn network() -> u32 {
     return 42
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -106,7 +106,7 @@ config security {
 
 map<u32, u64> packet_counts : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     return 2
 }
 
@@ -142,7 +142,7 @@ config network {
     rate_limit: u64 = 1000,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let size: u32 = network.max_size
     let timeout: u32 = network.timeout
     let logging: bool = network.enable_logging
@@ -173,7 +173,7 @@ config limits {
     min_packet_size: u32 = 64,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let packet_size: u32 = 800
     if (packet_size > limits.max_packet_size || packet_size < limits.min_packet_size) {
         return 1  // DROP
@@ -205,7 +205,7 @@ config network {
     timeout: u32 = 5000,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let bad_field = network.nonexistent_field
     return 2
 }
@@ -224,7 +224,7 @@ fn main() -> i32 {
 (** Test invalid config access (non-existent config) *)
 let test_invalid_config_access () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let bad_config = nonexistent_config.some_field
     return 2
 }
@@ -245,7 +245,7 @@ let test_accessing_map_as_config () =
   let program_text = {|
 map<u32, u64> packet_counts : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let bad_access = packet_counts.some_field
     return 2
 }
@@ -268,7 +268,7 @@ fn main() -> i32 {
 (** Test config declared inside function (invalid) *)
 let test_config_inside_function () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     config local_config {
         value: u32 = 42,
     }
@@ -289,7 +289,7 @@ fn main() -> i32 {
 (** Test config declared inside program block (invalid) *)
 let test_config_inside_program () =
   let program_text = {|
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     config program_config {
         size: u32 = 1024,
     }
@@ -332,7 +332,7 @@ config network {
     rate_limit: u64 = 1000,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let size = network.max_size
     return 2
 }
@@ -361,7 +361,7 @@ config settings {
     max_entries: u32 = 1000,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let size = settings.buffer_size
     return 2
 }
@@ -430,7 +430,7 @@ config database {
     timeout_seconds: u32 = 30,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let host = database.host
     return 2
 }
@@ -464,7 +464,7 @@ config application {
 
 map<u32, u64> stats : HashMap(1024)
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     let version = application.version
     let debug = application.debug_mode
     let memory_limit = application.max_memory
@@ -516,7 +516,7 @@ config types_test {
     flag_bool: bool = true,
 }
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let u32_val = types_test.flag_u32
     let u64_val = types_test.flag_u64
     let bool_val = types_test.flag_bool
@@ -553,7 +553,7 @@ config network {
     timeout: u32 = 5000,
 }
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     if (network.max_packet_size > 1000) {
         return 2
     }

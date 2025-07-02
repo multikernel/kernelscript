@@ -17,7 +17,7 @@ fn process_map_data(buffer_ptr: *DataBuffer) -> u32 {
 }
 
 @xdp  
-fn test(ctx: XdpContext) -> XdpAction {
+fn test(ctx: xdp_md) -> xdp_action {
     // Packet data access - should use bpf_dynptr_from_xdp
     let packet_byte = *ctx.data
     

@@ -1,7 +1,7 @@
 // KernelScript String Type Demonstration
 // Shows unified string syntax working in both eBPF and userspace contexts
 
-@xdp fn string_demo(ctx: XdpContext) -> XdpAction {
+@xdp fn string_demo(ctx: xdp_md) -> xdp_action {
   // Test string declarations with different sizes
   let name: str<16> = "hello"
   let message: str<32> = "world"

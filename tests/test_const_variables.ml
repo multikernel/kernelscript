@@ -9,7 +9,7 @@ let parse_program_string s =
 
 let test_valid_const_declaration () =
   let program_text = {|
-    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
       const MAX_SIZE: u32 = 1500
       const MIN_SIZE: u16 = 64
       const THRESHOLD = 100
@@ -26,7 +26,7 @@ let test_valid_const_declaration () =
 
 let test_const_assignment_error () =
   let program_text = {|
-    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
       const MAX_SIZE: u32 = 1500
       MAX_SIZE = 2000
       return 2
@@ -44,7 +44,7 @@ let test_const_assignment_error () =
 
 let test_const_integer_types_only () =
   let program_text = {|
-    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
       const name: str<16> = "test"
       return 2
     }
@@ -61,7 +61,7 @@ let test_const_integer_types_only () =
 
 let test_const_must_be_literal () =
   let program_text = {|
-    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
       let x = 10
       const MAX_SIZE: u32 = x
       return 2
@@ -79,7 +79,7 @@ let test_const_must_be_literal () =
 
 let test_const_type_inference () =
   let program_text = {|
-    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
       const SMALL_VALUE = 10  // Should infer u32
       const BIG_VALUE = 0xFFFFFFFF  // Should infer u32
       return 2
@@ -111,7 +111,7 @@ let test_const_in_userspace () =
 
 let test_const_with_different_integer_types () =
   let program_text = {|
-    @xdp fn test_program(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
       const BYTE_VAL: u8 = 255
       const SHORT_VAL: u16 = 65535
       const INT_VAL: u32 = 429496729

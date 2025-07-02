@@ -46,7 +46,7 @@ map<u32, result PacketInfo u8> packet_cache : PercpuHash(128)
 map<Protocol, Counter> protocol_stats : PercpuArray(32)
 
 @helper
-fn extract_packet_info(ctx: XdpContext) -> option PacketInfo {
+fn extract_packet_info(ctx: xdp_md) -> option PacketInfo {
   // This would contain actual packet parsing logic
   // For now, return a dummy PacketInfo
   let info: PacketInfo = PacketInfo {
@@ -94,7 +94,7 @@ fn update_stats(info: PacketInfo) {
 }
 
 // Program using all the new types
-@xdp fn packet_inspector(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_inspector(ctx: xdp_md) -> xdp_action {
   // Extract packet information
   let packet_info = extract_packet_info(ctx)
   

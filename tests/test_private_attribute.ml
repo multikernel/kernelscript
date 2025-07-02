@@ -18,7 +18,7 @@ let test_private_parsing () =
     }
     
     @xdp
-    fn packet_filter(ctx: XdpContext) -> XdpAction {
+    fn packet_filter(ctx: xdp_md) -> xdp_action {
         let result = public_filter(null, 100)
         return 2
     }

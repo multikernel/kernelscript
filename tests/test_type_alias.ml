@@ -34,7 +34,7 @@ let test_type_alias_resolution () =
 type IpAddress = u32
 type Port = u16
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let ip: IpAddress = 192168001001
     let port: Port = 8080
     return 2
@@ -54,7 +54,7 @@ let test_array_type_alias () =
   let source = {|
 type EthBuffer = u8[14]
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let buffer: EthBuffer = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     return 2
 }
@@ -78,7 +78,7 @@ let test_nested_type_aliases () =
 type Size = u32
 type BufferSize = Size
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
     let size: BufferSize = 1024
     return 2
 }
@@ -110,7 +110,7 @@ struct PacketStats {
 map<u32, Counter> cpu_counters : HashMap(256)
 map<IpAddress, PacketStats> ip_stats : HashMap(1000) 
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   return 2
 }
 |} in
@@ -180,7 +180,7 @@ type GroupId = AccountId
 
 map<GroupId, u64> user_groups : HashMap(100)
 
-@xdp fn test(ctx: XdpContext) -> XdpAction {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   return 2
 }
 |} in

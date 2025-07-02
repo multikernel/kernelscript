@@ -41,7 +41,7 @@ fn cleanup_lock() {
     let result = 0
 }
 
-@xdp fn error_test(ctx: XdpContext) -> XdpAction {
+@xdp fn error_test(ctx: xdp_md) -> xdp_action {
     let packet_len = 64  // Simulate packet length
     let key = packet_len % 100  // Use packet length as key
     

@@ -3,7 +3,7 @@ type IpAddress = u32
 type Port = u16
 type EthBuffer = u8[14]
 
-@xdp fn test_type_aliases(ctx: XdpContext) -> XdpAction {
+@xdp fn test_type_aliases(ctx: xdp_md) -> xdp_action {
     let port: Port = 8080
     let ip: IpAddress = 192168001001
     

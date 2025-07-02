@@ -58,7 +58,7 @@ fn should_log() -> bool {
 
 // eBPF program functions with attributes
 @xdp
-fn monitor(ctx: XdpContext) -> XdpAction {
+fn monitor(ctx: xdp_md) -> xdp_action {
     update_counters(0)  // Call kernel-shared function
     
     if (should_log()) {  // Call another kernel-shared function
@@ -159,7 +159,7 @@ config security {
 }
 
 @xdp
-fn network_monitor(ctx: XdpContext) -> XdpAction {
+fn network_monitor(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     
     // Use named configuration values
@@ -222,14 +222,14 @@ struct Args {
 
 // Kernel-shared functions (accessible by all eBPF programs)
 @helper
-fn update_stats(ctx: XdpContext) {
+fn update_stats(ctx: xdp_md) {
     let key = ctx.hash() % 1024
     global_stats[key].packets += 1
 }
 
 // eBPF program functions with attributes
 @xdp
-fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+fn packet_analyzer(ctx: xdp_md) -> xdp_action {
     if (monitoring.enable_stats) {
         // Process packet and update statistics
         monitoring.packets_processed += 1
@@ -303,7 +303,7 @@ eBPF program functions are first-class values that can be referenced by name and
 
 ```kernelscript
 @xdp
-fn packet_filter(ctx: XdpContext) -> XdpAction {
+fn packet_filter(ctx: xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
@@ -359,7 +359,7 @@ config network {
 }
 
 @xdp
-fn adaptive_filter(ctx: XdpContext) -> XdpAction {
+fn adaptive_filter(ctx: xdp_md) -> xdp_action {
     if (network.enable_filtering && ctx.packet_size() > network.max_packet_size) {
         return XDP_DROP
     }
@@ -399,7 +399,7 @@ fn main(args: Args) -> i32 {
 **Multi-Program Coordination:**
 ```kernelscript
 @xdp
-fn ingress_monitor(ctx: XdpContext) -> XdpAction { return XDP_PASS }
+fn ingress_monitor(ctx: xdp_md) -> xdp_action { return XDP_PASS }
 
 @tc
 fn egress_monitor(ctx: TcContext) -> TcAction { return TC_ACT_OK }
@@ -489,7 +489,7 @@ fn verify_packet_signature(packet: *u8, len: u32, signature: *u8) -> i32 {
 
 // eBPF program calling kfuncs
 @xdp
-fn secure_packet_filter(ctx: XdpContext) -> XdpAction {
+fn secure_packet_filter(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS
@@ -557,7 +557,7 @@ fn optimized_checksum_calculation(data: *u8, len: u32) -> u32 {
 
 // eBPF program usage
 @xdp
-fn data_processor(ctx: XdpContext) -> XdpAction {
+fn data_processor(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     
     // Call using function names
@@ -683,7 +683,7 @@ fn update_packet_stats(proto: u8, size: u32) {
 
 // eBPF programs can call helper functions
 @xdp
-fn packet_filter(ctx: XdpContext) -> XdpAction {
+fn packet_filter(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     
     // Call shared helper
@@ -730,7 +730,7 @@ Using `@helper` functions provides several benefits:
 **1. Code Reuse**
 ```kernelscript
 @helper
-fn extract_tcp_info(ctx: XdpContext) -> option TcpInfo {
+fn extract_tcp_info(ctx: xdp_md) -> option TcpInfo {
     let packet = ctx.packet()
     if (packet.protocol != IPPROTO_TCP) {
         return null
@@ -744,7 +744,7 @@ fn extract_tcp_info(ctx: XdpContext) -> option TcpInfo {
 }
 
 @xdp
-fn ddos_protection(ctx: XdpContext) -> XdpAction {
+fn ddos_protection(ctx: xdp_md) -> xdp_action {
     let tcp_info = extract_tcp_info(ctx)
     if (tcp_info != null && tcp_info.flags & TCP_SYN) {
         // SYN flood protection logic
@@ -836,7 +836,7 @@ fn flow_statistics(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -> u6
 
 // eBPF program that can call kfuncs but NOT private functions
 @xdp
-fn packet_filter(ctx: XdpContext) -> XdpAction {
+fn packet_filter(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS
@@ -1205,7 +1205,7 @@ fn update_counter(index: u32) {
 
 // eBPF program
 program packet_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
+    fn main(ctx: xdp_md) -> xdp_action {
         let cached_decision = decision_cache[ctx.hash()]
         if (cached_decision == null) {
             // Cache miss - compute decision
@@ -1245,7 +1245,7 @@ struct PacketHeader {
 }
 
 // Enumerations (C-style naming)
-enum XdpAction {
+enum xdp_action {
     XDP_ABORTED = 0,
     XDP_DROP = 1,
     XDP_PASS = 2,
@@ -1485,7 +1485,7 @@ fn pointer_arithmetic_examples(base_ptr: *u8, len: u32) {
 ```kernelscript
 // eBPF Context - Automatic bounds checking and dynptr integration
 @xdp
-fn ebpf_pointer_usage(ctx: XdpContext) -> XdpAction {
+fn ebpf_pointer_usage(ctx: xdp_md) -> xdp_action {
     // Context pointers - automatically bounded
     let packet_data: *u8 = ctx.data()          // Bounded by ctx.data_end()
     let packet_end: *u8 = ctx.data_end()       // End boundary
@@ -1603,7 +1603,7 @@ fn null_safety_example(ptr: *u8) -> u8 {
 
 // Bounds checking in eBPF context
 @xdp
-fn bounds_safety_example(ctx: XdpContext) -> XdpAction {
+fn bounds_safety_example(ctx: xdp_md) -> xdp_action {
     let data = ctx.data()
     let data_end = ctx.data_end()
     
@@ -1658,7 +1658,7 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 
 // Program 1: Can access all global maps
 @xdp
-fn ingress_monitor(ctx: XdpContext) -> XdpAction {
+fn ingress_monitor(ctx: xdp_md) -> xdp_action {
     let flow_key = extract_flow_key(ctx)?
     
     // Access global map directly
@@ -1790,7 +1790,7 @@ map<ConfigKey, ConfigValue> config_map : Array(16) {
 }
 
 @xdp
-fn simple_monitor(ctx: XdpContext) -> XdpAction {
+fn simple_monitor(ctx: xdp_md) -> xdp_action {
     // Access global maps directly
     packet_stats[ctx.packet_type()] += 1
     counters[0] += 1
@@ -1825,7 +1825,7 @@ return_type = type_annotation
 ```kernelscript
 // eBPF program function with attribute - entry point
 @xdp
-fn simple_xdp(ctx: XdpContext) -> XdpAction {
+fn simple_xdp(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()?
     
     if packet.is_tcp() {
@@ -1870,7 +1870,7 @@ priv fn internal_kernel_helper() -> u32 {
 }
 
 @xdp
-fn packet_filter(ctx: XdpContext) -> XdpAction {
+fn packet_filter(ctx: xdp_md) -> xdp_action {
     // Can call kernel-shared functions
     if (!validate_packet(ctx.packet())) {
         return XDP_DROP
@@ -1928,7 +1928,7 @@ The compiler automatically converts function calls to eBPF tail calls when **all
 ```kernelscript
 // eBPF programs that can be tail-called
 @xdp
-fn packet_classifier(ctx: XdpContext) -> XdpAction {
+fn packet_classifier(ctx: xdp_md) -> xdp_action {
     let protocol = get_protocol(ctx)  // Regular call (@helper)
     
     return match protocol {
@@ -1940,7 +1940,7 @@ fn packet_classifier(ctx: XdpContext) -> XdpAction {
 }
 
 @xdp  
-fn process_http(ctx: XdpContext) -> XdpAction {
+fn process_http(ctx: xdp_md) -> xdp_action {
     // HTTP processing logic
     if (is_malicious_http(ctx)) {    // Regular call (@helper)
         return XDP_DROP
@@ -1950,20 +1950,20 @@ fn process_http(ctx: XdpContext) -> XdpAction {
 }
 
 @xdp
-fn filter_by_policy(ctx: XdpContext) -> XdpAction {
+fn filter_by_policy(ctx: xdp_md) -> xdp_action {
     // Policy enforcement
     return XDP_PASS 
 }
 
 // Kernel helper function (not tail-callable)
 @helper
-fn get_protocol(ctx: XdpContext) -> u16 {
+fn get_protocol(ctx: xdp_md) -> u16 {
     // Extract protocol from packet
     return 6  // TCP
 }
 
 @helper
-fn is_malicious_http(ctx: XdpContext) -> bool {
+fn is_malicious_http(ctx: xdp_md) -> bool {
     // Security analysis
     return false
 }
@@ -1974,7 +1974,7 @@ fn is_malicious_http(ctx: XdpContext) -> bool {
 **✅ Valid Tail Calls:**
 ```kernelscript
 @xdp 
-fn main_filter(ctx: XdpContext) -> XdpAction {
+fn main_filter(ctx: xdp_md) -> xdp_action {
     return specialized_filter(ctx)   // ✅ Same type (@xdp), return position
 }
 
@@ -1987,7 +1987,7 @@ fn ingress_handler(ctx: TcContext) -> TcAction {
 **❌ Invalid Tail Calls (Become Regular Calls or Errors):**
 ```kernelscript
 @xdp
-fn invalid_examples(ctx: XdpContext) -> XdpAction {
+fn invalid_examples(ctx: xdp_md) -> xdp_action {
     // ❌ ERROR: Cannot call eBPF program function directly
     let result = process_http(ctx)
     
@@ -2009,7 +2009,7 @@ The compiler automatically generates and manages eBPF program arrays behind the 
 
 ```kernelscript
 // User writes this clean code:
-@xdp fn classifier(ctx: XdpContext) -> XdpAction {
+@xdp fn classifier(ctx: xdp_md) -> xdp_action {
     return match get_protocol(ctx) {
         HTTP => process_http(ctx),
         DNS => process_dns(ctx),
@@ -2138,7 +2138,7 @@ fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
 }
 
 // Error handling with try/catch blocks using integer matching
-fn process_packet(ctx: XdpContext) -> XdpAction {
+fn process_packet(ctx: xdp_md) -> xdp_action {
     try {
         let packet = get_packet(ctx)
         if (packet == null) {
@@ -2225,7 +2225,7 @@ fn complex_resource_management() -> bool {
 Defer statements work seamlessly with error handling - cleanup always occurs even when exceptions are thrown or caught.
 
 ```kernelscript
-fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
+fn safe_packet_processing(ctx: xdp_md) -> xdp_action {
     let packet_buffer = allocate_packet_buffer()
     defer free_packet_buffer(packet_buffer)  // Always executes
     
@@ -2256,7 +2256,7 @@ fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
 
 ```kernelscript
 program packet_filter : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
+    fn main(ctx: xdp_md) -> xdp_action {
         try {
             let result = process_packet(ctx)  // Might throw
             return XDP_PASS
@@ -2278,7 +2278,7 @@ Helper functions can propagate errors without catching them - this enables natur
 
 ```kernelscript
 // Helper functions can throw without catching
-fn extract_flow_key(ctx: XdpContext) -> FlowKey {
+fn extract_flow_key(ctx: xdp_md) -> FlowKey {
     let packet = get_packet(ctx)
     if packet == null {
         throw NETWORK_ERROR_ALLOCATION_FAILED  // ✅ OK - propagates to caller (throws 10)
@@ -2410,7 +2410,7 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 }
 
 // Multiple eBPF programs working together
-@xdp fn network_monitor(ctx: XdpContext) -> XdpAction {
+@xdp fn network_monitor(ctx: xdp_md) -> xdp_action {
     // Access global maps directly
     let flow_key = extract_flow_key(ctx)?
     global_flows[flow_key] += 1
@@ -2526,7 +2526,7 @@ config runtime {
 }
 
 program network_monitor : xdp {
-    fn main(ctx: XdpContext) -> XdpAction {
+    fn main(ctx: xdp_md) -> xdp_action {
         if (runtime.enable_logging) {
             print("Processing packet")
         }
@@ -2592,7 +2592,7 @@ KernelScript employs context-aware pointer safety mechanisms that adapt to the e
 ```kernelscript
 // eBPF Context - Automatic bounds checking with verifier compliance
 @xdp
-fn safe_packet_processing(ctx: XdpContext) -> XdpAction {
+fn safe_packet_processing(ctx: xdp_md) -> xdp_action {
     let packet_data: *u8 = ctx.data()
     let packet_end: *u8 = ctx.data_end()
     
@@ -2675,7 +2675,7 @@ fn userspace_stack_management() {
 
 // Automatic stack tracking for eBPF
 @xdp
-fn stack_aware_function(ctx: XdpContext) -> XdpAction {
+fn stack_aware_function(ctx: xdp_md) -> xdp_action {
     let buffer: [u8; 256] = [0; 256]  // Compiler tracks: 256 bytes used
     let header_info = PacketInfo {    // Compiler tracks: +64 bytes
         // ... fields
@@ -2774,7 +2774,7 @@ fn optional_pointer_example() -> ProcessResult {
 ```kernelscript
 // Context boundary safety
 @xdp 
-fn kernel_side_processing(ctx: XdpContext) -> XdpAction {
+fn kernel_side_processing(ctx: xdp_md) -> xdp_action {
     let packet_data = ctx.data()
     
     // Shared memory through maps - safe across contexts
@@ -2903,7 +2903,7 @@ mod program {
 ### 11.2 Context Helpers
 ```kernelscript
 // XDP context helpers
-impl XdpContext {
+impl xdp_md {
     pub fn packet(&self) -> Result<Packet, ContextError>
     pub fn adjust_head(&mut self, delta: i32) -> Result<(), ContextError>
     pub fn adjust_tail(&mut self, delta: i32) -> Result<(), ContextError>
@@ -2967,7 +2967,7 @@ fn log_blocked_port(port: u16) {
 }
 
 @xdp
-fn simple_filter(ctx: XdpContext) -> XdpAction {
+fn simple_filter(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS

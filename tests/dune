@@ -1,7 +1,12 @@
+(library
+ (name test_utils)
+ (modules test_utils)
+ (libraries kernelscript))
+
 (executable
  (name test_lexer)
  (modules test_lexer)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_ir_patterns)
@@ -11,7 +16,7 @@
 (executable
  (name test_ast)
  (modules test_ast)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_parser)
@@ -21,12 +26,12 @@
 (executable
  (name test_type_checker)
  (modules test_type_checker)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_symbol_table)
  (modules test_symbol_table)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest str test_utils))
 
 (executable
  (name test_maps)
@@ -46,12 +51,17 @@
 (executable
  (name test_evaluator)
  (modules test_evaluator)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_dynptr_bridge)
  (modules test_dynptr_bridge)
  (libraries kernelscript alcotest))
+
+(executable
+ (name test_btf_parser)
+ (modules test_btf_parser)
+ (libraries kernelscript alcotest str))
 
 (executable
  (public_name test_ir)
@@ -105,7 +115,7 @@
 (executable
  (name test_userspace_maps)
  (modules test_userspace_maps)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest str unix test_utils))
 
 (executable
  (name test_comment_positions)
@@ -471,7 +481,6 @@
 (rule
  (alias map-tests)
  (deps
-  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_map_syntax.exe
   test_map_assignment.exe
   test_map_integration.exe
@@ -490,7 +499,6 @@
 (rule
  (alias userspace-tests)
  (deps
-  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_userspace.exe
   test_userspace_maps.exe
   test_userspace_for_codegen.exe
@@ -517,7 +525,6 @@
 (rule
  (alias core-tests)
  (deps
-  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_lexer.exe
   test_ast.exe
   test_parser.exe
@@ -586,7 +593,6 @@
 (rule
  (alias ir-tests)
  (deps
-  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   test_ir.exe
   test_ir_analysis.exe
   test_ir_function_system.exe)
@@ -598,7 +604,7 @@
 
 (rule
  (alias codegen-tests)
- (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe)
+ (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
@@ -618,7 +624,6 @@
 (rule
  (alias runtest)
  (deps
-  ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks
   ./test_ast.exe
   ./test_lexer.exe
   ./test_parser.exe

@@ -87,7 +87,7 @@ let test_program_function_calls _ =
   } in
   
   (* Create main function that calls helper *)
-  let main_params = [("ctx", XdpContext)] in
+  let main_params = [("ctx", xdp_md)] in
   let helper_call = {
     expr_desc = FunctionCall ("helper", [
       { expr_desc = Literal (IntLit (10, None)); expr_pos = test_pos; expr_type = Some U32 }
@@ -97,12 +97,12 @@ let test_program_function_calls _ =
   } in
   let main_stmt = { stmt_desc = Declaration ("result", Some U32, helper_call); stmt_pos = test_pos } in
   let main_return = { stmt_desc = Return (Some {
-    expr_desc = Identifier "XDP_PASS"; expr_pos = test_pos; expr_type = Some XdpAction
+    expr_desc = Identifier "XDP_PASS"; expr_pos = test_pos; expr_type = Some xdp_action
   }); stmt_pos = test_pos } in
   let main_func = {
     func_name = "main";
     func_params = main_params;
-    func_return_type = Some XdpAction;
+    func_return_type = Some xdp_action;
     func_body = [main_stmt; main_return];
     func_scope = Ast.Userspace;
     func_pos = test_pos;
@@ -168,10 +168,10 @@ let test_multiple_parameters _ =
   (* Create minimal program *)
   let main_func = {
     func_name = "main";
-    func_params = [("ctx", XdpContext)];
-    func_return_type = Some XdpAction;
+    func_params = [("ctx", xdp_md)];
+    func_return_type = Some xdp_action;
     func_body = [{ stmt_desc = Return (Some {
-      expr_desc = Identifier "XDP_PASS"; expr_pos = test_pos; expr_type = Some XdpAction
+      expr_desc = Identifier "XDP_PASS"; expr_pos = test_pos; expr_type = Some xdp_action
     }); stmt_pos = test_pos }];
     func_scope = Ast.Userspace;
     func_pos = test_pos;

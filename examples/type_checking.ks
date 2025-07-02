@@ -30,7 +30,7 @@ map<IpAddress, u64> connection_stats : hash_map(1024) {
 }
 
 @helper
-fn extract_header(ctx: XdpContext) -> XdpAction {
+fn extract_header(ctx: xdp_md) -> xdp_action {
   // Type checker validates that ctx is xdp_context type
   let data = ctx.data
   let data_end = ctx.data_end
@@ -99,7 +99,7 @@ fn make_decision(header: PacketHeader) -> FilterDecision {
   }
 }
 
-@xdp fn packet_analyzer(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
   // Type checker validates context parameter and return type
   let packet_header = extract_header(ctx)
   

@@ -1398,14 +1398,14 @@ let rec ast_type_to_ir_type = function
       let ir_key_type = ast_type_to_ir_type key_type in
       let ir_value_type = ast_type_to_ir_type value_type in
       IRPointer (IRStruct ("map", [("key", ir_key_type); ("value", ir_value_type)]), make_bounds_info ())
-  | Ast.XdpContext -> IRContext XdpCtx
+  | Ast.Xdp_md -> IRContext XdpCtx
   | Ast.TcContext -> IRContext TcCtx
   | Ast.KprobeContext -> IRContext KprobeCtx
   | Ast.UprobeContext -> IRContext UprobeCtx
   | Ast.TracepointContext -> IRContext TracepointCtx
   | Ast.LsmContext -> IRContext LsmCtx
   | Ast.CgroupSkbContext -> IRContext CgroupSkbCtx
-  | Ast.XdpAction -> IRAction XdpActionType
+  | Ast.Xdp_action -> IRAction Xdp_actionType
   | Ast.TcAction -> IRAction TcActionType
   | Ast.ProgramRef _prog_type -> IRU32  (* Program refs become integers *)
   | Ast.ProgramHandle -> IRU64  (* Program handles are pointers represented as 64-bit ints *)

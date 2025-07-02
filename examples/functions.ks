@@ -10,7 +10,7 @@ fn another_helper() -> u32 {
   return 42
 }
 
-@xdp fn test_functions(ctx: XdpContext) -> XdpAction {
+@xdp fn test_functions(ctx: xdp_md) -> xdp_action {
   let result = helper_function(5)
   let const_val = another_helper()
   return XDP_PASS

@@ -181,7 +181,7 @@ let test_function_generation () =
   let return_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   
   generate_c_function ctx main_func;
   
@@ -200,7 +200,7 @@ let test_complete_program () =
   let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_xdp" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_xdp" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   
   (* Add a simple map *)
   let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHashMap 1024 test_pos in
@@ -253,7 +253,7 @@ let test_file_writing () =
   let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test" [("ctx", IRContext XdpCtx)] (Some (IRAction XdpActionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test" Xdp main_func test_pos in
   
   let test_filename = "test_output.c" in
@@ -481,8 +481,8 @@ let test_type_alias_struct_ordering () =
     program_type = Kernelscript.Ast.Xdp;
     entry_function = {
       func_name = "test";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("XdpContext", []))];
-      return_type = Some (Kernelscript.Ir.IRStruct("XdpAction", []));
+      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
+      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
       basic_blocks = [];
       total_stack_usage = 0;
       max_loop_depth = 0;
@@ -603,8 +603,8 @@ let test_complete_type_alias_fix_integration () =
     program_type = Kernelscript.Ast.Xdp;
     entry_function = {
       func_name = "packet_analyzer";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("XdpContext", []))];
-      return_type = Some (Kernelscript.Ir.IRStruct("XdpAction", []));
+      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
+      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
       basic_blocks = [];
       total_stack_usage = 0;
       max_loop_depth = 0;

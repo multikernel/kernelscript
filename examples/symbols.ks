@@ -10,7 +10,7 @@ struct PacketInfo {
     dst_ip: u32,
 }
 
-enum XdpAction {
+enum xdp_action {
     Pass = 0,
     Drop = 1,
     Aborted = 2,
@@ -36,7 +36,7 @@ pub fn log_packet(info: PacketInfo) -> u32 {
     return info.size
 }
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     let packet = ctx.packet()
     let info = PacketInfo {
         size: packet.len(),
@@ -102,7 +102,7 @@ fn main() -> i32 {
 // Symbol Table Structure:
 // Global Scope:
 //   - PacketInfo (struct)
-//   - XdpAction (enum)
+//   - xdp_action (enum)
 //   - global_stats (map)
 //   - packet_cache (map)
 //   - traffic_data (map)

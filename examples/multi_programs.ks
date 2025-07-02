@@ -3,7 +3,7 @@ map<u32, u32> shared_counter : HashMap(1024) {
 }
 
 // First eBPF program - packet counter
-@xdp fn packet_counter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_counter(ctx: xdp_md) -> xdp_action {
   shared_counter[1] = 100
   return XDP_PASS
 }

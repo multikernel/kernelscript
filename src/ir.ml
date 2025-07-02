@@ -127,7 +127,7 @@ and context_type =
   | XdpCtx | TcCtx | KprobeCtx | UprobeCtx | TracepointCtx | LsmCtx | CgroupSkbCtx
 
 and action_type =
-  | XdpActionType | TcActionType | GenericActionType
+  | Xdp_actionType | TcActionType | GenericActionType
 
 and bounds_info = {
   min_size: int option;
@@ -572,14 +572,14 @@ let rec ast_type_to_ir_type = function
       let bounds = make_bounds_info ~nullable:true () in
       IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
-  | XdpContext -> IRContext XdpCtx
+  | Xdp_md -> IRContext XdpCtx
   | TcContext -> IRContext TcCtx
   | KprobeContext -> IRContext KprobeCtx
   | UprobeContext -> IRContext UprobeCtx
   | TracepointContext -> IRContext TracepointCtx
   | LsmContext -> IRContext LsmCtx
   | CgroupSkbContext -> IRContext CgroupSkbCtx
-  | XdpAction -> IRAction XdpActionType
+  | Xdp_action -> IRAction Xdp_actionType
   | TcAction -> IRAction TcActionType
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (_, _) -> 
@@ -659,7 +659,7 @@ let rec string_of_ir_type = function
     | UprobeCtx -> "uprobe" | TracepointCtx -> "tracepoint"
     | LsmCtx -> "lsm" | CgroupSkbCtx -> "cgroup_skb")
   | IRAction action -> Printf.sprintf "action %s" (match action with
-    | XdpActionType -> "xdp" | TcActionType -> "tc"
+    | Xdp_actionType -> "xdp" | TcActionType -> "tc"
     | GenericActionType -> "generic")
 
 let string_of_ir_value_desc = function

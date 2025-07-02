@@ -51,7 +51,7 @@ struct ArrayElement {
 }
 
 // Program 1: Reader-heavy workload demonstrating safe concurrent access
-@xdp fn traffic_monitor(ctx: XdpContext) -> XdpAction {
+@xdp fn traffic_monitor(ctx: xdp_md) -> xdp_action {
     let key = ctx.ingress_ifindex()
     
     // Safe concurrent read access - multiple programs can read simultaneously

@@ -196,7 +196,7 @@ let rec ebpf_type_from_ir_type = function
   | IRContext TracepointCtx -> "void*"
   | IRContext LsmCtx -> "void*"
   | IRContext CgroupSkbCtx -> "struct __sk_buff*"
-  | IRAction XdpActionType -> "int"
+  | IRAction Xdp_actionType -> "int"
   | IRAction TcActionType -> "int"
   | IRAction GenericActionType -> "int"
 
@@ -1470,7 +1470,7 @@ let rec generate_c_instruction ctx ir_instr =
       | Some ret_val ->
           let ret_str = match ret_val.value_desc with
             (* Use context-specific action constant mapping *)
-            | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction XdpActionType ->
+            | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction Xdp_actionType ->
                 (match Kernelscript_context.Context_codegen.map_context_action_constant "xdp" i with
                  | Some action -> action
                  | None -> string_of_int i)

@@ -3,7 +3,7 @@
 
 map<u32, u32> counter_map : HashMap(10)
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
   let end_value = 1000 // Large value to make it unbound
   
   // This should be treated as unbound due to large range

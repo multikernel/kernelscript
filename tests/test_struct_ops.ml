@@ -162,7 +162,7 @@ let test_struct_ops_ir_generation () =
         release: u32
     }
     
-    @xdp fn xdp_prog(ctx: XdpContext) -> XdpAction {
+    @xdp fn xdp_prog(ctx: xdp_md) -> xdp_action {
         return 2
     }
     
@@ -201,7 +201,7 @@ let test_ebpf_struct_ops_codegen () =
         release: u32
     }
     
-    @xdp fn xdp_prog(ctx: XdpContext) -> XdpAction {
+    @xdp fn xdp_prog(ctx: xdp_md) -> xdp_action {
         return 2
     }
     
@@ -233,7 +233,7 @@ let test_userspace_struct_ops_codegen () =
         release: u32
     }
     
-    @xdp fn xdp_prog(ctx: XdpContext) -> XdpAction {
+    @xdp fn xdp_prog(ctx: xdp_md) -> xdp_action {
         return 2
     }
     
@@ -272,7 +272,7 @@ let test_malformed_struct_ops_attribute () =
         field: u32
     }
     
-    @xdp fn xdp_prog(ctx: XdpContext) -> XdpAction {
+    @xdp fn xdp_prog(ctx: xdp_md) -> xdp_action {
         return 2
     }
     

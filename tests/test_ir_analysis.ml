@@ -418,7 +418,7 @@ let _test_analysis_report_generation _ =
 (** Test IR generation and basic structure *)
 let test_ir_generation_basic () =
   let program_text = {|
-@xdp fn simple_ir(ctx: XdpContext) -> XdpAction {
+@xdp fn simple_ir(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
@@ -440,7 +440,7 @@ fn main() -> i32 {
 (** Test basic IR analysis *)
 let test_basic_ir_analysis () =
   let program_text = {|
-@xdp fn basic(ctx: XdpContext) -> XdpAction {
+@xdp fn basic(ctx: xdp_md) -> xdp_action {
   let x = 42
   return 2
 }
@@ -468,7 +468,7 @@ fn main() -> i32 {
 (** Test control flow analysis *)
 let test_control_flow_analysis () =
   let program_text = {|
-@xdp fn control_flow(ctx: XdpContext) -> XdpAction {
+@xdp fn control_flow(ctx: xdp_md) -> xdp_action {
   let x = 10
   if (x > 5) {
     return 2
@@ -921,7 +921,7 @@ let test_comprehensive_ir_analysis () =
 (** Test 4: Basic CFG construction *)
 let test_basic_cfg_construction () =
   let program_text = {|
-@xdp fn cfg_test(ctx: XdpContext) -> XdpAction {
+@xdp fn cfg_test(ctx: xdp_md) -> xdp_action {
   let x = 42
   if (x > 10) {
     return 2

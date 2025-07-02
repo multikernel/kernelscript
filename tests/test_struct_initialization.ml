@@ -42,7 +42,7 @@ struct PacketInfo {
     action: u32,
 }
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     let packet_size = ctx.data_end - ctx.data
     let info = PacketInfo {
         size: packet_size,
@@ -86,7 +86,7 @@ struct ConfigData {
     flags: u32,
 }
 
-@xdp fn config_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn config_filter(ctx: xdp_md) -> xdp_action {
     let packet_size = ctx.data_end - ctx.data
     let info = ConfigData {
         mode: packet_size,
@@ -125,7 +125,7 @@ struct VariableTest {
     action: u32,
 }
 
-@xdp fn variable_test(ctx: XdpContext) -> XdpAction {
+@xdp fn variable_test(ctx: xdp_md) -> xdp_action {
     let packet_size = ctx.data_end - ctx.data
     let info = VariableTest {
         size: packet_size,
@@ -169,7 +169,7 @@ struct Payload {
     data_type: u16,
 }
 
-@xdp fn multi_struct(ctx: XdpContext) -> XdpAction {
+@xdp fn multi_struct(ctx: xdp_md) -> xdp_action {
     let hdr = Header {
         version: 1,
         flags: 0,
@@ -217,7 +217,7 @@ struct FieldTest {
     action: u32,
 }
 
-@xdp fn field_test(ctx: XdpContext) -> XdpAction {
+@xdp fn field_test(ctx: xdp_md) -> xdp_action {
     let packet_size = ctx.data_end - ctx.data
     let info = FieldTest {
         size: packet_size,
@@ -256,7 +256,7 @@ struct TestStruct {
     field2: u64,
 }
 
-@xdp fn test_ir(ctx: XdpContext) -> XdpAction {
+@xdp fn test_ir(ctx: xdp_md) -> xdp_action {
     let test_obj = TestStruct {
         field1: 42,
         field2: 1000,
@@ -306,7 +306,7 @@ struct Parameter {
     action: u32,
 }
 
-@xdp fn param_test(ctx: XdpContext) -> XdpAction {
+@xdp fn param_test(ctx: xdp_md) -> xdp_action {
     let packet_size = ctx.data_end - ctx.data
     let info = Parameter {
         size: packet_size,

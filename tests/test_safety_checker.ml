@@ -48,7 +48,7 @@ let test_bounds_checking () =
 (** Test packet bounds checking *)
 let test_packet_bounds_checking () =
   let pos = make_position 1 1 "test.ks" in
-  let ctx_param = ("ctx", Pointer XdpContext) in
+  let ctx_param = ("ctx", Pointer Xdp_md) in
   let packet_access = make_expr (FieldAccess (make_expr (Identifier "ctx") pos, "data")) pos in
   let unsafe_access = make_expr (ArrayAccess (packet_access, make_expr (Literal (IntLit (1500, None))) pos)) pos in
   let stmt = make_stmt (ExprStmt unsafe_access) pos in
@@ -61,7 +61,7 @@ let test_packet_bounds_checking () =
 (** Test unsafe packet access *)
 let test_unsafe_packet_access () =
   let pos = make_position 1 1 "test.ks" in
-  let ctx_param = ("ctx", Pointer XdpContext) in
+  let ctx_param = ("ctx", Pointer Xdp_md) in
   let data_ptr = make_expr (FieldAccess (make_expr (Identifier "ctx") pos, "data")) pos in
   let unsafe_deref = make_expr (FieldAccess (data_ptr, "value")) pos in
   let stmt = make_stmt (ExprStmt unsafe_deref) pos in

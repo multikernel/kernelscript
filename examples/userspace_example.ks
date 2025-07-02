@@ -1,4 +1,4 @@
-@xdp fn packet_monitor(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_monitor(ctx: xdp_md) -> xdp_action {
     return XDP_PASS
 }
 

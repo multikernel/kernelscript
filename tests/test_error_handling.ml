@@ -20,7 +20,7 @@ let contains_substr str substr =
 let make_simple_program_with_body body_text = {|
 map<u32, u32> test_map : HashMap(1024)
 
-@xdp fn test_prog(ctx: XdpContext) -> i32 {
+@xdp fn test_prog(ctx: xdp_md) -> i32 {
 |} ^ body_text ^ {|
     return 2  // XDP_PASS
 }

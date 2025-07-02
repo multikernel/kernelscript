@@ -53,7 +53,7 @@ config network {
 
 map<u32, u64> packet_stats : HashMap(1024)
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     if (network.max_packet_size > 1000) {
         if (network.enable_logging) {
             print("Dropping big packets")

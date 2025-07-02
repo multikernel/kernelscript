@@ -258,7 +258,7 @@ let test_delete_statement_end_to_end () =
   let program_code = {|
     map<u32, u64> test_map : HashMap(1024)
     
-    @xdp fn test_delete(ctx: XdpContext) -> XdpAction {
+    @xdp fn test_delete(ctx: xdp_md) -> xdp_action {
       let key: u32 = 42
       delete test_map[key]
       return 0

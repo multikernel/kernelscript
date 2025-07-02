@@ -19,7 +19,7 @@ let parse_and_type_check source =
 (* Test str<N> type parsing *)
 let test_string_type_parsing _ =
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let name: str<16> = "hello"
       let message: str<64> = "world"
       let large_buffer: str<512> = "large message"
@@ -44,7 +44,7 @@ let test_string_type_parsing _ =
 (* Test string concatenation type checking *)
 let test_string_concatenation _ =
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let first: str<10> = "hello"
       let second: str<10> = "world"
       let result: str<20> = first + second
@@ -65,7 +65,7 @@ let test_string_concatenation _ =
 (* Test string equality comparison *)
 let test_string_equality _ =
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let name: str<16> = "test"
       let other: str<16> = "other"
       if (name == "test") {
@@ -90,7 +90,7 @@ let test_string_equality _ =
 (* Test string indexing *)
 let test_string_indexing _ =
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let name: str<16> = "hello"
       let first_char: char = name[0]
       let second_char: char = name[1]
@@ -111,7 +111,7 @@ let test_string_indexing _ =
 let test_invalid_string_operations _ =
   (* Test ordering comparison (should fail) *)
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let first: str<10> = "hello"
       let second: str<10> = "world"
       if (first < second) {
@@ -133,7 +133,7 @@ let test_invalid_string_operations _ =
 (* Test string assignment compatibility *)
 let test_string_assignment _ =
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let buffer: str<32> = "initial"
       let small: str<16> = "small"
       buffer = small
@@ -153,7 +153,7 @@ let test_string_assignment _ =
 (* Test arbitrary string sizes *)
 let test_arbitrary_string_sizes _ =
   let program_text = {|
-    @xdp fn test(ctx: XdpContext) -> i32 {
+    @xdp fn test(ctx: xdp_md) -> i32 {
       let tiny: str<1> = "a"
       let small: str<7> = "small"
       let medium: str<42> = "answer"

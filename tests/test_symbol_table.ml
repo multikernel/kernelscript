@@ -514,7 +514,7 @@ let test_global_map_visibility_rules () =
 let test_build_symbol_table_from_ast () =
   let global_map = create_test_map_decl "global_counter" true in
   
-  let packet_filter_func = create_test_function "packet_filter" [("ctx", XdpContext)] XdpAction in
+  let packet_filter_func = create_test_function "packet_filter" [("ctx", Xdp_md)] Xdp_action in
   let attr_func = make_attributed_function [SimpleAttribute "xdp"] packet_filter_func dummy_pos in
   
   let ast = [
@@ -579,18 +579,18 @@ let test_complex_integration () =
   let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)]) in
   add_type_def table struct_def dummy_pos;
   
-  let enum_def = EnumDef ("XdpAction", [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)]) in
+  let enum_def = EnumDef ("xdp_action", [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)]) in
   add_type_def table enum_def dummy_pos;
   
   (* Program scope *)
   let table_prog = enter_scope table (ProgramScope "packet_filter") in
   
   (* Function scope *)
-  let main_func = create_test_function "main" [("ctx", XdpContext)] XdpAction in
+  let main_func = create_test_function "main" [("ctx", Xdp_md)] Xdp_action in
   add_function table_prog main_func Private;
   
   let table_func = enter_scope table_prog (FunctionScope ("packet_filter", "main")) in
-  add_variable table_func "ctx" XdpContext dummy_pos;
+  add_variable table_func "ctx" Xdp_md dummy_pos;
   add_variable table_func "packet_info" (Struct "PacketInfo") dummy_pos;
   
   (* Verify all symbols are accessible *)
@@ -605,7 +605,7 @@ let test_complex_integration () =
    | _ -> fail "expected to find XDP_PASS enum constant");
    
   (match lookup_symbol table_func "ctx" with
-   | Some { kind = Variable XdpContext; _ } -> check bool "ctx variable" true true
+   | Some { kind = Variable Xdp_md; _ } -> check bool "ctx variable" true true
    | _ -> fail "expected to find ctx variable");
    
   check bool "complex integration test passed" true true
@@ -670,7 +670,7 @@ fn add(a: u32, b: u32) -> u32 {
   return sum
 }
 
-@xdp fn func_test(ctx: XdpContext) -> XdpAction {
+@xdp fn func_test(ctx: xdp_md) -> xdp_action {
   let result = add(10, 20)
   return 2
 }
@@ -700,7 +700,7 @@ fn add(a: u32, b: u32) -> u32 {
 (** Test variable resolution *)
 let test_variable_resolution () =
   let program_text = {|
-@xdp fn var_test(ctx: XdpContext) -> XdpAction {
+@xdp fn var_test(ctx: xdp_md) -> xdp_action {
   let x: u32 = 42
   let y: u64 = x + 10
   if (x > 0) {
@@ -768,7 +768,7 @@ let test_map_symbol_handling () =
 map<u32, u64> counter : HashMap(1024) { }
 map<u16, bool> flags : Array(256) { }
 
-@xdp fn map_test(ctx: XdpContext) -> XdpAction {
+@xdp fn map_test(ctx: xdp_md) -> xdp_action {
   counter[1] = 100
   flags[80] = true
   return 2
@@ -804,7 +804,7 @@ fn calculate(x: u32, y: u32) -> u64 {
   return result
 }
 
-@xdp fn type_test(ctx: XdpContext) -> XdpAction {
+@xdp fn type_test(ctx: xdp_md) -> xdp_action {
   let value = calculate(100, 200)
   if (value > 250) {
     return 2
@@ -877,7 +877,7 @@ fn validate_packet(size: u32) -> bool {
   return size > 64 && size < 1500
 }
 
-@xdp fn comprehensive(ctx: XdpContext) -> XdpAction {
+@xdp fn comprehensive(ctx: xdp_md) -> xdp_action {
   let data = ctx.data
   let data_end = ctx.data_end
   let packet_size = data_end - data

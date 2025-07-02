@@ -46,7 +46,7 @@ module Ir = Kernelscript.Ir
 (** Test that global functions are parsed correctly *)
 let test_global_functions_top_level () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -65,7 +65,7 @@ let test_global_functions_top_level () =
 (** Test that functions inside program blocks are not global *)
 let test_program_function_isolation () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -86,7 +86,7 @@ let test_program_function_isolation () =
 (** Test main function with correct signature - no parameters *)
 let test_main_correct_signature () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -103,7 +103,7 @@ let test_main_correct_signature () =
 (** Test main function with struct parameter *)
 let test_main_with_struct_param () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -125,7 +125,7 @@ let test_main_with_struct_param () =
 (** Test main function with wrong parameter types *)
 let test_main_wrong_param_types () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -148,7 +148,7 @@ let test_main_wrong_param_types () =
 (** Test main function with wrong return type *)
 let test_main_wrong_return_type () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -171,7 +171,7 @@ let test_main_wrong_return_type () =
 (** Test main function with non-struct single parameter *)
 let test_main_non_struct_param () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -194,7 +194,7 @@ let test_main_non_struct_param () =
 (** Test main function with too many parameters *)
 let test_main_too_many_params () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -217,7 +217,7 @@ let test_main_too_many_params () =
 (** Test missing main function *)
 let test_missing_main () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -240,7 +240,7 @@ let test_missing_main () =
 (** Test multiple main functions *)
 let test_multiple_main () =
   let code = {|
-    @xdp fn main(ctx: XdpContext) -> XdpAction {
+    @xdp fn main(ctx: xdp_md) -> xdp_action {
       return 2
     }
 
@@ -263,7 +263,7 @@ let test_multiple_main () =
 (** Test global functions with other functions (should be allowed) *)
 let test_global_functions_with_other_functions () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -281,7 +281,7 @@ let test_global_functions_with_other_functions () =
 (** Test global functions with struct definitions *)
 let test_global_functions_with_structs () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -308,7 +308,7 @@ let test_global_functions_with_structs () =
 (** Test multiple programs with single global main *)
 let test_multiple_programs_single_main () =
   let code = {|
-    @xdp fn monitor(ctx: XdpContext) -> XdpAction {
+    @xdp fn monitor(ctx: xdp_md) -> xdp_action {
         return 2
     }
     
@@ -329,7 +329,7 @@ let test_multiple_programs_single_main () =
 (** Test basic global function functionality *)
 let test_basic_global_functions () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
 
@@ -361,7 +361,7 @@ let test_basic_global_functions () =
 (** Test global function code generation from AST *)
 let test_global_function_codegen () =
   let code = {|
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -395,7 +395,7 @@ let test_literal_map_assignment () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -423,7 +423,7 @@ let test_map_lookup_with_literal_key () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -451,7 +451,7 @@ let test_map_update_with_literal_key_value () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -480,7 +480,7 @@ let test_map_delete_with_literal_key () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -509,7 +509,7 @@ let test_map_iterate_with_literal_key () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -539,7 +539,7 @@ let test_mixed_literal_variable_expressions () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -569,7 +569,7 @@ let test_unique_temp_var_names () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -598,7 +598,7 @@ let test_no_direct_literal_addressing () =
   let code = {|
     map<u32, u32> test_map : HashMap(1024)
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     
@@ -635,7 +635,7 @@ let test_map_loading_code_generation () =
         threat_level: u32 = 1,
     }
     
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
       return 2
     }
     

@@ -293,7 +293,7 @@ let test_pointer_ir_generation () =
       return p->x
     }
     @xdp
-    fn test_prog(ctx: XdpContext) -> XdpAction {
+    fn test_prog(ctx: xdp_md) -> xdp_action {
       return 2
     }
   |} in
@@ -324,7 +324,7 @@ let test_pointer_c_generation () =
       return p->x + p->y
     }
     @xdp
-    fn test_prog(ctx: XdpContext) -> XdpAction {
+    fn test_prog(ctx: xdp_md) -> xdp_action {
       return 2
     }
   |} in
@@ -352,7 +352,7 @@ let test_address_of_dereference_codegen () =
       return value
     }
     @xdp
-    fn test_prog(ctx: XdpContext) -> XdpAction {
+    fn test_prog(ctx: xdp_md) -> xdp_action {
       return 2
     }
   |} in
@@ -405,7 +405,7 @@ let test_pointer_safety () =
       return p->x + p->y
     }
     @xdp
-    fn test_prog(ctx: XdpContext) -> XdpAction {
+    fn test_prog(ctx: xdp_md) -> xdp_action {
       return 2
     }
   |} in
@@ -433,7 +433,7 @@ let test_nested_pointer_structures () =
       return width + height
     }
     @xdp
-    fn test_prog(ctx: XdpContext) -> XdpAction {
+    fn test_prog(ctx: xdp_md) -> xdp_action {
       return 2
     }
   |} in

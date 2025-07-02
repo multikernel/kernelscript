@@ -118,14 +118,14 @@ let type_error msg pos = raise (Type_error (msg, pos))
 
 (** Resolve user types to built-in types and type aliases *)
 let rec resolve_user_type ctx = function
-  | UserType "XdpContext" -> XdpContext
+  | UserType "xdp_md" -> Xdp_md
   | UserType "TcContext" -> TcContext
   | UserType "KprobeContext" -> KprobeContext
   | UserType "UprobeContext" -> UprobeContext
   | UserType "TracepointContext" -> TracepointContext
   | UserType "LsmContext" -> LsmContext
   | UserType "CgroupSkbContext" -> CgroupSkbContext
-  | UserType "XdpAction" -> XdpAction
+  | UserType "xdp_action" -> Xdp_action
   | UserType "TcAction" -> TcAction
   | UserType name ->
       (* Look up type alias in the context *)
@@ -337,7 +337,7 @@ let type_check_identifier ctx name pos =
     let parts = String.split_on_char ':' name in
     let filtered_parts = List.filter (fun s -> s <> "") parts in
     match filtered_parts with
-    | ["XdpAction"; _] -> { texpr_desc = TIdentifier name; texpr_type = XdpAction; texpr_pos = pos }
+    | ["xdp_action"; _] -> { texpr_desc = TIdentifier name; texpr_type = Xdp_action; texpr_pos = pos }
     | ["TcAction"; _] -> { texpr_desc = TIdentifier name; texpr_type = TcAction; texpr_pos = pos }
     | [enum_name; _] ->
         (* Try to find enum type *)
@@ -483,7 +483,7 @@ and type_check_field_access ctx obj field pos =
        with Not_found ->
          type_error ("Undefined struct: " ^ struct_name) pos)
   
-  | XdpContext | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext ->
+  | Xdp_md | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext ->
       (* Built-in context field access *)
       (match field with
        | "data" | "data_end" | "data_meta" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
@@ -514,7 +514,7 @@ and type_check_arrow_access ctx obj field pos =
        with Not_found ->
          type_error ("Undefined struct: " ^ struct_name) pos)
   
-  | Pointer (XdpContext | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext) ->
+  | Pointer (Xdp_md | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext) ->
       (* Built-in context field access through pointer *)
       (match field with
        | "data" | "data_end" | "data_meta" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
@@ -1411,7 +1411,7 @@ let type_check_ast ?builtin_path ast =
     match type_def with
     | EnumDef (enum_name, enum_values) ->
         let enum_type = match enum_name with
-          | "XdpAction" -> XdpAction
+          | "xdp_action" -> Xdp_action
           | "TcAction" -> TcAction
           | _ -> UserType enum_name
         in
@@ -1684,7 +1684,7 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
     match type_def with
     | EnumDef (enum_name, enum_values) ->
         let enum_type = match enum_name with
-          | "XdpAction" -> XdpAction
+          | "xdp_action" -> Xdp_action
           | "TcAction" -> TcAction
           | _ -> UserType enum_name
         in
@@ -1797,9 +1797,9 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
                | None -> None in
              
              if List.length params <> 1 ||
-                resolved_param_type <> XdpContext ||
-                resolved_return_type <> Some XdpAction then
-               type_error ("@xdp attributed function must have signature (ctx: XdpContext) -> XdpAction") attr_func.attr_pos
+                resolved_param_type <> Xdp_md ||
+                resolved_return_type <> Some Xdp_action then
+               type_error ("@xdp attributed function must have signature (ctx: xdp_md) -> xdp_action") attr_func.attr_pos
          | Some Tc ->
              let params = attr_func.attr_function.func_params in
              let resolved_param_type = if List.length params = 1 then 

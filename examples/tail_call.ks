@@ -8,12 +8,12 @@ fn validate_packet(size: u32) -> bool {
 }
 
 // ATTRIBUTED FUNCTION - for tail calls (same signature as main function)
-@xdp fn drop_handler(ctx: XdpContext) -> XdpAction {
+@xdp fn drop_handler(ctx: xdp_md) -> xdp_action {
     return 0  // XDP_DROP
 }
 
 // MAIN eBPF PROGRAM - demonstrates both call types
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
     let packet_size: u32 = 128
     
     // REGULAR CALL

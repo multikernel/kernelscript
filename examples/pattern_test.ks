@@ -5,7 +5,7 @@ struct PacketInfo {
     action: u32,
 }
 
-@xdp fn packet_filter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
   // Context access - tests IRContextAccess pattern
   let packet_size = ctx.data_end - ctx.data
   

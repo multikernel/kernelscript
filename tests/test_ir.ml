@@ -52,8 +52,8 @@ let make_test_main_function () =
     (make_test_position ()) in
   make_function 
     "test_xdp" 
-    [("ctx", XdpContext)] 
-    (Some XdpAction) 
+    [("ctx", Xdp_md)] 
+    (Some Xdp_action) 
     [return_stmt] 
     (make_test_position ())
 

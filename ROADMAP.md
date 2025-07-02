@@ -127,7 +127,7 @@ and stmt_desc =
 let test_simple_program () =
   let code = {|
     program test : xdp {
-      fn main(ctx: XdpContext) -> XdpAction {
+      fn main(ctx: xdp_md) -> xdp_action {
         return XDP_PASS;
       }
     }
@@ -157,7 +157,7 @@ Implement complete type checking, inference, and symbol resolution.
 - Complete type system in AST
 - Struct, enum, and type alias support
 - Option and Result type handling
-- Built-in context types (XdpContext, KprobeContext, etc.)
+- Built-in context types (xdp_md, KprobeContext, etc.)
 
 **Extended Types:**
 ```ocaml
@@ -208,7 +208,7 @@ let test_type_inference () =
 
 let test_context_types () =
   let code = {|
-    fn main(ctx: XdpContext) -> XdpAction {
+    fn main(ctx: xdp_md) -> xdp_action {
       let packet = ctx.packet();
       return XDP_PASS;
     }
@@ -230,7 +230,7 @@ let test_global_scoping () =
     map<u32, u64> global_counter : array(256)
     map<u32, LocalData> data_map : hash_map(100)
 
-    @xdp fn test(ctx: XdpContext) -> XdpAction {
+    @xdp fn test(ctx: xdp_md) -> xdp_action {
         global_counter[0] = 1;
         data_map[1] = LocalData::new();
         return XDP_PASS;
@@ -364,7 +364,7 @@ and context_type =
   | XdpCtx | TcCtx | KprobeCtx | UpprobeCtx | TracepointCtx | LsmCtx
 
 and action_type =
-  | XdpActionType | TcActionType | GenericActionType
+  | xdp_actionType | TcActionType | GenericActionType
 
 and bounds_info = {
   min_size: int option;

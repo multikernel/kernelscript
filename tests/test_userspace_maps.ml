@@ -33,10 +33,12 @@ open Alcotest
 
 (** Helper function to parse string with builtin constants loaded *)
 let parse_string_with_builtins code =
-  let ast = Kernelscript.Builtin_loader.parse_with_builtins code in
-  (* Also run type checking *)
-  let _ = Kernelscript.Type_checker.type_check_ast ast in
-  ast
+  let ast = parse_string code in
+  (* Create symbol table with test builtin types *)
+  let _symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  (* Run type checking with builtin types *)
+  let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+  typed_ast
 
 (** Helper function for position printing *)
 let _string_of_position pos =
@@ -74,7 +76,7 @@ let get_generated_userspace_code ast source_filename =
   try
     (* Convert AST to IR properly for the new IR-based codegen *)
     (* Load builtin ASTs for symbol table *)
-    let symbol_table = Kernelscript.Builtin_loader.build_symbol_table_with_builtins ast in
+    let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
     let ir_multi_prog = Kernelscript.Ir_generator.generate_ir ast symbol_table source_filename in
     let _output_file = generate_userspace_code_from_ir ir_multi_prog ~output_dir:temp_dir source_filename in
     let generated_file = Filename.concat temp_dir (Filename.remove_extension source_filename ^ ".c") in
@@ -105,7 +107,7 @@ let test_global_map_accessibility () =
 map<u32, u64> global_counter : HashMap(1024)
 map<u32, u32> global_config : Array(256)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -159,7 +161,7 @@ let test_global_only_map_access () =
   let code = {|
 map<u32, u64> global_shared : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -195,7 +197,7 @@ let test_map_operation_generation () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -247,7 +249,7 @@ map<u32, u32> array_map : Array(256)
 map<u32, u64> lru_map : LruHash(512)
 map<u64, u32> percpu_map : PercpuHash(128)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -303,7 +305,7 @@ let test_global_function_code_structure () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -349,7 +351,7 @@ let test_global_function_error_handling () =
     ({|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -362,7 +364,7 @@ fn helper() -> i32 {
     ({|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: XdpContext) -> u32 {
+@xdp fn test(ctx: xdp_md) -> u32 {
   return 2
 }
 
@@ -401,14 +403,14 @@ map<u32, u32> shared_counter : HashMap(1024) {
   pinned: "/sys/fs/bpf/shared_counter"
 }
 
-@xdp fn packet_counter(ctx: XdpContext) -> XdpAction {
+@xdp fn packet_counter(ctx: xdp_md) -> xdp_action {
   shared_counter[1] = 100
-  return XDP_PASS
+  return 2  // XDP_PASS
 }
 
 @tc fn packet_filter(ctx: TcContext) -> TcAction {
   shared_counter[2] = 200
-  return TC_ACT_OK
+  return 0  // TC_ACT_OK
 }
 
 fn main() -> i32 {
