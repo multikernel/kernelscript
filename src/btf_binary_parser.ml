@@ -225,86 +225,119 @@ let parse_btf_enum_values data offset vlen =
   in
   List.rev (parse_enums [] 0 offset)
 
-(* Parse all BTF types *)
-let parse_btf_types data header =
+(* Lightweight type scanning - only extract name and basic info without members *)
+let scan_btf_type data str_start offset =
+  let btf_type = parse_btf_type data offset in
+  let (kind, vlen) = extract_kind_vlen btf_type.info in 
+  let name = read_string data str_start btf_type.name_off in
+  
+  (* Calculate next offset based on BTF kind without allocating member data *)
+  let next_offset = match kind with
+    | BTF_KIND_STRUCT | BTF_KIND_UNION ->
+        offset + 12 + (vlen * 12) (* Each member is 12 bytes *)
+    | BTF_KIND_ENUM ->
+        offset + 12 + (vlen * 8)  (* Each enum value is 8 bytes *)
+    | BTF_KIND_FUNC_PROTO ->
+        offset + 12 + (vlen * 8)  (* Each parameter is 8 bytes *)
+    | BTF_KIND_ARRAY ->
+        offset + 12 + 12               (* Array info is 12 bytes *)
+    | _ ->
+        offset + 12                    (* Basic types are just 12 bytes *)
+  in
+  
+  (name, kind, vlen, offset, next_offset)
+
+(* Scan all BTF types to find target types by name - no member parsing *)
+let find_target_types data header target_names =
   let types_start = header.hdr_len + header.type_off in
   let types_end = types_start + header.type_len in
   let str_start = header.hdr_len + header.str_off in
   
-  let rec parse_types acc offset type_id =
-    if offset >= types_end then acc
-    else if offset + 12 > Bytes.length data then acc (* Bounds check *)
-    else if type_id > 20000 then acc (* Hard limit to prevent infinite loops *)
+  let target_set = List.fold_left (fun acc name -> 
+    let module StringSet = Set.Make(String) in
+    StringSet.add name acc
+  ) (let module StringSet = Set.Make(String) in StringSet.empty) target_names in
+  
+  let rec scan_types found_types offset type_id =
+    if offset >= types_end then found_types
+    else if offset + 12 > Bytes.length data then found_types
     else
       try
+        let (name, kind, vlen, curr_offset, next_offset) = scan_btf_type data str_start offset in
         
-        let btf_type = parse_btf_type data offset in
-        let (kind, vlen) = extract_kind_vlen btf_type.info in
-        let name = read_string data str_start btf_type.name_off in
-        
-        (* Add bounds checking for vlen to prevent memory issues *)
-        let safe_vlen = if vlen > 1000 then 0 else vlen in
-        
-        (* Calculate next offset based on BTF kind *)
-        let next_offset = match kind with
-          | BTF_KIND_STRUCT | BTF_KIND_UNION ->
-              offset + 12 + (safe_vlen * 12) (* Each member is 12 bytes *)
-          | BTF_KIND_ENUM ->
-              offset + 12 + (safe_vlen * 8)  (* Each enum value is 8 bytes *)
-          | BTF_KIND_FUNC_PROTO ->
-              offset + 12 + (safe_vlen * 8)  (* Each parameter is 8 bytes *)
-          | BTF_KIND_ARRAY ->
-              offset + 12 + 12               (* Array info is 12 bytes *)
-          | _ ->
-              offset + 12                    (* Basic types are just 12 bytes *)
-        in
-        
-        (* Only parse members for struct/union types we care about *)
-        let (members, enum_values) = match kind with
-          | BTF_KIND_STRUCT | BTF_KIND_UNION when safe_vlen > 0 ->
-              if offset + 12 + (safe_vlen * 12) <= Bytes.length data then
-                let members_offset = offset + 12 in
-                let members = parse_btf_members data members_offset safe_vlen in
-                let member_names = List.map (fun (member : btf_member) ->
-                  let member_name = read_string data str_start member.name_off in
-                  (member_name, member.type_id, member.offset)
-                ) members in
-                (Some member_names, None)
-              else
-                (None, None)
-          | BTF_KIND_ENUM when safe_vlen > 0 ->
-              if offset + 12 + (safe_vlen * 8) <= Bytes.length data then
-                let enums_offset = offset + 12 in
-                let enum_vals = parse_btf_enum_values data enums_offset safe_vlen in
-                let enum_names = List.map (fun (enum_val : btf_enum) ->
-                  let enum_name = read_string data str_start enum_val.name_off in
-                  (enum_name, enum_val.value)
-                ) enum_vals in
-                (None, Some enum_names)
-              else
-                (None, None)
-          | _ ->
-              (None, None)
-        in
-        
-        let parsed_type = {
-          id = type_id;
-          name = name;
-          kind = kind;
-          size = (match kind with
-            | BTF_KIND_INT | BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_ENUM ->
-                Some btf_type.size_type
-            | _ -> None);
-          members = members;
-          enum_values = enum_values;
-        } in
-        
-        parse_types (parsed_type :: acc) next_offset (type_id + 1)
+        (* Validate offset progression *)
+        if next_offset <= offset then found_types (* Must advance *)
+        else if next_offset > types_end then found_types (* Stay within bounds *)
+        else
+          let module StringSet = Set.Make(String) in
+          if StringSet.mem name target_set then
+            (* Found a target type - store its info for detailed parsing *)
+            let found_info = (name, kind, vlen, curr_offset, type_id) in
+            scan_types (found_info :: found_types) next_offset (type_id + 1)
+          else
+            (* Not a target type - just advance *)
+            scan_types found_types next_offset (type_id + 1)
       with
-      | _ -> acc (* Skip problematic types and continue *)
+      | _ -> found_types (* Skip problematic types *)
   in
   
-  List.rev (parse_types [] types_start 1)
+  List.rev (scan_types [] types_start 1)
+
+(* Parse detailed type information only for found target types *)
+let parse_target_type_details data str_start (name, kind, vlen, offset, type_id) =
+  try
+    (* Only parse members/enum values for types we actually care about *)
+    let (members, enum_values) = match kind with
+      | BTF_KIND_STRUCT | BTF_KIND_UNION when vlen > 0 ->
+          if offset + 12 + (vlen * 12) <= Bytes.length data then
+            let members_offset = offset + 12 in
+            let members = parse_btf_members data members_offset vlen in
+            let member_names = List.map (fun (member : btf_member) ->
+              let member_name = read_string data str_start member.name_off in
+              (member_name, member.type_id, member.offset)
+            ) members in
+            (Some member_names, None)
+          else
+            (None, None)
+      | BTF_KIND_ENUM when vlen > 0 ->
+          if offset + 12 + (vlen * 8) <= Bytes.length data then
+            let enums_offset = offset + 12 in
+            let enum_vals = parse_btf_enum_values data enums_offset vlen in
+            let enum_names = List.map (fun (enum_val : btf_enum) ->
+              let enum_name = read_string data str_start enum_val.name_off in
+              (enum_name, enum_val.value)
+            ) enum_vals in
+            (None, Some enum_names)
+          else
+            (None, None)
+      | _ ->
+          (None, None)
+    in
+    
+    let btf_type_info = parse_btf_type data offset in
+    Some {
+      id = type_id;
+      name = name;
+      kind = kind;
+      size = (match kind with
+        | BTF_KIND_INT | BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_ENUM ->
+            Some btf_type_info.size_type
+        | _ -> None);
+      members = members;
+      enum_values = enum_values;
+    }
+  with
+  | _ -> None (* Skip if parsing fails *)
+
+(* New elegant BTF parsing approach: scan first, then parse only needed types *)
+let parse_btf_types data header target_names =
+  let str_start = header.hdr_len + header.str_off in
+  
+  (* Step 1: Scan all types to find our target types by name *)
+  let found_target_info = find_target_types data header target_names in
+  
+  (* Step 2: Parse detailed information only for found target types *)
+  List.filter_map (parse_target_type_details data str_start) found_target_info
 
 (* Convert BTF types to KernelScript format *)
 let btf_type_to_kernelscript btf_types type_name =
@@ -362,9 +395,7 @@ let btf_type_to_kernelscript btf_types type_name =
       }
   | _ -> None
 
-
-
-(* Main BTF parsing function *)
+(* Updated main BTF parsing function *)
 let parse_btf_file btf_path target_types =
   try
     let ic = open_in_bin btf_path in
@@ -374,11 +405,7 @@ let parse_btf_file btf_path target_types =
     let data_bytes = Bytes.of_string data in
     let header = parse_btf_header data_bytes in
     
-
-    
-    let btf_types = parse_btf_types data_bytes header in
-    
-
+    let btf_types = parse_btf_types data_bytes header target_types in
     
     (* Extract requested types *)
     let extracted_types = List.filter_map (fun type_name ->
@@ -386,7 +413,7 @@ let parse_btf_file btf_path target_types =
     ) target_types in
     
     printf "Successfully parsed BTF file: %s\n" btf_path;
-    printf "Found %d types, extracted %d requested types\n" 
+    printf "Found %d target types, extracted %d requested types\n" 
       (List.length btf_types) (List.length extracted_types);
     
     extracted_types
