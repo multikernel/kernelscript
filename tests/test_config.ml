@@ -543,6 +543,98 @@ fn main() -> i32 {
   with
   | e -> fail ("Error with different config types: " ^ Printexc.to_string e)
 
+(** Test config AST to IR conversion bug fix *)
+let test_config_ast_to_ir_conversion () =
+  let program_text = {|
+config network {
+    max_packet_size: u32 = 1500,
+    enable_logging: bool = true,
+    blocked_ports: u16[4] = [22, 23, 135, 445],
+}
+
+@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+    if (network.max_packet_size > 1000) {
+        if (network.enable_logging) {
+            return 1
+        }
+    }
+    return 2
+}
+
+fn main() -> i32 {
+    let prog = load(packet_filter)
+    return 0
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let symbol_table = build_symbol_table ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    
+    (* Step 1: Verify config declarations are in AST *)
+    let config_declarations = List.filter_map (fun decl -> match decl with
+      | ConfigDecl config -> Some config
+      | _ -> None
+    ) ast in
+    check int "config declarations found in AST" 1 (List.length config_declarations);
+    
+    let network_config = List.hd config_declarations in
+    check string "config name in AST" "network" network_config.config_name;
+    check int "config fields in AST" 3 (List.length network_config.config_fields);
+    
+    (* Step 2: Generate IR and verify config declarations are converted to IR format *)
+    let ir = generate_ir annotated_ast symbol_table "test_config_ast_ir" in
+    check int "IR multi-program has config declarations" 1 (List.length ir.global_configs);
+    
+    let ir_config = List.hd ir.global_configs in
+    check string "config name in IR" "network" ir_config.config_name;
+    check int "config fields in IR" 3 (List.length ir_config.config_fields);
+    
+    (* Step 3: Verify specific field conversions from AST to IR *)
+    let field_names = List.map (fun (field : Kernelscript.Ir.ir_config_field) -> field.field_name) ir_config.config_fields in
+    check bool "max_packet_size field in IR" true (List.mem "max_packet_size" field_names);
+    check bool "enable_logging field in IR" true (List.mem "enable_logging" field_names);
+    check bool "blocked_ports field in IR" true (List.mem "blocked_ports" field_names);
+    
+    (* Step 4: Generate eBPF C code and verify struct and map definitions are present *)
+    let ebpf_code = compile_multi_to_c ir in
+    
+    (* Test that struct network_config is defined *)
+    check bool "struct network_config defined" true 
+      (try ignore (Str.search_forward (Str.regexp "struct network_config") ebpf_code 0); true 
+       with Not_found -> false);
+    
+    (* Test that network_config_map is defined *)
+    check bool "network_config_map defined" true 
+      (try ignore (Str.search_forward (Str.regexp "network_config_map") ebpf_code 0); true 
+       with Not_found -> false);
+    
+    (* Test that config fields are in the struct definition *)
+    check bool "max_packet_size field in struct" true 
+      (try ignore (Str.search_forward (Str.regexp "max_packet_size") ebpf_code 0); true 
+       with Not_found -> false);
+    
+    check bool "enable_logging field in struct" true 
+      (try ignore (Str.search_forward (Str.regexp "enable_logging") ebpf_code 0); true 
+       with Not_found -> false);
+    
+    check bool "blocked_ports field in struct" true 
+      (try ignore (Str.search_forward (Str.regexp "blocked_ports") ebpf_code 0); true 
+       with Not_found -> false);
+    
+    (* Test that BPF_MAP_TYPE_ARRAY is used for config map *)
+    check bool "config map uses BPF_MAP_TYPE_ARRAY" true 
+      (try ignore (Str.search_forward (Str.regexp "BPF_MAP_TYPE_ARRAY") ebpf_code 0); true 
+       with Not_found -> false);
+    
+    (* Test that get_network_config helper function is generated *)
+    check bool "get_network_config helper function" true 
+      (try ignore (Str.search_forward (Str.regexp "get_network_config") ebpf_code 0); true 
+       with Not_found -> false);
+       
+  with
+  | e -> fail ("Config AST to IR conversion test failed: " ^ Printexc.to_string e)
+
 (** Test config map initialization with default values (bug fix test) *)
 let test_config_map_default_value_initialization () =
   let program_text = {|
@@ -685,6 +777,9 @@ let config_tests = [
   (* eBPF C Code Generation Tests *)
   "config_struct_generation", `Quick, test_config_struct_generation;
   "config_bpf_map_generation", `Quick, test_config_bpf_map_generation;
+  
+  (* Bug Fix Tests *)
+  "config_ast_to_ir_conversion", `Quick, test_config_ast_to_ir_conversion;
   
   (* Userspace Code Generation Tests *)
   "config_initialization_generation", `Quick, test_config_initialization_generation;

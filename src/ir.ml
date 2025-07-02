@@ -112,7 +112,7 @@ and ir_config_item = {
 (** Enhanced type system for IR with bounds and safety information *)
 and ir_type = 
   | IRU8 | IRU16 | IRU32 | IRU64 | IRBool | IRChar
-  | IRI8 | IRF32 | IRF64 (* Add signed integers and floating point *)
+  | IRI8 | IRI16 | IRI32 | IRI64 | IRF32 | IRF64 (* Add signed integers and floating point *)
   | IRStr of int (* Fixed-size string str<N> *)
   | IRPointer of ir_type * bounds_info
   | IRArray of ir_type * int * bounds_info
@@ -650,6 +650,9 @@ let rec string_of_ir_type = function
   | IRBool -> "bool"
   | IRChar -> "char"
   | IRI8 -> "i8"
+  | IRI16 -> "i16"
+  | IRI32 -> "i32"
+  | IRI64 -> "i64"
   | IRF32 -> "f32"
   | IRF64 -> "f64"
   | IRStr size -> Printf.sprintf "str<%d>" size

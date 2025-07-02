@@ -402,7 +402,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate eBPF C code (with automatic tail call detection and kfunc declarations) *)
     let (ebpf_c_code, tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      ~config_declarations:optimized_ir.global_configs ~type_aliases ~variable_type_aliases ~kfunc_declarations optimized_ir in
+      ~type_aliases ~variable_type_aliases ~kfunc_declarations optimized_ir in
       
     (* Determine output directory *)
     let base_name = Filename.remove_extension (Filename.basename input_file) in

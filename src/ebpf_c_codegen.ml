@@ -176,6 +176,9 @@ let rec ebpf_type_from_ir_type = function
   | IRU32 -> "__u32"
   | IRU64 -> "__u64"
   | IRI8 -> "__s8"
+  | IRI16 -> "__s16"
+  | IRI32 -> "__s32"
+  | IRI64 -> "__s64"
   | IRF32 -> "__u32" (* Fixed point representation in kernel *)
   | IRF64 -> "__u64" (* Fixed point representation in kernel *)
   | IRBool -> "__u8"
@@ -761,7 +764,7 @@ let generate_config_map_definition ctx config_decl =
   emit_blank_line ctx
 
 (** Generate declarations in original AST order to preserve source order *)
-let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
+let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
   (* We need to generate declarations in the order they appeared in the original source.
      Since we don't have direct access to the AST here, we need to reconstruct the order.
      For now, we'll use a simple heuristic: type aliases first, then structs. *)
@@ -769,9 +772,8 @@ let generate_declarations_in_source_order ctx ir_multi_program type_aliases =
   (* Generate type alias definitions from AST first *)
   generate_ast_type_alias_definitions ctx type_aliases;
   
-  (* Generate config maps if provided *)
-  if ir_multi_program.global_configs <> [] then
-    List.iter (generate_config_map_definition ctx) ir_multi_program.global_configs;
+  (* Config maps are now generated from the main multi-program generation function to avoid duplication *)
+  (* Remove this generation here as it's handled in generate_c_multi_program *)
 
   (* With attributed functions, all maps are global - no program-scoped maps *)
   
@@ -1049,7 +1051,7 @@ let generate_c_expression ctx ir_expr =
                  | IRPointer (inner_type, _) ->
                      let c_type = ebpf_type_from_ir_type inner_type in
                      let size = match inner_type with
-                       | IRI8 | IRU8 -> 1 | IRU16 -> 2 | IRU32 -> 4 | IRU64 -> 8 | _ -> 4
+                       | IRI8 | IRU8 -> 1 | IRI16 | IRU16 -> 2 | IRI32 | IRU32 -> 4 | IRI64 | IRU64 -> 8 | _ -> 4
                      in
                      sprintf "({ %s __pkt_val = 0; struct bpf_dynptr __pkt_dynptr; if (bpf_dynptr_from_xdp(&__pkt_dynptr, ctx) == 0) { void* __pkt_data = bpf_dynptr_data(&__pkt_dynptr, (%s - (void*)(long)ctx->data), %d); if (__pkt_data) __pkt_val = *(%s*)__pkt_data; } __pkt_val; })" 
                        c_type val_str size c_type
@@ -1065,7 +1067,7 @@ let generate_c_expression ctx ir_expr =
                  | IRPointer (inner_type, _) ->
                      let c_type = ebpf_type_from_ir_type inner_type in
                      let size = match inner_type with
-                       | IRI8 | IRU8 -> 1 | IRU16 -> 2 | IRU32 -> 4 | IRU64 -> 8 | _ -> 4
+                       | IRI8 | IRU8 -> 1 | IRI16 | IRU16 -> 2 | IRI32 | IRU32 -> 4 | IRI64 | IRU64 -> 8 | _ -> 4
                      in
                      sprintf "({ %s __mem_val = 0; struct bpf_dynptr __mem_dynptr; if (bpf_dynptr_from_mem(%s, %d, 0, &__mem_dynptr) == 0) { void* __mem_data = bpf_dynptr_data(&__mem_dynptr, 0, %d); if (__mem_data) __mem_val = *(%s*)__mem_data; } __mem_val; })" 
                        c_type val_str size size c_type
@@ -1919,7 +1921,7 @@ let generate_c_function ctx ir_func =
 
 (** Generate complete C program from IR *)
 
-let generate_c_program ?config_declarations ir_prog =
+let generate_c_program ?_config_declarations ir_prog =
   let ctx = create_c_context () in
   
   (* Initialize modular context code generators *)
@@ -1954,11 +1956,9 @@ let generate_c_program ?config_declarations ir_prog =
   let type_aliases = collect_type_aliases_from_multi_program temp_multi_prog in
   generate_type_alias_definitions ctx type_aliases;
   
-  (* Generate config maps if provided *)
-  begin match config_declarations with
-  | Some configs -> List.iter (generate_config_map_definition ctx) configs
-  | None -> ()
-  end;
+  (* Generate config maps from temporary multi-program structure *)
+  if temp_multi_prog.global_configs <> [] then
+    List.iter (generate_config_map_definition ctx) temp_multi_prog.global_configs;
 
   (* With attributed functions, all maps are global - no program-scoped maps *)
   
@@ -1987,7 +1987,7 @@ let generate_c_program ?config_declarations ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
   let ctx = create_c_context () in
   
   (* Initialize modular context code generators *)
@@ -2014,11 +2014,9 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
   generate_struct_definitions ctx struct_defs;
   
-  (* Generate config maps if provided *)
-  begin match config_declarations with
-  | Some configs -> List.iter (generate_config_map_definition ctx) configs
-  | None -> ()
-  end;
+  (* Generate config maps from IR multi-program *)
+  if ir_multi_program.global_configs <> [] then
+    List.iter (generate_config_map_definition ctx) ir_multi_program.global_configs;
   
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
@@ -2060,8 +2058,8 @@ let generate_c_multi_program ?config_declarations ?(type_aliases=[]) ?(variable_
 
 (** Main compilation entry point *)
 
-let compile_to_c ?config_declarations ir_program =
-  let c_code = generate_c_program ?config_declarations ir_program in
+let compile_to_c ?_config_declarations ir_program =
+  let c_code = generate_c_program ?_config_declarations ir_program in
   c_code
 
 (** Helper function to write C code to file *)
@@ -2104,7 +2102,7 @@ let generate_prog_array_map ctx prog_array_size =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
-    ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[])
+    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[])
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -2246,8 +2244,9 @@ let compile_multi_to_c_with_tail_calls
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
   
-  (* Generate config maps *)
-  List.iter (generate_config_map_definition ctx) config_declarations;
+  (* Generate config maps from IR multi-program *)
+  if ir_multi_prog.global_configs <> [] then
+    List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
   
   (* Now generate the actual functions *)
   List.iter (fun ir_prog ->
@@ -2277,10 +2276,10 @@ let compile_multi_to_c_with_tail_calls
 
 (** Multi-program compilation entry point with automatic tail call handling *)
 
-let compile_multi_to_c ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
   let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-    ~config_declarations ~type_aliases ~variable_type_aliases ir_multi_program in
+    ~type_aliases ~variable_type_aliases ir_multi_program in
   
   (* Print tail call analysis results *)
   Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
@@ -2290,10 +2289,10 @@ let compile_multi_to_c ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_t
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
 
-let compile_multi_to_c_with_analysis ?(config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ir_multi_program =
+let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
   let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-    ~config_declarations ~type_aliases ~variable_type_aliases ~kfunc_declarations ir_multi_program in
+    ~type_aliases ~variable_type_aliases ~kfunc_declarations ir_multi_program in
   
   (* Print tail call analysis results *)
   Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 

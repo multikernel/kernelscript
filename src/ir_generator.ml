@@ -698,10 +698,10 @@ let rec lower_statement ctx stmt =
       
       (* Add stack usage for local variables *)
       let size = match target_type with
-        | IRU8 | IRChar -> 1
-        | IRU16 -> 2
-        | IRU32 | IRBool -> 4
-        | IRU64 -> 8
+        | IRI8 | IRU8 | IRChar -> 1
+        | IRI16 | IRU16 -> 2
+        | IRI32 | IRU32 | IRBool -> 4
+        | IRI64 | IRU64 -> 8
         | IRArray (_, count, _) -> count * 4 (* Simplified *)
         | IRStr size -> size + 2 (* String data + length field *)
         | _ -> 8 (* Conservative estimate *)
@@ -736,10 +736,10 @@ let rec lower_statement ctx stmt =
       
       (* Add stack usage for const variables (same as regular variables) *)
       let size = match target_type with
-        | IRU8 | IRChar -> 1
-        | IRU16 -> 2
-        | IRU32 | IRBool -> 4
-        | IRU64 -> 8
+        | IRI8 | IRU8 | IRChar -> 1
+        | IRI16 | IRU16 -> 2
+        | IRI32 | IRU32 | IRBool -> 4
+        | IRI64 | IRU64 -> 8
         | _ -> 8 (* Conservative estimate *)
       in
       ctx.stack_usage <- ctx.stack_usage + size;
@@ -1925,6 +1925,75 @@ let lower_multi_program ast symbol_table source_name =
     generate_userspace_bindings_from_multi_programs prog_defs userspace_functions map_flag_infos config_declarations
   in
   
+  (* Helper function to convert AST literals to IR values *)
+  let ast_literal_to_ir_value literal pos =
+    match literal with
+    | Ast.IntLit (i, orig) -> make_ir_value (IRLiteral (IntLit (i, orig))) IRU32 pos
+    | Ast.BoolLit b -> make_ir_value (IRLiteral (BoolLit b)) IRBool pos
+    | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) pos
+    | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar pos
+    | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) pos
+    | Ast.ArrayLit elements ->
+        let ir_elements = List.map (function
+          | Ast.IntLit (i, orig) -> IntLit (i, orig)
+          | Ast.BoolLit b -> BoolLit b
+          | Ast.StringLit s -> StringLit s
+          | Ast.CharLit c -> CharLit c
+          | Ast.NullLit -> NullLit
+          | Ast.ArrayLit _ -> failwith "Nested arrays not supported in config defaults"
+        ) elements in
+        make_ir_value (IRLiteral (ArrayLit ir_elements)) (IRArray (IRU32, List.length elements, make_bounds_info ())) pos
+  in
+  
+  (* Convert config declarations to IR *)
+  let ir_global_configs = List.map (fun config_decl ->
+    let ir_fields = List.map (fun field ->
+      let ir_type = match field.Ast.field_type with
+        | Ast.U8 -> IRU8
+        | Ast.U16 -> IRU16
+        | Ast.U32 -> IRU32
+        | Ast.U64 -> IRU64
+        | Ast.I8 -> IRI8
+        | Ast.I16 -> IRI16
+        | Ast.I32 -> IRI32
+        | Ast.I64 -> IRI64
+        | Ast.Bool -> IRBool
+        | Ast.Char -> IRChar
+        | Ast.Array (elem_type, size) ->
+            let ir_elem_type = match elem_type with
+              | Ast.U8 -> IRU8
+              | Ast.U16 -> IRU16
+              | Ast.U32 -> IRU32
+              | Ast.U64 -> IRU64
+              | Ast.I8 -> IRI8
+              | Ast.I16 -> IRI16
+              | Ast.I32 -> IRI32
+              | Ast.I64 -> IRI64
+              | Ast.Bool -> IRBool
+              | Ast.Char -> IRChar
+              | _ -> failwith ("Unsupported array element type: " ^ (Ast.string_of_bpf_type elem_type))
+            in
+            let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
+            IRArray (ir_elem_type, size, bounds_info)
+        | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field.Ast.field_type))
+      in
+      let default_value = match field.Ast.field_default with
+        | Some literal -> Some (ast_literal_to_ir_value literal field.Ast.field_pos)
+        | None -> None
+      in
+      make_ir_config_field 
+        field.Ast.field_name 
+        ir_type 
+        default_value 
+        false  (* is_mutable: configs are read-only by default *)
+        field.Ast.field_pos
+    ) config_decl.Ast.config_fields in
+    make_ir_global_config 
+      config_decl.Ast.config_name 
+      ir_fields 
+      config_decl.Ast.config_pos
+  ) config_declarations in
+  
   (* Create multi-program IR *)
   let multi_pos = match prog_defs with
     | [] -> { line = 1; column = 1; filename = source_name }
@@ -1936,6 +2005,7 @@ let lower_multi_program ast symbol_table source_name =
     ir_programs 
     ir_kernel_functions 
     ir_global_maps 
+    ~global_configs:ir_global_configs
     ~struct_ops_declarations:ir_struct_ops_declarations
     ~struct_ops_instances:ir_struct_ops_instances
     ?userspace_program:userspace_program 

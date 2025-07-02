@@ -556,6 +556,9 @@ let rec c_type_from_ir_type = function
   | IRU32 -> "uint32_t"
   | IRU64 -> "uint64_t"
   | IRI8 -> "int8_t"
+  | IRI16 -> "int16_t"
+  | IRI32 -> "int32_t"
+  | IRI64 -> "int64_t"
   | IRF32 -> "float"
   | IRF64 -> "double"
   | IRBool -> "bool"
@@ -1550,14 +1553,19 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
         dep_loading_code
     in
     
-    sprintf {|int load_bpf_program(const char *program_name) {
-    /* Ensure kfunc dependencies are loaded before loading eBPF program */
+    let kfunc_dependency_check = if has_kfunc_dependencies kfunc_dependencies then
+      {|    /* Ensure kfunc dependencies are loaded before loading eBPF program */
     if (ensure_kfunc_dependencies_loaded(program_name) != 0) {
         fprintf(stderr, "Failed to load required kernel modules for program '%%s'\n", program_name);
         return -1;
     }
+    |}
+    else
+      ""
+    in
     
-    if (!bpf_obj) {
+    sprintf {|int load_bpf_program(const char *program_name) {
+%s    if (!bpf_obj) {
         bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
         if (libbpf_get_error(bpf_obj)) {
             fprintf(stderr, "Failed to open BPF object\n");
@@ -1583,7 +1591,7 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
     }
     
     return prog_fd;
-}|} base_name combined_setup_code
+}|} kfunc_dependency_check base_name combined_setup_code
   else ""
 
 (** Generate complete userspace program from IR *)
