@@ -1,7 +1,7 @@
 (** Unit Tests for Dynptr Bridge Integration *)
 
 open Kernelscript.Dynptr_bridge
-open Kernelscript.Builtin_loader
+open Kernelscript.Symbol_table
 open Kernelscript.Evaluator
 open Alcotest
 
@@ -13,7 +13,7 @@ let test_memory_bridge_integration () =
   let maps = Hashtbl.create 16 in
   let functions = Hashtbl.create 16 in
   let empty_ast = [] in
-  let symbol_table = build_symbol_table_with_builtins empty_ast in
+  let symbol_table = build_symbol_table empty_ast in
   let eval_ctx = create_eval_context symbol_table maps functions in
   
   (* Add some test variables *)
@@ -62,7 +62,7 @@ let test_different_memory_regions () =
   let maps = Hashtbl.create 16 in
   let functions = Hashtbl.create 16 in
   let empty_ast = [] in
-  let symbol_table = build_symbol_table_with_builtins empty_ast in
+  let symbol_table = build_symbol_table empty_ast in
   let eval_ctx = create_eval_context symbol_table maps functions in
   
   (* Add variables of different region types *)
@@ -101,7 +101,7 @@ let test_bridge_error_handling () =
   let maps = Hashtbl.create 16 in
   let functions = Hashtbl.create 16 in
   let empty_ast = [] in
-  let symbol_table = build_symbol_table_with_builtins empty_ast in
+  let symbol_table = build_symbol_table empty_ast in
   let eval_ctx = create_eval_context symbol_table maps functions in
   
   (* Extract memory info from empty context *)

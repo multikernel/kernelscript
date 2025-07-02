@@ -51,12 +51,12 @@ type bounds_info = {
 (** Enhanced evaluator context with mandatory symbol table
     
     The evaluator now requires a symbol table to properly resolve enum constants
-    from builtin AST files (builtin/xdp.ks, builtin/tc.ks, etc.) instead of 
-    hardcoding them. This eliminates code duplication and ensures consistency.
+    extracted from BTF or defined in user code instead of hardcoding them.
+    This eliminates code duplication and ensures consistency.
     
     Usage:
-    - Symbol table must be created using Builtin_loader.build_symbol_table_with_builtins
-    - All enum constants (XDP_PASS, TC_ACT_OK, etc.) are loaded from builtin definitions
+    - Symbol table is created using Symbol_table.build_symbol_table with BTF-extracted types
+    - All enum constants (XDP_PASS, TC_ACT_OK, etc.) are loaded from BTF extraction during init
     - No hardcoded fallback - all callers must provide proper symbol tables
 *)
 type eval_context = {

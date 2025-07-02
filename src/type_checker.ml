@@ -92,23 +92,44 @@ type typed_program = {
 }
 
 (** Create type checking context *)
-let create_context symbol_table ast = {
-  variables = Hashtbl.create 32;
-  functions = Hashtbl.create 16;
-  function_scopes = Hashtbl.create 16;
-  helper_functions = Hashtbl.create 16;
-  attributed_functions = Hashtbl.create 16;
-  types = Hashtbl.create 16;
-  maps = Hashtbl.create 16;
-  configs = Hashtbl.create 16;
-  symbol_table = symbol_table;
-  current_function = None;
-  current_program_type = None;
-  multi_program_analysis = None;
-  in_tail_call_context = false;
-  attributed_function_map = Hashtbl.create 16;
-  ast_context = ast;
-}
+let create_context symbol_table ast = 
+  let variables = Hashtbl.create 32 in
+  let functions = Hashtbl.create 16 in
+  let function_scopes = Hashtbl.create 16 in
+  let helper_functions = Hashtbl.create 16 in
+  let attributed_functions = Hashtbl.create 16 in
+  let types = Hashtbl.create 16 in
+  let maps = Hashtbl.create 16 in
+  let configs = Hashtbl.create 16 in
+  
+  (* Extract enum constants from symbol table and add to variables *)
+  let global_symbols = Symbol_table.get_global_symbols symbol_table in
+  List.iter (fun symbol ->
+    match symbol.Symbol_table.kind with
+    | Symbol_table.EnumConstant (enum_name, _value) ->
+        (* Add enum constant as a U32 variable (standard for enum values) *)
+        let enum_type = Enum enum_name in
+        Hashtbl.replace variables symbol.Symbol_table.name enum_type
+    | _ -> ()
+  ) global_symbols;
+  
+  {
+    variables = variables;
+    functions = functions;
+    function_scopes = function_scopes;
+    helper_functions = helper_functions;
+    attributed_functions = attributed_functions;
+    types = types;
+    maps = maps;
+    configs = configs;
+    symbol_table = symbol_table;
+    current_function = None;
+    current_program_type = None;
+    multi_program_analysis = None;
+    in_tail_call_context = false;
+    attributed_function_map = Hashtbl.create 16;
+    ast_context = ast;
+  }
 
 (** Track loop nesting depth to prevent nested loops *)
 let loop_depth = ref 0
@@ -1388,23 +1409,9 @@ let type_check_userspace _ctx _userspace_block =
   failwith "Userspace blocks are no longer supported"
 
 (** Main type checking entry point *)
-let type_check_ast ?builtin_path ast =
-  (* Load builtin definitions from KernelScript files *)
-  (* Create symbol table with builtin definitions *)
-  let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
-  let builtin_asts = Builtin_loader.load_standard_builtins ?builtin_path () in
+let type_check_ast ast =
+  let symbol_table = Symbol_table.build_symbol_table ast in
   let ctx = create_context symbol_table ast in
-  
-  (* Process builtin types into type context *)
-  List.iter (fun builtin_ast ->
-    List.iter (function
-      | TypeDef type_def ->
-          (match type_def with
-           | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-               Hashtbl.replace ctx.types name type_def)
-      | _ -> ()
-    ) builtin_ast
-  ) builtin_asts;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
@@ -1650,7 +1657,7 @@ let typed_ast_to_annotated_ast typed_attributed_functions typed_userspace_functi
   ) original_ast
 
 (** PHASE 2: Type check and annotate AST with multi-program analysis *)
-let rec type_check_and_annotate_ast ?builtin_path ast =
+let rec type_check_and_annotate_ast ast =
   (* STEP 1: Multi-program analysis *)
   let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system ast in
   
@@ -1663,21 +1670,8 @@ let rec type_check_and_annotate_ast ?builtin_path ast =
     Multi_program_analyzer.print_analysis_results multi_prog_analysis;
   
   (* STEP 2: Type checking with multi-program context *)
-  (* Load builtin definitions and create symbol table *)
-  let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
-  let builtin_asts = Builtin_loader.load_standard_builtins ?builtin_path () in
+  let symbol_table = Symbol_table.build_symbol_table ast in
   let ctx = create_context symbol_table ast in
-  
-  (* Process builtin types into type context *)
-  List.iter (fun builtin_ast ->
-    List.iter (function
-      | TypeDef type_def ->
-          (match type_def with
-           | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
-               Hashtbl.replace ctx.types name type_def)
-      | _ -> ()
-    ) builtin_ast
-  ) builtin_asts;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->

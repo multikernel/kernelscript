@@ -6,7 +6,7 @@ open Printf
 (** Subcommand types *)
 type subcommand = 
   | Init of { prog_type: string; project_name: string; btf_path: string option }
-  | Compile of { input_file: string; output_dir: string option; verbose: bool; generate_makefile: bool; builtin_path: string option; btf_vmlinux_path: string option }
+  | Compile of { input_file: string; output_dir: string option; verbose: bool; generate_makefile: bool; btf_vmlinux_path: string option }
 
 (** Parse command line arguments *)
 let rec parse_args () =
@@ -70,31 +70,29 @@ and parse_init_args args =
   parse_aux None None None args
 
 and parse_compile_args args =
-  let rec parse_aux input_file_opt output_dir verbose generate_makefile builtin_path btf_path = function
+  let rec parse_aux input_file_opt output_dir verbose generate_makefile btf_path = function
     | [] ->
                  (match input_file_opt with
           | Some input_file ->
-              Compile { input_file; output_dir; verbose; generate_makefile; builtin_path; btf_vmlinux_path = btf_path }
+              Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path = btf_path }
          | None ->
              printf "Error: No input file specified for compile command\n";
              exit 1)
     | "-o" :: output :: rest ->
-        parse_aux input_file_opt (Some output) verbose generate_makefile builtin_path btf_path rest
+        parse_aux input_file_opt (Some output) verbose generate_makefile btf_path rest
     | "--output" :: output :: rest ->
-        parse_aux input_file_opt (Some output) verbose generate_makefile builtin_path btf_path rest
+        parse_aux input_file_opt (Some output) verbose generate_makefile btf_path rest
     | "-v" :: rest ->
-        parse_aux input_file_opt output_dir true generate_makefile builtin_path btf_path rest
+        parse_aux input_file_opt output_dir true generate_makefile btf_path rest
     | "--verbose" :: rest ->
-        parse_aux input_file_opt output_dir true generate_makefile builtin_path btf_path rest
+        parse_aux input_file_opt output_dir true generate_makefile btf_path rest
     | "--no-makefile" :: rest ->
-        parse_aux input_file_opt output_dir verbose false builtin_path btf_path rest
-    | "--builtin-path" :: path :: rest ->
-        parse_aux input_file_opt output_dir verbose generate_makefile (Some path) btf_path rest
+        parse_aux input_file_opt output_dir verbose false btf_path rest
     | "--btf-vmlinux-path" :: path :: rest ->
-        parse_aux input_file_opt output_dir verbose generate_makefile builtin_path (Some path) rest
+        parse_aux input_file_opt output_dir verbose generate_makefile (Some path) rest
     | arg :: rest when not (String.starts_with ~prefix:"-" arg) ->
         (match input_file_opt with
-         | None -> parse_aux (Some arg) output_dir verbose generate_makefile builtin_path btf_path rest
+         | None -> parse_aux (Some arg) output_dir verbose generate_makefile btf_path rest
          | Some _ ->
              printf "Error: Multiple input files specified\n";
              exit 1)
@@ -102,7 +100,7 @@ and parse_compile_args args =
         printf "Error: Unknown option '%s' for compile command\n" unknown;
         exit 1
   in
-  parse_aux None None false true None None args
+  parse_aux None None false true None args
 
 (** Initialize a new KernelScript project *)
 let init_project prog_type project_name btf_path =
@@ -198,7 +196,7 @@ cd %s && make run
   printf "   3. Run 'cd %s && make' to build the generated C code\n" project_name
 
 (** Compile KernelScript source (existing functionality) *)
-let compile_source input_file output_dir _verbose generate_makefile builtin_path btf_vmlinux_path =
+let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_path =
   let current_phase = ref "Parsing" in
   
   (* Initialize context code generators *)
@@ -237,8 +235,7 @@ let compile_source input_file output_dir _verbose generate_makefile builtin_path
     current_phase := "Symbol Analysis";
     Printf.printf "Phase 2: %s\n" !current_phase;
     
-    (* Load builtin ASTs and build symbol table *)
-    let symbol_table = Builtin_loader.build_symbol_table_with_builtins ?builtin_path ast in
+    let symbol_table = Symbol_table.build_symbol_table ast in
     Printf.printf "✅ Symbol table created successfully\n\n";
     
     (* Phase 3: Multi-program analysis *)
@@ -256,7 +253,7 @@ let compile_source input_file output_dir _verbose generate_makefile builtin_path
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := "Type Checking";
     Printf.printf "Phase 4: %s\n" !current_phase;
-    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ?builtin_path ast in
+    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ast in
     Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
     
     (* Phase 5: Multi-program IR optimization *)
@@ -478,5 +475,5 @@ let () =
   match parse_args () with
   | Init { prog_type; project_name; btf_path } ->
       init_project prog_type project_name btf_path
-  | Compile { input_file; output_dir; verbose; generate_makefile; builtin_path; btf_vmlinux_path } ->
-      compile_source input_file output_dir verbose generate_makefile builtin_path btf_vmlinux_path 
+  | Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path } ->
+      compile_source input_file output_dir verbose generate_makefile btf_vmlinux_path 

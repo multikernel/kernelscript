@@ -20,25 +20,25 @@ type program_template = {
 (** Get program template based on eBPF program type *)
 let rec get_program_template prog_type btf_path = 
   let (context_type, return_type, common_types) = match prog_type with
-    | "xdp" -> ("XdpContext", "XdpAction", [
+    | "xdp" -> ("xdp_md", "xdp_action", [
         "xdp_md"; "xdp_action"
       ])
-    | "tc" -> ("TcContext", "TcAction", [
+    | "tc" -> ("__sk_buff", "tc_action", [
         "__sk_buff"; "tc_action"
       ])
-    | "kprobe" -> ("KprobeContext", "i32", [
+    | "kprobe" -> ("pt_regs", "i32", [
         "pt_regs"
       ])
-    | "uprobe" -> ("UprobeContext", "i32", [
+    | "uprobe" -> ("pt_regs", "i32", [
         "pt_regs"
       ])
-    | "tracepoint" -> ("TracepointContext", "i32", [
+    | "tracepoint" -> ("trace_entry", "i32", [
         "trace_entry"
       ])
-    | "lsm" -> ("LsmContext", "i32", [
+    | "lsm" -> ("task_struct", "i32", [
         "task_struct"; "file"; "inode"
       ])
-    | "cgroup_skb" -> ("CgroupSkbContext", "i32", [
+    | "cgroup_skb" -> ("__sk_buff", "i32", [
         "__sk_buff"
       ])
     | _ -> ("GenericContext", "i32", [])
@@ -50,29 +50,16 @@ let rec get_program_template prog_type btf_path =
     | _ -> []
   in
   
-  (* If no types extracted, use builtin types for XDP/TC to avoid conflicts *)
-  let final_types = if List.length extracted_types = 0 then
-    match prog_type with
-    | "xdp" | "tc" -> 
-        printf "No BTF types found, using builtin types for %s program\n" prog_type;
-        [] (* These have builtin types, don't generate conflicting fallback types *)
-    | _ -> 
-        printf "No BTF types found, using fallback types\n";
-        generate_fallback_types common_types
-  else
+  (* If no types extracted, use fallback types since builtin files were removed *)
+  let final_types = if List.length extracted_types = 0 then (
+    printf "No BTF types found, using fallback types for %s program\n" prog_type;
+    generate_fallback_types common_types
+  ) else
     extracted_types
   in
   
-  (* Filter out builtin types that are already provided by builtin files *)
-  let builtin_types = match prog_type with
-    | "xdp" -> ["XdpAction"; "XdpContext"] (* Keep xdp_md and xdp_action from BTF *)
-    | "tc" -> ["TcAction"; "TcContext"] (* Keep __sk_buff and tc_action from BTF *)
-    | _ -> []
-  in
-  
-  let filtered_types = List.filter (fun type_info -> 
-    not (List.mem type_info.name builtin_types)
-  ) final_types in
+  (* No need to filter types since builtin files were removed *)
+  let filtered_types = final_types in
   
   {
     program_type = prog_type;

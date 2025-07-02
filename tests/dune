@@ -300,7 +300,6 @@
 
 (rule
  (alias runtest_type_checker)
- (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks)
  (action (run ./test_type_checker.exe)))
 
 (rule
@@ -325,7 +324,6 @@
 
 (rule
  (alias runtest_dynptr_bridge)
- (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks)
  (action (run ./test_dynptr_bridge.exe)))
 
 (rule
@@ -366,7 +364,6 @@
 
 (rule
  (alias runtest_userspace_maps)
- (deps ../builtin/xdp.ks ../builtin/tc.ks ../builtin/kprobe.ks)
  (action (run ./test_userspace_maps.exe)))
 
 (rule
