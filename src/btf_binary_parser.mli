@@ -5,6 +5,7 @@ type btf_type_info = {
   kind: string;
   size: int option;
   members: (string * string) list option; (* field_name * field_type *)
+  kernel_defined: bool; (* Mark if this type is kernel-defined *)
 }
 
 (** Parse a binary BTF file directly and extract requested types.

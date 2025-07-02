@@ -183,8 +183,8 @@ let rec ebpf_type_from_ir_type = function
   | IRStr size -> sprintf "str_%d_t" size
   | IRPointer (inner_type, _) -> sprintf "%s*" (ebpf_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ebpf_type_from_ir_type inner_type) size
-  | IRStruct (name, _) -> sprintf "struct %s" name
-  | IREnum (name, _) -> sprintf "enum %s" name
+  | IRStruct (name, _, _) -> sprintf "struct %s" name
+      | IREnum (name, _, _) -> sprintf "enum %s" name
 
   | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
@@ -348,7 +348,7 @@ let collect_enum_definitions ir_multi_prog =
   let enum_map = Hashtbl.create 16 in
   
   let rec collect_from_type = function
-    | IREnum (name, values) -> Hashtbl.replace enum_map name values
+    | IREnum (name, values, _) -> Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
   
@@ -433,11 +433,26 @@ let generate_enum_definition ctx enum_name enum_values =
 let generate_enum_definitions ctx ir_multi_prog =
   let enum_map = collect_enum_definitions ir_multi_prog in
   if Hashtbl.length enum_map > 0 then (
-    emit_line ctx "/* Enum definitions */";
-    Hashtbl.iter (fun enum_name enum_values ->
-      generate_enum_definition ctx enum_name enum_values
-    ) enum_map;
-    emit_blank_line ctx
+    (* Filter out kernel-defined enums that are provided by kernel headers *)
+    let user_defined_enums = Hashtbl.fold (fun enum_name enum_values acc ->
+      if not (Kernel_types.is_well_known_ebpf_type enum_name) then
+        (enum_name, enum_values) :: acc
+      else
+        acc
+    ) enum_map [] in
+    
+    if user_defined_enums <> [] then (
+      emit_line ctx "/* User-defined enum definitions */";
+      List.iter (fun (enum_name, enum_values) ->
+        generate_enum_definition ctx enum_name enum_values
+      ) user_defined_enums;
+      emit_blank_line ctx
+    );
+    
+    (* Log filtered types for debugging *)
+    let filtered_count = (Hashtbl.length enum_map) - (List.length user_defined_enums) in
+    if filtered_count > 0 then
+      printf "Filtered out %d kernel-defined enum types from C generation\n" filtered_count
   )
 
 (** Generate string type definitions *)
@@ -461,11 +476,11 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   
   let rec collect_from_type ir_type =
     match ir_type with
-    | IRStruct (name, fields) ->
+    | IRStruct (name, struct_fields, _) ->
         if not (List.mem_assoc name !struct_defs) then (
           (* Only collect structs that actually have fields - ignore empty structs that are likely type aliases *)
-          if fields <> [] then
-            struct_defs := (name, fields) :: !struct_defs
+          if struct_fields <> [] then
+            struct_defs := (name, struct_fields) :: !struct_defs
           (* Remove warning - empty structs are expected for type aliases *)
         )
     | IRPointer (inner_type, _) -> 
@@ -537,8 +552,20 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
 
 (** Generate struct definitions *)
 let generate_struct_definitions ctx struct_defs =
-  if struct_defs <> [] then (
-    emit_line ctx "/* Struct definitions */";
+  (* Filter out kernel-defined structs that are provided by kernel headers *)
+  let user_defined_structs = List.filter (fun (struct_name, fields) ->
+    (* Check if any field indicates this is a kernel-defined struct *)
+    let has_kernel_field = List.exists (fun (_field_name, field_type) ->
+      match field_type with
+      | IRStruct (_, _, kernel_defined) -> kernel_defined
+      | IREnum (_, _, kernel_defined) -> kernel_defined
+      | _ -> false
+    ) fields in
+    not has_kernel_field && not (Kernel_types.is_well_known_ebpf_type struct_name)
+  ) struct_defs in
+  
+  if user_defined_structs <> [] then (
+    emit_line ctx "/* User-defined struct definitions */";
     List.iter (fun (struct_name, fields) ->
       emit_line ctx (sprintf "struct %s {" struct_name);
       increase_indent ctx;
@@ -559,9 +586,14 @@ let generate_struct_definitions ctx struct_defs =
       ) fields;
       decrease_indent ctx;
       emit_line ctx "};"
-    ) struct_defs;
+    ) user_defined_structs;
     emit_blank_line ctx
-  )
+  );
+  
+  (* Log filtered types for debugging *)
+  let filtered_count = (List.length struct_defs) - (List.length user_defined_structs) in
+  if filtered_count > 0 then
+    printf "Filtered out %d kernel-defined struct types from C generation\n" filtered_count
 
 (** Collect type aliases from IR multi-program *)
 let collect_type_aliases_from_multi_program ir_multi_prog =
@@ -1070,7 +1102,7 @@ let generate_c_expression ctx ir_expr =
        | PacketData ->
            (* Packet data field access - use bpf_dynptr_from_xdp *)
            (match obj_val.val_type with
-            | IRPointer (IRStruct (struct_name, _), _) ->
+            | IRPointer (IRStruct (struct_name, _, _), _) ->
                 let field_size = 4 in (* Default - should be calculated from struct *)
                 let full_struct_name = sprintf "struct %s" struct_name in
                 sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __pkt_dynptr; if (bpf_dynptr_from_xdp(&__pkt_dynptr, ctx) == 0) { void* __field_data = bpf_dynptr_data(&__pkt_dynptr, (%s - (void*)(long)ctx->data) + __builtin_offsetof(%s, %s), %d); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
@@ -1080,7 +1112,7 @@ let generate_c_expression ctx ir_expr =
                | _ when is_map_value_parameter obj_val ->
             (* Map value field access - use bpf_dynptr_from_mem *)
             (match obj_val.val_type with
-             | IRPointer (IRStruct (struct_name, _), _) ->
+             | IRPointer (IRStruct (struct_name, _, _), _) ->
                  let field_size = 4 in (* Default - should be calculated from struct *)
                  let full_struct_name = sprintf "struct %s" struct_name in
                  sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __mem_dynptr; if (bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr) == 0) { void* __field_data = bpf_dynptr_data(&__mem_dynptr, __builtin_offsetof(%s, %s), %d); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
@@ -1145,7 +1177,7 @@ let generate_map_load ctx map_val key_val dest_val load_type =
       emit_line ctx (sprintf "  if (__tmp_ptr) %s = *(%s*)__tmp_ptr;" dest_str (ebpf_type_from_ir_type dest_val.val_type));
       (* Handle fallback value based on type *)
       let fallback_value = match dest_val.val_type with
-        | IRStruct (_, _) -> sprintf "(%s){0}" (ebpf_type_from_ir_type dest_val.val_type)
+        | IRStruct (_, _, _) -> sprintf "(%s){0}" (ebpf_type_from_ir_type dest_val.val_type)
         | _ -> "0"
       in
       emit_line ctx (sprintf "  else %s = %s; }" dest_str fallback_value)
@@ -1368,7 +1400,7 @@ let rec generate_c_instruction ctx ir_instr =
                | PacketData ->
             (* Packet data field assignment - use dynptr API for safe write *)
             (match obj_val.val_type with
-             | IRPointer (IRStruct (struct_name, _), _) ->
+             | IRPointer (IRStruct (struct_name, _, _), _) ->
                  let field_size = 4 in (* Default - should be calculated from struct *)
                  let full_struct_name = sprintf "struct %s" struct_name in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __pkt_dynptr; bpf_dynptr_from_xdp(&__pkt_dynptr, ctx);");
@@ -1380,7 +1412,7 @@ let rec generate_c_instruction ctx ir_instr =
         | _ when is_map_value_parameter obj_val ->
             (* Map value field assignment - use dynptr API *)
             (match obj_val.val_type with
-             | IRPointer (IRStruct (struct_name, _), _) ->
+             | IRPointer (IRStruct (struct_name, _, _), _) ->
                  let field_size = 4 in
                  let full_struct_name = sprintf "struct %s" struct_name in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __mem_dynptr; bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr);" obj_str full_struct_name);

@@ -33,10 +33,10 @@ module Xdp = struct
   ]
   
   (** Create XDP action enum AST *)
-  let action_enum = TypeDef (EnumDef ("xdp_action", action_constants))
+  let action_enum = TypeDef (EnumDef ("xdp_action", action_constants, false))
   
   (** Create XDP context struct AST *)
-  let context_struct = TypeDef (StructDef ("xdp_md", context_fields))
+  let context_struct = TypeDef (StructDef ("xdp_md", context_fields, true))
   
   (** All XDP builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]
@@ -79,10 +79,10 @@ module Tc = struct
   ]
   
   (** Create TC action enum AST *)
-  let action_enum = TypeDef (EnumDef ("TcAction", action_constants))
+  let action_enum = TypeDef (EnumDef ("TcAction", action_constants, true))
   
   (** Create TC context struct AST *)
-  let context_struct = TypeDef (StructDef ("TcContext", context_fields))
+  let context_struct = TypeDef (StructDef ("TcContext", context_fields, true))
   
   (** All TC builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]
@@ -107,10 +107,10 @@ module Kprobe = struct
   ]
   
   (** Create Kprobe action enum AST *)
-  let action_enum = TypeDef (EnumDef ("KprobeAction", action_constants))
+  let action_enum = TypeDef (EnumDef ("KprobeAction", action_constants, true))
   
   (** Create Kprobe context struct AST *)
-  let context_struct = TypeDef (StructDef ("KprobeContext", context_fields))
+  let context_struct = TypeDef (StructDef ("KprobeContext", context_fields, true))
   
   (** All Kprobe builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]

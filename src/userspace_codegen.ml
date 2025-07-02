@@ -404,7 +404,7 @@ let collect_enum_definitions_from_userspace userspace_prog =
   let enum_map = Hashtbl.create 16 in
   
   let rec collect_from_type = function
-    | IREnum (name, values) -> Hashtbl.replace enum_map name values
+    | IREnum (name, values, _) -> Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
   
@@ -480,10 +480,20 @@ let generate_enum_definition_userspace enum_name enum_values =
 let generate_enum_definitions_userspace userspace_prog =
   let enum_map = collect_enum_definitions_from_userspace userspace_prog in
   if Hashtbl.length enum_map > 0 then (
-    let enum_defs = Hashtbl.fold (fun enum_name enum_values acc ->
-      (generate_enum_definition_userspace enum_name enum_values) :: acc
+    (* Filter out kernel-defined enums that are provided by kernel headers *)
+    let user_defined_enums = Hashtbl.fold (fun enum_name enum_values acc ->
+      if not (Kernel_types.is_well_known_ebpf_type enum_name) then
+        (enum_name, enum_values) :: acc
+      else
+        acc
     ) enum_map [] in
-    "/* Enum definitions */\n" ^ (String.concat "\n\n" enum_defs) ^ "\n\n"
+    
+    if List.length user_defined_enums > 0 then (
+      let enum_defs = List.map (fun (enum_name, enum_values) ->
+        generate_enum_definition_userspace enum_name enum_values
+      ) user_defined_enums in
+      "/* Enum definitions */\n" ^ (String.concat "\n\n" enum_defs) ^ "\n\n"
+    ) else ""
   ) else ""
 
 (** Generate string type definitions *)
@@ -553,8 +563,8 @@ let rec c_type_from_ir_type = function
   | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
   | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
-  | IRStruct (name, _) -> sprintf "struct %s" name
-  | IREnum (name, _) -> sprintf "enum %s" name
+  | IRStruct (name, _, _) -> sprintf "struct %s" name
+      | IREnum (name, _, _) -> sprintf "enum %s" name
 
   | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
@@ -1169,7 +1179,7 @@ let generate_c_function_from_ir (ir_func : ir_function) =
         (* Generate argument parsing for struct parameter *)
         let (param_name, param_type) = List.hd ir_func.parameters in
         (match param_type with
-         | IRStruct (struct_name, _) ->
+         | IRStruct (struct_name, _, _) ->
            sprintf "    // Parse command line arguments\n    struct %s %s = parse_arguments(argc, argv);" struct_name param_name
          | _ -> "    // No argument parsing needed")
       else
@@ -1619,7 +1629,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     | Some main_func when List.length main_func.parameters > 0 ->
         let (param_name, param_type) = List.hd main_func.parameters in
         (match param_type with
-         | IRStruct (struct_name, _) ->
+         | IRStruct (struct_name, _, _) ->
            (* Look up the actual struct definition to get the fields *)
            (match List.find_opt (fun s -> s.struct_name = struct_name) userspace_prog.userspace_structs with
             | Some struct_def -> generate_getopt_parsing struct_name param_name struct_def.struct_fields
@@ -1654,8 +1664,13 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
          String.ends_with ~suffix:"_config" ir_struct.struct_name)
   ) userspace_prog.userspace_structs in
   
+  (* Filter out kernel-defined structs that are provided by kernel headers *)
+  let user_defined_ir_structs = List.filter (fun ir_struct ->
+    not ir_struct.kernel_defined && not (Kernel_types.is_well_known_ebpf_type ir_struct.struct_name)
+  ) non_config_ir_structs in
+  
   let structs = String.concat "\n\n" 
-    ((List.map generate_c_struct_from_ir non_config_ir_structs) @ config_structs) in
+    ((List.map generate_c_struct_from_ir user_defined_ir_structs) @ config_structs) in
   
   (* Generate map-related code only if maps are actually used *)
   let used_global_maps = List.filter (fun map ->

@@ -6,12 +6,16 @@ open Printf
 let btf_magic = 0xeB9F
 let btf_version = 1
 
+(* Use shared kernel type checking *)
+let is_well_known_kernel_type = Kernel_types.is_well_known_ebpf_type
+
 (* Define our own BTF type info to avoid circular dependency *)
 type btf_type_info = {
   name: string;
   kind: string;
   size: int option;
   members: (string * string) list option; (* field_name * field_type *)
+  kernel_defined: bool; (* Mark if this type is kernel-defined *)
 }
 
 (* BTF Kind values *)
@@ -378,6 +382,7 @@ let btf_type_to_kernelscript btf_types type_name =
         kind = "struct";
         size = btf_type.size;
         members = Some members;
+        kernel_defined = is_well_known_kernel_type btf_type.name;
       }
   | Some btf_type when btf_type.kind = BTF_KIND_ENUM ->
       let enum_values = match btf_type.enum_values with
@@ -392,6 +397,7 @@ let btf_type_to_kernelscript btf_types type_name =
         kind = "enum";
         size = btf_type.size;
         members = Some enum_values;
+        kernel_defined = is_well_known_kernel_type btf_type.name;
       }
   | _ -> None
 

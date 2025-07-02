@@ -221,12 +221,12 @@ let process_enum_values values =
 (** Add type definition to symbol table *)
 let add_type_def table type_def pos =
   match type_def with
-  | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+  | StructDef (name, _, _) | EnumDef (name, _, _) | TypeAlias (name, _) ->
       add_symbol table name (TypeDef type_def) Public pos;
       
       (* For enums, also add enum constants with auto-value assignment *)
       (match type_def with
-       | EnumDef (enum_name, values) ->
+       | EnumDef (enum_name, values, _) ->
            let processed_values = process_enum_values values in
            List.iter (fun (const_name, value) ->
              (* Add both namespaced and direct constant names *)
@@ -381,7 +381,7 @@ and process_declaration_accumulate table declaration =
       
   | Ast.StructDecl struct_def ->
       let pos = { line = 1; column = 1; filename = "" } in
-      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.kernel_defined) in
       add_type_def table type_def pos;
       table
 
@@ -428,7 +428,7 @@ and process_declaration table = function
       
   | Ast.StructDecl struct_def ->
       let pos = { line = 1; column = 1; filename = "" } in
-      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
+      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.kernel_defined) in
       add_type_def table type_def pos
 
 and process_statement table stmt =
@@ -632,7 +632,7 @@ and process_expression table expr =
   | StructLiteral (struct_name, field_assignments) ->
       (* Validate that struct exists *)
       (match lookup_symbol table struct_name with
-       | Some { kind = TypeDef (StructDef (_, _)); _ } ->
+       | Some { kind = TypeDef (StructDef (_, _, _)); _ } ->
            (* Process field assignment expressions *)
            List.iter (fun (_, field_expr) -> process_expression table field_expr) field_assignments
        | Some _ -> 
@@ -708,8 +708,8 @@ let string_of_symbol_kind = function
   | ConstVariable (t, value) -> "const_variable:" ^ string_of_bpf_type t ^ "=" ^ string_of_literal value
   | Function (params, ret) ->
       "function:(" ^ String.concat "," (List.map string_of_bpf_type params) ^ ")->" ^ string_of_bpf_type ret
-  | TypeDef (StructDef (name, _)) -> "struct:" ^ name
-  | TypeDef (EnumDef (name, _)) -> "enum:" ^ name
+  | TypeDef (StructDef (name, _, _)) -> "struct:" ^ name
+  | TypeDef (EnumDef (name, _, _)) -> "enum:" ^ name
   | TypeDef (TypeAlias (name, t)) -> "alias:" ^ name ^ "=" ^ string_of_bpf_type t
   | GlobalMap _ -> "global_map"
   | Parameter t -> "param:" ^ string_of_bpf_type t

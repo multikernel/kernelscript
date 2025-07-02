@@ -7,6 +7,7 @@ type btf_type_info = {
   kind: string;
   size: int option;
   members: (string * string) list option; (* field_name * field_type *)
+  kernel_defined: bool; (* Mark if this type is kernel-defined *)
 }
 
 type program_template = {
@@ -16,6 +17,11 @@ type program_template = {
   includes: string list;
   types: btf_type_info list;
 }
+
+
+
+(** Check if a type name is a well-known kernel type *)
+let is_well_known_kernel_type = Kernel_types.is_well_known_ebpf_type
 
 (** Get program template based on eBPF program type *)
 let rec get_program_template prog_type btf_path = 
@@ -82,6 +88,7 @@ and extract_types_from_btf btf_path type_names =
         kind = bt.Btf_binary_parser.kind;
         size = bt.Btf_binary_parser.size;
         members = bt.Btf_binary_parser.members;
+        kernel_defined = is_well_known_kernel_type bt.Btf_binary_parser.name;
       }
     ) binary_types in
     
@@ -113,6 +120,7 @@ and generate_fallback_types type_names =
           ("rx_queue_index", "u32");
           ("egress_ifindex", "u32");
         ];
+        kernel_defined = true;
       }
     | "xdp_action" -> {
         name = "xdp_action";
@@ -125,6 +133,7 @@ and generate_fallback_types type_names =
           ("XDP_TX", "3");
           ("XDP_REDIRECT", "4");
         ];
+        kernel_defined = true;
       }
     | "__sk_buff" -> {
         name = "__sk_buff";
@@ -164,6 +173,7 @@ and generate_fallback_types type_names =
           ("sk", "u32");
           ("gso_size", "u32");
         ];
+        kernel_defined = true;
       }
     | "tc_action" -> {
         name = "tc_action";
@@ -180,6 +190,7 @@ and generate_fallback_types type_names =
           ("TC_ACT_REPEAT", "6");
           ("TC_ACT_REDIRECT", "7");
         ];
+        kernel_defined = true;
       }
     | "pt_regs" -> {
         name = "pt_regs";
@@ -208,12 +219,14 @@ and generate_fallback_types type_names =
           ("sp", "u64");
           ("ss", "u64");
         ];
+        kernel_defined = true;
       }
     | other -> {
         name = other;
         kind = "struct";
         size = None;
         members = Some [("placeholder", "u32")];
+        kernel_defined = false;
       }
   ) type_names
 

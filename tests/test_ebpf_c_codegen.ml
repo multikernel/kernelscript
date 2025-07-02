@@ -93,7 +93,7 @@ let test_map_operations () =
   let ctx = create_c_context () in
   
   (* Test map lookup *)
-  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
+  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) test_pos in
   let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let dest_val = make_ir_value (IRVariable "result") (IRPointer (IRU64, make_bounds_info ())) test_pos in
   
@@ -108,7 +108,7 @@ let test_literal_map_operations () =
   let ctx = create_c_context () in
   
   (* Test map store with literal key and value *)
-  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
+  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) test_pos in
   let literal_key = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let literal_value = make_ir_value (IRLiteral (IntLit (100, None))) IRU64 test_pos in
   
@@ -481,8 +481,8 @@ let test_type_alias_struct_ordering () =
     program_type = Kernelscript.Ast.Xdp;
     entry_function = {
       func_name = "test";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
-      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
+      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", [], true))];
+      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", [], true));
       basic_blocks = [];
       total_stack_usage = 0;
       max_loop_depth = 0;
@@ -603,8 +603,8 @@ let test_complete_type_alias_fix_integration () =
     program_type = Kernelscript.Ast.Xdp;
     entry_function = {
       func_name = "packet_analyzer";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
-      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
+      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", [], true))];
+      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", [], true));
       basic_blocks = [];
       total_stack_usage = 0;
       max_loop_depth = 0;

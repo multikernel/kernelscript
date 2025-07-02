@@ -413,4 +413,28 @@ let print_analysis_results (analysis: multi_program_analysis) : unit =
     ) analysis.optimization_opportunities
   );
   
-  Printf.printf "\n✅ Multi-program analysis completed.\n\n" 
+  Printf.printf "\n✅ Multi-program analysis completed.\n\n"
+
+(** Extract program types from AST for BTF loading *)
+let get_program_types_from_ast (ast: declaration list) : program_type list =
+  List.fold_left (fun acc decl ->
+    match decl with
+    | AttributedFunction attr_func ->
+        (match attr_func.attr_list with
+         | SimpleAttribute prog_type_str :: _ ->
+             (match prog_type_str with
+              | "xdp" -> Xdp :: acc
+              | "tc" -> Tc :: acc  
+              | "kprobe" -> Kprobe :: acc
+              | "uprobe" -> Uprobe :: acc
+              | "tracepoint" -> Tracepoint :: acc
+              | "lsm" -> Lsm :: acc
+              | "cgroup_skb" -> CgroupSkb :: acc
+              | _ -> acc)
+         | _ -> acc)
+    | _ -> acc
+  ) [] ast |> List.rev |> fun types -> 
+  (* Remove duplicates *)
+  List.fold_left (fun acc typ -> 
+    if List.mem typ acc then acc else typ :: acc
+  ) [] types 

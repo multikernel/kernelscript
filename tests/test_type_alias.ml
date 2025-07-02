@@ -141,7 +141,7 @@ map<IpAddress, PacketStats> ip_stats : HashMap(1000)
   (* Test that PacketStats is a real struct *)
   let struct_value_type = ip_stats_map.map_value_type in
   (match struct_value_type with
-   | Kernelscript.Ir.IRStruct ("PacketStats", _fields) -> 
+   | Kernelscript.Ir.IRStruct ("PacketStats", _fields, _) -> 
        check bool "PacketStats is IRStruct" true true
    | _ -> 
        fail "PacketStats should be IRStruct");

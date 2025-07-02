@@ -212,7 +212,7 @@ let expand_context_method ctx method_name _args pos =
 let expand_map_operation ctx map_name operation key_val value_val_opt pos =
   let map_def = Hashtbl.find ctx.maps map_name in
   let map_val = make_ir_value (IRMapRef map_name) 
-    (IRPointer (IRStruct ("map", []), make_bounds_info ())) pos in
+    (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) pos in
   
   match operation with
   | "lookup" ->
@@ -281,13 +281,23 @@ let rec lower_expression ctx (expr : Ast.expr) =
                (match Symbol_table.lookup_symbol ctx.symbol_table name with
                 | Some symbol -> 
                     (match symbol.kind with
-                     | Symbol_table.EnumConstant (_, Some value) ->
+                     | Symbol_table.EnumConstant (enum_name, Some value) ->
                          (* Enum constants are treated as constants *)
                          let ir_type = match expr.expr_type with
                            | Some ast_type -> ast_type_to_ir_type ast_type
                            | None -> IRU32
                          in
-                         make_ir_value (IRLiteral (IntLit (value, None))) ir_type expr.expr_pos
+                         (* Detect action types by enum name and constant name *)
+                         let final_ir_type = match ir_type with
+                           | IRAction _ -> ir_type  (* Keep action type intact *)
+                           | _ -> 
+                               (* Check if this is an action constant *)
+                               (match enum_name, name with
+                                | "xdp_action", _ -> IRAction Xdp_actionType
+                                | "tc_action", _ -> IRAction TcActionType
+                                | _ -> ir_type)
+                         in
+                         make_ir_value (IRLiteral (IntLit (value, None))) final_ir_type expr.expr_pos
                      | Symbol_table.EnumConstant (_, None) ->
                          (* Enum constant without value - treat as variable *)
                          let reg = get_variable_register ctx name in
@@ -468,7 +478,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            in
            emit_instruction ctx instr;
            result_val
-       | IRStruct (_, _) ->
+       | IRStruct (_, _, _) ->
            (* Handle struct field access *)
            let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
            let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
@@ -496,7 +506,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Handle arrow access for different pointer types *)
       (match obj_val.val_type with
-       | IRPointer (IRStruct (_, _), _) ->
+       | IRPointer (IRStruct (_, _, _), _) ->
            (* Handle pointer-to-struct field access *)
            let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
            let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
@@ -578,7 +588,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-        | None -> IRStruct (struct_name, [])
+        | None -> IRStruct (struct_name, [], false)
       in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
@@ -985,7 +995,7 @@ let rec lower_statement ctx stmt =
            (* Create loop context register *)
            let loop_ctx_reg = allocate_register ctx in
            let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
-             (IRPointer (IRStruct ("loop_ctx", []), make_bounds_info ())) stmt.stmt_pos in
+             (IRPointer (IRStruct ("loop_ctx", [], false), make_bounds_info ())) stmt.stmt_pos in
            
            (* Create the bpf_loop instruction with IR body *)
            let bpf_loop_instr = make_ir_instruction 
@@ -1067,7 +1077,7 @@ let rec lower_statement ctx stmt =
       (* Placeholder for bpf_loop implementation *)
       let loop_ctx_reg = allocate_register ctx in
       let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
-        (IRPointer (IRStruct ("iter_ctx", []), make_bounds_info ())) stmt.stmt_pos in
+        (IRPointer (IRStruct ("iter_ctx", [], false), make_bounds_info ())) stmt.stmt_pos in
       
       (* Create a separate context for the loop body *)
       let body_ctx = {
@@ -1383,9 +1393,9 @@ let rec ast_type_to_ir_type = function
   | Ast.Str size -> IRStr size
   | Ast.Array (elem_type, size) -> IRArray (ast_type_to_ir_type elem_type, size, make_bounds_info ())
   | Ast.Pointer elem_type -> IRPointer (ast_type_to_ir_type elem_type, make_bounds_info ())
-  | Ast.UserType type_name -> IRStruct (type_name, [])  (* Simplified *)
-  | Ast.Struct struct_name -> IRStruct (struct_name, [])
-  | Ast.Enum enum_name -> IREnum (enum_name, [])
+  | Ast.UserType type_name -> IRStruct (type_name, [], false)  (* Simplified *)
+  | Ast.Struct struct_name -> IRStruct (struct_name, [], false)
+  | Ast.Enum enum_name -> IREnum (enum_name, [], false)
   | Ast.Option inner_type -> 
     let bounds = make_bounds_info ~nullable:true () in
     IRPointer (ast_type_to_ir_type inner_type, bounds)
@@ -1397,7 +1407,7 @@ let rec ast_type_to_ir_type = function
   | Ast.Map (key_type, value_type, _map_type) ->
       let ir_key_type = ast_type_to_ir_type key_type in
       let ir_value_type = ast_type_to_ir_type value_type in
-      IRPointer (IRStruct ("map", [("key", ir_key_type); ("value", ir_value_type)]), make_bounds_info ())
+      IRPointer (IRStruct ("map", [("key", ir_key_type); ("value", ir_value_type)], false), make_bounds_info ())
   | Ast.Xdp_md -> IRContext XdpCtx
   | Ast.TcContext -> IRContext TcCtx
   | Ast.KprobeContext -> IRContext KprobeCtx
@@ -1418,15 +1428,15 @@ let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
              (match Symbol_table.lookup_symbol symbol_table struct_name with
         | Some symbol ->
             (match symbol.kind with
-             | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
+             | Symbol_table.TypeDef (Ast.StructDef (_, fields, _)) ->
                  let ir_fields = List.map (fun (field_name, field_type) ->
                    (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                  ) fields in
-                 IRStruct (struct_name, ir_fields)
+                 IRStruct (struct_name, ir_fields, false)
              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) ->
                  ast_type_to_ir_type underlying_type
-             | _ -> IRStruct (struct_name, []))  (* Fallback for other symbol kinds *)
-        | None -> IRStruct (struct_name, []))  (* Fallback when symbol not found *)
+             | _ -> IRStruct (struct_name, [], false))  (* Fallback for other symbol kinds *)
+        | None -> IRStruct (struct_name, [], false))  (* Fallback when symbol not found *)
   | _ -> ast_type_to_ir_type ast_type  (* For all other types, use regular conversion *)
 
 (** Convert AST function to IR function for userspace context *)

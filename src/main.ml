@@ -231,12 +231,101 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     in
     Printf.printf "✅ Successfully parsed %d declarations\n\n" (List.length ast);
     
-    (* Phase 2: Symbol table analysis *)
+    (* Phase 2: Symbol table analysis with BTF type loading *)
     current_phase := "Symbol Analysis";
     Printf.printf "Phase 2: %s\n" !current_phase;
     
-    let symbol_table = Symbol_table.build_symbol_table ast in
-    Printf.printf "✅ Symbol table created successfully\n\n";
+    (* Load BTF types for eBPF context types and action constants *)
+    let btf_types = try
+      let program_types = Multi_program_analyzer.get_program_types_from_ast ast in
+      List.fold_left (fun acc prog_type ->
+        let prog_type_str = match prog_type with
+          | Ast.Xdp -> "xdp"
+          | Ast.Tc -> "tc"
+          | Ast.Kprobe -> "kprobe"
+          | _ -> ""
+        in
+        if prog_type_str <> "" then
+          let template = Btf_parser.get_program_template prog_type_str btf_vmlinux_path in
+          template.types @ acc
+        else
+          acc
+      ) [] program_types
+    with
+    | _ -> 
+        Printf.printf "⚠️ Warning: Could not load BTF types, using defaults\n";
+        []
+    in
+    
+    (* Convert BTF types to AST declarations *)
+    let btf_declarations = List.map (fun btf_type ->
+      match btf_type.Btf_parser.kind with
+      | "struct" -> 
+          let fields = match btf_type.members with
+            | Some members -> List.map (fun (field_name, _field_type) -> (field_name, Ast.U32)) members
+            | None -> []
+          in
+          Ast.StructDecl { 
+            struct_name = btf_type.Btf_parser.name; 
+            struct_fields = fields; 
+            struct_attributes = []; 
+            kernel_defined = btf_type.Btf_parser.kernel_defined;
+            struct_pos = { filename = "btf"; line = 1; column = 1 }
+          }
+      | "enum" ->
+          let enum_values = match btf_type.members with
+            | Some members -> 
+                List.map (fun (const_name, const_value) -> (const_name, Some (int_of_string const_value))) members
+            | None -> []
+          in
+          Ast.TypeDef (Ast.EnumDef (btf_type.Btf_parser.name, enum_values, btf_type.Btf_parser.kernel_defined))
+      | _ -> 
+          Ast.TypeDef (Ast.TypeAlias (btf_type.Btf_parser.name, Ast.U32))
+    ) btf_types in
+    
+          Printf.printf "🔧 Loaded %d BTF type definitions\n" (List.length btf_declarations);
+      
+      (* Filter out BTF types that are already defined by the user *)
+      let user_defined_types = List.fold_left (fun acc decl ->
+        match decl with
+        | Ast.StructDecl struct_def -> struct_def.struct_name :: acc
+        | Ast.TypeDef (Ast.EnumDef (enum_name, _, _)) -> enum_name :: acc
+        | Ast.TypeDef (Ast.StructDef (struct_name, _, _)) -> struct_name :: acc
+        | Ast.TypeDef (Ast.TypeAlias (alias_name, _)) -> alias_name :: acc
+        | _ -> acc
+      ) [] ast in
+      
+      let filtered_btf_declarations = List.filter (fun btf_decl ->
+        match btf_decl with
+        | Ast.StructDecl struct_def -> 
+            if List.mem struct_def.struct_name user_defined_types then (
+              Printf.printf "🔧 Skipping BTF type '%s' - already defined by user\n" struct_def.struct_name;
+              false
+            ) else true
+        | Ast.TypeDef (Ast.EnumDef (enum_name, _, _)) -> 
+            if List.mem enum_name user_defined_types then (
+              Printf.printf "🔧 Skipping BTF enum '%s' - already defined by user\n" enum_name;
+              false
+            ) else true
+        | Ast.TypeDef (Ast.StructDef (struct_name, _, _)) -> 
+            if List.mem struct_name user_defined_types then (
+              Printf.printf "🔧 Skipping BTF struct '%s' - already defined by user\n" struct_name;
+              false
+            ) else true
+        | Ast.TypeDef (Ast.TypeAlias (alias_name, _)) -> 
+            if List.mem alias_name user_defined_types then (
+              Printf.printf "🔧 Skipping BTF alias '%s' - already defined by user\n" alias_name;
+              false
+            ) else true
+        | _ -> true
+      ) btf_declarations in
+      
+      Printf.printf "🔧 Using %d BTF types after filtering (skipped %d user-defined)\n" 
+        (List.length filtered_btf_declarations) 
+        (List.length btf_declarations - List.length filtered_btf_declarations);
+      
+      let symbol_table = Symbol_table.build_symbol_table ~builtin_asts:[filtered_btf_declarations] ast in
+    Printf.printf "✅ Symbol table created successfully with BTF types\n\n";
     
     (* Phase 3: Multi-program analysis *)
     current_phase := "Multi-Program Analysis";
@@ -253,7 +342,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := "Type Checking";
     Printf.printf "Phase 4: %s\n" !current_phase;
-    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ast in
+    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
     Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
     
     (* Phase 5: Multi-program IR optimization *)
