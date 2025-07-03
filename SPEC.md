@@ -320,7 +320,7 @@ struct Args {
 // Kernel-shared functions (accessible by all eBPF programs)
 @helper
 fn update_stats(ctx: xdp_md) {
-    let key = ctx.hash() % 1024
+    var key = ctx.hash() % 1024
     global_stats[key].packets += 1
 }
 
@@ -340,7 +340,7 @@ fn flow_tracker(ctx: TcContext) -> TcAction {
     // Track flow information using shared config
     if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
         // Sample this flow
-        let key = ctx.hash() % 1024
+        var key = ctx.hash() % 1024
         global_stats[key].bytes += ctx.packet_size()
     }
     return TC_ACT_OK
@@ -351,11 +351,11 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=1 --enable-verbose=1
     
-    let interface_index = args.interface_id
+    var interface_index = args.interface_id
     
     // Load and coordinate multiple programs
-    let analyzer_handle = load(packet_analyzer)
-    let tracker_handle = load(flow_tracker)
+    var analyzer_handle = load(packet_analyzer)
+    var tracker_handle = load(flow_tracker)
     
     attach(analyzer_handle, interface_index, 0)
     attach(tracker_handle, interface_index, 1)
@@ -365,7 +365,7 @@ fn main(args: Args) -> i32 {
     }
     
     while (true) {
-        let stats = get_combined_stats()
+        var stats = get_combined_stats()
         print("Total packets: ", stats.packets)
         print("Total bytes: ", stats.bytes)
         sleep(1000)
@@ -376,7 +376,7 @@ fn main(args: Args) -> i32 {
 
 // Userspace helper functions
 fn get_combined_stats() -> PacketStats {
-    let total = PacketStats { packets: 0, bytes: 0, drops: 0 }
+    var total = PacketStats { packets: 0, bytes: 0, drops: 0 }
     for (i in 0..1024) {
         total.packets += global_stats[i].packets
         total.bytes += global_stats[i].bytes
@@ -412,12 +412,12 @@ fn flow_monitor(ctx: TcContext) -> TcAction {
 // Userspace program coordination
 fn main() -> i32 {
     // Program functions can be referenced by name
-    let xdp_prog = packet_filter  // Type: FunctionRef
-    let tc_prog = flow_monitor    // Type: FunctionRef
+    var xdp_prog = packet_filter  // Type: FunctionRef
+    var tc_prog = flow_monitor    // Type: FunctionRef
     
     // Explicit loading and attachment
-    let prog_handle = load(xdp_prog)
-    let result = attach(prog_handle, "eth0", 0)
+    var prog_handle = load(xdp_prog)
+    var result = attach(prog_handle, "eth0", 0)
     
     return 0
 }
@@ -471,7 +471,7 @@ struct Args {
 
 fn main(args: Args) -> i32 {
     // Load program first
-    let prog_handle = load(adaptive_filter)
+    var prog_handle = load(adaptive_filter)
     
     // Configure parameters based on command line
     network.enable_filtering = args.strict_mode
@@ -480,7 +480,7 @@ fn main(args: Args) -> i32 {
     }
     
     // Now attach with configured parameters
-    let result = attach(prog_handle, args.interface, 0)
+    var result = attach(prog_handle, args.interface, 0)
     
     if (result == 0) {
         print("Filter attached successfully")
@@ -514,7 +514,7 @@ struct tcp_congestion_ops {
     name: string,
 }
 
-let my_bbr = tcp_congestion_ops {
+var my_bbr = tcp_congestion_ops {
     init: fn(sk: *TcpSock) -> void {
         // Initialize BBR state
     },
@@ -655,11 +655,11 @@ fn optimized_checksum_calculation(data: *u8, len: u32) -> u32 {
 // eBPF program usage
 @xdp
 fn data_processor(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     
     // Call using function names
-    let checksum = optimized_checksum_calculation(packet.data, packet.len)
-    let decrypt_result = packet_decrypt(packet.data, packet.len, get_key())
+    var checksum = optimized_checksum_calculation(packet.data, packet.len)
+    var decrypt_result = packet_decrypt(packet.data, packet.len, get_key())
     
     return XDP_PASS
 }
@@ -683,8 +683,8 @@ fn data_processor(ctx: xdp_md) -> xdp_action {
 @kfunc
 fn enforce_network_policy(src_ip: u32, dst_ip: u32, port: u16, protocol: u8) -> i32 {
     // Access kernel network namespaces
-    let ns = get_current_net_ns()
-    let policy = lookup_network_policy(ns, src_ip, dst_ip, port)
+    var ns = get_current_net_ns()
+    var policy = lookup_network_policy(ns, src_ip, dst_ip, port)
     
     if (policy == null) {
         return -ENOENT  // No policy found
@@ -698,12 +698,12 @@ fn enforce_network_policy(src_ip: u32, dst_ip: u32, port: u16, protocol: u8) -> 
 @kfunc
 fn check_file_access(path: *char, mode: u32) -> i32 {
     // Interact with VFS and security modules
-    let dentry = kern_path_lookup(path)
+    var dentry = kern_path_lookup(path)
     if (IS_ERR(dentry)) {
         return PTR_ERR(dentry)
     }
     
-    let result = security_inode_permission(dentry.d_inode, mode)
+    var result = security_inode_permission(dentry.d_inode, mode)
     path_put(&dentry)
     
     return result
@@ -713,7 +713,7 @@ fn check_file_access(path: *char, mode: u32) -> i32 {
 @kfunc
 fn allocate_secure_buffer(size: u32) -> *u8 {
     // Use kernel memory allocators with security considerations
-    let buffer = kzalloc(size, GFP_KERNEL | __GFP_ZERO)
+    var buffer = kzalloc(size, GFP_KERNEL | __GFP_ZERO)
     if (buffer != null) {
         // Mark as secure/encrypted region
         mark_buffer_secure(buffer, size)
@@ -725,11 +725,11 @@ fn allocate_secure_buffer(size: u32) -> *u8 {
 // Usage in complex eBPF program
 @lsm("socket_connect")
 fn advanced_security_monitor(ctx: LsmContext) -> i32 {
-    let sock = ctx.socket()
-    let addr = ctx.address()
+    var sock = ctx.socket()
+    var addr = ctx.address()
     
     // Use kfunc for complex policy checking
-    let policy_result = enforce_network_policy(
+    var policy_result = enforce_network_policy(
         sock.src_ip, addr.dst_ip, addr.port, sock.protocol
     )
     
@@ -739,7 +739,7 @@ fn advanced_security_monitor(ctx: LsmContext) -> i32 {
     
     // Use kfunc for file access checks if connection involves file transfer
     if (is_file_transfer_protocol(addr.port)) {
-        let file_check = check_file_access("/tmp/allowed_transfers", R_OK)
+        var file_check = check_file_access("/tmp/allowed_transfers", R_OK)
         if (file_check != 0) {
             return -EACCES
         }
@@ -771,7 +771,7 @@ fn calculate_hash(src_ip: u32, dst_ip: u32) -> u32 {
 
 @helper
 fn update_packet_stats(proto: u8, size: u32) {
-    let key = proto as u32
+    var key = proto as u32
     if (packet_stats.contains_key(key)) {
         packet_stats[key].count += 1
         packet_stats[key].total_bytes += size
@@ -781,7 +781,7 @@ fn update_packet_stats(proto: u8, size: u32) {
 // eBPF programs can call helper functions
 @xdp
 fn packet_filter(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     
     // Call shared helper
     if (!validate_packet_size(packet.len)) {
@@ -796,14 +796,14 @@ fn packet_filter(ctx: xdp_md) -> xdp_action {
 
 @tc
 fn traffic_shaper(ctx: TcContext) -> TcAction {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     
     // Reuse the same helpers
     if (!validate_packet_size(packet.len)) {
         return TC_ACT_SHOT
     }
     
-    let hash = calculate_hash(packet.src_ip, packet.dst_ip)
+    var hash = calculate_hash(packet.src_ip, packet.dst_ip)
     update_packet_stats(packet.protocol, packet.len)
     
     return TC_ACT_OK
@@ -828,7 +828,7 @@ Using `@helper` functions provides several benefits:
 ```kernelscript
 @helper
 fn extract_tcp_info(ctx: xdp_md) -> option TcpInfo {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     if (packet.protocol != IPPROTO_TCP) {
         return null
     }
@@ -842,7 +842,7 @@ fn extract_tcp_info(ctx: xdp_md) -> option TcpInfo {
 
 @xdp
 fn ddos_protection(ctx: xdp_md) -> xdp_action {
-    let tcp_info = extract_tcp_info(ctx)
+    var tcp_info = extract_tcp_info(ctx)
     if (tcp_info != null && tcp_info.flags & TCP_SYN) {
         // SYN flood protection logic
         return rate_limit_syn(tcp_info.dst_port) ? XDP_PASS : XDP_DROP
@@ -852,7 +852,7 @@ fn ddos_protection(ctx: xdp_md) -> xdp_action {
 
 @tc
 fn connection_tracker(ctx: TcContext) -> TcAction {
-    let tcp_info = extract_tcp_info(ctx)  // Reuse same helper
+    var tcp_info = extract_tcp_info(ctx)  // Reuse same helper
     if (tcp_info != null) {
         track_connection(tcp_info.src_port, tcp_info.dst_port)
     }
@@ -879,12 +879,12 @@ fn validate_ip_address(addr: u32) -> bool {
 @private
 fn calculate_flow_hash(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -> u64 {
     // Complex hashing algorithm using kernel crypto
-    let hash_state = crypto_alloc_shash("xxhash64", 0, 0)
+    var hash_state = crypto_alloc_shash("xxhash64", 0, 0)
     if (IS_ERR(hash_state)) {
         return simple_hash(src_ip ^ dst_ip ^ (src_port << 16) ^ dst_port)
     }
     
-    let result = crypto_hash_flow(hash_state, src_ip, dst_ip, src_port, dst_port)
+    var result = crypto_hash_flow(hash_state, src_ip, dst_ip, src_port, dst_port)
     crypto_free_shash(hash_state)
     return result
 }
@@ -892,7 +892,7 @@ fn calculate_flow_hash(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -
 @private  
 fn check_rate_limit_bucket(flow_id: u64, current_time: u64) -> bool {
     // Token bucket implementation with kernel timers
-    let bucket = find_bucket(flow_id)
+    var bucket = find_bucket(flow_id)
     if (bucket == null) {
         bucket = create_bucket(flow_id, current_time)
     }
@@ -910,7 +910,7 @@ fn advanced_flow_filter(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) 
     }
     
     // Calculate flow hash using private helper
-    let flow_id = calculate_flow_hash(src_ip, dst_ip, src_port, dst_port)
+    var flow_id = calculate_flow_hash(src_ip, dst_ip, src_port, dst_port)
     
     // Check rate limiting using private helper
     if (!check_rate_limit_bucket(flow_id, bpf_ktime_get_ns())) {
@@ -934,13 +934,13 @@ fn flow_statistics(src_ip: u32, dst_ip: u32, src_port: u16, dst_port: u16) -> u6
 // eBPF program that can call kfuncs but NOT private functions
 @xdp
 fn packet_filter(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS
     }
     
     // Can call public kfunc
-    let filter_result = advanced_flow_filter(
+    var filter_result = advanced_flow_filter(
         packet.src_ip, packet.dst_ip, packet.src_port, packet.dst_port
     )
     
@@ -949,7 +949,7 @@ fn packet_filter(ctx: xdp_md) -> xdp_action {
     }
     
     // ERROR: Cannot call private functions directly
-    // let is_valid = validate_ip_address(packet.src_ip)  // Compilation error!
+    // var is_valid = validate_ip_address(packet.src_ip)  // Compilation error!
     
     return XDP_PASS
 }
@@ -968,7 +968,7 @@ fn low_level_crypto(data: *u8, len: u32) -> u32 {
 @private
 fn mid_level_validation(packet: *u8, len: u32) -> bool {
     // Can call other private functions in same module
-    let hash = low_level_crypto(packet, len)
+    var hash = low_level_crypto(packet, len)
     return hash != 0 && validate_packet_structure(packet, len)
 }
 
@@ -979,17 +979,17 @@ fn high_level_filter(packet: *u8, len: u32) -> i32 {
         return -EINVAL
     }
     
-    let hash = low_level_crypto(packet, len)
+    var hash = low_level_crypto(packet, len)
     return store_packet_hash(hash)
 }
 
 // eBPF usage
 @tc
 fn traffic_analyzer(ctx: TcContext) -> TcAction {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     
     // Can only call the public kfunc
-    let result = high_level_filter(packet.data, packet.len)
+    var result = high_level_filter(packet.data, packet.len)
     
     return result == 0 ? TC_ACT_OK : TC_ACT_SHOT
 }
@@ -1019,12 +1019,12 @@ Using `@private` functions provides several architectural benefits:
 
 @kfunc
 fn packet_policy_check(packet: *u8, len: u32) -> i32 {
-    let headers = parse_headers(packet)
+    var headers = parse_headers(packet)
     if (!validate_headers(headers)) {
         return -EINVAL
     }
     
-    let policy = apply_policy(headers)
+    var policy = apply_policy(headers)
     return policy.action
 }
 ```
@@ -1062,8 +1062,8 @@ fn secure_packet_process(encrypted_packet: *u8, len: u32) -> i32 {
 
 @kfunc
 fn optimized_packet_check(packet: *u8, len: u32) -> bool {
-    let checksum = fast_checksum(packet, len)
-    let cache_entry = cache_lookup(checksum)
+    var checksum = fast_checksum(packet, len)
+    var cache_entry = cache_lookup(checksum)
     
     return cache_entry != null && cache_entry.is_valid
 }
@@ -1092,15 +1092,15 @@ struct tcp_congestion_ops {
 map<u32, BbrState> connection_state : HashMap(1024)
 
 // Create an instance with function implementations
-let my_bbr = tcp_congestion_ops {
+var my_bbr = tcp_congestion_ops {
     init: fn(sk: *TcpSock) -> void {
         // eBPF constraints: limited stack, restricted helpers
-        let state = BbrState::new()
+        var state = BbrState::new()
         connection_state[sk.id] = state
     },
     cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void {
         // eBPF congestion avoidance logic
-        let state = connection_state[sk.id]
+        var state = connection_state[sk.id]
         // ... BBR logic with eBPF constraints
     },
     cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
@@ -1131,9 +1131,9 @@ fn register<T>(ops: T) -> Result<Link, Error>
 // Multi-program userspace coordination
 fn main() -> i32 {
     // Load all programs
-    let ingress_handle = load(ingress_monitor)
-    let egress_handle = load(egress_monitor)
-    let security_handle = load(security_check)
+    var ingress_handle = load(ingress_monitor)
+    var egress_handle = load(egress_monitor)
+    var security_handle = load(security_check)
     
     // Attach in specific order for coordinated monitoring
     attach(security_handle, "socket_connect", 0)
@@ -1593,7 +1593,7 @@ fn process_by_pointer(data: *PacketData) {
 // Example with compiler guidance
 @helper
 fn ebpf_function_parameters() {
-    let large_struct = LargePacketData { /* ... */ }
+    var large_struct = LargePacketData { /* ... */ }
     
     // ⚠️ Compiler warning: "Large struct (1024 bytes) passed by value in eBPF context"
     // process_by_value(large_struct)  
@@ -1611,7 +1611,7 @@ map<FlowKey, FlowData> flow_map : HashMap(1024)
 @helper
 fn map_pointer_operations(flow_key: FlowKey) {
     // Map lookup returns pointer to value
-    let flow_data: *FlowData = flow_map.lookup(flow_key)
+    var flow_data: *FlowData = flow_map.lookup(flow_key)
     
     if (flow_data != null) {
         // Direct modification through pointer
@@ -1644,12 +1644,12 @@ fn null_safety_example(ptr: *u8) -> u8 {
 // Bounds checking in eBPF context
 @xdp
 fn bounds_safety_example(ctx: xdp_md) -> xdp_action {
-    let data = ctx.data()
-    let data_end = ctx.data_end()
+    var data = ctx.data()
+    var data_end = ctx.data_end()
     
     // Compiler automatically generates verifier-compliant bounds checks
     if (data + sizeof(EthHeader) <= data_end) {
-        let eth = data as *EthHeader
+        var eth = data as *EthHeader
         // Safe to access eth->fields
         return process_ethernet(eth)
     }
@@ -1699,7 +1699,7 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 // Program 1: Can access all global maps
 @xdp
 fn ingress_monitor(ctx: xdp_md) -> xdp_action {
-    let flow_key = extract_flow_key(ctx)?
+    var flow_key = extract_flow_key(ctx)?
     
     // Access global map directly
     if (global_flows[flow_key] == null) {
@@ -1717,7 +1717,7 @@ fn ingress_monitor(ctx: xdp_md) -> xdp_action {
 // Program 2: Automatically has access to the same global maps
 @tc
 fn egress_monitor(ctx: TcContext) -> TcAction {
-    let flow_key = extract_flow_key(ctx)?
+    var flow_key = extract_flow_key(ctx)?
     
     // Same global map, no import needed
     if (global_flows[flow_key] != null) {
@@ -1726,7 +1726,7 @@ fn egress_monitor(ctx: TcContext) -> TcAction {
     }
     
     // Check global configuration
-    let enable_filtering = if (global_config[CONFIG_KEY_ENABLE_FILTERING] != null) {
+    var enable_filtering = if (global_config[CONFIG_KEY_ENABLE_FILTERING] != null) {
         global_config[CONFIG_KEY_ENABLE_FILTERING]
     } else {
         CONFIG_VALUE_BOOL_FALSE
@@ -1748,11 +1748,11 @@ fn egress_monitor(ctx: TcContext) -> TcAction {
 // Program 3: Security analyzer using the same global maps
 @lsm("socket_connect")
 fn security_analyzer(ctx: LsmContext) -> i32 {
-    let flow_key = extract_flow_key_from_socket(ctx)?
+    var flow_key = extract_flow_key_from_socket(ctx)?
     
     // Check global flow statistics
     if (global_flows[flow_key] != null) {
-        let flow_stats = global_flows[flow_key]
+        var flow_stats = global_flows[flow_key]
         if (flow_stats.is_suspicious()) {
             security_events.submit(SecurityEvent {
                 event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
@@ -1776,13 +1776,13 @@ map<Event> event_stream : RingBuffer(1024 * 1024)
 
 @kprobe("sys_read")
 fn producer(ctx: KprobeContext) -> i32 {
-    let pid = bpf_get_current_pid_tgid() as u32
+    var pid = bpf_get_current_pid_tgid() as u32
     
     // Update global counter (accessible by other programs)
     global_counters[pid % 256] += 1
     
     // Send event to global stream
-    let event = Event {
+    var event = Event {
         pid: pid,
         syscall: "read",
         timestamp: bpf_ktime_get_ns(),
@@ -1794,10 +1794,10 @@ fn producer(ctx: KprobeContext) -> i32 {
 
 @kprobe("sys_write")
 fn consumer(ctx: KprobeContext) -> i32 {
-    let pid = bpf_get_current_pid_tgid() as u32
+    var pid = bpf_get_current_pid_tgid() as u32
     
     // Access global counter (same map as producer program)
-    let read_count = global_counters[pid % 256]
+    var read_count = global_counters[pid % 256]
     
     // Process the read count data
     process_read_count(read_count)
@@ -1836,7 +1836,7 @@ fn simple_monitor(ctx: xdp_md) -> xdp_action {
     counters[0] += 1
     
     // Process packet and update flow info
-    let flow_key = extract_flow_key(ctx)
+    var flow_key = extract_flow_key(ctx)
     active_flows[flow_key] = FlowInfo::new()
     
     return XDP_PASS
@@ -1866,7 +1866,7 @@ return_type = type_annotation
 // eBPF program function with attribute - entry point
 @xdp
 fn simple_xdp(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()?
+    var packet = ctx.packet()?
     
     if packet.is_tcp() {
         return XDP_PASS
@@ -1893,7 +1893,7 @@ fn validate_packet(packet: *PacketHeader) -> bool {
 // Public kernel-shared function
 @helper
 pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
-    let sum: u32 = 0
+    var sum: u32 = 0
     for (i in 0..(len / 2)) {
         sum += data[i * 2] + (data[i * 2 + 1] << 8)
     }
@@ -1916,7 +1916,7 @@ fn packet_filter(ctx: xdp_md) -> xdp_action {
         return XDP_DROP
     }
     
-    let checksum = calculate_checksum(ctx.data(), ctx.len())
+    var checksum = calculate_checksum(ctx.data(), ctx.len())
     
     return XDP_PASS
 }
@@ -1942,8 +1942,8 @@ fn main() -> i32 {
     
     // Cannot call validate_packet() here - it's kernel-only
     
-    let filter_handle = load(packet_filter)
-    let monitor_handle = load(flow_monitor)
+    var filter_handle = load(packet_filter)
+    var monitor_handle = load(flow_monitor)
     
     attach(filter_handle, "eth0", 0)
     attach(monitor_handle, "eth0", 1)
@@ -1969,7 +1969,7 @@ The compiler automatically converts function calls to eBPF tail calls when **all
 // eBPF programs that can be tail-called
 @xdp
 fn packet_classifier(ctx: xdp_md) -> xdp_action {
-    let protocol = get_protocol(ctx)  // Regular call (@helper)
+    var protocol = get_protocol(ctx)  // Regular call (@helper)
     
     return match protocol {
         HTTP => process_http(ctx),    // Tail call - meets all conditions
@@ -2029,7 +2029,7 @@ fn ingress_handler(ctx: TcContext) -> TcAction {
 @xdp
 fn invalid_examples(ctx: xdp_md) -> xdp_action {
     // ❌ ERROR: Cannot call eBPF program function directly
-    let result = process_http(ctx)
+    var result = process_http(ctx)
     
     // ❌ ERROR: Mixed program types (@xdp calling @tc)  
     return security_check(ctx)  // security_check is @tc
@@ -2076,11 +2076,11 @@ struct Args {
 fn main(args: Args) -> i32 {
     if (args.mode == "simple") {
         // Load individual program (no tail calls)
-        let http_handle = load(process_http)
+        var http_handle = load(process_http)
         attach(http_handle, args.interface, 0)
     } else {
         // Load main program (automatically sets up tail calls)
-        let main_handle = load(packet_classifier)  
+        var main_handle = load(packet_classifier)  
         attach(main_handle, args.interface, 0)
     }
     
@@ -2298,7 +2298,7 @@ fn safe_packet_processing(ctx: xdp_md) -> xdp_action {
 program packet_filter : xdp {
     fn main(ctx: xdp_md) -> xdp_action {
         try {
-            let result = process_packet(ctx)  // Might throw
+            var result = process_packet(ctx)  // Might throw
             return XDP_PASS
             
         } catch 1 {  // PARSE_ERROR_TOO_SHORT
@@ -2319,7 +2319,7 @@ Helper functions can propagate errors without catching them - this enables natur
 ```kernelscript
 // Helper functions can throw without catching
 fn extract_flow_key(ctx: xdp_md) -> FlowKey {
-    let packet = get_packet(ctx)
+    var packet = get_packet(ctx)
     if packet == null {
         throw NETWORK_ERROR_ALLOCATION_FAILED  // ✅ OK - propagates to caller (throws 10)
     }
@@ -2328,7 +2328,7 @@ fn extract_flow_key(ctx: xdp_md) -> FlowKey {
 }
 
 fn validate_flow(key: FlowKey) -> FlowState {
-    let state = lookup_flow_state(key)  // May throw
+    var state = lookup_flow_state(key)  // May throw
     if state.is_expired() {
         throw NETWORK_ERROR_RATE_LIMITED  // ✅ OK - propagates to caller (throws 12)
     }
@@ -2343,7 +2343,7 @@ Userspace functions generate **compiler warnings** for uncaught throws, but comp
 
 ```kernelscript
 fn main() -> i32 {
-    let prog = load(packet_filter)    // ⚠️ Warning: might throw
+    var prog = load(packet_filter)    // ⚠️ Warning: might throw
     attach(prog, "eth0", 0)           // ⚠️ Warning: might throw
     return 0
     // If any throw occurs, program terminates (like panic)
@@ -2352,7 +2352,7 @@ fn main() -> i32 {
 // Better - explicit error handling
 fn main() -> i32 {
     try {
-        let prog = load(packet_filter)
+        var prog = load(packet_filter)
     attach(prog, "eth0", 0)
         print("Program attached successfully")
         return 0
@@ -2452,7 +2452,7 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 // Multiple eBPF programs working together
 @xdp fn network_monitor(ctx: xdp_md) -> xdp_action {
     // Access global maps directly
-    let flow_key = extract_flow_key(ctx)?
+    var flow_key = extract_flow_key(ctx)?
     global_flows[flow_key] += 1
     
     // Use named config for decisions
@@ -2468,11 +2468,11 @@ map<ConfigKey, ConfigValue> global_config : Array(64) {
 
 program security_filter : lsm("socket_connect") {
     fn main(ctx: LsmContext) -> i32 {
-        let flow_key = extract_flow_key_from_socket(ctx)?
+        var flow_key = extract_flow_key_from_socket(ctx)?
         
         // Check global flow statistics for threat detection
         if (global_flows[flow_key] != null) {
-            let flow_stats = global_flows[flow_key]
+            var flow_stats = global_flows[flow_key]
             if (flow_stats.is_suspicious()) {
                 global_events.submit(EVENT_THREAT_DETECTED { flow_key })
                 return -EPERM  // Block connection
@@ -2515,7 +2515,7 @@ impl SystemCoordinator {
     
     fn process_events(&self) {
         // Process events from all programs
-        let event = self.global_events.read()
+        var event = self.global_events.read()
         if (event != null) {
             if (event.event_type == EVENT_PACKET_PROCESSED) {
                 print("Processed packet for flow: ", event.flow_key)
@@ -2541,7 +2541,7 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --monitoring-enabled=1
     
-    let coordinator = SystemCoordinator::new().unwrap()
+    var coordinator = SystemCoordinator::new().unwrap()
     coordinator.start_on_interface_by_id(args.interface_id).unwrap()
     
     if (args.monitoring_enabled == 1) {
@@ -2591,8 +2591,8 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --verbose-mode=1 --enable-monitoring=1
     
-    let network_monitor = load(network_monitor)
-    let flow_analyzer = load(flow_analyzer)
+    var network_monitor = load(network_monitor)
+    var flow_analyzer = load(flow_analyzer)
     
     attach(network_monitor, args.interface_id, 0)
     attach(flow_analyzer, args.interface_id, 1)
@@ -2633,12 +2633,12 @@ KernelScript employs context-aware pointer safety mechanisms that adapt to the e
 // eBPF Context - Automatic bounds checking with verifier compliance
 @xdp
 fn safe_packet_processing(ctx: xdp_md) -> xdp_action {
-    let packet_data: *u8 = ctx.data()
-    let packet_end: *u8 = ctx.data_end()
+    var packet_data: *u8 = ctx.data()
+    var packet_end: *u8 = ctx.data_end()
     
     // Compiler automatically generates verifier-compliant bounds checks
     if (packet_data + 20 <= packet_end) {
-        let ip_header = packet_data as *IpHeader
+        var ip_header = packet_data as *IpHeader
         // Safe access - bounds verified by compiler-generated checks
         if (ip_header->version == 4) {
             return process_ipv4_packet(ip_header)
@@ -2669,10 +2669,10 @@ map<Event> event_log : RingBuffer(1024 * 1024)
 @helper
 fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
     // User writes simple pointer code
-    let log_entry: *u8 = event_log.reserve(data_len + 16)  // Dynptr-backed pointer
+    var log_entry: *u8 = event_log.reserve(data_len + 16)  // Dynptr-backed pointer
     if (log_entry != null) {
         // Regular pointer operations - compiler uses dynptr API internally
-        let header = log_entry as *EventHeader
+        var header = log_entry as *EventHeader
         header->timestamp = bpf_ktime_get_ns()
         header->data_len = data_len
         
@@ -2696,9 +2696,9 @@ fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
 // Context-aware stack management
 @helper
 fn ebpf_stack_management() {
-    let small_struct = SmallData { x: 1, y: 2 }  // 8 bytes - fine
-    let medium_struct = MediumData { /* 128 bytes */ }  // ⚠️ Warning
-    let large_struct = LargeData { /* 1024 bytes */ }   // ❌ Error in eBPF
+    var small_struct = SmallData { x: 1, y: 2 }  // 8 bytes - fine
+    var medium_struct = MediumData { /* 128 bytes */ }  // ⚠️ Warning
+    var large_struct = LargeData { /* 1024 bytes */ }   // ❌ Error in eBPF
     
     // Compiler suggestions:
     process_small(small_struct)      // ✅ Pass by value
@@ -2709,15 +2709,15 @@ fn ebpf_stack_management() {
 
 // Userspace - relaxed stack rules
 fn userspace_stack_management() {
-    let large_struct = LargeData { /* 1024 bytes */ }
+    var large_struct = LargeData { /* 1024 bytes */ }
     process_large(large_struct)      // ✅ Fine in userspace - plenty of stack
 }
 
 // Automatic stack tracking for eBPF
 @xdp
 fn stack_aware_function(ctx: xdp_md) -> xdp_action {
-    let buffer: [u8; 256] = [0; 256]  // Compiler tracks: 256 bytes used
-    let header_info = PacketInfo {    // Compiler tracks: +64 bytes
+    var buffer: [u8; 256] = [0; 256]  // Compiler tracks: 256 bytes used
+    var header_info = PacketInfo {    // Compiler tracks: +64 bytes
         // ... fields
     }
     
@@ -2737,11 +2737,11 @@ fn stack_aware_function(ctx: xdp_md) -> xdp_action {
 @helper
 fn resource_safe_processing(input: *u8, len: u32) -> ProcessResult {
     // Stack-based resource with automatic cleanup
-    let work_buffer: [u8; 512] = [0; 512]
-    let work_ptr: *u8 = &work_buffer[0]
+    var work_buffer: [u8; 512] = [0; 512]
+    var work_ptr: *u8 = &work_buffer[0]
     
     // Heap-like resource (userspace) or map-backed storage (eBPF)
-    let temp_storage: *u8 = allocate_temp_space(len * 2)
+    var temp_storage: *u8 = allocate_temp_space(len * 2)
     if (temp_storage == null) {
         throw ALLOCATION_ERROR
     }
@@ -2752,7 +2752,7 @@ fn resource_safe_processing(input: *u8, len: u32) -> ProcessResult {
     }
     
     // Process data safely
-    let result = transform_data(input, len, work_ptr, temp_storage)
+    var result = transform_data(input, len, work_ptr, temp_storage)
     
     return result  // defer ensures cleanup
 }
@@ -2762,7 +2762,7 @@ map<u32, DataCache> cache_map : HashMap(1024)
 
 @helper
 fn map_lifetime_safety(key: u32) {
-    let cache_entry: *DataCache = cache_map.lookup(key)
+    var cache_entry: *DataCache = cache_map.lookup(key)
     if (cache_entry != null) {
         // Compiler tracks that cache_entry is valid here
         cache_entry->access_count += 1
@@ -2797,11 +2797,11 @@ fn null_safety_demonstration(maybe_ptr: *PacketData) -> u32 {
 // Optional pointer types for clarity
 @helper
 fn optional_pointer_example() -> ProcessResult {
-    let data_ptr: *u8 = try_get_data()  // May return null
+    var data_ptr: *u8 = try_get_data()  // May return null
     
     // Compiler enforces null checking
     if (data_ptr != null) {
-        let result = process_data(data_ptr)
+        var result = process_data(data_ptr)
         return ProcessResult::success(result)
     } else {
         return ProcessResult::no_data()
@@ -2815,10 +2815,10 @@ fn optional_pointer_example() -> ProcessResult {
 // Context boundary safety
 @xdp 
 fn kernel_side_processing(ctx: xdp_md) -> xdp_action {
-    let packet_data = ctx.data()
+    var packet_data = ctx.data()
     
     // Shared memory through maps - safe across contexts
-    let shared_buffer = shared_map.lookup(0)
+    var shared_buffer = shared_map.lookup(0)
     if (shared_buffer != null) {
         shared_buffer->kernel_processed_count += 1
         memory_copy(packet_data, shared_buffer->data, min(packet_len, 64))
@@ -2833,7 +2833,7 @@ fn userspace_processing() -> i32 {
     // let packet_data = some_kernel_context.data()  // Compilation error
     
     // ✅ Access through shared maps
-    let shared_buffer = shared_map.lookup(0)
+    var shared_buffer = shared_map.lookup(0)
     if (shared_buffer != null) {
         shared_buffer->userspace_processed_count += 1
         process_shared_data(shared_buffer->data)
@@ -2977,8 +2977,8 @@ config system {
 @kfunc
 fn advanced_port_check(port: u16, protocol: u8, src_ip: u32) -> i32 {
     // Full kernel privileges - access to network namespaces, security modules
-    let ns = get_current_net_ns()
-    let policy = lookup_port_policy(ns, port, protocol)
+    var ns = get_current_net_ns()
+    var policy = lookup_port_policy(ns, port, protocol)
     
     if (policy == null) {
         return 0  // No policy, allow
@@ -3008,7 +3008,7 @@ fn log_blocked_port(port: u16) {
 
 @xdp
 fn simple_filter(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS
     }
@@ -3016,7 +3016,7 @@ fn simple_filter(ctx: xdp_md) -> xdp_action {
     system.packets_processed += 1
     
     if (packet.is_tcp()) {
-        let tcp = packet.tcp_header()
+        var tcp = packet.tcp_header()
         
         // First check simple blocked ports (kernel-shared function)
         if (is_port_blocked(tcp.dst_port)) {
@@ -3026,7 +3026,7 @@ fn simple_filter(ctx: xdp_md) -> xdp_action {
         }
         
         // Advanced analysis using kfunc for complex policy checking
-        let policy_result = advanced_port_check(tcp.dst_port, packet.protocol(), packet.src_ip())
+        var policy_result = advanced_port_check(tcp.dst_port, packet.protocol(), packet.src_ip())
         if (policy_result != 0) {
             log_blocked_port(tcp.dst_port)
             system.packets_dropped += 1
@@ -3039,13 +3039,13 @@ fn simple_filter(ctx: xdp_md) -> xdp_action {
 
 @tc
 fn security_monitor(ctx: TcContext) -> TcAction {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     if (packet == null) {
         return TC_ACT_OK
     }
     
     if (packet.is_tcp()) {
-        let tcp = packet.tcp_header()
+        var tcp = packet.tcp_header()
         
         // Check simple blocked ports first
         if (is_port_blocked(tcp.src_port)) {
@@ -3054,7 +3054,7 @@ fn security_monitor(ctx: TcContext) -> TcAction {
         }
         
         // Use the same kfunc for advanced policy checking
-        let policy_result = advanced_port_check(tcp.src_port, packet.protocol(), packet.dst_ip())
+        var policy_result = advanced_port_check(tcp.src_port, packet.protocol(), packet.dst_ip())
         if (policy_result != 0) {
             log_blocked_port(tcp.src_port)
             return TC_ACT_SHOT
@@ -3082,11 +3082,11 @@ fn main(args: Args) -> i32 {
     }
     
     // Explicit program lifecycle management for multiple programs
-    let filter_handle = load(simple_filter)
-    let monitor_handle = load(security_monitor)
+    var filter_handle = load(simple_filter)
+    var monitor_handle = load(security_monitor)
     
-    let filter_result = attach(filter_handle, args.interface, 0)
-    let monitor_result = attach(monitor_handle, args.interface, 1)
+    var filter_result = attach(filter_handle, args.interface, 0)
+    var monitor_result = attach(monitor_handle, args.interface, 1)
     
     if (filter_result != 0 || monitor_result != 0) {
         print("Failed to attach programs to interface: ", args.interface)
@@ -3134,7 +3134,7 @@ var interface_name: str<16>
 // eBPF program using global variables
 @xdp
 fn packet_counter(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS
     }
@@ -3177,8 +3177,8 @@ fn main(args: Args) -> i32 {
     }
     
     // Load and attach program
-    let prog_handle = load(packet_counter)
-    let result = attach(prog_handle, interface_name, 0)
+    var prog_handle = load(packet_counter)
+    var result = attach(prog_handle, interface_name, 0)
     
     if (result != 0) {
         print("Failed to attach program")
@@ -3215,14 +3215,14 @@ struct CallInfo {
 @kfunc
 fn analyze_syscall_performance(pid: u32, syscall_nr: u32, bytes: u32, duration: u64) -> i32 {
     // Full kernel privileges - access to process information, scheduler data
-    let task = pid_task(find_vpid(pid), PIDTYPE_PID)
+    var task = pid_task(find_vpid(pid), PIDTYPE_PID)
     if (task == null) {
         return -ESRCH
     }
     
     // Access kernel scheduler information
-    let cpu_usage = task.utime + task.stime
-    let context_switches = task.nvcsw + task.nivcsw
+    var cpu_usage = task.utime + task.stime
+    var context_switches = task.nvcsw + task.nivcsw
     
     // Log to kernel performance subsystem
     return perf_event_record_syscall(task, syscall_nr, bytes, duration, cpu_usage, context_switches)
@@ -3236,8 +3236,8 @@ fn measure_write_time(ctx: KprobeContext) -> u64 {
 
 @kprobe("sys_read")
 fn perf_monitor(ctx: KprobeContext) -> i32 {
-    let pid = bpf_get_current_pid_tgid() as u32
-    let call_info = CallInfo {
+    var pid = bpf_get_current_pid_tgid() as u32
+    var call_info = CallInfo {
         start_time: bpf_ktime_get_ns(),
         bytes_requested: ctx.arg_u32(2),
     }
@@ -3248,11 +3248,11 @@ fn perf_monitor(ctx: KprobeContext) -> i32 {
 
 @kretprobe("sys_read")
 fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
-    let pid = bpf_get_current_pid_tgid() as u32
+    var pid = bpf_get_current_pid_tgid() as u32
     
-    let call_info = active_calls[pid]
+    var call_info = active_calls[pid]
     if (call_info != null) {
-        let duration = bpf_ktime_get_ns() - call_info.start_time
+        var duration = bpf_ktime_get_ns() - call_info.start_time
         read_stats[pid % 1024] += duration
         
         // Use kfunc for detailed analysis and logging
@@ -3266,8 +3266,8 @@ fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
 
 @kprobe("sys_write")
 fn write_monitor(ctx: KprobeContext) -> i32 {
-    let pid = bpf_get_current_pid_tgid() as u32
-    let duration = measure_write_time(ctx)
+    var pid = bpf_get_current_pid_tgid() as u32
+    var duration = measure_write_time(ctx)
     write_stats[pid % 1024] += duration
     return 0
 }
@@ -3289,18 +3289,18 @@ fn main(args: Args) -> i32 {
         return 0
     }
     
-    let interval = if (args.interval_ms == 0) { 5000 } else { args.interval_ms }
-    let show_details = (args.show_details == 1)
+    var interval = if (args.interval_ms == 0) { 5000 } else { args.interval_ms }
+    var show_details = (args.show_details == 1)
     
     // Explicit program lifecycle management for multiple programs
-    let read_handle = load(perf_monitor)
-    let read_ret_handle = load(perf_monitor_return)
-    let write_handle = load(write_monitor)
+    var read_handle = load(perf_monitor)
+    var read_ret_handle = load(perf_monitor_return)
+    var write_handle = load(write_monitor)
     
     // Attach programs to different kprobe targets
-    let read_attach = attach(read_handle, "sys_read", 0)
-    let read_ret_attach = attach(read_ret_handle, "sys_read", 0)
-    let write_attach = attach(write_handle, "sys_write", 0)
+    var read_attach = attach(read_handle, "sys_read", 0)
+    var read_ret_attach = attach(read_ret_handle, "sys_read", 0)
+    var write_attach = attach(write_handle, "sys_write", 0)
     
     if (read_attach != 0 || read_ret_attach != 0 || write_attach != 0) {
         print("Failed to attach monitoring programs")
@@ -3334,8 +3334,8 @@ fn print_detailed_stats() {
 }
 
 fn print_summary_stats() {
-    let total_read_time = 0u64
-    let total_write_time = 0u64
+    var total_read_time = 0u64
+    var total_write_time = 0u64
     
     for (i in 0..1024) {
         total_read_time += read_stats[i]
