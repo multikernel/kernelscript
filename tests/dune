@@ -273,6 +273,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_global_var)
+ (modules test_global_var)
+ (libraries kernelscript alcotest test_utils))
+
+(executable
  (name test_function_validation)
  (modules test_function_validation)
  (libraries kernelscript alcotest))
@@ -460,6 +465,10 @@
  (action (run ./test_const_variables.exe)))
 
 (rule
+ (alias runtest_global_var)
+ (action (run ./test_global_var.exe)))
+
+(rule
  (alias runtest_integer_literal_codegen)
  (action (run ./test_integer_literal_codegen.exe)))
 
@@ -542,6 +551,7 @@
   test_enum.exe
   test_type_alias.exe
   test_const_variables.exe
+  test_global_var.exe
   test_evaluator.exe
   test_dynptr_bridge.exe
   test_safety_checker.exe
@@ -575,6 +585,7 @@
    (run ./test_enum.exe)
    (run ./test_type_alias.exe)
    (run ./test_const_variables.exe)
+   (run ./test_global_var.exe)
    (run ./test_evaluator.exe)
    (run ./test_dynptr_bridge.exe)
    (run ./test_safety_checker.exe)

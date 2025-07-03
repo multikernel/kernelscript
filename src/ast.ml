@@ -240,6 +240,14 @@ type config_declaration = {
   config_pos: position;
 }
 
+(** Global variable declaration *)
+type global_variable_declaration = {
+  global_var_name: string;
+  global_var_type: bpf_type option;
+  global_var_init: literal option;
+  global_var_pos: position;
+}
+
 (** Top-level declarations *)
 type declaration =
   | AttributedFunction of attributed_function
@@ -248,6 +256,7 @@ type declaration =
   | MapDecl of map_declaration
   | ConfigDecl of config_declaration
   | StructDecl of struct_def
+  | GlobalVarDecl of global_variable_declaration
 
 (** Complete AST *)
 type ast = declaration list
@@ -367,6 +376,13 @@ let make_config_declaration name fields pos = {
   config_name = name;
   config_fields = fields;
   config_pos = pos;
+}
+
+let make_global_var_decl name typ init pos = {
+  global_var_name = name;
+  global_var_type = typ;
+  global_var_init = init;
+  global_var_pos = pos;
 }
 
 (** Pretty-printing functions for debugging *)
@@ -636,7 +652,16 @@ let string_of_declaration = function
         Printf.sprintf "%s: %s" name (string_of_bpf_type typ)
       ) struct_def.struct_fields) in
       Printf.sprintf "%sstruct %s {\n    %s\n}" attrs_str struct_def.struct_name fields_str
-  (* StructOpsDecl and StructOpsInstance cases removed - now handled as regular StructDecl with attributes *)
+  | GlobalVarDecl decl ->
+      let type_str = match decl.global_var_type with
+        | None -> ""
+        | Some t -> ": " ^ string_of_bpf_type t
+      in
+      let init_str = match decl.global_var_init with
+        | None -> ""
+        | Some lit -> " = " ^ string_of_literal lit
+      in
+      Printf.sprintf "var %s%s%s;" decl.global_var_name type_str init_str
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

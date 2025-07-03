@@ -1708,6 +1708,44 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
         Hashtbl.replace ctx.maps map_decl.name map_decl
     | ConfigDecl config_decl ->
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
+    | GlobalVarDecl global_var_decl ->
+        (* Add global variable to type checker context *)
+        let var_type = match global_var_decl.global_var_type with
+          | Some t -> 
+              let resolved_type = resolve_user_type ctx t in
+              (* If both type and initial value are present, check for type mismatch *)
+              (match global_var_decl.global_var_init with
+               | Some init_value ->
+                                       let inferred_type = match init_value with
+                      | IntLit (_, _) -> 
+                          (* For integer literals, use the declared type if it's an integer type *)
+                          (match resolved_type with
+                           | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 -> resolved_type
+                           | _ -> U32)
+                      | StringLit s -> Str (String.length s + 1)
+                      | BoolLit _ -> Bool
+                      | CharLit _ -> Char
+                      | NullLit -> Pointer U8
+                      | ArrayLit elems -> Array (U32, List.length elems)
+                    in
+                                        if (unify_types resolved_type inferred_type) = None then
+                     type_error ("Type mismatch in global variable declaration: expected " ^ 
+                                string_of_bpf_type resolved_type ^ ", got " ^ 
+                                string_of_bpf_type inferred_type) global_var_decl.global_var_pos;
+                   resolved_type
+               | None -> resolved_type)
+          | None -> 
+              (* If no type specified, infer from initial value *)
+              (match global_var_decl.global_var_init with
+               | Some (IntLit (_, _)) -> U32  (* Default integer type *)
+               | Some (StringLit s) -> Str (String.length s + 1)  (* String length + null terminator *)
+               | Some (BoolLit _) -> Bool
+               | Some (CharLit _) -> Char
+               | Some (NullLit) -> Pointer U8  (* Default pointer type *)
+               | Some (ArrayLit elems) -> Array (U32, List.length elems)  (* Infer array size from elements *)
+               | None -> U32)  (* Default type when no type or value specified *)
+        in
+        Hashtbl.replace ctx.variables global_var_decl.global_var_name var_type
     | AttributedFunction attr_func ->
         (* Register attributed function signature in context *)
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) attr_func.attr_function.func_params in

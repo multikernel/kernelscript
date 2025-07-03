@@ -1431,6 +1431,31 @@ let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
     ?pin_path:pin_path
     map_decl.Ast.map_pos
 
+(** Lower AST global variable declaration to IR global variable *)
+let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global_variable_declaration) =
+  let ir_type = match global_var_decl.global_var_type with
+    | Some ast_type -> ast_type_to_ir_type_with_context symbol_table ast_type
+    | None -> 
+        (* If no type specified, infer from initial value *)
+        (match global_var_decl.global_var_init with
+         | Some (IntLit (_, _)) -> IRU32  (* Default integer type *)
+         | Some (StringLit s) -> IRStr (max 1 (String.length s))  (* String type *)
+         | Some (BoolLit _) -> IRBool
+         | Some (CharLit _) -> IRChar
+         | Some (NullLit) -> IRPointer (IRU8, make_bounds_info ~nullable:true ())  (* Default pointer type *)
+         | Some (ArrayLit _) -> IRArray (IRU32, 1, make_bounds_info ())  (* Default array type *)
+         | None -> IRU32)  (* Default type when no type or value specified *)
+  in
+  let ir_init = match global_var_decl.global_var_init with
+    | Some literal -> Some (make_ir_value (IRLiteral literal) ir_type global_var_decl.global_var_pos)
+    | None -> None
+  in
+  make_ir_global_variable
+    global_var_decl.global_var_name
+    ir_type
+    ir_init
+    global_var_decl.global_var_pos
+
 (** Convert AST types to IR types *)
 let rec ast_type_to_ir_type = function
   | Ast.U8 -> IRU8 | Ast.U16 -> IRU16 | Ast.U32 -> IRU32 | Ast.U64 -> IRU64
@@ -1779,8 +1804,19 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> None
   ) ast in
   
+  (* Collect global variable declarations *)
+  let global_var_decls = List.filter_map (function
+    | Ast.GlobalVarDecl v -> Some v
+    | _ -> None
+  ) ast in
+  
   (* Lower global maps *)
   let ir_global_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) global_map_decls in
+  
+  (* Lower global variables *)
+  let ir_global_variables = List.map (fun global_var_decl -> 
+    lower_global_variable_declaration ctx.symbol_table global_var_decl
+  ) global_var_decls in
   
   (* Add global maps to main context for userspace processing *)
   List.iter (fun (map_def : ir_map_def) -> 
@@ -2052,6 +2088,7 @@ let lower_multi_program ast symbol_table source_name =
     ir_kernel_functions 
     ir_global_maps 
     ~global_configs:ir_global_configs
+    ~global_variables:ir_global_variables
     ~struct_ops_declarations:ir_struct_ops_declarations
     ~struct_ops_instances:ir_struct_ops_instances
     ?userspace_program:userspace_program 

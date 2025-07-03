@@ -103,13 +103,14 @@ let validate_ast ast =
     List.for_all validate_stmt func.func_body
   in
   
-  let validate_declaration =   function
+  let validate_declaration = function
     | AttributedFunction attr_func -> validate_function attr_func.attr_function
     | GlobalFunction func -> validate_function func
     | TypeDef _ -> true (* Type definitions are always valid once parsed *)
     | MapDecl _ -> true (* Map declarations are always valid once parsed *)
     | ConfigDecl _ -> true (* Config declarations are always valid once parsed *)
     | StructDecl _ -> true (* Struct declarations are always valid once parsed *)
+    | GlobalVarDecl _ -> true (* Global variable declarations are always valid once parsed *)
   in
   
   List.for_all validate_declaration ast

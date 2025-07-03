@@ -189,14 +189,111 @@ fn network_monitor(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-### 3.3 Kernel-Userspace Scoping Model
+### 3.3 Global Variables
+
+KernelScript supports global variable declarations at the top level that are accessible from both kernel and userspace contexts. Global variables provide a simple way to declare shared state without the complexity of full map declarations.
+
+#### 3.3.1 Global Variable Declaration Syntax
+
+Global variables support three forms of declaration:
+
+```kernelscript
+// Form 1: Full declaration with type and initial value
+var global_counter: u32 = 0
+var global_string: str<256> = "default_value"
+var global_flag: bool = true
+
+// Form 2: Type-only declaration (uninitialized)
+var uninitialized_counter: u32
+var uninitialized_buffer: str<128>
+
+// Form 3: Value-only declaration (type inferred)
+var inferred_int = 42           // Type: u32 (default for integer literals)
+var inferred_string = "hello"   // Type: str<6> (inferred from string length)
+var inferred_bool = false       // Type: bool
+var inferred_char = 'a'         // Type: char
+```
+
+#### 3.3.2 Type Inference Rules
+
+When no explicit type is provided, KernelScript infers the type based on the initial value:
+
+| Literal Type | Inferred Type | Example |
+|-------------|---------------|---------|
+| `IntLit` | `u32` | `var x = 42` → `u32` |
+| `StringLit` | `str<N>` | `var s = "hello"` → `str<6>` |
+| `BoolLit` | `bool` | `var b = true` → `bool` |
+| `CharLit` | `char` | `var c = 'a'` → `char` |
+| `NullLit` | `*u8` | `var p = null` → `*u8` |
+| `ArrayLit` | `[u32; 1]` | `var a = [1, 2, 3]` → `[u32; 3]` |
+
+#### 3.3.3 Global Variable Usage
+
+Global variables are accessible from both kernel and userspace contexts:
+
+```kernelscript
+// Global variables - accessible from both contexts
+var packet_count: u64 = 0
+var enable_logging: bool = true
+var max_packet_size: u32 = 1500
+
+// eBPF program using global variables
+@xdp
+fn packet_monitor(ctx: xdp_md) -> xdp_action {
+    packet_count += 1  // Access global variable
+    
+    var packet = ctx.packet()
+    if (packet.size > max_packet_size) {
+        if (enable_logging) {
+            print("Packet too large: %d", packet.size)
+        }
+        return XDP_DROP
+    }
+    
+    return XDP_PASS
+}
+
+// Userspace program using global variables
+struct Args {
+    interface: str<16>,
+    debug: bool,
+}
+
+fn main(args: Args) -> i32 {
+    // Configure global variables based on command line
+    enable_logging = args.debug
+    
+    var prog_handle = load(packet_monitor)
+    attach(prog_handle, args.interface, 0)
+    
+    // Monitor global state
+    while (true) {
+        print("Total packets processed: ", packet_count)
+        sleep(1000)
+    }
+    
+    return 0
+}
+```
+
+#### 3.3.4 Global Variables vs Maps and Configs
+
+| Feature | Global Variables | Maps | Configs |
+|---------|------------------|------|---------|
+| **Syntax** | `var name: type = value` | `map<K,V> name : Type(size)` | `config name { field: type = value }` |
+| **Use Case** | Simple shared state | Complex data structures | Structured configuration |
+| **Access** | Direct variable access | Key-value lookup | Dotted field access |
+| **Performance** | Fastest | Medium | Fastest |
+| **Flexibility** | Limited | High | Medium |
+
+### 3.4 Kernel-Userspace Scoping Model
 
 KernelScript uses a simple and intuitive scoping model:
 - **Attributed functions** (e.g., `@xdp`, `@tc`): Kernel space (eBPF) - compiles to eBPF bytecode
 - **`@kfunc` functions**: Kernel modules (full privileges) - exposed to eBPF programs via BTF
 - **`@private` functions**: Kernel modules (full privileges) - internal helpers for kfuncs
 - **Regular functions**: User space - compiles to native executable
-- **Maps and global configs**: Shared between both kernel and user space
+- **Maps, global configs, and global variables**: Shared between both kernel and user space
 
 ```kernelscript
 // Shared configuration and maps (accessible by both kernel and userspace)
@@ -293,11 +390,11 @@ fn on_packet_event(event: PacketEvent) {
 }
 ```
 
-### 3.4 Explicit Program Lifecycle Management
+### 3.5 Explicit Program Lifecycle Management
 
 KernelScript supports explicit control over eBPF program loading and attachment through function references and built-in lifecycle functions. This enables advanced use cases like parameter configuration between loading and attachment phases.
 
-#### 3.4.1 Program Function References and Safety
+#### 3.5.1 Program Function References and Safety
 
 eBPF program functions are first-class values that can be referenced by name and passed to lifecycle functions. The interface enforces safety by requiring programs to be loaded before attachment:
 
@@ -326,7 +423,7 @@ fn main() -> i32 {
 }
 ```
 
-#### 3.4.2 Lifecycle Functions
+#### 3.5.2 Lifecycle Functions
 
 **`load(function_ref: FunctionRef) -> ProgramHandle`**
 - Loads the specified eBPF program function into the kernel
@@ -349,7 +446,7 @@ fn main() -> i32 {
 - **Implementation abstraction**: Users work with `ProgramHandle` instead of raw file descriptors
 - **Resource safety**: Program handles abstract away the underlying resource management
 
-#### 3.4.3 Advanced Usage Patterns
+#### 3.5.3 Advanced Usage Patterns
 
 **Configuration Between Load and Attach:**
 ```kernelscript
@@ -433,11 +530,11 @@ let my_bbr = tcp_congestion_ops {
     name: "my_bbr",
 }
 
-### 3.4 Custom Kernel Functions (kfunc)
+### 3.6 Custom Kernel Functions (kfunc)
 
 KernelScript allows users to define custom kernel functions using the `@kfunc` attribute. These functions execute in kernel space with full privileges and can be called from eBPF programs. The compiler automatically generates a kernel module containing the kfunc implementation and loads it transparently when needed.
 
-#### 3.4.1 kfunc Declaration and Usage
+#### 3.6.1 kfunc Declaration and Usage
 
 kfunc functions are declared using the `@kfunc` attribute and are registered with the same name as the function:
 
@@ -519,7 +616,7 @@ fn secure_packet_filter(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-#### 3.4.2 Automatic Kernel Module Generation
+#### 3.6.2 Automatic Kernel Module Generation
 
 The compiler automatically generates a kernel module for each kfunc:
 
@@ -537,7 +634,7 @@ The compiler automatically generates a kernel module for each kfunc:
 5. eBPF program is loaded and can call the kfuncs
 6. Module remains loaded as long as eBPF programs reference it
 
-#### 3.4.3 kfunc Registration
+#### 3.6.3 kfunc Registration
 
 ```kernelscript
 // kfunc registered as "packet_decrypt"
@@ -568,7 +665,7 @@ fn data_processor(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-#### 3.4.4 kfunc vs Other Function Types
+#### 3.6.4 kfunc vs Other Function Types
 
 | Aspect | `@kfunc` | `@helper` | `@xdp/@tc/etc` | Regular `fn` |
 |--------|----------|-------------|----------------|--------------|
@@ -579,7 +676,7 @@ fn data_processor(ctx: xdp_md) -> xdp_action {
 | **Resource Limits** | None | eBPF verifier limits | eBPF verifier limits | Process limits |
 | **Loading** | Automatic module load | Part of eBPF program | Part of eBPF program | Part of executable |
 
-#### 3.4.5 Advanced kfunc Examples
+#### 3.6.5 Advanced kfunc Examples
 
 ```kernelscript
 // Network policy enforcement with kernel integration
@@ -652,11 +749,11 @@ fn advanced_security_monitor(ctx: LsmContext) -> i32 {
 }
 ```
 
-### 3.5 Helper Functions (@helper)
+### 3.7 Helper Functions (@helper)
 
 KernelScript supports kernel-shared helper functions using the `@helper` attribute. These functions compile to eBPF bytecode and are shared across all eBPF programs within the same compilation unit, providing a way to reuse common logic without duplicating code.
 
-#### 3.5.1 @helper Declaration and Usage
+#### 3.7.1 @helper Declaration and Usage
 
 Helper functions are declared using the `@helper` attribute and can be called from any eBPF program:
 
@@ -713,7 +810,7 @@ fn traffic_shaper(ctx: TcContext) -> TcAction {
 }
 ```
 
-#### 3.5.2 @helper vs Other Function Types
+#### 3.7.2 @helper vs Other Function Types
 
 | Aspect | `@helper` | `@kfunc` | `@xdp/@tc/etc` | Regular `fn` |
 |--------|-----------|----------|----------------|--------------|
@@ -723,7 +820,7 @@ fn traffic_shaper(ctx: TcContext) -> TcAction {
 | **Shared Across Programs** | Yes | Yes | No | No |
 | **Memory Access** | eBPF-restricted | Unrestricted kernel | eBPF-restricted | Userspace-restricted |
 
-#### 3.5.3 Code Organization Benefits
+#### 3.7.3 Code Organization Benefits
 
 Using `@helper` functions provides several benefits:
 
@@ -763,11 +860,11 @@ fn connection_tracker(ctx: TcContext) -> TcAction {
 }
 ```
 
-### 3.6 Private Kernel Module Functions (@private)
+### 3.8 Private Kernel Module Functions (@private)
 
 KernelScript supports private helper functions within kernel modules using the `@private` attribute. These functions execute in kernel space but are internal to the module - they cannot be called by eBPF programs and are not registered via BTF. They serve as utility functions for `@kfunc` implementations.
 
-#### 3.6.1 @private Declaration and Usage
+#### 3.8.1 @private Declaration and Usage
 
 Private functions are declared using the `@private` attribute and can only be called by other functions within the same kernel module:
 
@@ -858,7 +955,7 @@ fn packet_filter(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-#### 3.6.2 Function Visibility and Call Hierarchy
+#### 3.8.2 Function Visibility and Call Hierarchy
 
 ```kernelscript
 // Example showing function call hierarchy
@@ -898,7 +995,7 @@ fn traffic_analyzer(ctx: TcContext) -> TcAction {
 }
 ```
 
-#### 3.6.3 @private vs @kfunc Comparison
+#### 3.8.3 @private vs @kfunc Comparison
 
 | Aspect | `@private` | `@kfunc` |
 |--------|-----------|----------|
@@ -909,7 +1006,7 @@ fn traffic_analyzer(ctx: TcContext) -> TcAction {
 | **Use Case** | Internal implementation details | Public API functions |
 | **Performance** | Direct function call | BTF-mediated call |
 
-#### 3.6.4 Code Organization Benefits
+#### 3.8.4 Code Organization Benefits
 
 Using `@private` functions provides several architectural benefits:
 
@@ -972,11 +1069,11 @@ fn optimized_packet_check(packet: *u8, len: u32) -> bool {
 }
 ```
 
-### 3.6 Struct_ops and Kernel Module Function Pointers
+### 3.9 Struct_ops and Kernel Module Function Pointers
 
 KernelScript supports both eBPF struct_ops and kernel module function pointer registration through attributed structs.
 
-#### 3.5.1 eBPF Struct_ops
+#### 3.9.1 eBPF Struct_ops
 
 eBPF struct_ops allow implementing kernel interfaces using eBPF programs:
 
@@ -1019,7 +1116,7 @@ let my_bbr = tcp_congestion_ops {
 register(my_bbr)
 ```
 
-#### 3.5.2 Registration Function
+#### 3.9.2 Registration Function
 
 The `register()` function is type-aware and generates the appropriate registration code:
 
@@ -3018,7 +3115,91 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 12.2 Performance Monitoring
+### 12.2 Global Variables Example
+```kernelscript
+// Global variables - shared between kernel and userspace
+var packet_count: u64 = 0
+var enable_debug: bool = false
+var max_allowed_size: u32 = 1500
+
+// Type inference examples
+var inferred_counter = 0            // Type: u32
+var inferred_message = "startup"    // Type: str<8>
+var inferred_flag = true            // Type: bool
+
+// Uninitialized global variables
+var total_bytes: u64
+var interface_name: str<16>
+
+// eBPF program using global variables
+@xdp
+fn packet_counter(ctx: xdp_md) -> xdp_action {
+    let packet = ctx.packet()
+    if (packet == null) {
+        return XDP_PASS
+    }
+    
+    // Access global variables directly
+    packet_count += 1
+    total_bytes += packet.len
+    
+    // Use global configuration
+    if (packet.len > max_allowed_size) {
+        if (enable_debug) {
+            print("Packet too large: %d bytes", packet.len)
+        }
+        return XDP_DROP
+    }
+    
+    return XDP_PASS
+}
+
+// Userspace program using global variables
+struct Args {
+    interface: str<16>,
+    debug: bool,
+    max_size: u32,
+}
+
+fn main(args: Args) -> i32 {
+    // Configure global variables from command line
+    enable_debug = args.debug
+    max_allowed_size = args.max_size
+    interface_name = args.interface
+    
+    // Initialize uninitialized globals
+    total_bytes = 0
+    
+    if (enable_debug) {
+        print("Debug mode enabled")
+        print("Max packet size: %d", max_allowed_size)
+        print("Interface: %s", interface_name)
+    }
+    
+    // Load and attach program
+    let prog_handle = load(packet_counter)
+    let result = attach(prog_handle, interface_name, 0)
+    
+    if (result != 0) {
+        print("Failed to attach program")
+        return 1
+    }
+    
+    print("Packet counter started on interface: %s", interface_name)
+    
+    // Monitor global state
+    while (true) {
+        if (enable_debug) {
+            print("Packets: %d, Total bytes: %d", packet_count, total_bytes)
+        }
+        sleep(5000)
+    }
+    
+    return 0
+}
+```
+
+### 12.3 Performance Monitoring
 ```kernelscript
 // Global maps for performance data
 map<u32, CallInfo> active_calls : HashMap(1024)
@@ -3176,7 +3357,7 @@ kernelscript_file = { global_declaration }
 
 global_declaration = config_declaration | map_declaration | type_declaration | 
                     function_declaration | struct_declaration | 
-                    bindings_declaration | import_declaration 
+                    global_variable_declaration | bindings_declaration | import_declaration 
 
 (* Map declarations - global scope *)
 map_declaration = "map" "<" key_type "," value_type ">" identifier 
@@ -3195,17 +3376,20 @@ map_attribute = identifier [ "=" literal ]
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kfunc"
+                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kfunc" | "helper" | "private"
 attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)
 config_declaration = "config" identifier "{" { config_field } "}" 
-config_field = identifier ":" type_annotation [ "=" expression ] "," 
+config_field = identifier ":" type_annotation [ "=" expression ] ","
+
+(* Global variable declarations *)
+global_variable_declaration = "var" identifier [ ":" type_annotation ] [ "=" expression ] 
 
 (* Scoping rules for KernelScript:
    - Attributed functions (e.g., @xdp, @tc): Kernel space (eBPF) - compiles to eBPF bytecode
    - Regular functions: User space - compiles to native executable  
-   - Maps and global configs: Shared between both kernel and user space
+   - Maps, global configs, and global variables: Shared between both kernel and user space
    
    Userspace main function can have two forms:
    1. fn main() -> i32 { ... }                    // No command line arguments

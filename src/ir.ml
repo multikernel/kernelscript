@@ -15,6 +15,7 @@ type ir_multi_program = {
   kernel_functions: ir_function list; (* Kernel functions shared across all programs *)
   global_maps: ir_map_def list; (* Maps shared across programs *)
   global_configs: ir_global_config list; (* Named configuration blocks *)
+  global_variables: ir_global_variable list; (* Global variables shared across programs *)
   struct_ops_declarations: ir_struct_ops_declaration list; (* Struct_ops type declarations *)
   struct_ops_instances: ir_struct_ops_instance list; (* Struct_ops instances *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
@@ -381,6 +382,14 @@ and ir_config_field = {
   field_pos: ir_position;
 }
 
+(** Global variable declaration *)
+and ir_global_variable = {
+  global_var_name: string;
+  global_var_type: ir_type;
+  global_var_init: ir_value option;
+  global_var_pos: ir_position;
+}
+
 (** Utility functions for creating IR nodes *)
 
 let make_bounds_info ?min_size ?max_size ?(alignment = 1) ?(nullable = false) () = {
@@ -465,13 +474,14 @@ let make_ir_program name prog_type entry_function pos = {
 }
 
 let make_ir_multi_program source_name programs kernel_functions global_maps 
-                          ?(global_configs = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = []) 
+                          ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = []) 
                           ?userspace_program ?(userspace_bindings = []) pos = {
   source_name;
   programs;
   kernel_functions;
   global_maps;
   global_configs;
+  global_variables;
   struct_ops_declarations;
   struct_ops_instances;
   userspace_program;
@@ -547,6 +557,13 @@ let make_ir_config_management loads updates sync = {
   config_loads = loads;
   config_updates = updates;
   runtime_config_sync = sync;
+}
+
+let make_ir_global_variable name var_type init pos = {
+  global_var_name = name;
+  global_var_type = var_type;
+  global_var_init = init;
+  global_var_pos = pos;
 }
 
 (** Type conversion utilities *)

@@ -108,6 +108,7 @@
 %type <Ast.literal list> literal_list
 %type <(string * Ast.expr) list> struct_literal_fields
 %type <string * Ast.expr> struct_literal_field
+%type <Ast.global_variable_declaration> global_variable_declaration
 
 /* Start symbol */
 %start program
@@ -130,6 +131,7 @@ declaration:
   | struct_declaration { StructDecl $1 }
   | enum_declaration { TypeDef $1 }
   | type_alias_declaration { TypeDef $1 }
+  | global_variable_declaration { GlobalVarDecl $1 }
 
 /* Config declaration: config name { config_fields } */
 config_declaration:
@@ -517,5 +519,14 @@ enum_variant:
 type_alias_declaration:
   | TYPE IDENTIFIER ASSIGN bpf_type
     { make_type_alias $2 $4 }
+
+/* Global variable declaration: var name: type = value */
+global_variable_declaration:
+  | VAR IDENTIFIER COLON bpf_type ASSIGN literal
+    { make_global_var_decl $2 (Some $4) (Some $6) (make_pos ()) }
+  | VAR IDENTIFIER COLON bpf_type
+    { make_global_var_decl $2 (Some $4) None (make_pos ()) }
+  | VAR IDENTIFIER ASSIGN literal
+    { make_global_var_decl $2 None (Some $4) (make_pos ()) }
 
 %% 

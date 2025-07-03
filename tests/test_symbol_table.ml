@@ -143,6 +143,7 @@ let comprehensive_symbol_analysis symbol_table ast =
       | Function _ -> incr function_count
       | Variable _ | Parameter _ -> incr variable_count  
       | ConstVariable _ -> incr variable_count  (* Count const variables as variables *)
+      | GlobalVariable _ -> incr variable_count  (* Count global variables as variables *)
       | TypeDef _ -> incr type_count
       | GlobalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count

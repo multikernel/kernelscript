@@ -6,6 +6,7 @@ open Ast
 type symbol_kind =
   | Variable of bpf_type
   | ConstVariable of bpf_type * literal  (* Type and constant value *)
+  | GlobalVariable of bpf_type * literal option  (* Type and optional initial value *)
   | Function of bpf_type list * bpf_type  (* Parameter types, return type *)
   | TypeDef of type_def
   | GlobalMap of map_declaration
@@ -286,6 +287,24 @@ let add_config_decl table config_decl =
   let pos = config_decl.config_pos in
   add_symbol table config_decl.config_name (Config config_decl) Public pos
 
+(** Add global variable declaration to symbol table *)
+let add_global_var_decl table global_var_decl =
+  let pos = global_var_decl.global_var_pos in
+  let var_type = match global_var_decl.global_var_type with
+    | Some t -> t
+    | None -> 
+        (* If no type specified, infer from initial value *)
+        (match global_var_decl.global_var_init with
+         | Some (IntLit (_, _)) -> U32  (* Default integer type *)
+         | Some (StringLit s) -> Str (String.length s + 1)  (* String length + null terminator *)
+         | Some (BoolLit _) -> Bool
+         | Some (CharLit _) -> Char
+         | Some (NullLit) -> Pointer U8  (* Default pointer type *)
+         | Some (ArrayLit elems) -> Array (U32, List.length elems)  (* Infer array size from elements *)
+         | None -> U32)  (* Default type when no type or value specified *)
+  in
+  add_symbol table global_var_decl.global_var_name (GlobalVariable (var_type, global_var_decl.global_var_init)) Public pos
+
 (** Check if map is global *)
 let is_global_map table name =
   Hashtbl.mem table.global_maps name
@@ -384,7 +403,10 @@ and process_declaration_accumulate table declaration =
       let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.kernel_defined) in
       add_type_def table type_def pos;
       table
-
+      
+  | Ast.GlobalVarDecl global_var_decl ->
+      add_global_var_decl table global_var_decl;
+      table
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
@@ -430,6 +452,9 @@ and process_declaration table = function
       let pos = { line = 1; column = 1; filename = "" } in
       let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.kernel_defined) in
       add_type_def table type_def pos
+      
+  | Ast.GlobalVarDecl global_var_decl ->
+      add_global_var_decl table global_var_decl
 
 and process_statement table stmt =
   match stmt.stmt_desc with
@@ -706,6 +731,7 @@ let lookup_function table func_name =
 let string_of_symbol_kind = function
   | Variable t -> "variable:" ^ string_of_bpf_type t
   | ConstVariable (t, value) -> "const_variable:" ^ string_of_bpf_type t ^ "=" ^ string_of_literal value
+  | GlobalVariable (t, _) -> "global_variable:" ^ string_of_bpf_type t
   | Function (params, ret) ->
       "function:(" ^ String.concat "," (List.map string_of_bpf_type params) ^ ")->" ^ string_of_bpf_type ret
   | TypeDef (StructDef (name, _, _)) -> "struct:" ^ name

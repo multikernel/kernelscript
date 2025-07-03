@@ -1987,6 +1987,7 @@ let generate_c_program ?_config_declarations ir_prog =
     kernel_functions = [];
     global_maps = [];
     global_configs = [];
+    global_variables = [];
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
