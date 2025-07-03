@@ -93,7 +93,7 @@ fn main(args: Args) -> i32 {
 
 ### 2.1 Keywords
 ```
-program     fn          let         mut         const       config
+program     fn          let         const       config
 map         type        struct      enum        if          else
 for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
@@ -132,7 +132,7 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kmod" | "kfunc" | "private" | "helper"
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kfunc" | "private" | "helper"
 attribute_args = string_literal | identifier
 
 parameter_list = parameter { "," parameter }
@@ -154,8 +154,8 @@ config network {
 
 config security {
     threat_threshold: u32 = 100,
-    mut current_threat_level: u32 = 0,
-    mut enable_strict_mode: bool = false,
+    current_threat_level: u32 = 0,
+    enable_strict_mode: bool = false,
 }
 
 @xdp
@@ -203,7 +203,7 @@ KernelScript uses a simple and intuitive scoping model:
 config monitoring {
     enable_stats: bool = true,
     sample_rate: u32 = 100,
-    mut packets_processed: u64 = 0,
+    packets_processed: u64 = 0,
 }
 
 map<u32, PacketStats> global_stats : HashMap(1024)
@@ -279,7 +279,7 @@ fn main(args: Args) -> i32 {
 
 // Userspace helper functions
 fn get_combined_stats() -> PacketStats {
-    let mut total = PacketStats { packets: 0, bytes: 0, drops: 0 }
+    let total = PacketStats { packets: 0, bytes: 0, drops: 0 }
     for (i in 0..1024) {
         total.packets += global_stats[i].packets
         total.bytes += global_stats[i].bytes
@@ -354,8 +354,8 @@ fn main() -> i32 {
 **Configuration Between Load and Attach:**
 ```kernelscript
 config network {
-    mut enable_filtering: bool = false,
-    mut max_packet_size: u32 = 1500,
+    enable_filtering: bool = false,
+    max_packet_size: u32 = 1500,
 }
 
 @xdp
@@ -1019,63 +1019,7 @@ let my_bbr = tcp_congestion_ops {
 register(my_bbr)
 ```
 
-#### 3.5.2 Kernel Module Function Pointers
-
-For kernel modules, use the `@kmod` attribute to define function pointer structs:
-
-```kernelscript
-// Define the kernel module function pointer struct
-@kmod("file_operations")
-struct file_operations {
-    open: fn(inode: *Inode, file: *File) -> i32,
-    read: fn(file: *File, buf: *u8, count: usize) -> ssize_t,
-    write: fn(file: *File, buf: *u8, count: usize) -> ssize_t,
-    release: fn(inode: *Inode, file: *File) -> i32,
-}
-
-// Create an instance with full kernel privileges
-let my_fops = file_operations {
-    open: fn(inode: *Inode, file: *File) -> i32 {
-        // Full kernel privileges, unlimited capabilities
-        printk(KERN_INFO, "Device opened")
-        return 0
-    },
-    read: fn(file: *File, buf: *u8, count: usize) -> ssize_t {
-        // Full kernel read implementation
-        if (copy_to_user(buf, kernel_buffer, count) != 0) {
-            return -EFAULT
-        }
-        return count
-    },
-    write: fn(file: *File, buf: *u8, count: usize) -> ssize_t {
-        // Full kernel write implementation
-        if (copy_from_user(kernel_buffer, buf, count) != 0) {
-            return -EFAULT
-        }
-        return count
-    },
-    release: fn(inode: *Inode, file: *File) -> i32 {
-        printk(KERN_INFO, "Device closed")
-        return 0
-    },
-}
-
-// Register the kernel module function pointers
-register(my_fops)
-```
-
-#### 3.5.3 Key Differences
-
-| Aspect | `@struct_ops` (eBPF) | `@kmod` (Kernel Module) |
-|--------|---------------------|------------------------|
-| **Execution Context** | eBPF sandbox with restrictions | Full kernel privileges |
-| **Stack Size** | Limited (512 bytes) | Unlimited |
-| **Function Calls** | Restricted to eBPF helpers | All kernel functions |
-| **Compilation** | eBPF bytecode | Native machine code |
-| **Verification** | eBPF verifier enforced | Manual verification |
-| **Registration** | `bpf_map__attach_struct_ops()` | Kernel registration APIs |
-
-#### 3.5.4 Registration Function
+#### 3.5.2 Registration Function
 
 The `register()` function is type-aware and generates the appropriate registration code:
 
@@ -1084,7 +1028,6 @@ fn register<T>(ops: T) -> Result<Link, Error>
 ```
 
 - For `@struct_ops`: Generates libbpf registration using `bpf_map__attach_struct_ops()`
-- For `@kmod`: Generates kernel module registration using appropriate kernel APIs
 - Returns a `Link` handle for later unregistration
 - The compiler determines the registration method based on the struct attribute
 
@@ -1295,7 +1238,7 @@ KernelScript supports fixed-size strings with `str<N>` syntax, where N can be an
 // String declaration and assignment (N can be any positive integer)
 let name: str<16> = "John"
 let surname: str<16> = "Doe"
-let mut buffer: str<32> = "Hello"
+let buffer: str<32> = "Hello"
 let small_buffer: str<8> = "tiny"
 let custom_size: str<42> = "custom"
 let large_buffer: str<512> = "large text content"
@@ -1853,7 +1796,7 @@ fn validate_packet(packet: *PacketHeader) -> bool {
 // Public kernel-shared function
 @helper
 pub fn calculate_checksum(data: *u8, len: u32) -> u16 {
-    let mut sum: u32 = 0
+    let sum: u32 = 0
     for (i in 0..(len / 2)) {
         sum += data[i * 2] + (data[i * 2 + 1] << 8)
     }
@@ -2466,7 +2409,7 @@ impl SystemCoordinator {
         })
     }
     
-    fn start(&mut self) -> Result<(), Error> {
+    fn start(&self) -> Result<(), Error> {
         // Coordinate multiple programs
         attach(network_monitor, "eth0", 0)?
     attach(security_filter, "socket_connect", 0)?
@@ -2501,7 +2444,7 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --monitoring-enabled=1
     
-    let mut coordinator = SystemCoordinator::new().unwrap()
+    let coordinator = SystemCoordinator::new().unwrap()
     coordinator.start_on_interface_by_id(args.interface_id).unwrap()
     
     if (args.monitoring_enabled == 1) {
@@ -2905,8 +2848,8 @@ mod program {
 // XDP context helpers
 impl xdp_md {
     pub fn packet(&self) -> Result<Packet, ContextError>
-    pub fn adjust_head(&mut self, delta: i32) -> Result<(), ContextError>
-    pub fn adjust_tail(&mut self, delta: i32) -> Result<(), ContextError>
+    pub fn adjust_head(&self, delta: i32) -> Result<(), ContextError>
+    pub fn adjust_tail(&self, delta: i32) -> Result<(), ContextError>
 }
 
 // Kprobe context helpers
@@ -2929,8 +2872,8 @@ config filtering {
 }
 
 config system {
-    mut packets_dropped: u64 = 0,
-    mut packets_processed: u64 = 0,
+    packets_dropped: u64 = 0,
+    packets_processed: u64 = 0,
 }
 
 // Custom kernel function for advanced port analysis
@@ -3252,12 +3195,12 @@ map_attribute = identifier [ "=" literal ]
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kmod" | "kfunc"
+                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kfunc"
 attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)
 config_declaration = "config" identifier "{" { config_field } "}" 
-config_field = [ "mut" ] identifier ":" type_annotation [ "=" expression ] "," 
+config_field = identifier ":" type_annotation [ "=" expression ] "," 
 
 (* Scoping rules for KernelScript:
    - Attributed functions (e.g., @xdp, @tc): Kernel space (eBPF) - compiles to eBPF bytecode
@@ -3302,7 +3245,7 @@ expression_statement = expression
 assignment_statement = identifier assignment_operator expression 
 assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%=" 
 
-declaration_statement = "let" [ "mut" ] identifier [ ":" type_annotation ] "=" expression 
+declaration_statement = "let" identifier [ ":" type_annotation ] "=" expression 
 
 if_statement = "if" "(" expression ")" "{" statement_list "}" 
                { "else" "if" "(" expression ")" "{" statement_list "}" }
