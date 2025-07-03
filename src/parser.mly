@@ -17,7 +17,7 @@
 %token FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
-%token VAR CONST CONFIG
+%token VAR CONST CONFIG LOCAL
 %token IN DELETE TRY CATCH THROW DEFER
 
 
@@ -520,13 +520,19 @@ type_alias_declaration:
   | TYPE IDENTIFIER ASSIGN bpf_type
     { make_type_alias $2 $4 }
 
-/* Global variable declaration: var name: type = value */
+/* Global variable declaration: [local] var name: type = value */
 global_variable_declaration:
   | VAR IDENTIFIER COLON bpf_type ASSIGN literal
-    { make_global_var_decl $2 (Some $4) (Some $6) (make_pos ()) }
+    { make_global_var_decl $2 (Some $4) (Some $6) (make_pos ()) () }
   | VAR IDENTIFIER COLON bpf_type
-    { make_global_var_decl $2 (Some $4) None (make_pos ()) }
+    { make_global_var_decl $2 (Some $4) None (make_pos ()) () }
   | VAR IDENTIFIER ASSIGN literal
-    { make_global_var_decl $2 None (Some $4) (make_pos ()) }
+    { make_global_var_decl $2 None (Some $4) (make_pos ()) () }
+  | LOCAL VAR IDENTIFIER COLON bpf_type ASSIGN literal
+    { make_global_var_decl $3 (Some $5) (Some $7) (make_pos ()) ~is_local:true () }
+  | LOCAL VAR IDENTIFIER COLON bpf_type
+    { make_global_var_decl $3 (Some $5) None (make_pos ()) ~is_local:true () }
+  | LOCAL VAR IDENTIFIER ASSIGN literal
+    { make_global_var_decl $3 None (Some $5) (make_pos ()) ~is_local:true () }
 
 %% 

@@ -45,10 +45,12 @@ type ir_context = {
   variable_declared_types: (string, string) Hashtbl.t; (* variable_name -> original_type_name *)
   (* Track function parameters to avoid allocating registers for them *)
   function_parameters: (string, ir_type) Hashtbl.t; (* param_name -> param_type *)
+  (* Track global variables for proper access *)
+  global_variables: (string, ir_global_variable) Hashtbl.t; (* global_var_name -> global_var *)
 }
 
 (** Create new IR generation context *)
-let create_context symbol_table = {
+let create_context ?(global_variables = []) symbol_table = {
   variables = Hashtbl.create 32;
   next_register = 0;
   current_block = [];
@@ -66,6 +68,9 @@ let create_context symbol_table = {
   register_aliases = Hashtbl.create 32;
   variable_declared_types = Hashtbl.create 32;
   function_parameters = Hashtbl.create 32;
+  global_variables = (let tbl = Hashtbl.create 16 in
+                     List.iter (fun gv -> Hashtbl.add tbl gv.global_var_name gv) global_variables;
+                     tbl);
 }
 
 (** Register allocation *)
@@ -276,6 +281,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
                (* Function parameters use IRVariable with their original names *)
                let param_type = Hashtbl.find ctx.function_parameters name in
                make_ir_value (IRVariable name) param_type expr.expr_pos
+             (* Check if this is a global variable *)
+             else if Hashtbl.mem ctx.global_variables name then
+               (* Global variables use IRVariable with their original names *)
+               let global_var = Hashtbl.find ctx.global_variables name in
+               make_ir_value (IRVariable name) global_var.global_var_type expr.expr_pos
              else
                (* Check if this is a constant from the symbol table *)
                (match Symbol_table.lookup_symbol ctx.symbol_table name with
@@ -613,26 +623,44 @@ let rec lower_statement ctx stmt =
       
   | Ast.Assignment (name, expr) ->
       let value = lower_expression ctx expr in
-      let reg = get_variable_register ctx name in
-      (* Get the target variable's actual type from the symbol table *)
-      let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
-        | Some symbol -> 
-            (match symbol.kind with
-             | Symbol_table.Variable var_type -> ast_type_to_ir_type_with_context ctx.symbol_table var_type
-             | _ -> value.val_type)
-        | None -> value.val_type (* Fallback to value type if not found *)
-      in
-      let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
       
-      (* If the target type is different from the value type, create a cast expression *)
-      let value_expr = 
-        if target_type <> value.val_type then
-          make_ir_expr (IRCast (value, target_type)) target_type stmt.stmt_pos
-        else
-          make_ir_expr (IRValue value) target_type stmt.stmt_pos
-      in
-      let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
-      emit_instruction ctx instr
+      (* Check if this is a global variable assignment *)
+      if Hashtbl.mem ctx.global_variables name then
+        (* Global variable assignment *)
+        let global_var = Hashtbl.find ctx.global_variables name in
+        let target_val = make_ir_value (IRVariable name) global_var.global_var_type stmt.stmt_pos in
+        
+        (* If the target type is different from the value type, create a cast expression *)
+        let value_expr = 
+          if global_var.global_var_type <> value.val_type then
+            make_ir_expr (IRCast (value, global_var.global_var_type)) global_var.global_var_type stmt.stmt_pos
+          else
+            make_ir_expr (IRValue value) global_var.global_var_type stmt.stmt_pos
+        in
+        let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
+        emit_instruction ctx instr
+      else
+        (* Local variable assignment *)
+        let reg = get_variable_register ctx name in
+        (* Get the target variable's actual type from the symbol table *)
+        let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
+          | Some symbol -> 
+              (match symbol.kind with
+               | Symbol_table.Variable var_type -> ast_type_to_ir_type_with_context ctx.symbol_table var_type
+               | _ -> value.val_type)
+          | None -> value.val_type (* Fallback to value type if not found *)
+        in
+        let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
+        
+        (* If the target type is different from the value type, create a cast expression *)
+        let value_expr = 
+          if target_type <> value.val_type then
+            make_ir_expr (IRCast (value, target_type)) target_type stmt.stmt_pos
+          else
+            make_ir_expr (IRValue value) target_type stmt.stmt_pos
+        in
+        let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
+        emit_instruction ctx instr
       
   | Ast.IndexAssignment (map_expr, key_expr, value_expr) ->
       let map_val = lower_expression ctx map_expr in
@@ -1455,6 +1483,8 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
     ir_type
     ir_init
     global_var_decl.global_var_pos
+    ~is_local:global_var_decl.is_local
+    ()
 
 (** Convert AST types to IR types *)
 let rec ast_type_to_ir_type = function
@@ -1489,7 +1519,7 @@ let rec ast_type_to_ir_type = function
   | Ast.Xdp_action -> IRAction Xdp_actionType
   | Ast.TcAction -> IRAction TcActionType
   | Ast.ProgramRef _prog_type -> IRU32  (* Program refs become integers *)
-  | Ast.ProgramHandle -> IRU64  (* Program handles are pointers represented as 64-bit ints *)
+  | Ast.ProgramHandle -> IRI32  (* Program handles are file descriptors (i32) to support error codes *)
 
 (** Convert AST types to IR types with symbol table lookup for struct field resolution *)
 let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
@@ -1860,12 +1890,17 @@ let lower_multi_program ast symbol_table source_name =
   let all_kernel_shared_functions = kernel_shared_functions @ helper_functions in
   
   (* Lower kernel functions once - they are shared across all programs *)
-  let ir_kernel_functions = List.map (lower_function ctx "kernel") all_kernel_shared_functions in
+  let kernel_ctx = create_context ~global_variables:ir_global_variables symbol_table in
+  (* Copy maps from main context to kernel context *)
+  Hashtbl.iter (fun map_name map_def -> 
+    Hashtbl.add kernel_ctx.maps map_name map_def
+  ) ctx.maps;
+  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel") all_kernel_shared_functions in
   
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
-    let prog_ctx = create_context symbol_table in
+    let prog_ctx = create_context ~global_variables:ir_global_variables symbol_table in
     lower_single_program prog_ctx prog_def ir_global_maps all_kernel_shared_functions
   ) prog_defs in
   
@@ -1900,8 +1935,13 @@ let lower_multi_program ast symbol_table source_name =
           struct_decl.Ast.struct_pos
       ) userspace_struct_decls in
       
-      let ir_functions = List.map (fun func -> lower_userspace_function ctx func) userspace_functions in
-      Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
+      let userspace_ctx = create_context ~global_variables:ir_global_variables symbol_table in
+      (* Copy maps from main context to userspace context *)
+      Hashtbl.iter (fun map_name map_def -> 
+        Hashtbl.add userspace_ctx.maps map_name map_def
+      ) ctx.maps;
+      let ir_functions = List.map (fun func -> lower_userspace_function userspace_ctx func) userspace_functions in
+      Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
   
   (* Extract all map assignments from the AST to analyze initial values *)

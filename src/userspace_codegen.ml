@@ -251,24 +251,28 @@ type userspace_context = {
   var_declarations: (string, string) Hashtbl.t; (* var_name -> c_type *)
   (* Track function usage for optimization *)
   function_usage: function_usage;
+  (* Global variables for skeleton access *)
+  global_variables: ir_global_variable list;
 }
 
-let create_userspace_context () = {
+let create_userspace_context ?(global_variables = []) () = {
   temp_counter = ref 0;
   function_name = "user_function";
   is_main = false;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
   function_usage = create_function_usage ();
+  global_variables;
 }
 
-let create_main_context () = {
+let create_main_context ?(global_variables = []) () = {
   temp_counter = ref 0;
   function_name = "main";
   is_main = true;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
   function_usage = create_function_usage ();
+  global_variables;
 }
 
 let fresh_temp_var ctx prefix =
@@ -573,7 +577,57 @@ let collect_type_aliases_from_userspace_program userspace_prog =
   
   List.rev !type_aliases
 
-(** Convert IR types to C types *)
+(** Get printf format specifier for IR type *)
+let get_printf_format_specifier ir_type =
+  match ir_type with
+  | IRU8 -> "%u"
+  | IRU16 -> "%u"
+  | IRU32 -> "%u"
+  | IRU64 -> "%llu"
+  | IRI8 -> "%d"
+  | IRI16 -> "%d"
+  | IRI32 -> "%d"
+  | IRI64 -> "%lld"
+  | IRBool -> "%d"
+  | IRChar -> "%c"
+  | IRF32 -> "%f"
+  | IRF64 -> "%f"
+  | IRStr _ -> "%s"
+  | IRPointer _ -> "%p"
+  | _ -> "%d"  (* fallback *)
+
+(** Fix format specifiers in a format string based on argument types *)
+let fix_format_specifiers format_string arg_types =
+  let format_chars = String.to_seq format_string |> List.of_seq in
+  let rec fix_formats chars arg_types_list acc =
+    match chars with
+    | [] -> String.concat "" (List.rev acc)
+    | '%' :: '%' :: rest ->
+        (* Escaped % - keep as is *)
+        fix_formats rest arg_types_list ("%%" :: acc)
+    | '%' :: rest ->
+        (* Format specifier - find the end and replace *)
+        let rec find_spec_end spec_chars =
+          match spec_chars with
+          | [] -> ([], [])
+          | ('d' | 'i' | 'u' | 'o' | 'x' | 'X' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'c' | 's' | 'p' | 'n') :: rest ->
+              (spec_chars, rest)
+          | c :: rest ->
+              let (spec, remaining) = find_spec_end rest in
+              (c :: spec, remaining)
+        in
+        let (spec_chars, remaining) = find_spec_end rest in
+        (match arg_types_list with
+         | [] -> fix_formats remaining [] (String.concat "" (List.rev_map (String.make 1) spec_chars) :: "%" :: acc)
+         | arg_type :: rest_types ->
+             let new_spec = get_printf_format_specifier arg_type in
+             fix_formats remaining rest_types (new_spec :: acc))
+    | c :: rest ->
+        (* Regular character - keep as is *)
+        fix_formats rest arg_types_list (String.make 1 c :: acc)
+  in
+  fix_formats format_chars arg_types []
+
 let rec c_type_from_ir_type = function
   | IRU8 -> "uint8_t"
   | IRU16 -> "uint16_t"
@@ -690,7 +744,20 @@ let generate_c_value_from_ir ctx ir_value =
         | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
       ) elems in
       sprintf "{%s}" (String.concat ", " elem_strs)
-  | IRVariable name -> name  (* Function parameters and regular variables use their names directly *)
+  | IRVariable name -> 
+      (* Check if this is a global variable that should be accessed through skeleton *)
+      let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
+      if is_global then
+        (* Access global variable through skeleton *)
+        let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
+        if global_var.is_local then
+          (* Local global variables are not accessible from userspace *)
+          failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
+        else
+          (* Shared global variables are accessed through skeleton bss section *)
+          sprintf "obj->bss->%s" name
+      else
+        name  (* Function parameters and regular variables use their names directly *)
   | IRRegister reg_id -> get_register_var_name ctx reg_id ir_value.val_type
   | IRContextField (_ctx_type, field) -> sprintf "ctx->%s" field
   | IRMapRef map_name -> sprintf "%s_fd" map_name
@@ -907,16 +974,41 @@ let generate_config_field_update_from_ir ctx map_val key_val field value_val =
 (** Generate variable assignment with optional const keyword *)
 and generate_variable_assignment ctx dest src is_const =
   let assignment_prefix = if is_const then "const " else "" in
-  let dest_str = generate_c_value_from_ir ctx dest in
   let src_str = generate_c_expression_from_ir ctx src in
   
-  (* For string assignments, use safer approach to avoid truncation warnings *)
-  (match dest.val_type with
-   | IRStr size -> 
-       sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
-         assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
-   | _ -> 
-       sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+  (* Check if this is a global variable assignment - handle specially *)
+  (match dest.value_desc with
+   | IRVariable name ->
+       let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
+       if is_global then
+         (* Global variable assignment - add null check to prevent segfault *)
+         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
+         if global_var.is_local then
+           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
+         else
+            (* Global variable assignment through skeleton bss section *)
+            sprintf "%sobj->bss->%s = %s;" 
+              assignment_prefix name src_str
+       else
+         (* Regular variable assignment *)
+         let dest_str = generate_c_value_from_ir ctx dest in
+         (* For string assignments, use safer approach to avoid truncation warnings *)
+         (match dest.val_type with
+          | IRStr size -> 
+              sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
+                assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+          | _ -> 
+              sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+   | _ ->
+       (* Non-variable assignment (registers, etc.) *)
+       let dest_str = generate_c_value_from_ir ctx dest in
+       (* For string assignments, use safer approach to avoid truncation warnings *)
+       (match dest.val_type with
+        | IRStr size -> 
+            sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
+              assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+        | _ -> 
+            sprintf "%s%s = %s;" assignment_prefix dest_str src_str))
 
 (** Generate C instruction from IR instruction *)
 let rec generate_c_instruction_from_ir ctx instruction =
@@ -940,13 +1032,41 @@ let rec generate_c_instruction_from_ir ctx instruction =
             let c_args = List.map (generate_c_value_from_ir ctx) args in
             (match name with
              | "print" -> 
-                 (* Special handling for print: convert to printf format *)
-                 (match c_args with
-                  | [] -> (userspace_impl, ["\"\\n\""])
-                  | [first] -> (userspace_impl, [sprintf "%s \"\\n\"" first])
-                  | args -> (userspace_impl, args @ ["\"\\n\""]))
+                 (* Special handling for print: convert to printf format with proper type specifiers *)
+                 (match c_args, args with
+                  | [], [] -> (userspace_impl, ["\"\\n\""])
+                  | [first], [_] -> 
+                      (* For single string argument, check if we need to append newline to format string *)
+                      let format_str = first in
+                      let fixed_format = match format_str with
+                        | str when String.length str >= 2 && String.get str 0 = '"' && String.get str (String.length str - 1) = '"' ->
+                            (* Remove quotes, add newline, add quotes back *)
+                            let inner_str = String.sub str 1 (String.length str - 2) in
+                            sprintf "\"%s\\n\"" inner_str
+                        | str -> 
+                            (* Non-quoted string - add newline *)
+                            sprintf "%s \"\\n\"" str
+                      in
+                      (userspace_impl, [fixed_format])
+                  | format_arg :: rest_args, _ :: rest_ir_args ->
+                      (* Extract the format string and fix format specifiers based on argument types *)
+                      let format_str = format_arg in
+                      let arg_types = List.map (fun ir_val -> ir_val.val_type) rest_ir_args in
+                      let fixed_format = match format_str with
+                        | str when String.length str >= 2 && String.get str 0 = '"' && String.get str (String.length str - 1) = '"' ->
+                            (* Remove quotes, fix format specifiers, add newline, add quotes back *)
+                            let inner_str = String.sub str 1 (String.length str - 2) in
+                            let fixed_str = fix_format_specifiers inner_str arg_types in
+                            sprintf "\"%s\\n\"" fixed_str
+                        | str -> 
+                            (* Non-quoted string - fix as is and add newline *)
+                            let fixed_str = fix_format_specifiers str arg_types in
+                            sprintf "\"%s\\n\"" fixed_str
+                      in
+                      (userspace_impl, fixed_format :: rest_args)
+                  | args, _ -> (userspace_impl, args @ ["\"\\n\""]))
              | "load" ->
-                 (* Special handling for load: generate libbpf program loading code *)
+                 (* Special handling for load: generate libbpf program loading code with error checking *)
                  ctx.function_usage.uses_load <- true;
                  (match c_args with
                   | [program_name] ->
@@ -971,9 +1091,18 @@ let rec generate_c_instruction_from_ir ctx instruction =
             (name, c_args)
       in
       let args_str = String.concat ", " translated_args in
-      (match ret_opt with
+      let basic_call = (match ret_opt with
        | Some result -> sprintf "%s = %s(%s);" (generate_c_value_from_ir ctx result) actual_name args_str
-       | None -> sprintf "%s(%s);" actual_name args_str)
+       | None -> sprintf "%s(%s);" actual_name args_str) in
+      
+      (* Add error checking for load in main function *)
+      if ctx.is_main && name = "load" then
+        match ret_opt with
+        | Some result ->
+            let result_var = generate_c_value_from_ir ctx result in
+            sprintf "%s\n    if (%s < 0) {\n        fprintf(stderr, \"Failed to load BPF program\\n\");\n        return 1;\n    }" basic_call result_var
+        | None -> basic_call
+      else basic_call
   
   | IRTailCall (name, _args, _index) ->
       (* Tail calls are not supported in userspace - this should not happen *)
@@ -1172,15 +1301,15 @@ let generate_variable_declarations ctx =
   else "    " ^ String.concat "\n    " (List.rev declarations) ^ "\n"
 
 (** Collect function usage information from IR function *)
-let collect_function_usage_from_ir_function ir_func =
-  let ctx = create_userspace_context () in
+let collect_function_usage_from_ir_function ?(global_variables = []) ir_func =
+  let ctx = create_userspace_context ~global_variables () in
   List.iter (fun block ->
     track_usage_in_instructions ctx block.instructions
   ) ir_func.basic_blocks;
   ctx.function_usage
 
 (** Generate C function from IR function *)
-let generate_c_function_from_ir (ir_func : ir_function) =
+let generate_c_function_from_ir ?(global_variables = []) (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
        (* Handle string types specially for function parameters *)
@@ -1195,8 +1324,8 @@ let generate_c_function_from_ir (ir_func : ir_function) =
     | None -> "void"
   in
   
-  let ctx = if ir_func.func_name = "main" then create_main_context () else 
-    { (create_userspace_context ()) with function_name = ir_func.func_name } in
+  let ctx = if ir_func.func_name = "main" then create_main_context ~global_variables () else 
+    { (create_userspace_context ~global_variables ()) with function_name = ir_func.func_name } in
   
   (* Function parameters are used directly, no need for local variable copies *)
   
@@ -1243,18 +1372,36 @@ let generate_c_function_from_ir (ir_func : ir_function) =
       "    \n    // Auto-initialize BPF maps\n    atexit(cleanup_bpf_maps);\n    if (init_bpf_maps() < 0) {\n        return 1;\n    }"
     else "" in
     
+    (* Add error handling notice for BPF program loading *)
+    let error_handling_notice = if func_usage.uses_load then
+      "    // Error handling: BPF program loading failures are handled by null checks on 'obj'"
+    else "" in
+    
     (* Generate ONLY what the user explicitly wrote with auto-initialization if needed *)
     sprintf {|%s %s(%s) {
 %s    
 %s%s
 %s
+%s
     
     %s
-}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code auto_init_call body_c
+}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code auto_init_call error_handling_notice body_c
   else
     sprintf {|%s %s(%s) {
 %s    %s
 }|} adjusted_return_type ir_func.func_name adjusted_params var_decls body_c
+
+(** Generate skeleton definitions and initialization for global variables *)
+let generate_skeleton_code base_name global_variables =
+  (* Use standard libbpf skeleton - no custom skeleton generation needed *)
+  if global_variables = [] then
+    ""
+  else
+    let shared_vars = List.filter (fun gv -> not gv.is_local) global_variables in
+    if shared_vars = [] then
+      ""
+    else
+      sprintf "/* Standard libbpf skeleton */\nstruct %s_bpf *obj = NULL;\n" base_name
 
 (** Generate struct_ops registration code *)
 let generate_struct_ops_registration_code ir_multi_program =
@@ -1546,7 +1693,7 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
 
 (** Generate userspace code with tail call dependency management *)
-let generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies =
+let generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies _global_variables =
   (* kfunc_dependencies is used implicitly in the generated C code via ensure_kfunc_dependencies_loaded call *)
   let _ensure_deps_exist = kfunc_dependencies in  (* Suppress unused warning *)
   if all_usage.uses_load then
@@ -1608,21 +1755,29 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
       ""
     in
     
+    (* Standard libbpf skeleton handles global variable initialization automatically *)
+    
     sprintf {|int load_bpf_program(const char *program_name) {
-%s    if (!bpf_obj) {
-        bpf_obj = bpf_object__open_file("%s.ebpf.o", NULL);
-        if (libbpf_get_error(bpf_obj)) {
-            fprintf(stderr, "Failed to open BPF object\n");
+%s    if (!obj) {
+        /* Use standard libbpf skeleton (equivalent to loading %s.ebpf.o) */
+        obj = %s_ebpf__open_and_load();
+        if (!obj) {
+            fprintf(stderr, "Failed to open and load BPF skeleton\n");
             return -1;
         }
-        if (bpf_object__load(bpf_obj)) {
-            fprintf(stderr, "Failed to load BPF object\n");
+        
+        /* Ensure global variable sections are accessible */
+        if (!obj->bss) {
+            fprintf(stderr, "Failed to access global variables section\n");
+            %s_ebpf__destroy(obj);
+            obj = NULL;
             return -1;
         }
+        
         %s
     }
     
-    struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, program_name);
+    struct bpf_program *prog = bpf_object__find_program_by_name(obj->obj, program_name);
     if (!prog) {
         fprintf(stderr, "Failed to find program '%%s' in BPF object\n", program_name);
         return -1;
@@ -1635,14 +1790,14 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
     }
     
     return prog_fd;
-}|} kfunc_dependency_check base_name combined_setup_code
+}|} kfunc_dependency_check base_name base_name base_name combined_setup_code
   else ""
 
 (** Generate complete userspace program from IR *)
 let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
-    let func_usage = collect_function_usage_from_ir_function func in
+    let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
     {
       uses_load = acc_usage.uses_load || func_usage.uses_load;
       uses_attach = acc_usage.uses_attach || func_usage.uses_attach;
@@ -1657,6 +1812,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let base_includes = generate_headers_for_maps ~uses_bpf_functions global_maps in
   let additional_includes = {|#include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <net/if.h>
@@ -1670,7 +1826,13 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Add kfunc dependency loading code if needed *)
   let kmodule_loading_code = generate_kmodule_loading_code kfunc_dependencies in
   
-  let includes = base_includes ^ "\n" ^ additional_includes ^ kmodule_loading_code in
+  (* Generate skeleton header include for standard libbpf skeleton *)
+  let base_name = Filename.remove_extension (Filename.basename source_filename) in
+  let skeleton_include = if ir_multi_prog.global_variables <> [] then
+    sprintf "#include \"%s.skel.h\"\n" base_name
+  else "" in
+  
+  let includes = base_includes ^ "\n" ^ additional_includes ^ kmodule_loading_code ^ skeleton_include in
 
   (* Reset and use the global config names collector *)
   global_config_names := [];
@@ -1703,9 +1865,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Generate type alias definitions from AST *)
   let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
 
+  (* Generate skeleton instance - use standard libbpf skeleton *)
+  let skeleton_code = if ir_multi_prog.global_variables <> [] then
+    sprintf "/* Standard libbpf skeleton */\nstruct %s_ebpf *obj = NULL;\n" base_name
+  else "" in
+  
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
-    (List.map generate_c_function_from_ir userspace_prog.userspace_functions) in
+    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables) userspace_prog.userspace_functions) in
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
@@ -1777,8 +1944,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     (if config_setup_code <> "" && struct_ops_registration_code <> "" then "\n" else "") ^
     struct_ops_registration_code in
   
-  (* Extract base name from source filename *)
-  let base_name = Filename.remove_extension (Filename.basename source_filename) in
+  (* Base name already extracted earlier *)
   
   (* Generate automatic BPF object initialization when maps are used but load is not called *)
   let needs_auto_bpf_init = all_usage.uses_map_operations && not all_usage.uses_load in
@@ -1815,7 +1981,7 @@ void cleanup_bpf_maps(void) {
   
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
-    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies in
+    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies ir_multi_prog.global_variables in
     
     let attach_function = if all_usage.uses_attach then
       {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
@@ -1857,9 +2023,7 @@ void cleanup_bpf_maps(void) {
 }|}
     else "" in
     
-    let bpf_obj_decl = if all_usage.uses_load || all_usage.uses_attach then
-      "struct bpf_object *bpf_obj = NULL;"
-    else "" in
+    let bpf_obj_decl = "" in  (* Skeleton now handles the BPF object *)
     
     let functions_list = List.filter (fun s -> s <> "") [load_function; attach_function] in
     if functions_list = [] && bpf_obj_decl = "" then ""
@@ -1885,15 +2049,17 @@ void cleanup_bpf_maps(void) {
 %s
 
 %s
-%s
 
 %s
 %s
 
 %s
+%s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
+
+%s
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs skeleton_code all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =

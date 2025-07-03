@@ -251,9 +251,9 @@ struct LocalSettings {
 }
 
 @helper
-fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
+fn process_settings(global: GlobalSettings, localSettings: LocalSettings) -> u32 {
   var g_limit = global.global_limit
-  var l_limit = local.local_limit
+  var l_limit = localSettings.local_limit
   return g_limit + l_limit
 }
 

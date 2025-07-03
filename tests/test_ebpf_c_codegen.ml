@@ -49,7 +49,7 @@ let test_c_value_generation () =
   check string "integer literal" "42" (generate_c_value ctx int_val);
   
   let bool_val = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
-  check string "boolean literal" "true" (generate_c_value ctx bool_val);
+  check string "boolean literal" "1" (generate_c_value ctx bool_val);
   
   let var_val = make_ir_value (IRVariable "my_var") IRU32 test_pos in
   check string "variable reference" "my_var" (generate_c_value ctx var_val)

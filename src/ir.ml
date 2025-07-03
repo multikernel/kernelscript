@@ -388,6 +388,7 @@ and ir_global_variable = {
   global_var_type: ir_type;
   global_var_init: ir_value option;
   global_var_pos: ir_position;
+  is_local: bool; (* true if declared with 'local' keyword *)
 }
 
 (** Utility functions for creating IR nodes *)
@@ -559,11 +560,12 @@ let make_ir_config_management loads updates sync = {
   runtime_config_sync = sync;
 }
 
-let make_ir_global_variable name var_type init pos = {
+let make_ir_global_variable name var_type init pos ?(is_local=false) () = {
   global_var_name = name;
   global_var_type = var_type;
   global_var_init = init;
   global_var_pos = pos;
+  is_local;
 }
 
 (** Type conversion utilities *)
@@ -607,7 +609,7 @@ let rec ast_type_to_ir_type = function
       IRStr 64  (* Function names as strings, max 64 chars *)
   | Map (_, _, _) -> failwith "Map types handled separately"
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
-  | ProgramHandle -> IRU32 (* Program handles are represented as file descriptors (u32) in IR *)
+  | ProgramHandle -> IRI32 (* Program handles are represented as file descriptors (i32) in IR to support error codes *)
 
 (* Helper function that preserves type aliases when converting AST types to IR types *)
 let rec ast_type_to_ir_type_with_context symbol_table ast_type =

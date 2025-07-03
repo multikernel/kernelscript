@@ -82,6 +82,7 @@
     | "var" -> VAR
     | "const" -> CONST
     | "config" -> CONFIG
+    | "local" -> LOCAL
     | "in" -> IN
     | "delete" -> DELETE
     | "try" -> TRY

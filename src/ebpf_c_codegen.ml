@@ -890,6 +890,47 @@ let generate_map_definition ctx map_def =
   emit_line ctx (sprintf "} %s SEC(\".maps\");" map_def.map_name);
   emit_blank_line ctx
 
+(** Generate global variable definitions for eBPF *)
+let generate_global_variables ctx global_variables =
+  if global_variables <> [] then (
+    emit_line ctx "/* Global variables */";
+    
+    (* Generate __hidden attribute definition for local variables *)
+    let has_local_vars = List.exists (fun gv -> gv.is_local) global_variables in
+    if has_local_vars then (
+      emit_line ctx "#define __hidden __attribute__((visibility(\"hidden\")))";
+      emit_blank_line ctx
+    );
+    
+    List.iter (fun global_var ->
+      let c_type = ebpf_type_from_ir_type global_var.global_var_type in
+      let var_name = global_var.global_var_name in
+      let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
+      
+      (* Generate variable declaration with initialization if present *)
+      (match global_var.global_var_init with
+       | Some init_val ->
+           let init_str = match init_val.value_desc with
+             | IRLiteral (Ast.IntLit (i, _)) -> string_of_int i
+             | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
+             | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" s
+             | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
+             | IRLiteral (Ast.NullLit) -> "NULL"
+             | _ -> "0" (* fallback *)
+           in
+           if global_var.is_local then
+             emit_line ctx (sprintf "%s%s %s = %s;" local_attr c_type var_name init_str)
+           else
+             emit_line ctx (sprintf "%s %s = %s;" c_type var_name init_str)
+       | None ->
+           if global_var.is_local then
+             emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
+           else
+             emit_line ctx (sprintf "%s %s;" c_type var_name))
+    ) global_variables;
+    emit_blank_line ctx
+  )
+
 (** Generate struct_ops definitions and instances for eBPF *)
 let generate_struct_ops ctx ir_multi_program =
   (* Generate struct_ops declarations *)
@@ -918,7 +959,7 @@ let generate_c_value ctx ir_val =
        | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
        | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
        | _ -> string_of_int i)
-  | IRLiteral (BoolLit b) -> if b then "true" else "false"
+  | IRLiteral (BoolLit b) -> if b then "1" else "0"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (NullLit) -> "NULL"
   | IRLiteral (StringLit s) -> 
@@ -2070,6 +2111,9 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
   
+  (* Generate global variables *)
+  generate_global_variables ctx ir_multi_program.global_variables;
+  
   (* Generate struct_ops definitions and instances *)
   generate_struct_ops ctx ir_multi_program;
   
@@ -2296,6 +2340,9 @@ let compile_multi_to_c_with_tail_calls
   (* Generate config maps from IR multi-program *)
   if ir_multi_prog.global_configs <> [] then
     List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
+  
+  (* Generate global variables *)
+  generate_global_variables ctx ir_multi_prog.global_variables;
   
   (* Now generate the actual functions *)
   List.iter (fun ir_prog ->

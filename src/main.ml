@@ -590,32 +590,37 @@ LIBS = -lbpf -lelf -lz
 # Object files
 BPF_OBJ = %s.ebpf.o
 USERSPACE_BIN = %s
+SKELETON_H = %s.skel.h
 
 # Source files
 BPF_SRC = %s.ebpf.c
 USERSPACE_SRC = %s.c%s
 
 # Default target - build both eBPF and userspace programs%s
-all: $(BPF_OBJ) $(USERSPACE_BIN)%s
+all: $(BPF_OBJ) $(SKELETON_H) $(USERSPACE_BIN)%s
 
 # Compile eBPF C to object file
 $(BPF_OBJ): $(BPF_SRC)
 	$(BPF_CC) $(BPF_CFLAGS) $(BPF_INCLUDES) -c $< -o $@
 
+# Generate skeleton header
+$(SKELETON_H): $(BPF_OBJ)
+	bpftool gen skeleton $< > $@
+
 # Compile userspace program
-$(USERSPACE_BIN): $(USERSPACE_SRC) $(BPF_OBJ)
+$(USERSPACE_BIN): $(USERSPACE_SRC) $(SKELETON_H)
 	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
 
 # Clean generated files
 clean:
-	rm -f $(BPF_OBJ) $(USERSPACE_BIN)%s
+	rm -f $(BPF_OBJ) $(SKELETON_H) $(USERSPACE_BIN)%s
 
 # Run the userspace program
 run: $(USERSPACE_BIN)%s
 	sudo ./$(USERSPACE_BIN)
 
 .PHONY: all clean run%s
-|} base_name base_name base_name base_name kmod_targets
+|} base_name base_name base_name base_name base_name kmod_targets
        (if kernel_module_code <> None then " and kernel module" else "")
        (if kernel_module_code <> None then " $(KMOD_OBJ)" else "")
        (if kernel_module_code <> None then " clean-kmod" else "")

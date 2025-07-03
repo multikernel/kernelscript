@@ -93,7 +93,7 @@ fn main(args: Args) -> i32 {
 
 ### 2.1 Keywords
 ```
-program     fn          var         const       config
+program     fn          var         const       config      local
 map         type        struct      enum        if          else
 for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
@@ -276,7 +276,60 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-#### 3.3.4 Global Variables vs Maps and Configs
+#### 3.3.4 Global Variable Scoping
+
+KernelScript provides explicit control over global variable visibility between kernel and userspace:
+
+```kernelscript
+// Shared variables (default) - accessible from both kernel and userspace
+var packet_count: u64 = 0
+var enable_logging: bool = true
+var shared_buffer: str<256> = "default"
+
+// Local variables - kernel-only, not exposed to userspace
+local var crypto_nonce: u64 = 0x123456789ABCDEF0
+local var internal_debug_flags: u32 = 0
+local var temp_calculation_buffer: [u8; 1024] = [0; 1024]
+
+// eBPF program using both shared and local variables
+@xdp
+fn secure_packet_filter(ctx: xdp_md) -> xdp_action {
+    packet_count += 1          // Shared: accessible via skeleton
+    crypto_nonce += 1          // Local: kernel-only, not in skeleton
+    
+    if (enable_logging) {      // Shared: configurable from userspace
+        internal_debug_flags |= 0x1  // Local: internal state only
+        print("Processing packet")
+    }
+    
+    return XDP_PASS
+}
+
+// Userspace program accessing shared variables only
+fn main() -> i32 {
+    // Can access shared variables via skeleton
+    enable_logging = true
+    
+    while (true) {
+        print("Packets processed: ", packet_count)  // Via skeleton
+        // Cannot access crypto_nonce or internal_debug_flags
+        sleep(1000)
+    }
+    
+    return 0
+}
+```
+
+**Scoping Rules:**
+- **Shared variables** (default): Accessible from both kernel and userspace via libbpf skeleton
+- **Local variables** (`local var`): Kernel-only, hidden from userspace, not included in skeleton generation
+
+**Security Benefits:**
+- Sensitive data like cryptographic nonces remain kernel-only
+- Internal debugging state isn't exposed to userspace
+- Clear separation between public API and internal implementation
+
+#### 3.3.5 Global Variables vs Maps and Configs
 
 | Feature | Global Variables | Maps | Configs |
 |---------|------------------|------|---------|
@@ -285,6 +338,7 @@ fn main(args: Args) -> i32 {
 | **Access** | Direct variable access | Key-value lookup | Dotted field access |
 | **Performance** | Fastest | Medium | Fastest |
 | **Flexibility** | Limited | High | Medium |
+| **Scoping** | Shared or local | Always shared | Always shared |
 
 ### 3.4 Kernel-Userspace Scoping Model
 
@@ -3384,7 +3438,7 @@ config_declaration = "config" identifier "{" { config_field } "}"
 config_field = identifier ":" type_annotation [ "=" expression ] ","
 
 (* Global variable declarations *)
-global_variable_declaration = "var" identifier [ ":" type_annotation ] [ "=" expression ] 
+global_variable_declaration = [ "local" ] "var" identifier [ ":" type_annotation ] [ "=" expression ] 
 
 (* Scoping rules for KernelScript:
    - Attributed functions (e.g., @xdp, @tc): Kernel space (eBPF) - compiles to eBPF bytecode

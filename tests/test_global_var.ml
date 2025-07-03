@@ -19,6 +19,13 @@ let type_check_and_annotate_ast_with_builtins ast =
   let symbol_table = create_test_symbol_table ast in
   Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast
 
+(** Helper function to check if a string contains a substring *)
+let string_contains_substring s sub =
+  try
+    let _ = Str.search_forward (Str.regexp_string sub) s 0 in
+    true
+  with Not_found -> false
+
 (** Test parsing of all three forms of global variable declarations *)
 let test_global_var_parsing_forms () =
   let program_text = {|
@@ -557,6 +564,308 @@ fn test_program(ctx: xdp_md) -> xdp_action {
   with
   | e -> fail ("Edge cases test failed: " ^ Printexc.to_string e)
 
+(** Test local keyword functionality *)
+let test_local_keyword_parsing () =
+  let program_text = {|
+// Regular shared global variables (default)
+var shared_counter: u32 = 0
+var shared_flag: bool = true
+
+// Local global variables (kernel-only)
+local var local_counter: u32 = 0
+local var local_secret: u64 = 12345
+local var local_flag: bool = false
+
+// Local with type inference
+local var local_inferred = 42
+
+@xdp
+fn test_program(ctx: xdp_md) -> xdp_action {
+    return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_program_string program_text in
+    
+    (* Count total global variables *)
+    let total_global_vars = List.fold_left (fun acc decl ->
+      match decl with
+      | GlobalVarDecl _ -> acc + 1
+      | _ -> acc
+    ) 0 ast in
+    
+    check int "total global variables" 6 total_global_vars;
+    
+    (* Check that local variables are correctly marked *)
+    let check_local_flag var_name expected_local =
+      let found = List.find_opt (function
+        | GlobalVarDecl {global_var_name; _} when global_var_name = var_name -> true
+        | _ -> false
+      ) ast in
+      match found with
+      | Some _ ->
+          (* Find the actual declaration to get the is_local flag *)
+          let decl = List.find (function
+            | GlobalVarDecl {global_var_name; _} when global_var_name = var_name -> true
+            | _ -> false
+          ) ast in
+          (match decl with
+           | GlobalVarDecl {is_local; _} ->
+               check bool (var_name ^ " is_local flag") expected_local is_local
+           | _ -> fail (var_name ^ " unexpected declaration type"))
+      | None -> fail (var_name ^ " not found")
+    in
+    
+    check_local_flag "shared_counter" false;
+    check_local_flag "shared_flag" false;
+    check_local_flag "local_counter" true;
+    check_local_flag "local_secret" true;
+    check_local_flag "local_flag" true;
+    check_local_flag "local_inferred" true
+  with
+  | e -> fail ("Local keyword parsing test failed: " ^ Printexc.to_string e)
+
+(** Test local keyword with IR generation *)
+let test_local_keyword_ir_generation () =
+  let program_text = {|
+var shared_var: u32 = 100
+local var local_var: u32 = 200
+
+@xdp
+fn test_program(ctx: xdp_md) -> xdp_action {
+    return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_program_string program_text in
+    let symbol_table = create_test_symbol_table ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
+    
+    (* Generate IR *)
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
+    
+    (* Check that global variables are present in IR *)
+    check int "global variables count in IR" 2 (List.length ir.global_variables);
+    
+    (* Check the is_local flag is correctly propagated *)
+    let check_ir_local var_name expected_local =
+      let found = List.find_opt (fun (gvar : Kernelscript.Ir.ir_global_variable) ->
+        gvar.global_var_name = var_name
+      ) ir.global_variables in
+      match found with
+      | Some gvar -> 
+          check bool (var_name ^ " is_local in IR") expected_local gvar.is_local
+      | None -> fail (var_name ^ " not found in IR")
+    in
+    
+    check_ir_local "shared_var" false;
+    check_ir_local "local_var" true
+  with
+  | e -> fail ("Local keyword IR generation test failed: " ^ Printexc.to_string e)
+
+(** Test local keyword with eBPF C code generation *)
+let test_local_keyword_ebpf_codegen () =
+  let program_text = {|
+var shared_counter: u32 = 0
+local var local_counter: u32 = 0
+local var local_secret: u64 = 12345
+
+@xdp
+fn test_program(ctx: xdp_md) -> xdp_action {
+    return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_program_string program_text in
+    let symbol_table = create_test_symbol_table ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
+    
+    (* Generate IR *)
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
+    
+    (* Generate eBPF C code *)
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
+    
+    (* Check that the C code contains the expected patterns *)
+    let check_c_code_contains pattern description =
+      if string_contains_substring c_code pattern then
+        check bool description true true
+      else
+        fail (description ^ " - pattern not found: " ^ pattern)
+    in
+    
+    (* Check that shared variables are generated normally *)
+    check_c_code_contains "__u32 shared_counter = 0;" "shared variable generated";
+    
+    (* Check that local variables use __hidden attribute *)
+    check_c_code_contains "__hidden" "local variables use __hidden attribute";
+    check_c_code_contains "__u32 local_counter = 0;" "local variable generated";
+    check_c_code_contains "__u64 local_secret = 12345;" "local variable with initialization";
+    
+    (* Check that __hidden is defined *)
+    check_c_code_contains "#define __hidden" "__hidden macro defined"
+  with
+  | e -> fail ("Local keyword eBPF codegen test failed: " ^ Printexc.to_string e)
+
+(** Test local keyword with all forms of variable declarations *)
+let test_local_keyword_all_forms () =
+  let program_text = {|
+// Local with full specification
+local var local_typed: u32 = 42
+
+// Local with type only
+local var local_uninitialized: u64
+
+// Local with type inference
+local var local_inferred = 100
+
+@xdp
+fn test_program(ctx: xdp_md) -> xdp_action {
+    return XDP_PASS
+}
+|} in
+  try
+    let ast = parse_program_string program_text in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
+    
+    (* Check that all three forms parse correctly with local keyword *)
+    let check_local_var_exists var_name =
+      let found = List.find_opt (function
+        | GlobalVarDecl {global_var_name; _} when global_var_name = var_name -> true
+        | _ -> false
+      ) ast in
+      match found with
+      | Some _ ->
+          (* Find the actual declaration to check is_local *)
+          let decl = List.find (function
+            | GlobalVarDecl {global_var_name; _} when global_var_name = var_name -> true
+            | _ -> false
+          ) ast in
+          (match decl with
+           | GlobalVarDecl {is_local = true; _} ->
+               check bool (var_name ^ " exists and is local") true true
+           | GlobalVarDecl {is_local = false; _} ->
+               fail (var_name ^ " found but not local")
+           | _ -> fail (var_name ^ " unexpected declaration type"))
+      | None -> fail (var_name ^ " not found")
+    in
+    
+    check_local_var_exists "local_typed";
+    check_local_var_exists "local_uninitialized";
+    check_local_var_exists "local_inferred"
+  with
+  | e -> fail ("Local keyword all forms test failed: " ^ Printexc.to_string e)
+
+(** Test that 'local' keyword cannot be used on non-global variables *)
+let test_local_keyword_invalid_usage () =
+  (* Test 1: local keyword on function parameter - should fail *)
+  let test_function_param = {|
+@xdp
+fn test_function(local var param: u32, ctx: xdp_md) -> xdp_action {
+    return 2
+}
+|} in
+  
+  (* Test 2: local keyword on local variable inside function - should fail *)
+  let test_local_variable = {|
+@xdp
+fn test_function(ctx: xdp_md) -> xdp_action {
+    local var local_var: u32 = 42
+    return 2
+}
+|} in
+  
+  (* Test 3: local keyword in struct field - should fail *)
+  let test_struct_field = {|
+struct TestStruct {
+    local var field: u32
+}
+
+@xdp
+fn test_function(ctx: xdp_md) -> xdp_action {
+    return 2
+}
+|} in
+
+  let test_cases = [
+    ("function parameter", test_function_param);
+    ("local variable inside function", test_local_variable);
+    ("struct field", test_struct_field);
+  ] in
+  
+  List.iter (fun (test_name, program_text) ->
+    try
+      let _ast = parse_program_string program_text in
+      fail (Printf.sprintf "Expected parse error for 'local' on %s, but parsing succeeded" test_name)
+    with
+    | Kernelscript.Parse.Parse_error (_, _) ->
+        check bool (Printf.sprintf "'local' correctly rejected on %s" test_name) true true
+    | e -> 
+        fail (Printf.sprintf "Unexpected error for 'local' on %s: %s" test_name (Printexc.to_string e))
+  ) test_cases
+
+(** Test that global variables actually appear in generated eBPF C code *)
+let test_global_vars_in_generated_ebpf_code () =
+  let program_text = {|
+// Shared global variables
+var shared_counter: u32 = 100
+var shared_flag: bool = false
+
+// Local global variables  
+local var local_counter: u32 = 200
+local var local_secret: u64 = 0xdeadbeef
+
+@xdp
+fn test_program(ctx: xdp_md) -> xdp_action {
+    shared_counter = shared_counter + 1
+    local_counter = local_counter + 1
+    return 2  // XDP_PASS
+}
+|} in
+  try
+    let ast = parse_program_string program_text in
+    let symbol_table = create_test_symbol_table ast in
+    let _ = type_check_and_annotate_ast_with_builtins ast in
+    
+    (* Generate IR *)
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir_multi_prog = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
+    
+    (* Generate eBPF C code *)
+    let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_multi_prog in
+    
+    (* Verify that global variables appear in the C code *)
+    let check_c_code_contains pattern description =
+      if string_contains_substring c_code pattern then
+        check bool description true true
+      else (
+        Printf.printf "Generated C code:\n%s\n" c_code;
+        fail (description ^ " - pattern not found: " ^ pattern)
+      )
+    in
+    
+    (* Check that shared variables appear without __hidden *)
+    check_c_code_contains "__u32 shared_counter = 100;" "shared variable with initialization";
+    check_c_code_contains "__u8 shared_flag = 0;" "shared boolean variable (using 0 not false)";
+    
+    (* Check that local variables appear with __hidden attribute *)
+    check_c_code_contains "#define __hidden" "__hidden macro defined";
+    check_c_code_contains "__hidden __attribute__((aligned(8))) __u32 local_counter = 200;" "local variable with __hidden";
+    check_c_code_contains "__hidden __attribute__((aligned(8))) __u64 local_secret = 3735928559;" "local variable with hex literal (converted to decimal)";
+    
+    (* Verify that the comment indicating global variables section exists *)
+    check_c_code_contains "/* Global variables */" "global variables section comment";
+    
+    (* Verify boolean values use 0/1 not true/false *)
+    if string_contains_substring c_code "false" || string_contains_substring c_code "true" then
+      fail "C code should not contain 'true' or 'false' literals - should use 0/1";
+    
+    check bool "boolean literals use 0/1 not true/false" true true
+  with
+  | e -> fail ("Global variables in eBPF C code test failed: " ^ Printexc.to_string e)
+
 let global_variable_tests = [
   ("parsing_forms", `Quick, test_global_var_parsing_forms);
   ("type_inference", `Quick, test_global_var_type_inference);
@@ -574,6 +883,12 @@ let global_variable_tests = [
   ("initialization_types", `Quick, test_global_var_initialization_types);
   ("pointer_types", `Quick, test_global_var_pointer_types);
   ("edge_cases", `Quick, test_global_var_edge_cases);
+  ("local_keyword_parsing", `Quick, test_local_keyword_parsing);
+  ("local_keyword_ir_generation", `Quick, test_local_keyword_ir_generation);
+  ("local_keyword_ebpf_codegen", `Quick, test_local_keyword_ebpf_codegen);
+  ("local_keyword_all_forms", `Quick, test_local_keyword_all_forms);
+  ("local_keyword_invalid_usage", `Quick, test_local_keyword_invalid_usage);
+  ("global_vars_in_generated_ebpf_code", `Quick, test_global_vars_in_generated_ebpf_code);
 ]
 
 let () =

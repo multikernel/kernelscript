@@ -246,6 +246,7 @@ type global_variable_declaration = {
   global_var_type: bpf_type option;
   global_var_init: literal option;
   global_var_pos: position;
+  is_local: bool; (* true if declared with 'local' keyword *)
 }
 
 (** Top-level declarations *)
@@ -378,11 +379,12 @@ let make_config_declaration name fields pos = {
   config_pos = pos;
 }
 
-let make_global_var_decl name typ init pos = {
+let make_global_var_decl name typ init pos ?(is_local=false) () = {
   global_var_name = name;
   global_var_type = typ;
   global_var_init = init;
   global_var_pos = pos;
+  is_local;
 }
 
 (** Pretty-printing functions for debugging *)
