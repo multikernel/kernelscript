@@ -847,17 +847,42 @@ let rec lower_statement ctx stmt =
            | Some else_stmts -> List.iter (lower_statement ctx) else_stmts
            | None -> ())
       else if ctx.is_userspace then
-        (* For userspace, generate structured IRIf instruction *)
-        let then_instructions = ref [] in
+        (* For userspace, detect and generate if-else-if chains *)
+        let rec collect_if_chain acc_conditions acc_then_bodies current_cond current_then current_else =
+          let new_conditions = acc_conditions @ [current_cond] in
+          let new_then_bodies = acc_then_bodies @ [current_then] in
+          match current_else with
+          | None -> (new_conditions, new_then_bodies, None)
+          | Some else_stmts ->
+              (* Check if this is an else-if pattern: single If statement *)
+              (match else_stmts with
+               | [single_stmt] when (match single_stmt.Ast.stmt_desc with Ast.If (_, _, _) -> true | _ -> false) ->
+                   (* This is an else-if: extract the nested if statement *)
+                   (match single_stmt.Ast.stmt_desc with
+                    | Ast.If (next_cond_expr, next_then_stmts, next_else_opt) ->
+                        let next_cond_val = lower_expression ctx next_cond_expr in
+                        (* Capture instructions for next then block *)
+                        let old_block = ctx.current_block in
+                        ctx.current_block <- [];
+                        List.iter (lower_statement ctx) next_then_stmts;
+                        let next_then_instructions = List.rev ctx.current_block in
+                        ctx.current_block <- old_block;
+                        (* Recursively collect more if-else-if chains *)
+                        collect_if_chain new_conditions new_then_bodies next_cond_val next_then_instructions next_else_opt
+                    | _ -> (new_conditions, new_then_bodies, Some else_stmts))
+               | _ ->
+                   (* This is a regular else block *)
+                   (new_conditions, new_then_bodies, Some else_stmts))
+        in
         
-        (* Temporarily capture instructions for then block *)
+        (* Capture instructions for initial then block *)
         let old_block = ctx.current_block in
         ctx.current_block <- [];
         List.iter (lower_statement ctx) then_stmts;
-        then_instructions := List.rev ctx.current_block;
+        let initial_then_instructions = List.rev ctx.current_block in
         ctx.current_block <- old_block;
         
-        (* Temporarily capture instructions for else block *)
+        (* Capture instructions for else block if needed *)
         let else_instrs_opt = match else_opt with
           | Some else_stmts ->
               ctx.current_block <- [];
@@ -868,10 +893,31 @@ let rec lower_statement ctx stmt =
           | None -> None
         in
         
-        (* Generate IRIf instruction *)
-        let if_instr = make_ir_instruction 
-          (IRIf (cond_val, !then_instructions, else_instrs_opt))
-          stmt.stmt_pos in
+        (* Collect the if-else-if chain *)
+        let (conditions, then_bodies, final_else) = collect_if_chain [] [] cond_val initial_then_instructions else_opt in
+        
+        (* Generate appropriate instruction based on the result *)
+        let if_instr = if List.length conditions > 1 then
+          (* Multiple conditions: generate if-else-if chain *)
+          let conditions_and_bodies = List.combine conditions then_bodies in
+          let final_else_instrs = match final_else with
+            | Some else_stmts ->
+                ctx.current_block <- [];
+                List.iter (lower_statement ctx) else_stmts;
+                let else_instrs = List.rev ctx.current_block in
+                ctx.current_block <- old_block;
+                Some else_instrs
+            | None -> None
+          in
+          make_ir_instruction 
+            (IRIfElseChain (conditions_and_bodies, final_else_instrs))
+            stmt.stmt_pos
+        else
+          (* Single condition: generate regular IRIf *)
+          make_ir_instruction 
+            (IRIf (cond_val, initial_then_instructions, else_instrs_opt))
+            stmt.stmt_pos
+        in
         emit_instruction ctx if_instr
       else if ctx.in_try_block then
         (* For try blocks, use structured IRIf to avoid disrupting statement ordering *)

@@ -251,6 +251,7 @@ and ir_instr_desc =
   | IRJump of string
   | IRCondJump of ir_value * string * string
   | IRIf of ir_value * ir_instruction list * ir_instruction list option (* condition, then_body, else_body *)
+  | IRIfElseChain of (ir_value * ir_instruction list) list * ir_instruction list option (* (condition, then_body) list, final_else_body *)
   | IRReturn of ir_value option
   | IRComment of string (* for debugging and analysis comments *)
   | IRBpfLoop of ir_value * ir_value * ir_value * ir_value * ir_instruction list (* start, end, counter, ctx, body_instructions *)
@@ -774,6 +775,19 @@ let rec string_of_ir_instruction instr =
       in
       Printf.sprintf "if (%s) {\n%s\n} %s" 
         (string_of_ir_value cond) then_str else_str
+  | IRIfElseChain (conditions_and_bodies, final_else) ->
+      let if_parts = List.mapi (fun i (cond, then_body) ->
+        let cond_str = string_of_ir_value cond in
+        let then_str = String.concat "\n  " (List.map string_of_ir_instruction then_body) in
+        let keyword = if i = 0 then "if" else "else if" in
+        Printf.sprintf "%s (%s) {\n%s\n}" keyword cond_str then_str
+      ) conditions_and_bodies in
+      let else_part = match final_else with
+        | None -> ""
+        | Some else_instrs -> 
+            Printf.sprintf " else {\n%s\n}" (String.concat "\n  " (List.map string_of_ir_instruction else_instrs))
+      in
+      String.concat " " if_parts ^ else_part
   | IRReturn None -> "return"
   | IRReturn (Some value) -> Printf.sprintf "return %s" (string_of_ir_value value)
   | IRComment comment -> Printf.sprintf "/* %s */" comment

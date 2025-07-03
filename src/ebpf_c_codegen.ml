@@ -294,6 +294,19 @@ let rec collect_string_sizes_from_instr ir_instr =
         | None -> []
       in
       cond_sizes @ then_sizes @ else_sizes
+  | IRIfElseChain (conditions_and_bodies, final_else) ->
+      let cond_sizes = List.fold_left (fun acc (cond_val, then_instrs) ->
+        let cond_sizes = collect_string_sizes_from_value cond_val in
+        let then_sizes = List.fold_left (fun acc instr -> 
+          acc @ (collect_string_sizes_from_instr instr)) [] then_instrs in
+        acc @ cond_sizes @ then_sizes
+      ) [] conditions_and_bodies in
+      let else_sizes = match final_else with
+        | Some else_instrs -> List.fold_left (fun acc instr -> 
+            acc @ (collect_string_sizes_from_instr instr)) [] else_instrs
+        | None -> []
+      in
+      cond_sizes @ else_sizes
   | IRReturn ret_opt ->
       (match ret_opt with
        | Some ret_val -> collect_string_sizes_from_value ret_val
@@ -521,8 +534,14 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     | IRReturn (Some ret_val) -> collect_from_value ret_val
     | IRIf (cond_val, then_instrs, else_instrs_opt) ->
         collect_from_value cond_val;
-                  List.iter collect_from_instr then_instrs;
+        List.iter collect_from_instr then_instrs;
         (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        List.iter (fun (cond_val, then_instrs) ->
+          collect_from_value cond_val;
+          List.iter collect_from_instr then_instrs
+        ) conditions_and_bodies;
+        (match final_else with Some instrs -> List.iter collect_from_instr instrs | None -> ())
     | _ -> ()
   in
   
@@ -1499,6 +1518,27 @@ let rec generate_c_instruction ctx ir_instr =
        | None ->
            emit_line ctx "}")
 
+  | IRIfElseChain (conditions_and_bodies, final_else) ->
+      (* Generate if-else-if chains with proper C formatting for eBPF *)
+      List.iteri (fun i (cond_val, then_body) ->
+        let cond_str = generate_c_value ctx cond_val in
+        let keyword = if i = 0 then "if" else "} else if" in
+        emit_line ctx (sprintf "%s (%s) {" keyword cond_str);
+        increase_indent ctx;
+        List.iter (generate_c_instruction ctx) then_body;
+        decrease_indent ctx
+      ) conditions_and_bodies;
+      
+      (match final_else with
+       | Some else_instrs ->
+           emit_line ctx "} else {";
+           increase_indent ctx;
+           List.iter (generate_c_instruction ctx) else_instrs;
+           decrease_indent ctx;
+           emit_line ctx "}"
+       | None ->
+           emit_line ctx "}")
+
   | IRReturn ret_opt ->
       begin match ret_opt with
       | Some ret_val ->
@@ -1826,6 +1866,14 @@ let collect_registers_in_function ir_func =
         collect_in_value cond_val;
         List.iter collect_in_instr then_body;
         (match else_body with
+         | Some else_instrs -> List.iter collect_in_instr else_instrs
+         | None -> ())
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        List.iter (fun (cond_val, then_body) ->
+          collect_in_value cond_val;
+          List.iter collect_in_instr then_body
+        ) conditions_and_bodies;
+        (match final_else with
          | Some else_instrs -> List.iter collect_in_instr else_instrs
          | None -> ())
     | IRReturn ret_opt -> Option.iter collect_in_value ret_opt

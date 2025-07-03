@@ -75,6 +75,13 @@ let rec extract_function_calls_from_ir_instrs instrs =
         (match else_body with
          | Some else_instrs -> calls := (extract_function_calls_from_ir_instrs else_instrs) @ !calls
          | None -> ())
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        List.iter (fun (_, then_body) ->
+          calls := (extract_function_calls_from_ir_instrs then_body) @ !calls
+        ) conditions_and_bodies;
+        (match final_else with
+         | Some else_instrs -> calls := (extract_function_calls_from_ir_instrs else_instrs) @ !calls
+         | None -> ())
     | IRBpfLoop (_, _, _, _, body_instrs) ->
         calls := (extract_function_calls_from_ir_instrs body_instrs) @ !calls
     | IRTry (try_instrs, catch_clauses) ->
@@ -310,6 +317,13 @@ let rec track_usage_in_instructions ctx instrs =
         (match else_body with
          | Some else_instrs -> track_usage_in_instructions ctx else_instrs
          | None -> ())
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        List.iter (fun (_, then_body) ->
+          track_usage_in_instructions ctx then_body
+        ) conditions_and_bodies;
+        (match final_else with
+         | Some else_instrs -> track_usage_in_instructions ctx else_instrs
+         | None -> ())
     | IRBpfLoop (_, _, _, _, body_instrs) ->
         track_usage_in_instructions ctx body_instrs
     | IRTry (try_instrs, catch_clauses) ->
@@ -373,6 +387,10 @@ let collect_string_sizes_from_ir_instruction ir_instr =
        | Some value -> collect_string_sizes_from_ir_value value
        | None -> [])
   | IRIf (cond, _, _) -> collect_string_sizes_from_ir_value cond
+  | IRIfElseChain (conditions_and_bodies, _) ->
+      List.fold_left (fun acc (cond, _) ->
+        acc @ (collect_string_sizes_from_ir_value cond)
+      ) [] conditions_and_bodies
   | IRMapLoad (_, _, dest, _) -> collect_string_sizes_from_ir_value dest
   | IRMapStore (_, _, value, _) -> collect_string_sizes_from_ir_value value
   | IRMapDelete (_, _) -> []
@@ -446,6 +464,12 @@ let collect_enum_definitions_from_userspace userspace_prog =
         collect_from_value cond_val;
         List.iter collect_from_instr then_instrs;
         (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        List.iter (fun (cond_val, then_instrs) ->
+          collect_from_value cond_val;
+          List.iter collect_from_instr then_instrs
+        ) conditions_and_bodies;
+        (match final_else with Some instrs -> List.iter collect_from_instr instrs | None -> ())
     | _ -> ()
   in
   
@@ -1011,14 +1035,34 @@ let rec generate_c_instruction_from_ir ctx instruction =
         (generate_c_value_from_ir ctx condition) true_label false_label
   
   | IRIf (condition, then_body, else_body) ->
+      (* Generate simple if statement *)
       let cond_str = generate_c_value_from_ir ctx condition in
-      let then_stmts = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) then_body) in
-      (match else_body with
-       | None ->
-           sprintf "if (%s) {\n        %s\n    }" cond_str then_stmts
-       | Some else_stmts ->
-           let else_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) else_stmts) in
-           sprintf "if (%s) {\n        %s\n    } else {\n        %s\n    }" cond_str then_stmts else_stmts_str)
+      let then_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) then_body) in
+      let else_part = match else_body with
+        | None -> ""
+        | Some else_stmts ->
+            let else_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) else_stmts) in
+            sprintf " else {\n        %s\n    }" else_stmts_str
+      in
+      sprintf "if (%s) {\n        %s\n    }%s" cond_str then_stmts_str else_part
+
+  | IRIfElseChain (conditions_and_bodies, final_else) ->
+      (* Generate if-else-if chains with proper C formatting *)
+      let if_parts = List.mapi (fun i (cond, then_stmts) ->
+        let cond_str = generate_c_value_from_ir ctx cond in
+        let then_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) then_stmts) in
+        let keyword = if i = 0 then "if" else "else if" in
+        sprintf "%s (%s) {\n        %s\n    }" keyword cond_str then_stmts_str
+      ) conditions_and_bodies in
+      
+      let final_part = match final_else with
+        | None -> ""
+        | Some else_stmts ->
+            let else_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) else_stmts) in
+            sprintf " else {\n        %s\n    }" else_stmts_str
+      in
+      
+      String.concat " " if_parts ^ final_part
   
   | IRBoundsCheck (value, min_val, max_val) ->
       sprintf "/* bounds check: %s in [%d, %d] */" 
