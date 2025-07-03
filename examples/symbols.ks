@@ -37,8 +37,8 @@ pub fn log_packet(info: PacketInfo) -> u32 {
 }
 
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
-    let info = PacketInfo {
+    var packet = ctx.packet()
+    var info = PacketInfo {
         size: packet.len(),
         protocol: packet.protocol(),
         src_ip: packet.src_ip(),
@@ -52,7 +52,7 @@ pub fn log_packet(info: PacketInfo) -> u32 {
     packet_cache[info.src_ip] = info
     
     // Call global function
-    let logged_size = log_packet(info)
+    var logged_size = log_packet(info)
     
     // Use global enum
     if (info.protocol == 6) {
@@ -63,7 +63,7 @@ pub fn log_packet(info: PacketInfo) -> u32 {
 }
 
 @tc fn traffic_monitor(ctx: TcContext) -> TcAction {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     
     // Access global map (visible from all programs)
     global_stats[packet.protocol()] = global_stats[packet.protocol()] + 1
@@ -72,7 +72,7 @@ pub fn log_packet(info: PacketInfo) -> u32 {
     traffic_data[0] = packet.len()
     
     // Can call global function
-    let info = PacketInfo {
+    var info = PacketInfo {
         size: packet.len(),
         protocol: packet.protocol(),
         src_ip: packet.src_ip(),

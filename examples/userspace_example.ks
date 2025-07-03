@@ -18,7 +18,7 @@ fn main() -> i32 {
     // Load and attach the packet monitor program
     print("Loading packet monitor program")
     
-    let prog = load(packet_monitor)
+    var prog = load(packet_monitor)
     attach(prog, "eth0", 0)
     
     return 0

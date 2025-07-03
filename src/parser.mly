@@ -17,7 +17,7 @@
 %token FN MAP TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
-%token LET CONST CONFIG
+%token VAR CONST CONFIG
 %token IN DELETE TRY CATCH THROW DEFER
 
 
@@ -231,9 +231,9 @@ statement:
   | defer_statement { $1 }
 
 variable_declaration:
-  | LET IDENTIFIER ASSIGN expression
+  | VAR IDENTIFIER ASSIGN expression
     { make_stmt (Declaration ($2, None, $4)) (make_pos ()) }
-  | LET IDENTIFIER COLON bpf_type ASSIGN expression
+  | VAR IDENTIFIER COLON bpf_type ASSIGN expression
     { make_stmt (Declaration ($2, Some $4, $6)) (make_pos ()) }
 
 const_declaration:

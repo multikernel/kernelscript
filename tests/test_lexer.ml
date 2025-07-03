@@ -52,7 +52,7 @@ let token_testable = testable (fun fmt -> function
   | Parser.RETURN -> Format.fprintf fmt "RETURN"
   | Parser.BREAK -> Format.fprintf fmt "BREAK"
   | Parser.CONTINUE -> Format.fprintf fmt "CONTINUE"
-  | Parser.LET -> Format.fprintf fmt "LET"
+  | Parser.VAR -> Format.fprintf fmt "VAR"
   | Parser.CONFIG -> Format.fprintf fmt "CONFIG"
   | Parser.EOF -> Format.fprintf fmt "EOF"
   | _ -> Format.fprintf fmt "OTHER_TOKEN"
@@ -107,8 +107,8 @@ let test_control_flow () =
   check (list token_testable) "control flow" [Parser.IF; Parser.ELSE; Parser.FOR; Parser.WHILE; Parser.RETURN; Parser.BREAK; Parser.CONTINUE] tokens
 
 let test_variable_keywords () =
-  let tokens = Lexer.tokenize_string "let config" in
-  check (list token_testable) "variable keywords" [Parser.LET; Parser.CONFIG] tokens
+  let tokens = Lexer.tokenize_string "var config" in
+  check (list token_testable) "variable keywords" [Parser.VAR; Parser.CONFIG] tokens
 
 let test_line_comments () =
   let tokens = Lexer.tokenize_string "@ // this is a comment\nfn" in
@@ -128,7 +128,7 @@ let test_program_types_as_identifiers () =
 let test_complex_attributed_function () =
   let code = {|
     @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-      let x = 42
+      var x = 42
       return x
     }
   |} in
@@ -137,7 +137,7 @@ let test_complex_attributed_function () =
     Parser.AT; Parser.IDENTIFIER "xdp"; Parser.FN; Parser.IDENTIFIER "packet_filter"; 
     Parser.LPAREN; Parser.IDENTIFIER "ctx"; Parser.COLON; Parser.IDENTIFIER "xdp_md"; Parser.RPAREN;
     Parser.ARROW; Parser.IDENTIFIER "xdp_action"; Parser.LBRACE;
-    Parser.LET; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None);
+    Parser.VAR; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None);
     Parser.RETURN; Parser.IDENTIFIER "x";
     Parser.RBRACE
   ] in

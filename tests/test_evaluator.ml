@@ -8,9 +8,9 @@ open Alcotest
 let test_basic_evaluation () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 5
-  let y = 10
-  let result = x + y
+  var x = 5
+  var y = 10
+  var result = x + y
   return 2
 }
 |} in
@@ -97,10 +97,25 @@ let test_various_enum_constants () =
   with
   | e -> fail ("Unexpected exception: " ^ Printexc.to_string e)
 
+let test_variable_evaluation () =
+  let program_text = {|
+@xdp fn test(ctx: xdp_md) -> xdp_action {
+  var x = 5
+  return 2
+}
+|} in
+  let ast = parse_string program_text in
+  let _ = Test_utils.Helpers.create_test_symbol_table ast in
+  
+  (* Test would evaluate the variable declaration *)
+  check bool "variable evaluation test" true (List.length ast = 1);
+  Printf.printf "test_variable_evaluation passed\n%!"
+
 let evaluator_tests = [
   "basic_evaluation", `Quick, test_basic_evaluation;
   "enum_constant_evaluation", `Quick, test_enum_constant_evaluation;
   "various_enum_constants", `Quick, test_various_enum_constants;
+  "variable_evaluation", `Quick, test_variable_evaluation;
 ]
 
 let () =

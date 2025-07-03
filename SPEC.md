@@ -79,8 +79,8 @@ struct Args { interface: str<16> }
 fn main(args: Args) -> i32 {
     // Cannot call update_counters() here - it's kernel-only
     
-    let monitor_handle = load(monitor)
-    let analyzer_handle = load(analyzer)
+    var monitor_handle = load(monitor)
+    var analyzer_handle = load(analyzer)
     
     attach(monitor_handle, args.interface, 0)
     attach(analyzer_handle, args.interface, 1)
@@ -93,7 +93,7 @@ fn main(args: Args) -> i32 {
 
 ### 2.1 Keywords
 ```
-program     fn          let         const       config
+program     fn          var         const       config
 map         type        struct      enum        if          else
 for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
@@ -160,7 +160,7 @@ config security {
 
 @xdp
 fn network_monitor(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     
     // Use named configuration values
     if (packet.size > network.max_packet_size) {
@@ -172,7 +172,7 @@ fn network_monitor(ctx: xdp_md) -> xdp_action {
     
     // Check blocked ports from network config
     if (packet.is_tcp()) {
-        let tcp = packet.tcp_header()
+        var tcp = packet.tcp_header()
         for (i in 0..5) {
             if (tcp.dst_port == network.blocked_ports[i]) {
                 return XDP_DROP
@@ -446,13 +446,13 @@ kfunc functions are declared using the `@kfunc` attribute and are registered wit
 @kfunc
 fn advanced_packet_analysis(data: *u8, len: u32) -> u32 {
     // Full kernel privileges - can access any kernel API
-    let skb = alloc_skb(len, GFP_KERNEL)
+    var skb = alloc_skb(len, GFP_KERNEL)
     if (skb == null) {
         return 0
     }
     
     // Complex analysis using kernel subsystems
-    let result = deep_packet_inspection(data, len)
+    var result = deep_packet_inspection(data, len)
     kfree_skb(skb)
     
     return result
@@ -462,7 +462,7 @@ fn advanced_packet_analysis(data: *u8, len: u32) -> u32 {
 @kfunc
 fn rate_limit_flow(flow_id: u64, current_time: u64) -> bool {
     // Access kernel data structures directly
-    let bucket = get_rate_limit_bucket(flow_id)
+    var bucket = get_rate_limit_bucket(flow_id)
     if (bucket == null) {
         bucket = create_rate_limit_bucket(flow_id)
     }
@@ -476,12 +476,12 @@ fn rate_limit_flow(flow_id: u64, current_time: u64) -> bool {
 @kfunc
 fn verify_packet_signature(packet: *u8, len: u32, signature: *u8) -> i32 {
     // Use kernel crypto subsystem
-    let tfm = crypto_alloc_shash("sha256", 0, 0)
+    var tfm = crypto_alloc_shash("sha256", 0, 0)
     if (IS_ERR(tfm)) {
         return -ENOMEM
     }
     
-    let result = crypto_verify_signature(tfm, packet, len, signature)
+    var result = crypto_verify_signature(tfm, packet, len, signature)
     crypto_free_shash(tfm)
     
     return result
@@ -490,26 +490,26 @@ fn verify_packet_signature(packet: *u8, len: u32, signature: *u8) -> i32 {
 // eBPF program calling kfuncs
 @xdp
 fn secure_packet_filter(ctx: xdp_md) -> xdp_action {
-    let packet = ctx.packet()
+    var packet = ctx.packet()
     if (packet == null) {
         return XDP_PASS
     }
     
     // Call custom kernel function using function name
-    let analysis_result = advanced_packet_analysis(packet.data, packet.len)
+    var analysis_result = advanced_packet_analysis(packet.data, packet.len)
     if (analysis_result == 0) {
         return XDP_DROP
     }
     
     // Call rate limiter kfunc using function name
-    let flow_id = compute_flow_id(packet)
+    var flow_id = compute_flow_id(packet)
     if (!rate_limit_flow(flow_id, bpf_ktime_get_ns())) {
         return XDP_DROP
     }
     
     // Verify packet signature for critical flows
     if (packet.is_critical_flow()) {
-        let signature = extract_signature(packet)
+        var signature = extract_signature(packet)
         if (verify_packet_signature(packet.data, packet.len, signature) != 0) {
             return XDP_DROP
         }
@@ -1087,28 +1087,28 @@ KernelScript uses `null` to represent **expected absence** of values, not error 
 #### When to Use `null`:
 ```kernelscript
 // ✅ Map key lookups - absence is expected and normal
-let flow_data = global_flows[flow_key]
+var flow_data = global_flows[flow_key]
 if (flow_data == null) {
     // Key doesn't exist - create new entry
     global_flows[flow_key] = FlowData::new()
 }
 
 // ✅ Optional function return values - when no data is available
-let packet = ctx.packet()  // Returns null if no packet available
+var packet = ctx.packet()  // Returns null if no packet available
 if (packet == null) {
     return XDP_PASS
 }
 
 // ✅ Event polling - when no events are available
-let event = event_queue.read()  // Returns null if queue is empty
+var event = event_queue.read()  // Returns null if queue is empty
 if (event == null) {
     // No events to process
     return
 }
 
 // ✅ Optional configuration values
-let timeout = config.optional_timeout  // Could be null if not set
-let actual_timeout = if (timeout == null) { 5000 } else { timeout }
+var timeout = config.optional_timeout  // Could be null if not set
+var actual_timeout = if (timeout == null) { 5000 } else { timeout }
 ```
 
 #### When to Use `throw` (NOT `null`):
@@ -1126,7 +1126,7 @@ fn parse_ip_header(data: *u8, len: u32) -> IpHeader {
 
 // ✅ Resource allocation failures
 fn allocate_buffer(size: u32) -> *u8 {
-    let buffer = bpf_malloc(size)
+    var buffer = bpf_malloc(size)
     if (buffer == null) {
         throw ALLOCATION_ERROR_OUT_OF_MEMORY  // Error, not absence
     }
@@ -1149,10 +1149,10 @@ fn update_counter(index: u32) {
 // eBPF program
 program packet_filter : xdp {
     fn main(ctx: xdp_md) -> xdp_action {
-        let cached_decision = decision_cache[ctx.hash()]
+        var cached_decision = decision_cache[ctx.hash()]
         if (cached_decision == null) {
             // Cache miss - compute decision
-            let decision = compute_decision(ctx)
+            var decision = compute_decision(ctx)
             decision_cache[ctx.hash()] = decision
             return decision
         }
@@ -1162,10 +1162,10 @@ program packet_filter : xdp {
 
 // Userspace code
 fn load_config(path: string) -> Config {
-    let cached_config = config_cache[path]
+    var cached_config = config_cache[path]
     if (cached_config == null) {
         // Cache miss - load from disk
-        let loaded = read_config_file(path)  // May throw on file errors
+        var loaded = read_config_file(path)  // May throw on file errors
         config_cache[path] = loaded
         return loaded
     }
@@ -1236,24 +1236,24 @@ KernelScript supports fixed-size strings with `str<N>` syntax, where N can be an
 
 ```kernelscript
 // String declaration and assignment (N can be any positive integer)
-let name: str<16> = "John"
-let surname: str<16> = "Doe"
-let buffer: str<32> = "Hello"
-let small_buffer: str<8> = "tiny"
-let custom_size: str<42> = "custom"
-let large_buffer: str<512> = "large text content"
+var name: str<16> = "John"
+var surname: str<16> = "Doe"
+var buffer: str<32> = "Hello"
+var small_buffer: str<8> = "tiny"
+var custom_size: str<42> = "custom"
+var large_buffer: str<512> = "large text content"
 
 // Assignment
 buffer = name                  // Assignment (size must be compatible)
 
 // Indexing (read-only character access)
-let first_char: char = name[0] // Returns 'J'
-let last_char: char = name[3]  // Returns 'n'
+var first_char: char = name[0] // Returns 'J'
+var last_char: char = name[3]  // Returns 'n'
 
 // String concatenation (explicit result size required)
-let full_name: str<32> = name + surname  // "JohnDoe"
-let greeting: str<20> = "Hello " + name  // "Hello John"
-let custom_msg: str<100> = small_buffer + " and " + custom_size  // Arbitrary sizes work
+var full_name: str<32> = name + surname  // "JohnDoe"
+var greeting: str<20> = "Hello " + name  // "Hello John"
+var custom_msg: str<100> = small_buffer + " and " + custom_size  // Arbitrary sizes work
 
 // String comparison
 if (name == "John") {             // Equality comparison
@@ -1274,12 +1274,12 @@ struct PersonInfo {
 // Kernel space usage
 program user_monitor : kprobe("sys_open") {
     fn main(ctx: KprobeContext) -> i32 {
-        let process_name: ProcessName = get_current_process_name()
-        let file_path: FilePath = get_file_path(ctx)
+        var process_name: ProcessName = get_current_process_name()
+        var file_path: FilePath = get_file_path(ctx)
         
         // String operations work the same in kernel space
         if (process_name == "malware") {
-            let log_msg: LogMessage = "Blocked process: " + process_name
+            var log_msg: LogMessage = "Blocked process: " + process_name
             print(log_msg)
             return -1
         }
@@ -1297,7 +1297,7 @@ struct Args {
 fn main(args: Args) -> i32 {
     // Same string operations in userspace
     if (args.interface == "eth0") {
-        let status_msg: str<64> = "Using interface: " + args.interface
+        var status_msg: str<64> = "Using interface: " + args.interface
         print(status_msg)
     }
     
@@ -1313,20 +1313,20 @@ KernelScript uses a unified pointer syntax `*T` for all pointer types, with the 
 
 ```kernelscript
 // Pointer declaration - unified syntax for all contexts
-let data_ptr: *u8 = get_data_source()
-let header_ptr: *PacketHeader = get_packet_header()
-let buffer_ptr: *[u8] = allocate_buffer(1024)
+var data_ptr: *u8 = get_data_source()
+var header_ptr: *PacketHeader = get_packet_header()
+var buffer_ptr: *[u8] = allocate_buffer(1024)
 
 // Address-of operator (&) - take address of a value
-let value: u32 = 42
-let value_ptr: *u32 = &value
+var value: u32 = 42
+var value_ptr: *u32 = &value
 
 // Dereference operator (*) - access value through pointer
-let retrieved_value: u32 = *value_ptr
+var retrieved_value: u32 = *value_ptr
 
 // Null checking - required before dereference
 if (data_ptr != null) {
-    let first_byte = *data_ptr
+    var first_byte = *data_ptr
 }
 ```
 
@@ -1366,7 +1366,7 @@ fn process_packet_header(header_ptr: *PacketHeader) -> bool {
 @helper
 fn explicit_dereference_style(header_ptr: *PacketHeader) {
     if (header_ptr != null) {
-        let version = (*header_ptr).version    // Explicit dereference
+        var version = (*header_ptr).version    // Explicit dereference
         (*header_ptr).checksum = 0             // Explicit modification
     }
 }
@@ -1395,8 +1395,8 @@ fn process_buffer(buf_ptr: *DataBuffer) {
     }
     
     // Get pointer to array element
-    let data_start: *u8 = &buf_ptr->data[0]
-    let metadata_ptr: *u32 = &buf_ptr->metadata[0]
+    var data_start: *u8 = &buf_ptr->data[0]
+    var metadata_ptr: *u32 = &buf_ptr->metadata[0]
     
     // Process with raw pointers
     process_raw_data(data_start, buf_ptr->header.length)
@@ -1411,15 +1411,15 @@ fn pointer_arithmetic_examples(base_ptr: *u8, len: u32) {
     if (base_ptr == null) return
     
     // Pointer arithmetic - compiler inserts bounds checks
-    let next_byte_ptr = base_ptr + 1           // Move to next byte
-    let offset_ptr = base_ptr + 10             // Move by offset
+    var next_byte_ptr = base_ptr + 1           // Move to next byte
+    var offset_ptr = base_ptr + 10             // Move by offset
     
     // Array-style indexing (preferred for readability)
-    let first_byte = base_ptr[0]               // Equivalent to *base_ptr
-    let tenth_byte = base_ptr[9]               // Equivalent to *(base_ptr + 9)
+    var first_byte = base_ptr[0]               // Equivalent to *base_ptr
+    var tenth_byte = base_ptr[9]               // Equivalent to *(base_ptr + 9)
     
     // Pointer difference
-    let byte_distance = next_byte_ptr - base_ptr  // Returns 1
+    var byte_distance = next_byte_ptr - base_ptr  // Returns 1
 }
 ```
 
@@ -1430,12 +1430,12 @@ fn pointer_arithmetic_examples(base_ptr: *u8, len: u32) {
 @xdp
 fn ebpf_pointer_usage(ctx: xdp_md) -> xdp_action {
     // Context pointers - automatically bounded
-    let packet_data: *u8 = ctx.data()          // Bounded by ctx.data_end()
-    let packet_end: *u8 = ctx.data_end()       // End boundary
+    var packet_data: *u8 = ctx.data()          // Bounded by ctx.data_end()
+    var packet_end: *u8 = ctx.data_end()       // End boundary
     
     // Compiler automatically inserts verifier-compliant bounds checks
     if (packet_data + 14 <= packet_end) {
-        let eth_header = packet_data as *EthHeader
+        var eth_header = packet_data as *EthHeader
         if (eth_header->eth_type == ETH_P_IP) {
             // Safe access - bounds verified
             process_ethernet_header(eth_header)
@@ -1443,7 +1443,7 @@ fn ebpf_pointer_usage(ctx: xdp_md) -> xdp_action {
     }
     
     // Dynptr-backed pointers (transparent to user)
-    let log_buffer: *u8 = event_log.reserve(256)  // Returns dynptr-backed pointer
+    var log_buffer: *u8 = event_log.reserve(256)  // Returns dynptr-backed pointer
     if (log_buffer != null) {
         // Regular pointer operations - compiler uses dynptr API internally
         log_buffer[0] = EVENT_TYPE_PACKET
@@ -1457,14 +1457,14 @@ fn ebpf_pointer_usage(ctx: xdp_md) -> xdp_action {
 // Userspace Context - Full pointer functionality
 fn userspace_pointer_usage() -> i32 {
     // Dynamic allocation
-    let buffer: *u8 = malloc(4096)
+    var buffer: *u8 = malloc(4096)
     if (buffer == null) {
         return -1
     }
     
     // Full pointer arithmetic
-    let mid_ptr = buffer + 2048
-    let end_ptr = buffer + 4096
+    var mid_ptr = buffer + 2048
+    var end_ptr = buffer + 4096
     
     // Direct memory operations
     *buffer = 0xFF
@@ -2015,7 +2015,7 @@ if (condition) {
 }
 
 // Pattern matching (simplified)
-let protocol = packet.protocol()
+var protocol = packet.protocol()
 if (protocol == PROTOCOL_TCP) {
     handle_tcp(packet)
 } else if (protocol == PROTOCOL_UDP) {
@@ -2035,7 +2035,7 @@ for (i in 0..MAX_ITERATIONS) {
 }
 
 // While loops (compiler ensures termination)
-let iterations = 0
+var iterations = 0
 while (condition && iterations < MAX_ITERATIONS) {
     do_work()
     iterations = iterations + 1
@@ -2072,7 +2072,7 @@ fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
         throw PARSE_ERROR_TOO_SHORT  // Throws integer value 1
     }
     
-    let header = cast_to_ip_header(packet)
+    var header = cast_to_ip_header(packet)
     if (header.version != 4) {
         throw PARSE_ERROR_INVALID_VERSION  // Throws integer value 2
     }
@@ -2083,12 +2083,12 @@ fn parse_ip_header(packet: *u8, len: u32) -> IpHeader {
 // Error handling with try/catch blocks using integer matching
 fn process_packet(ctx: xdp_md) -> xdp_action {
     try {
-        let packet = get_packet(ctx)
+        var packet = get_packet(ctx)
         if (packet == null) {
             throw NETWORK_ERROR_ALLOCATION_FAILED  // Throws integer value 10
         }
         
-        let header = parse_ip_header(packet.data, packet.len)
+        var header = parse_ip_header(packet.data, packet.len)
         update_flow_stats(header)
         
         return XDP_PASS
@@ -2113,7 +2113,7 @@ fn validate_input(value: i32) {
         throw 42  // Direct integer throw
     }
     
-    let error_code = compute_error_code(value)
+    var error_code = compute_error_code(value)
     if (error_code != 0) {
         throw error_code  // Variable throw
     }
@@ -2127,7 +2127,7 @@ The `defer` statement ensures cleanup code runs automatically at function exit, 
 ```kernelscript
 // Resource management with automatic cleanup
 fn update_shared_counter(index: u32) -> bool {
-    let data = shared_counters[index]
+    var data = shared_counters[index]
     if (data == null) {
         return false
     }
@@ -2148,13 +2148,13 @@ fn update_shared_counter(index: u32) -> bool {
 
 // Multiple defer statements execute in reverse order (LIFO)
 fn complex_resource_management() -> bool {
-    let buffer = allocate_buffer()
+    var buffer = allocate_buffer()
     defer free_buffer(buffer)          // Executes 3rd
     
-    let lock = acquire_lock()
+    var lock = acquire_lock()
     defer release_lock(lock)           // Executes 2nd
     
-    let fd = open_file("config.txt")
+    var fd = open_file("config.txt")
     defer close_file(fd)               // Executes 1st
     
     // Use resources safely
@@ -2169,14 +2169,14 @@ Defer statements work seamlessly with error handling - cleanup always occurs eve
 
 ```kernelscript
 fn safe_packet_processing(ctx: xdp_md) -> xdp_action {
-    let packet_buffer = allocate_packet_buffer()
+    var packet_buffer = allocate_packet_buffer()
     defer free_packet_buffer(packet_buffer)  // Always executes
     
     try {
-        let lock = acquire_flow_lock()
+        var lock = acquire_flow_lock()
         defer release_flow_lock(lock)        // Always executes
         
-        let flow_data = process_flow(packet_buffer)
+        var flow_data = process_flow(packet_buffer)
         if (flow_data.is_suspicious()) {
             throw NETWORK_ERROR_RATE_LIMITED  // Throws 12
         }
@@ -3245,7 +3245,7 @@ expression_statement = expression
 assignment_statement = identifier assignment_operator expression 
 assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%=" 
 
-declaration_statement = "let" identifier [ ":" type_annotation ] "=" expression 
+declaration_statement = "var" identifier [ ":" type_annotation ] "=" expression 
 
 if_statement = "if" "(" expression ")" "{" statement_list "}" 
                { "else" "if" "(" expression ")" "{" statement_list "}" }

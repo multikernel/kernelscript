@@ -89,8 +89,8 @@ let test_pointer_type_parsing () =
 let test_address_of_parsing () =
   let simple_address_of = {|
     fn test() -> u32 {
-      let x = 42
-      let ptr = &x
+      var x = 42
+      var ptr = &x
       return 0
     }
   |} in
@@ -99,8 +99,8 @@ let test_address_of_parsing () =
   let field_address_of = {|
     struct Point { x: u32, y: u32 }
     fn test() -> u32 {
-      let p = Point { x: 10, y: 20 }
-      let ptr = &p.x
+      var p = Point { x: 10, y: 20 }
+      var ptr = &p.x
       return 0
     }
   |} in
@@ -108,8 +108,8 @@ let test_address_of_parsing () =
   
   let array_address_of = {|
     fn test() -> u32 {
-      let arr = [1, 2, 3, 4, 5]
-      let ptr = &arr[0]
+      var arr = [1, 2, 3, 4, 5]
+      var ptr = &arr[0]
       return 0
     }
   |} in
@@ -135,7 +135,7 @@ let test_dereference_parsing () =
   (* For now, just test that we can dereference in expressions *)
   let deref_in_expr = {|
     fn test(ptr: *u32, other: *u32) -> u32 {
-      let value = *ptr + *other
+      var value = *ptr + *other
       return value
     }
   |} in
@@ -175,9 +175,9 @@ let test_complex_pointer_expressions () =
   let complex_expr = {|
     struct Point { x: u32, y: u32 }
     fn test(p: *Point, q: *Point) -> u32 {
-      let sum = p->x + q->y
-      let addr = &sum
-      let updated_sum = *addr + 10
+      var sum = p->x + q->y
+      var addr = &sum
+      var updated_sum = *addr + 10
       return updated_sum
     }
   |} in
@@ -211,8 +211,8 @@ let test_pointer_type_checking () =
   
   let address_of_type_check = {|
     fn test() -> u32 {
-      let x: u32 = 42
-      let ptr: *u32 = &x
+      var x: u32 = 42
+      var ptr: *u32 = &x
       return *ptr
     }
     fn main() -> i32 { return 0 }
@@ -221,7 +221,7 @@ let test_pointer_type_checking () =
   
   let dereference_type_check = {|
     fn test(ptr: *u32) -> u32 {
-      let value: u32 = *ptr
+      var value: u32 = *ptr
       return value
     }
     fn main() -> i32 { return 0 }
@@ -232,7 +232,7 @@ let test_pointer_type_checking () =
 let test_pointer_type_errors () =
   let invalid_dereference = {|
     fn test() -> u32 {
-      let x: u32 = 42
+      var x: u32 = 42
       return *x
     }
     fn main() -> i32 { return 0 }
@@ -242,7 +242,7 @@ let test_pointer_type_errors () =
   let arrow_on_non_pointer = {|
     struct Point { x: u32, y: u32 }
     fn test() -> u32 {
-      let p = Point { x: 10, y: 20 }
+      var p = Point { x: 10, y: 20 }
       return p->x
     }
     fn main() -> i32 { return 0 }
@@ -252,7 +252,7 @@ let test_pointer_type_errors () =
   (* Test a more obvious type error - trying to use string as pointer *)
   let obvious_type_error = {|
     fn test() -> u32 {
-      let s: str<10> = "hello"
+      var s: str<10> = "hello"
       return s->length
     }
     fn main() -> i32 { return 0 }
@@ -275,8 +275,8 @@ let test_pointer_field_access () =
     struct Point { x: u32, y: u32 }
     struct Line { start: *Point, end: Point }
     fn test(line: *Line) -> u32 {
-      let start_x = line->start->x
-      let end_y = line->end.y
+      var start_x = line->start->x
+      var end_y = line->end.y
       return start_x + end_y
     }
     fn main() -> i32 { return 0 }
@@ -346,9 +346,9 @@ let test_address_of_dereference_codegen () =
   let address_deref_program = {|
     @helper
     fn test_address_deref() -> u32 {
-      let x: u32 = 42
-      let ptr: *u32 = &x
-      let value: u32 = *ptr
+      var x: u32 = 42
+      var ptr: *u32 = &x
+      var value: u32 = *ptr
       return value
     }
     @xdp
@@ -428,8 +428,8 @@ let test_nested_pointer_structures () =
     struct Rectangle { top_left: *Point, bottom_right: *Point }
     @helper
     fn process_rectangle(rect: *Rectangle) -> u32 {
-      let width = rect->bottom_right->x - rect->top_left->x
-      let height = rect->bottom_right->y - rect->top_left->y
+      var width = rect->bottom_right->x - rect->top_left->x
+      var height = rect->bottom_right->y - rect->top_left->y
       return width + height
     }
     @xdp

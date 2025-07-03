@@ -21,12 +21,12 @@ map<u32, Counter> packet_stats : HashMap(1024) {
 @helper
 fn safe_function(ctx: xdp_md) -> xdp_action {
   // Small local variables - safe stack usage
-  let counter: u64 = 0
-  let packet_size: u16 = 1500
-  let protocol: u8 = 6 // TCP
+  var counter: u64 = 0
+  var packet_size: u16 = 1500
+  var protocol: u8 = 6 // TCP
   
   // Safe array access
-  let small_buffer: u8[64] = [0; 64]
+  var small_buffer: u8[64] = [0; 64]
   small_buffer[10] = protocol // Safe: index 10 < 64
   
   // Safe map operations
@@ -38,7 +38,7 @@ fn safe_function(ctx: xdp_md) -> xdp_action {
 // Function demonstrating bounds checking
 @helper
 fn bounds_demo(ctx: xdp_md) -> xdp_action {
-  let data_array: u32[10] = [0; 10]
+  var data_array: u32[10] = [0; 10]
   
   // Safe accesses
   data_array[0] = 42   // OK: index 0
@@ -55,8 +55,8 @@ fn bounds_demo(ctx: xdp_md) -> xdp_action {
 @helper
 fn moderate_stack_usage(ctx: xdp_md) -> xdp_action {
   // Moderate buffer size - should be within eBPF limits
-  let buffer: u8[256] = [0; 256]
-  let info: PacketInfo = PacketInfo {
+  var buffer: u8[256] = [0; 256]
+  var info: PacketInfo = PacketInfo {
     src_ip: 0,
     dst_ip: 0,
     protocol: 0,
@@ -74,7 +74,7 @@ fn moderate_stack_usage(ctx: xdp_md) -> xdp_action {
 fn large_stack_usage(ctx: xdp_md) -> xdp_action {
   // Large buffer - would exceed eBPF 512-byte stack limit
   // This would be flagged by the safety analyzer
-  let large_buffer: u8[600] = [0; 600] // WARNING: Stack overflow
+  var large_buffer: u8[600] = [0; 600] // WARNING: Stack overflow
   
   large_buffer[0] = 1
   
@@ -85,13 +85,13 @@ fn large_stack_usage(ctx: xdp_md) -> xdp_action {
 @helper
 fn array_validation_demo(ctx: xdp_md) -> xdp_action {
   // Valid array sizes
-  let valid_small: u32[10] = [0; 10]     // OK
-  let valid_medium: u8[100] = [0; 100]   // OK
+  var valid_small: u32[10] = [0; 10]     // OK
+  var valid_medium: u8[100] = [0; 100]   // OK
   
   // The following would be caught by validation:
-  // let invalid_negative: u32[-1] = [0; -1]  // ERROR: Negative size
-  // let invalid_zero: u32[0] = [0; 0]        // ERROR: Zero size
-  // let too_large: u8[2000] = [0; 2000]      // WARNING: Too large for stack
+  // var invalid_negative: u32[-1] = [0; -1]  // ERROR: Negative size
+  // var invalid_zero: u32[0] = [0; 0]        // ERROR: Zero size
+  // var too_large: u8[2000] = [0; 2000]      // WARNING: Too large for stack
   
   valid_small[5] = 42
   valid_medium[50] = 255
@@ -102,19 +102,19 @@ fn array_validation_demo(ctx: xdp_md) -> xdp_action {
 // Program with various safety scenarios
 @xdp fn safety_demo(ctx: xdp_md) -> xdp_action {
   // Stack usage: minimal for main function
-  let result: xdp_action = XDP_PASS
+  var result: xdp_action = XDP_PASS
   
   // Call safe functions
-  let _ = safe_function(ctx)
-  let _ = bounds_demo(ctx)
-  let _ = moderate_stack_usage(ctx)
+  var _ = safe_function(ctx)
+  var _ = bounds_demo(ctx)
+  var _ = moderate_stack_usage(ctx)
   
   // The following call would trigger warnings:
   // let _ = large_stack_usage(ctx) // Stack overflow warning
   
   // Safe map access
-  let key: u32 = 1
-  let count = packet_stats[key]
+  var key: u32 = 1
+  var count = packet_stats[key]
   if (count != null) {
     packet_stats[key] = count + 1
   } else {

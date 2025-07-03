@@ -20,9 +20,9 @@ let parse_and_type_check source =
 let test_string_type_parsing _ =
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let name: str<16> = "hello"
-      let message: str<64> = "world"
-      let large_buffer: str<512> = "large message"
+      var name: str<16> = "hello"
+      var message: str<64> = "world"
+      var large_buffer: str<512> = "large message"
       return 0
     }
   |} in
@@ -45,9 +45,9 @@ let test_string_type_parsing _ =
 let test_string_concatenation _ =
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let first: str<10> = "hello"
-      let second: str<10> = "world"
-      let result: str<20> = first + second
+      var first: str<10> = "hello"
+      var second: str<10> = "world"
+      var result: str<20> = first + second
       return 0
     }
   |} in
@@ -66,8 +66,8 @@ let test_string_concatenation _ =
 let test_string_equality _ =
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let name: str<16> = "test"
-      let other: str<16> = "other"
+      var name: str<16> = "test"
+      var other: str<16> = "other"
       if (name == "test") {
         return 1
       }
@@ -91,9 +91,9 @@ let test_string_equality _ =
 let test_string_indexing _ =
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let name: str<16> = "hello"
-      let first_char: char = name[0]
-      let second_char: char = name[1]
+      var name: str<16> = "hello"
+      var first_char: char = name[0]
+      var second_char: char = name[1]
       return 0
     }
   |} in
@@ -112,8 +112,8 @@ let test_invalid_string_operations _ =
   (* Test ordering comparison (should fail) *)
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let first: str<10> = "hello"
-      let second: str<10> = "world"
+      var first: str<10> = "hello"
+      var second: str<10> = "world"
       if (first < second) {
         return 1
       }
@@ -134,8 +134,8 @@ let test_invalid_string_operations _ =
 let test_string_assignment _ =
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let buffer: str<32> = "initial"
-      let small: str<16> = "small"
+      var buffer: str<32> = "initial"
+      var small: str<16> = "small"
       buffer = small
       return 0
     }
@@ -154,10 +154,10 @@ let test_string_assignment _ =
 let test_arbitrary_string_sizes _ =
   let program_text = {|
     @xdp fn test(ctx: xdp_md) -> i32 {
-      let tiny: str<1> = "a"
-      let small: str<7> = "small"
-      let medium: str<42> = "answer"
-      let large: str<1000> = "very long text"
+      var tiny: str<1> = "a"
+      var small: str<7> = "small"
+      var medium: str<42> = "answer"
+      var large: str<1000> = "very long text"
       return 0
     }
   |} in

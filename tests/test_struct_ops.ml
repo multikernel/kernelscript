@@ -13,8 +13,8 @@ let test_struct_ops_parsing () =
     }
     
     fn main() -> i32 {
-        let tcp_ops = MyTcpCong { init: 1, release: 2 }
-        let result = register(tcp_ops)
+        var tcp_ops = MyTcpCong { init: 1, release: 2 }
+        var result = register(tcp_ops)
         return result
     }
   |} in
@@ -68,8 +68,8 @@ let test_register_with_struct_ops () =
     }
     
     fn main() -> i32 {
-        let tcp_ops = MyTcpCong { slow_start: 1, cong_avoid: 2 }
-        let result = register(tcp_ops)
+        var tcp_ops = MyTcpCong { slow_start: 1, cong_avoid: 2 }
+        var result = register(tcp_ops)
         return result
     }
   |} in
@@ -93,8 +93,8 @@ let test_register_rejects_regular_struct () =
     }
     
     fn main() -> i32 {
-        let instance = RegularStruct { field1: 1, field2: 2 }
-        let result = register(instance)
+        var instance = RegularStruct { field1: 1, field2: 2 }
+        var result = register(instance)
         return result
     }
   |} in
@@ -127,10 +127,10 @@ let test_multiple_struct_ops () =
     }
     
     fn main() -> i32 {
-        let tcp_ops = TcpOps { init: 1, release: 2 }
-        let iter_ops = IterOps { init: 3, fini: 4 }
-        let result1 = register(tcp_ops)
-        let result2 = register(iter_ops)
+        var tcp_ops = TcpOps { init: 1, release: 2 }
+        var iter_ops = IterOps { init: 3, fini: 4 }
+        var result1 = register(tcp_ops)
+        var result2 = register(iter_ops)
         return result1 + result2
     }
   |} in
@@ -168,8 +168,8 @@ let test_struct_ops_ir_generation () =
     }
     
     fn main() -> i32 {
-        let tcp_ops = MyTcpCong { init: 1, release: 2 }
-        let result = register(tcp_ops)
+        var tcp_ops = MyTcpCong { init: 1, release: 2 }
+        var result = register(tcp_ops)
         return result
     }
   |} in
@@ -207,8 +207,8 @@ let test_ebpf_struct_ops_codegen () =
     }
     
     fn main() -> i32 {
-        let tcp_ops = MyTcpCong { init: 1, release: 2 }
-        let result = register(tcp_ops)
+        var tcp_ops = MyTcpCong { init: 1, release: 2 }
+        var result = register(tcp_ops)
         return result
     }
   |} in
@@ -239,8 +239,8 @@ let test_userspace_struct_ops_codegen () =
     }
     
     fn main() -> i32 {
-        let tcp_ops = MyTcpCong { init: 1, release: 2 }
-        let result = register(tcp_ops)
+        var tcp_ops = MyTcpCong { init: 1, release: 2 }
+        var result = register(tcp_ops)
         return result
     }
   |} in
@@ -294,8 +294,8 @@ let test_malformed_struct_ops_attribute () =
 let test_register_with_non_struct () =
   let program = {|
     fn main() -> i32 {
-        let x: u32 = 42
-        let result = register(x)
+        var x: u32 = 42
+        var result = register(x)
         return result
     }
   |} in
@@ -324,9 +324,9 @@ let test_nested_struct_ops () =
     }
     
     fn main() -> i32 {
-        let inner = InnerStruct { data: 100 }
-        let outer = OuterStruct { inner: inner, value: 42 }
-        let result = register(outer)
+        var inner = InnerStruct { data: 100 }
+        var outer = OuterStruct { inner: inner, value: 42 }
+        var result = register(outer)
         return result
     }
   |} in
@@ -350,7 +350,7 @@ let test_symbol_table_struct_ops () =
     }
     
     fn main() -> i32 {
-        let ops = IterOps { init_seq: 1, fini_seq: 2 }
+        var ops = IterOps { init_seq: 1, fini_seq: 2 }
         return 0
     }
   |} in

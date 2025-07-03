@@ -518,7 +518,7 @@ let rec string_of_stmt stmt =
         | Some t -> ": " ^ string_of_bpf_type t
         | None -> ""
       in
-      Printf.sprintf "let %s%s = %s;" name typ_str (string_of_expr expr)
+      Printf.sprintf "var %s%s = %s;" name typ_str (string_of_expr expr)
   | ConstDeclaration (name, typ_opt, expr) ->
       let typ_str = match typ_opt with
         | Some t -> ": " ^ string_of_bpf_type t

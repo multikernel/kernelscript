@@ -14,7 +14,7 @@ fn validate_packet(size: u32) -> bool {
 
 // MAIN eBPF PROGRAM - demonstrates both call types
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-    let packet_size: u32 = 128
+    var packet_size: u32 = 128
     
     // REGULAR CALL
     if (!validate_packet(packet_size)) {

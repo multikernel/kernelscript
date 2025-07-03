@@ -35,8 +35,8 @@ type IpAddress = u32
 type Port = u16
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let ip: IpAddress = 192168001001
-    let port: Port = 8080
+    var ip: IpAddress = 192168001001
+    var port: Port = 8080
     return 2
 }
 |} in
@@ -55,7 +55,7 @@ let test_array_type_alias () =
 type EthBuffer = u8[14]
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let buffer: EthBuffer = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var buffer: EthBuffer = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     return 2
 }
 |} in
@@ -79,7 +79,7 @@ type Size = u32
 type BufferSize = Size
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size: BufferSize = 1024
+    var size: BufferSize = 1024
     return 2
 }
 |} in

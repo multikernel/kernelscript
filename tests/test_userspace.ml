@@ -400,7 +400,8 @@ let test_literal_map_assignment () =
     }
     
     fn main() -> i32 {
-      test_map[1] = 42 let x = test_map[1]
+      test_map[1] = 42
+      var x = test_map[1]
       return 0
     }
   |} in
@@ -428,7 +429,8 @@ let test_map_lookup_with_literal_key () =
     }
     
     fn main() -> i32 {
-      test_map[1] = 42 let x = test_map[1]
+      test_map[1] = 42 
+      var x = test_map[1]
       return 0
     }
   |} in
@@ -456,8 +458,9 @@ let test_map_update_with_literal_key_value () =
     }
     
     fn main() -> i32 {
-      test_map[1] = 42 test_map[1] = 43
-      let x = test_map[1]
+      test_map[1] = 42
+      test_map[1] = 43
+      var x = test_map[1]
       return 0
     }
   |} in
@@ -485,8 +488,9 @@ let test_map_delete_with_literal_key () =
     }
     
     fn main() -> i32 {
-      test_map[1] = 42 delete test_map[1]
-      let x = test_map[1]
+      test_map[1] = 42
+      delete test_map[1]
+      var x = test_map[1]
       return 0
     }
   |} in
@@ -515,8 +519,8 @@ let test_map_iterate_with_literal_key () =
     
     fn main() -> i32 {
       test_map[1] = 42 test_map[2] = 43
-      let x = test_map[1]
-      let y = test_map[2]
+      var x = test_map[1]
+      var y = test_map[2]
       return 0
     }
   |} in
@@ -545,8 +549,8 @@ let test_mixed_literal_variable_expressions () =
     
     fn main() -> i32 {
       test_map[1] = 42 test_map[2] = 43
-      let x = test_map[1]
-      let y = test_map[2]
+      var x = test_map[1]
+      var y = test_map[2]
       return 0
     }
   |} in
@@ -574,8 +578,10 @@ let test_unique_temp_var_names () =
     }
     
     fn main() -> i32 {
-      test_map[1] = 42 test_map[2] = 43
-      test_map[3] = 44 let z = test_map[1] + test_map[2] + test_map[3]
+      test_map[1] = 42
+      test_map[2] = 43
+      test_map[3] = 44
+      var z = test_map[1] + test_map[2] + test_map[3]
       return 0
     }
   |} in
@@ -603,7 +609,8 @@ let test_no_direct_literal_addressing () =
     }
     
     fn main() -> i32 {
-      test_map[1] = 42 let x = test_map[1]
+      test_map[1] = 42
+      var x = test_map[1]
       return 0
     }
   |} in
@@ -641,7 +648,7 @@ let test_map_loading_code_generation () =
     
     fn main() -> i32 {
       network.enable_logging = true
-      let prog_handle = load(test)
+      var prog_handle = load(test)
       return 0
     }
   |} in

@@ -50,8 +50,8 @@ let test_complete_map_compilation () =
 map<u32, u64> counter : HashMap(1024)
 
 @xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
-  let src_ip = 0x08080808
-  let current_count = counter[src_ip]
+  var src_ip = 0x08080808
+  var current_count = counter[src_ip]
   counter[src_ip] = current_count + 1
   
   if (current_count > 100) {
@@ -93,9 +93,9 @@ map<u16, u32> port_map : Array(65536)
 map<u64, u32> session_map : HashMap(10000)
 
 @xdp fn multi_map(ctx: xdp_md) -> xdp_action {
-  let ip = 0x08080808
-  let port = 80
-  let session = 0x123456789ABCDEF0
+  var ip = 0x08080808
+  var port = 80
+  var session = 0x123456789ABCDEF0
   
   global_counter[ip] = global_counter[ip] + 1
   port_map[port] = ip
@@ -191,10 +191,10 @@ fn compute_key(base: u32) -> u32 {
 }
 
 @xdp fn complex_ops(ctx: xdp_md) -> xdp_action {
-  let base_ip = 0x08080808
-  let key = compute_key(base_ip)
+  var base_ip = 0x08080808
+  var key = compute_key(base_ip)
   
-  let current_value = stats[key]
+  var current_value = stats[key]
   stats[key] = current_value + 1
   
   if (stats[key] > 500) {
@@ -243,13 +243,13 @@ map<u32, u64> packet_counts : HashMap(1024)
 map<u32, u32> blacklist : HashMap(256)
 
 @xdp fn conditional_maps(ctx: xdp_md) -> xdp_action {
-  let src_ip = 0x08080808
+  var src_ip = 0x08080808
   
   if (blacklist[src_ip] > 0) {
     return 1
   }
   
-  let current_count = packet_counts[src_ip]
+  var current_count = packet_counts[src_ip]
   packet_counts[src_ip] = current_count + 1
   
   if (packet_counts[src_ip] > 1000) {
@@ -257,7 +257,7 @@ map<u32, u32> blacklist : HashMap(256)
     return 1
   }
   
-  let threshold = 100
+  var threshold = 100
   if (src_ip == 0x08080808) {
     threshold = 500
   }
@@ -309,8 +309,8 @@ let test_memory_safety () =
 map<u32, u64> test_map : HashMap(1024)
 
 @xdp fn memory_safe(ctx: xdp_md) -> xdp_action {
-  let key = 42
-  let value = test_map[key]
+  var key = 42
+  var value = test_map[key]
   test_map[key] = value + 1
   return 2
 }

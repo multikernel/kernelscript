@@ -65,22 +65,22 @@ fn get_timestamp() -> u64 {
 // XDP program demonstrating map usage
 @xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
   // Get packet information
-  let src_ip: IpAddress = get_src_ip(ctx)
-  let packet_len: PacketSize = get_packet_len_xdp(ctx)
+  var src_ip: IpAddress = get_src_ip(ctx)
+  var packet_len: PacketSize = get_packet_len_xdp(ctx)
   
   // Update CPU counter
-  let cpu_id = get_cpu_id()
+  var cpu_id = get_cpu_id()
   cpu_counters[cpu_id] = cpu_counters[cpu_id] + 1
   
   // Update IP statistics
-  let stats = ip_stats[src_ip]
+  var stats = ip_stats[src_ip]
   if (stats != null) {
     stats.count = stats.count + 1
     stats.total_bytes = stats.total_bytes + packet_len
     stats.last_seen = get_timestamp()
     ip_stats[src_ip] = stats
   } else {
-    let new_stats = PacketStats {
+    var new_stats = PacketStats {
       count: 1,
       total_bytes: packet_len,
       last_seen: get_timestamp()
@@ -89,7 +89,7 @@ fn get_timestamp() -> u64 {
   }
   
   // Check recent connections
-  let recent = recent_connections[src_ip]
+  var recent = recent_connections[src_ip]
   if (recent != null) {
     // Log repeated connection
     event_log[0] = 1
@@ -103,8 +103,8 @@ fn get_timestamp() -> u64 {
 
 // TC program demonstrating different map usage patterns
 @tc fn traffic_shaper(ctx: TcContext) -> TcAction {
-  let cpu = get_cpu_id()
-  let bytes = get_packet_len_tc(ctx)
+  var cpu = get_cpu_id()
+  var bytes = get_packet_len_tc(ctx)
   
   // Update bandwidth usage
   bandwidth_usage[cpu] = bandwidth_usage[cpu] + bytes
@@ -118,8 +118,8 @@ fn get_timestamp() -> u64 {
 }
 
 fn main() -> i32 {
-  let prog1 = load(traffic_shaper)
-  let prog2 = load(packet_analyzer)
+  var prog1 = load(traffic_shaper)
+  var prog2 = load(packet_analyzer)
   attach(prog1, "lo", 0)
   attach(prog2, "lo", 0)
   return 0

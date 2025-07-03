@@ -32,10 +32,10 @@ let test_type_unification () =
 let test_basic_type_inference () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 42
-  let y = true
-  let z = "hello"
-  return 0
+  var x = 42
+  var y = true
+  var z = "hello"
+  return 2
 }
 |} in
   try
@@ -56,10 +56,10 @@ let test_basic_type_inference () =
 let test_variable_type_checking () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x: u32 = 42
-  let y: bool = true
-  let z = x + 10
-  return z
+  var x: u32 = 42
+  var y: bool = true
+  var z = x + 10
+  return 2
 }
 |} in
   try
@@ -72,15 +72,15 @@ let test_variable_type_checking () =
 (** Test binary operations *)
 let test_binary_operations () =
   let valid_operations = [
-    ("let x = 1 + 2", true);
-    ("let x = 1 - 2", true); 
-    ("let x = 1 * 2", true);
-    ("let x = 1 / 2", true);
-    ("let x = 1 == 2", true);
-    ("let x = 1 != 2", true);
-    ("let x = 1 < 2", true);
-    ("let x = true && false", true);
-    ("let x = true || false", true);
+    ("var x = 1 + 2", true);
+    ("var x = 1 - 2", true); 
+    ("var x = 1 * 2", true);
+    ("var x = 1 / 2", true);
+    ("var x = 1 == 2", true);
+    ("var x = 1 != 2", true);
+    ("var x = 1 < 2", true);
+    ("var x = true && false", true);
+    ("var x = true || false", true);
   ] in
   
   List.iter (fun (stmt, should_succeed) ->
@@ -107,7 +107,7 @@ fn helper(x: u32, y: u32) -> u32 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let result = helper(10, 20)
+  var result = helper(10, 20)
   return result
 }
 |} in
@@ -136,7 +136,7 @@ let test_context_types () =
 let test_struct_field_access () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let packet = ctx.data
+  var packet = ctx.data
   return 0
 }
 |} in
@@ -151,7 +151,7 @@ let test_struct_field_access () =
 let test_statement_type_checking () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x: u32 = 42
+  var x: u32 = 42
   x = 50
   if (x > 0) {
     return 1
@@ -171,12 +171,12 @@ let test_function_type_checking () =
   let program_text = {|
 @helper
 fn calculate(a: u32, b: u32) -> u32 {
-  let result = a + b
+  var result = a + b
   return result
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let value = calculate(10, 20)
+  var value = calculate(10, 20)
   return value
 }
 |} in
@@ -233,7 +233,7 @@ let test_variadic_function_arguments () =
 let test_builtin_function_return_types () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let result: u32 = print("test message")
+    var result: u32 = print("test message")
     return result
 }
 |} in
@@ -253,7 +253,7 @@ fn my_function(x: u32) -> u32 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let user_result = my_function(10)
+  var user_result = my_function(10)
   print("User function result: ", user_result)
   return user_result
 }
@@ -290,10 +290,10 @@ let test_stdlib_integration () =
 (** Test error handling *)
 let test_error_handling () =
   let invalid_programs = [
-    ("let x: u32 = true;", "type mismatch");
-    ("let x = 1 + true;", "invalid binary operation");
-    ("let x = unknown_var;", "undefined variable");
-    ("let x = func_not_exists();", "undefined function");
+    ("var x: u32 = true;", "type mismatch");
+    ("var x = 1 + true;", "invalid binary operation");
+    ("var x = unknown_var;", "undefined variable");
+    ("var x = func_not_exists();", "undefined function");
   ] in
   
   List.iter (fun (stmt, description) ->
@@ -320,7 +320,7 @@ fn is_tcp(protocol: u8) -> bool {
 }
 
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-  let protocol: u8 = 6
+  var protocol: u8 = 6
   if (is_tcp(protocol)) {
     return 2  // 2 // XDP_PASS
   }
@@ -356,12 +356,12 @@ map<u32, u64> counter : HashMap(1024) { }
   counter[2] = 200     // U32 literal should promote to U64
   
   // Test arithmetic with different sizes
-  let small: u32 = 50
-  let large: u64 = 1000
-  let result = small + large  // U32 should promote to U64
+  var small: u32 = 50
+  var large: u64 = 1000
+  var result = small + large  // U32 should promote to U64
   
   // Test map access with promoted values
-  let val1 = counter[1] + 50  // U64 + U32 -> U64
+  var val1 = counter[1] + 50  // U64 + U32 -> U64
   counter[3] = val1
   
   return 2  // 2 // XDP_PASS
@@ -402,8 +402,8 @@ map<u32, u64> counter : HashMap(1024) { }
 
 @helper
 fn increment_counter(key: u32) -> u64 {
-  let current = counter[key]
-  let new_value = current + 1
+  var current = counter[key]
+  var new_value = current + 1
   counter[key] = new_value
   return new_value
 }
@@ -414,9 +414,9 @@ fn process_packet(size: u32) -> bool {
 }
 
 @xdp fn comprehensive_test(ctx: xdp_md) -> xdp_action {
-  let packet_size: u32 = 1000
-  let counter_val = increment_counter(packet_size)
-  let is_large = process_packet(packet_size)
+  var packet_size: u32 = 1000
+  var counter_val = increment_counter(packet_size)
+  var is_large = process_packet(packet_size)
   
   if (is_large && counter_val > 100) {
     return 1 // XDP_DROP
@@ -505,16 +505,16 @@ let test_comprehensive_integer_promotion () =
 let test_arithmetic_promotion () =
   let arithmetic_tests = [
     (* Basic arithmetic with different sizes *)
-    ("let x: u8 = 10\n    let y: u64 = 1000\n    let result = x + y", "u8 + u64 addition");
-    ("let x: u16 = 100\n    let y: u32 = 2000\n    let result = x * y", "u16 * u32 multiplication");
-    ("let x: u32 = 500\n    let y: u64 = 1000\n    let result = y - x", "u64 - u32 subtraction");
-    ("let x: u8 = 5\n    let y: u16 = 10\n    let result = x / y", "u8 / u16 division");
-    ("let x: u16 = 17\n    let y: u32 = 5\n    let result = x % y", "u16 % u32 modulo");
+    ("var x: u8 = 10\n    var y: u64 = 1000\n    var result = x + y", "u8 + u64 addition");
+    ("var x: u16 = 100\n    var y: u32 = 2000\n    var result = x * y", "u16 * u32 multiplication");
+    ("var x: u32 = 500\n    var y: u64 = 1000\n    var result = y - x", "u64 - u32 subtraction");
+    ("var x: u8 = 5\n    var y: u16 = 10\n    var result = x / y", "u8 / u16 division");
+    ("var x: u16 = 17\n    var y: u32 = 5\n    var result = x % y", "u16 % u32 modulo");
     
     (* Signed arithmetic *)
-    ("let x: i8 = -10\n    let y: i64 = 1000\n    let result = x + y", "i8 + i64 addition");
-    ("let x: i16 = -100\n    let y: i32 = 2000\n    let result = x * y", "i16 * i32 multiplication");
-    ("let x: i32 = -500\n    let y: i64 = 1000\n    let result = y - x", "i64 - i32 subtraction");
+    ("var x: i8 = -10\n    var y: i64 = 1000\n    var result = x + y", "i8 + i64 addition");
+    ("var x: i16 = -100\n    var y: i32 = 2000\n    var result = x * y", "i16 * i32 multiplication");
+    ("var x: i32 = -500\n    var y: i64 = 1000\n    var result = y - x", "i64 - i32 subtraction");
   ] in
   
   List.iter (fun (stmt, desc) ->
@@ -538,19 +538,19 @@ let test_arithmetic_promotion () =
 let test_comparison_promotion () =
   let comparison_tests = [
     (* Equality comparisons *)
-    ("let x: u8 = 10\n    let y: u64 = 10\n    let result = x == y", "u8 == u64 equality");
-    ("let x: u16 = 100\n    let y: u32 = 200\n    let result = x != y", "u16 != u32 inequality");
-    ("let x: i8 = -5\n    let y: i64 = -5\n    let result = x == y", "i8 == i64 equality");
+    ("var x: u8 = 10\n    var y: u64 = 10\n    var result = x == y", "u8 == u64 equality");
+    ("var x: u16 = 100\n    var y: u32 = 200\n    var result = x != y", "u16 != u32 inequality");
+    ("var x: i8 = -5\n    var y: i64 = -5\n    var result = x == y", "i8 == i64 equality");
     
     (* Ordering comparisons *)
-    ("let x: u8 = 10\n    let y: u64 = 100\n    let result = x < y", "u8 < u64 less than");
-    ("let x: u16 = 1000\n    let y: u32 = 500\n    let result = x > y", "u16 > u32 greater than");
-    ("let x: u32 = 100\n    let y: u64 = 100\n    let result = x <= y", "u32 <= u64 less equal");
-    ("let x: u8 = 50\n    let y: u16 = 30\n    let result = x >= y", "u8 >= u16 greater equal");
+    ("var x: u8 = 10\n    var y: u64 = 100\n    var result = x < y", "u8 < u64 less than");
+    ("var x: u16 = 1000\n    var y: u32 = 500\n    var result = x > y", "u16 > u32 greater than");
+    ("var x: u32 = 100\n    var y: u64 = 100\n    var result = x <= y", "u32 <= u64 less equal");
+    ("var x: u8 = 50\n    var y: u16 = 30\n    var result = x >= y", "u8 >= u16 greater equal");
     
     (* Signed comparisons *)
-    ("let x: i8 = -10\n    let y: i64 = 100\n    let result = x < y", "i8 < i64 less than");
-    ("let x: i16 = -5\n    let y: i32 = -10\n    let result = x > y", "i16 > i32 greater than");
+    ("var x: i8 = -10\n    var y: i64 = 100\n    var result = x < y", "i8 < i64 less than");
+    ("var x: i16 = -5\n    var y: i32 = -10\n    var result = x > y", "i16 > i32 greater than");
   ] in
   
   List.iter (fun (stmt, desc) ->
@@ -570,10 +570,6 @@ let test_comparison_promotion () =
       check bool ("comparison promotion: " ^ desc) false true
   ) comparison_tests
 
-
-
-
-
 (** Test map operations with type promotion *)
 let test_map_operations_promotion () =
   let map_tests = [
@@ -583,7 +579,7 @@ type IpAddress = u32
 map<IpAddress, u64> counters : HashMap(1000)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
+  var ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
   counters[ip] = 100
   return 2 // XDP_PASS
 }
@@ -595,7 +591,7 @@ type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let value: u16 = 1500  // u16 should promote to u64 (Counter)
+  var value: u16 = 1500  // u16 should promote to u64 (Counter)
   stats[1] = value
   return 2 // XDP_PASS
 }
@@ -608,9 +604,9 @@ type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let size: PacketSize = 1500
-  let current = stats[1]  // u64
-  let new_value = current + size  // u64 + u16 -> u64
+  var size: PacketSize = 1500
+  var current = stats[1]  // u64
+  var new_value = current + size  // u64 + u16 -> u64
   stats[1] = new_value
   return 2 // XDP_PASS
 }
@@ -634,11 +630,11 @@ let test_type_promotion_edge_cases () =
     (* Nested arithmetic with multiple promotions *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let a: u8 = 10
-  let b: u16 = 100
-  let c: u32 = 1000
-  let d: u64 = 10000
-  let result = a + b + c + d  // Chain of promotions
+  var a: u8 = 10
+  var b: u16 = 100
+  var c: u32 = 1000
+  var d: u64 = 10000
+  var result = a + b + c + d  // Chain of promotions
   return 2 // XDP_PASS
 }
 |}, "nested arithmetic with multiple promotions");
@@ -651,8 +647,8 @@ fn process(value: u64) -> u64 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let small: u16 = 100
-  let result = process(small)  // u16 -> u64 promotion in function call
+  var small: u16 = 100
+  var result = process(small)  // u16 -> u64 promotion in function call
   return 2 // XDP_PASS
 }
 |}, "function parameter promotion");
@@ -660,11 +656,11 @@ fn process(value: u64) -> u64 {
     (* Complex expression with promotions *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let a: u8 = 5
-  let b: u16 = 10
-  let c: u32 = 20
-  let d: u64 = 40
-  let result = (a + b) * (c + d)  // Mixed promotions in complex expression
+  var a: u8 = 5
+  var b: u16 = 10
+  var c: u32 = 20
+  var d: u64 = 40
+  var result = (a + b) * (c + d)  // Mixed promotions in complex expression
   return 2 // XDP_PASS
 }
 |}, "complex expression with promotions");
@@ -672,8 +668,8 @@ fn process(value: u64) -> u64 {
     (* Assignment with promotion *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let big: u64 = 1000
-  let small: u16 = 100
+  var big: u64 = 1000
+  var small: u16 = 100
   big = big + small  // u64 = u64 + u16
   return 2 // XDP_PASS
 }
@@ -697,7 +693,7 @@ let test_null_literal_typing () =
     (* Basic null literal *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = null
+  var x = null
   return 2 // XDP_PASS
 }
 |}, "basic null literal");
@@ -705,7 +701,7 @@ let test_null_literal_typing () =
     (* Null comparison with typed variable *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x: u32 = 42
+  var x: u32 = 42
   if (x == null) {
     return 1 // XDP_DROP
   }
@@ -716,7 +712,7 @@ let test_null_literal_typing () =
     (* Null assignment in variable declaration *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let ptr = null
+  var ptr = null
   return 2 // XDP_PASS
 }
 |}, "null assignment in declaration");
@@ -739,22 +735,22 @@ let test_null_literal_typing () =
 let test_null_comparisons () =
   let comparison_tests = [
     (* Comparisons with different numeric types *)
-    ("let x: u8 = 10\n    let result = x == null", "u8 == null");
-    ("let x: u16 = 100\n    let result = x != null", "u16 != null");
-    ("let x: u32 = 1000\n    let result = x == null", "u32 == null");
-    ("let x: u64 = 10000\n    let result = x != null", "u64 != null");
-    ("let x: i8 = -5\n    let result = x == null", "i8 == null");
-    ("let x: i16 = -100\n    let result = x != null", "i16 != null");
-    ("let x: i32 = -1000\n    let result = x == null", "i32 == null");
-    ("let x: i64 = -10000\n    let result = x != null", "i64 != null");
+    ("var x: u8 = 10\n    var result = x == null", "u8 == null");
+    ("var x: u16 = 100\n    var result = x != null", "u16 != null");
+    ("var x: u32 = 1000\n    var result = x == null", "u32 == null");
+    ("var x: u64 = 10000\n    var result = x != null", "u64 != null");
+    ("var x: i8 = -5\n    var result = x == null", "i8 == null");
+    ("var x: i16 = -100\n    var result = x != null", "i16 != null");
+    ("var x: i32 = -1000\n    var result = x == null", "i32 == null");
+    ("var x: i64 = -10000\n    var result = x != null", "i64 != null");
     
     (* Basic null comparisons *)
-    ("let ptr = null\n    let result = ptr == null", "null variable == null");
-    ("let ptr = null\n    let result = ptr != null", "null variable != null");
+    ("var ptr = null\n    var result = ptr == null", "null variable == null");
+    ("var ptr = null\n    var result = ptr != null", "null variable != null");
     
     (* Double null comparison *)
-    ("let result = null == null", "null == null");
-    ("let result = null != null", "null != null");
+    ("var result = null == null", "null == null");
+    ("var result = null != null", "null != null");
   ] in
   
   List.iter (fun (stmt, desc) ->
@@ -784,7 +780,7 @@ let test_map_null_semantics () =
 map<u32, u64> test_map : HashMap(100)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let value = test_map[42]
+  var value = test_map[42]
   if (value == null) {
     return 1 // XDP_DROP
   }
@@ -797,7 +793,7 @@ map<u32, u64> test_map : HashMap(100)
 map<u32, u32> counters : HashMap(100)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let count = counters[1]
+  var count = counters[1]
   if (count == null) {
     counters[1] = 1
   } else {
@@ -813,8 +809,8 @@ map<u32, u64> flows : HashMap(100)
 map<u32, u32> packets : HashMap(100)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let flow = flows[123]
-  let packet_count = packets[123]
+  var flow = flows[123]
+  var packet_count = packets[123]
   
   if (flow == null || packet_count == null) {
     return 1 // XDP_DROP
@@ -846,7 +842,7 @@ let test_null_vs_throw_pattern () =
 map<u32, u64> cache : HashMap(100)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let cached_value = cache[42]
+  var cached_value = cache[42]
   if (cached_value == null) {
     // Key doesn't exist - expected case
     cache[42] = 100
@@ -867,7 +863,7 @@ fn validate_input(value: u32) -> u32 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let result = validate_input(500)
+  var result = validate_input(500)
   return 2 // XDP_PASS
 }
 |}, "error validation pattern");
@@ -878,7 +874,7 @@ map<u32, u32> data : HashMap(100)
 
 @helper
 fn lookup_value(key: u32) -> u32 {
-  let value = data[key]
+  var value = data[key]
   if (value == null) {
     return 0  // Default value for missing key
   }
@@ -886,7 +882,7 @@ fn lookup_value(key: u32) -> u32 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let result = lookup_value(42)
+  var result = lookup_value(42)
   return 2 // XDP_PASS
 }
 |}, "function with nullable return pattern");
@@ -911,8 +907,8 @@ let test_null_semantics () =
 map<u32, u32> test_map : HashMap(100)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let value = test_map[1]
-  let result = 0
+  var value = test_map[1]
+  var result = 0
   if (value == null) {
     result = 0
   } else {
@@ -928,8 +924,8 @@ map<u32, u32> map1 : HashMap(100)
 map<u32, u32> map2 : HashMap(100)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let val1 = map1[1]
-  let val2 = map2[1]
+  var val1 = map1[1]
+  var val2 = map2[1]
   
   if (val1 != null && val2 != null) {
     return 2 // XDP_PASS
@@ -942,7 +938,7 @@ map<u32, u32> map2 : HashMap(100)
     (* Basic null assignments *)
     ({|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = null
+  var x = null
   if (x == null) {
     return 1 // XDP_DROP
   }
@@ -1043,7 +1039,7 @@ fn get_src_ip(ctx: xdp_md) -> IpAddress {
 }
 
 @xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
-    let src_ip: IpAddress = get_src_ip(ctx)
+    var src_ip: IpAddress = get_src_ip(ctx)
     return 2 // XDP_PASS
 }
 |} in
@@ -1071,14 +1067,14 @@ fn get_packet_size(ctx: xdp_md) -> u32 {
 
 @helper
 fn validate_headers(ctx: xdp_md, min_size: u32, max_size: u32) -> bool {
-    let size = get_packet_size(ctx)
+    var size = get_packet_size(ctx)
     return size >= min_size && size <= max_size
 }
 
 @xdp fn complex_handler(ctx: xdp_md) -> xdp_action {
-    let flags = process_packet(ctx, 0x01)
-    let size = get_packet_size(ctx)
-    let is_valid = validate_headers(ctx, 64, 1500)
+    var flags = process_packet(ctx, 0x01)
+    var size = get_packet_size(ctx)
+    var is_valid = validate_headers(ctx, 64, 1500)
     
     if (is_valid) {
         return 2 // XDP_PASS
@@ -1106,13 +1102,13 @@ fn helper_function(value: u32) -> u32 {
 
 @helper
 fn main_kernel_function(ctx: xdp_md) -> u32 {
-    let base_value = 42
-    let result = helper_function(base_value)
+    var base_value = 42
+    var result = helper_function(base_value)
     return result
 }
 
 @xdp fn test_program(ctx: xdp_md) -> xdp_action {
-    let computed = main_kernel_function(ctx)
+    var computed = main_kernel_function(ctx)
     return 2 // XDP_PASS
 }
 |} in
@@ -1139,8 +1135,8 @@ fn convert_ip_to_u32(addr: IpAddress) -> u32 {
 }
 
 @xdp fn packet_processor(ctx: xdp_md) -> xdp_action {
-    let ip_addr = extract_ip_from_context(ctx)
-    let converted_value = convert_ip_to_u32(ip_addr)
+    var ip_addr = extract_ip_from_context(ctx)
+    var converted_value = convert_ip_to_u32(ip_addr)
     
     if (converted_value > 0) {
         return 2 // XDP_PASS

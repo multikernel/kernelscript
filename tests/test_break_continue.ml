@@ -21,7 +21,7 @@ let test_break_statement_parsing () =
     if (i == 5) {
       break
     }
-    let x = i
+    var x = i
   }
   return 2
 }
@@ -38,7 +38,7 @@ let test_continue_statement_parsing () =
     if (i == 5) {
       continue
     }
-    let x = i
+    var x = i
   }
   return 2
 }
@@ -51,12 +51,13 @@ let test_continue_statement_parsing () =
 let test_break_in_while_loop () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let count = 0
-  while (count < 100) {
-    count = count + 1
-    if (count == 50) {
+  var i = 0
+  while (i < 10) {
+    i = i + 1
+    if (i == 5) {
       break
     }
+    var x = 5
   }
   return 2
 }
@@ -69,13 +70,13 @@ let test_break_in_while_loop () =
 let test_continue_in_while_loop () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let count = 0
-  while (count < 10) {
-    count = count + 1
-    if (count == 5) {
+  var i = 0
+  while (i < 10) {
+    i = i + 1
+    if (i % 2 == 0) {
       continue
     }
-    let processed = count * 2
+    var x = 5
   }
   return 2
 }
@@ -88,12 +89,12 @@ let test_continue_in_while_loop () =
 let test_break_in_for_iter () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let array = [1, 2, 3, 4, 5]
+  var array = [1, 2, 3, 4, 5]
   for (i, val) in array.iter() {
     if (i == 3) {
       break
     }
-    let processed = val * 2
+    var processed = val * 2
   }
   return 2
 }
@@ -106,7 +107,7 @@ let test_break_in_for_iter () =
 let test_break_outside_loop_error () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 5
+  var x = 5
   break
   return 2
 }
@@ -121,7 +122,7 @@ let test_break_outside_loop_error () =
 let test_continue_outside_loop_error () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 5
+  var x = 5
   continue
   return 2
 }
@@ -144,7 +145,7 @@ let test_break_continue_in_nested_conditional () =
         break
       }
     }
-    let processed = i * 3
+    var processed = i * 3
   }
   return 2
 }
@@ -167,7 +168,7 @@ let test_multiple_break_continue_statements () =
     if (i > 80) {
       continue
     }
-    let x = i * 2
+    var x = i * 2
   }
   return 2
 }

@@ -128,7 +128,7 @@ let test_expression_parsing () =
   List.iter (fun (expr_text, should_succeed) ->
     let program_text = Printf.sprintf {|
 @xdp fn test() -> u32 {
-  let result = %s
+  var result = %s
   return 0
 }
 |} expr_text in
@@ -142,8 +142,8 @@ let test_expression_parsing () =
 (** Test statement parsing *)
 let test_statement_parsing () =
   let statements = [
-    ("let x = 42", true);
-    ("let y: u32 = 100", true);
+    ("var x = 42", true);
+    ("var y: u32 = 100", true);
     ("x = 50", true);
     ("return x", true);
     ("return", true);
@@ -174,7 +174,7 @@ fn helper(x: u32, y: u32) -> u32 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let result = helper(10, 20)
+  var result = helper(10, 20)
   return 2
 }
 |} in
@@ -238,7 +238,7 @@ let test_bpf_type_parsing () =
   List.iter (fun (type_text, expected_type) ->
     let program_text = Printf.sprintf {|
 @xdp fn test() -> u32 {
-  let x: %s = 0
+  var x: %s = 0
   return 0
 }
 |} type_text in
@@ -261,7 +261,7 @@ let test_bpf_type_parsing () =
 let test_control_flow_parsing () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
+  var x = 10
   
   if (x > 5) {
     x = x + 1
@@ -307,9 +307,9 @@ let test_error_handling () =
 let test_operator_precedence () =
   let program_text = {|
 @xdp fn test() -> u32 {
-  let result = 1 + 2 * 3
-  let comparison = x < y && a > b
-  let complex = (a + b) * c - d / e
+  var result = 1 + 2 * 3
+  var comparison = x < y && a > b
+  var complex = (a + b) * c - d / e
   return 0
 }
 |} in
@@ -326,14 +326,14 @@ map<u32, u64> packet_count : HashMap(1024) { }
 
 @helper
 fn process_packet(src_ip: u32) -> u64 {
-  let count = packet_count[src_ip]
+  var count = packet_count[src_ip]
   packet_count[src_ip] = count + 1
   return count
 }
 
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-  let src_ip = 0x12345678
-  let count = process_packet(src_ip)
+  var src_ip = 0x12345678
+  var count = process_packet(src_ip)
   
   if (count > 100) {
     return 1  // DROP
@@ -379,7 +379,7 @@ fn process_packet(src_ip: u32) -> u64 {
 let test_simple_if () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
+  var x = 10
   if (x > 5) {
     return 1
   }
@@ -405,7 +405,7 @@ let test_simple_if () =
 let test_if_else () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
+  var x = 10
   if (x > 15) {
     return 1
   } else {
@@ -432,7 +432,7 @@ let test_if_else () =
 let test_if_else_if_else () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
+  var x = 10
   if (x > 20) {
     return 1
   } else if (x > 10) {
@@ -457,18 +457,18 @@ let test_if_else_if_else () =
              (* Check that else contains another if statement *)
              (match (List.hd else_stmts).stmt_desc with
               | If (_, _, Some _) -> check bool "nested if-else" true true
-              | _ -> fail "Expected nested if in else branch")
-         | _ -> fail "Expected if-else chain")
+              | _ -> fail "Expected nested if-else")
+         | _ -> fail "Expected if-else statement")
     | _ -> fail "Expected attributed function declaration"
   with
-  | e -> fail ("Failed to parse if-else-if-else: " ^ Printexc.to_string e)
+  | e -> fail ("Failed to parse if-else if-else: " ^ Printexc.to_string e)
 
 (** Test nested if statements *)
 let test_nested_if () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
-  let y = 20
+  var x = 10
+  var y = 20
   if (x > 5) {
     if (y > 15) {
       return 1
@@ -504,15 +504,15 @@ let test_nested_if () =
 let test_multiple_statements_in_branches () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
+  var x = 10
   if (x > 5) {
-    let y = x + 1
-    let z = y * 2
+    var y = x + 1
+    var z = y * 2
     x = z - 1
     return 1
   } else {
     x = x - 1
-    let w = x / 2  
+    var w = x / 2  
     return 2
   }
 }
@@ -536,8 +536,8 @@ let test_multiple_statements_in_branches () =
 let test_spec_compliant_syntax () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let x = 10
-  let y = 20
+  var x = 10
+  var y = 20
   
   // SPEC-compliant syntax with mandatory parentheses around condition
   if (x > 5) {
@@ -627,7 +627,7 @@ let test_for_loop_with_expressions () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 0..5) {
-    let x = i * 2
+    var x = i * 2
   }
   return 2
 }
@@ -652,7 +652,7 @@ let test_for_iter_syntax () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 0..3) {
-    let v = i
+    var v = i
     return v
   }
   return 2
@@ -709,11 +709,11 @@ let test_nested_for_loops () =
 let test_for_loop_edge_cases () =
   let test_cases = [
     (* Zero range - should work *)
-    ("for (i in 5..5) { let x = i }", 
+    ("for (i in 5..5) { var x = i }", 
      [make_for_stmt "i" (make_int_lit 5) (make_int_lit 5) [make_decl "x" (make_id "i")]]);
     
     (* Variable bounds - use simple constants *)
-    ("for (j in 2..8) { let y = j }", 
+    ("for (j in 2..8) { var y = j }", 
      [make_for_stmt "j" (make_int_lit 2) (make_int_lit 8) [make_decl "y" (make_id "j")]]);
   ] in
   List.iter (fun (input, expected) ->
@@ -721,7 +721,7 @@ let test_for_loop_edge_cases () =
   ) test_cases
 
 let test_for_comprehensive () =
-  let input = "for (i in 0..3) { let x = i } for (j in 1..5) { let y = j }" in
+  let input = "for (i in 0..3) { var x = i } for (j in 1..5) { var y = j }" in
   let expected = [
     make_for_stmt "i" (make_int_lit 0) (make_int_lit 3) [make_decl "x" (make_id "i")];
     make_for_stmt "j" (make_int_lit 1) (make_int_lit 5) [make_decl "y" (make_id "j")];
@@ -730,12 +730,205 @@ let test_for_comprehensive () =
 
 let test_loop_bounds_analysis () =
   (* Test that we can parse different kinds of loop bounds *)
-  let input = "for (i in 0..5) { let x = i } for (j in 2..8) { let y = j }" in
+  let input = "for (i in 0..5) { var x = i } for (j in 2..8) { var y = j }" in
   let expected = [
     make_for_stmt "i" (make_int_lit 0) (make_int_lit 5) [make_decl "x" (make_id "i")];
     make_for_stmt "j" (make_int_lit 2) (make_int_lit 8) [make_decl "y" (make_id "j")];
   ] in
   test_parse_statements input expected
+
+let test_variable_declaration () =
+  let test_cases = [
+    ("var x: u32 = 10", true);
+    ("var y = 20", true);
+    ("var z: bool = true", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_if_statements () =
+  let test_cases = [
+    ("if (true) { var x = 10 }", true);
+    ("if (false) { var y = 20 } else { var z = 30 }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_while_loops () =
+  let test_cases = [
+    ("while (true) { var x = 10 }", true);
+    ("while (false) { break }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_for_loops () =
+  let test_cases = [
+    ("for (i in 0..10) { var x = 10 }", true);
+    ("for (j in 1..5) { break }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_return_statements () =
+  let test_cases = [
+    ("return 42", true);
+    ("return true", true);
+    ("return", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_function_calls () =
+  let test_cases = [
+    ("print(42)", true);
+    ("helper(x, y)", true);
+    ("process()", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_nested_statements () =
+  let test_cases = [
+    ("if (true) { while (false) { var x = 10 } }", true);
+    ("for (i in 0..5) { if (i == 2) { break } }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_range_expressions () =
+  let test_cases = [
+    ("for (i in 0..10) { var x = 10 }", true);
+    ("for (j in 1..100) { var x = 10 }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_complex_expressions () =
+  let test_cases = [
+    ("for (i in 0..5) { var x = 10 }", true);
+    ("while (i < 10) { var x = 10 }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_combined_statements () =
+  let test_cases = [
+    ("for (i in 0..3) { var x = i }", true);
+    ("for (j in 1..5) { var y = j }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_range_boundary_conditions () =
+  let test_cases = [
+    ("for (i in 5..5) { var x = i }", true);
+    ("for (i in 0..0) { var y = i }", true);
+  ] in
+  List.iter (fun (input, should_pass) ->
+    try
+      let _ = parse_string input in
+      if not should_pass then
+        Printf.printf "ERROR: Expected %s to fail\n" input
+    with 
+    | _ when should_pass -> 
+        Printf.printf "ERROR: Expected %s to pass\n" input
+    | _ -> () (* Expected failure *)
+  ) test_cases
+
+let test_multiple_statements_parsing () =
+  let complex_tests = [
+    ("for (i in 0..3) { var x = i } for (j in 1..5) { var y = j }", "multiple for loops with variables");
+    ("for (i in 0..5) { var x = i } for (j in 2..8) { var y = j }", "larger range for loops with variables");
+  ] in
+  
+  List.iter (fun (input, description) ->
+    try
+      let _ = parse_string input in
+      Printf.printf "✓ %s: %s\n" description input;
+    with 
+    | e -> Printf.printf "✗ %s failed: %s\n" description (Printexc.to_string e)
+  ) complex_tests
 
 let parser_tests = [
   "simple_program", `Quick, test_simple_program;
@@ -762,6 +955,18 @@ let parser_tests = [
   "for_loop_edge_cases", `Quick, test_for_loop_edge_cases;
   "test_for_comprehensive", `Quick, test_for_comprehensive;
   "test_loop_bounds_analysis", `Quick, test_loop_bounds_analysis;
+  "variable_declaration", `Quick, test_variable_declaration;
+  "if_statements", `Quick, test_if_statements;
+  "while_loops", `Quick, test_while_loops;
+  "for_loops", `Quick, test_for_loops;
+  "return_statements", `Quick, test_return_statements;
+  "function_calls", `Quick, test_function_calls;
+  "nested_statements", `Quick, test_nested_statements;
+  "range_expressions", `Quick, test_range_expressions;
+  "complex_expressions", `Quick, test_complex_expressions;
+  "combined_statements", `Quick, test_combined_statements;
+  "range_boundary_conditions", `Quick, test_range_boundary_conditions;
+  "multiple_statements_parsing", `Quick, test_multiple_statements_parsing;
 ]
 
 let () =

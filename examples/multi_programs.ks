@@ -18,8 +18,8 @@ fn main() -> i32 {
   shared_counter[1] = 0
   shared_counter[2] = 0
   
-  let prog1 = load(packet_counter)
-  let prog2 = load(packet_filter)
+  var prog1 = load(packet_counter)
+  var prog2 = load(packet_filter)
   attach(prog1, "eth0", 0)
   attach(prog2, "eth0", 0)
   

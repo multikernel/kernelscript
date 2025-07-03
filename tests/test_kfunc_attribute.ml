@@ -12,7 +12,7 @@ let test_kfunc_parsing () =
     
     @xdp
     fn test_program(ctx: xdp_md) -> xdp_action {
-        let result = custom_check(null, 100)
+        var result = custom_check(null, 100)
         return 2
     }
     
@@ -46,7 +46,7 @@ let test_kfunc_type_checking () =
     
     @xdp 
     fn filter(ctx: xdp_md) -> xdp_action {
-        let valid = packet_validator(null, 1000)
+        var valid = packet_validator(null, 1000)
         if (valid) {
             return 2
         }
@@ -80,7 +80,7 @@ let test_kernel_module_generation () =
     
     @xdp
     fn test_xdp(ctx: xdp_md) -> xdp_action {
-        let result = advanced_filter(null, 100)
+        var result = advanced_filter(null, 100)
         return 2
     }
     
@@ -114,8 +114,8 @@ let test_ebpf_kfunc_declarations () =
     
     @xdp
     fn security_filter(ctx: xdp_md) -> xdp_action {
-        let addr: u64 = 12345
-        let safe = security_check(addr)
+        var addr: u64 = 12345
+        var safe = security_check(addr)
         if (!safe) {
             return 1
         }
@@ -211,7 +211,7 @@ fn helper_func() -> u32 {
 
 @kfunc  
 fn main_kfunc() -> u32 {
-    let result = helper_func()
+    var result = helper_func()
     return result
 }
 |} in
@@ -242,4 +242,4 @@ let tests = [
 
 let () = Alcotest.run "KernelScript @kfunc attribute tests" [
   "kfunc_tests", tests
-] 
+]

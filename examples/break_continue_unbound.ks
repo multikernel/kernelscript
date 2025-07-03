@@ -4,7 +4,7 @@
 map<u32, u32> counter_map : HashMap(10)
 
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-  let end_value = 1000 // Large value to make it unbound
+  var end_value = 1000 // Large value to make it unbound
   
   // This should be treated as unbound due to large range
   for (i in 0..end_value) {
@@ -19,8 +19,8 @@ map<u32, u32> counter_map : HashMap(10)
     }
     
     // Count odd numbers up to threshold
-    let key = 0
-    let current = counter_map[key]
+    var key = 0
+    var current = counter_map[key]
     counter_map[key] = current + 1
   }
   
@@ -29,8 +29,8 @@ map<u32, u32> counter_map : HashMap(10)
 
 // Userspace coordination (no wrapper)
 fn main() -> i32 {
-  let limit = 1000 // Runtime-determined limit
-  let count = 0
+  var limit = 1000 // Runtime-determined limit
+  var count = 0
   
   // This should also be unbound
   for (i in 0..limit) {
@@ -45,8 +45,8 @@ fn main() -> i32 {
     count = count + 1
   }
   
-  let prog = load(packet_filter)
-  attach(prog, "eth0", 0)
+  var prog = load(packet_filter)
+  attach(prog, "lo", 0)
   
   return 0
 } 

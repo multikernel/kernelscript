@@ -3,18 +3,18 @@
 
 @xdp fn string_demo(ctx: xdp_md) -> xdp_action {
   // Test string declarations with different sizes
-  let name: str<16> = "hello"
-  let message: str<32> = "world"
-  let large_buffer: str<128> = "large message buffer"
+  var name: str<16> = "hello"
+  var message: str<32> = "world"
+  var large_buffer: str<128> = "large message buffer"
   
   // Test string indexing
-  let first_char: char = name[0]
-  let second_char: char = name[1]
+  var first_char: char = name[0]
+  var second_char: char = name[1]
   
   // Test string comparison
   if (name == "hello") {
     // String concatenation
-    let result: str<48> = name + message
+    var result: str<48> = name + message
     
     // Test string inequality
     if (result != "helloworld") {
@@ -23,8 +23,8 @@
   }
   
   // Test smaller strings
-  let tiny: str<4> = "abc"
-  let custom: str<10> = "custom"
+  var tiny: str<4> = "abc"
+  var custom: str<10> = "custom"
   
   return 0
 }
@@ -32,19 +32,19 @@
 // Userspace coordinator demonstrating the same string operations
 fn main() -> i32 {
     // Same string syntax works in userspace
-    let greeting: str<20> = "Hello"
-    let target: str<20> = "World"
-    let punctuation: str<5> = "!"
+    var greeting: str<20> = "Hello"
+    var target: str<20> = "World"
+    var punctuation: str<5> = "!"
     
     // String concatenation in userspace
-    let message: str<45> = greeting + target
-    let final_message: str<50> = message + punctuation
+    var message: str<45> = greeting + target
+    var final_message: str<50> = message + punctuation
     
     // String comparison in userspace
     if (greeting == "Hello") {
         // Character access
-        let first: char = greeting[0]
-        let last: char = target[4]
+        var first: char = greeting[0]
+        var last: char = target[4]
         
         // String inequality test
         if (final_message != "HelloWorld!") {
@@ -53,13 +53,13 @@ fn main() -> i32 {
     }
     
     // Test string truncation behavior
-    let short: str<6> = "toolong"  // Will be truncated to "toolo" + null
-    let exact: str<6> = "exact"    // Fits perfectly: "exact" + null
+    var short: str<6> = "toolong"  // Will be truncated to "toolo" + null
+    var exact: str<6> = "exact"    // Fits perfectly: "exact" + null
     
     // Demonstrate different string sizes
-    let tiny: str<3> = "hi"        // 2 chars + null
-    let medium: str<32> = "medium length string"
-    let large: str<128> = "this is a much longer string for testing"
+    var tiny: str<3> = "hi"        // 2 chars + null
+    var medium: str<32> = "medium length string"
+    var large: str<128> = "this is a much longer string for testing"
     
     return 0
 } 

@@ -25,8 +25,8 @@ struct GlobalConfig {
 
 @helper
 fn process_packet(cfg: GlobalConfig) -> u32 {
-  let max_size = cfg.max_packet_size
-  let timeout = cfg.timeout_ms
+  var max_size = cfg.max_packet_size
+  var timeout = cfg.timeout_ms
   if (max_size > 1500) {
     return 1
   }
@@ -60,8 +60,8 @@ struct LocalConfig {
 
 @helper
 fn check_threshold(settings: LocalConfig) -> u32 {
-  let val = settings.threshold
-  let m = settings.mode
+  var val = settings.threshold
+  var m = settings.mode
   if (val > 100 && m > 0) {
     return 1
   }
@@ -95,8 +95,8 @@ struct NetworkLimits {
 
 @helper
 fn enforce_limits(limits: NetworkLimits) -> u32 {
-  let max_conn = limits.max_connections
-  let bandwidth = limits.bandwidth_limit
+  var max_conn = limits.max_connections
+  var bandwidth = limits.bandwidth_limit
   
   if (max_conn > 1000 || bandwidth > 10000) {
     return 1 // Drop
@@ -135,8 +135,8 @@ struct ServerConfig {
 }
 
 fn setup_server(cfg: ServerConfig) -> i32 {
-  let max_conn = cfg.max_connections
-  let port_num = cfg.port
+  var max_conn = cfg.max_connections
+  var port_num = cfg.port
   if (cfg.enable_debug > 0) {
     return 1
   }
@@ -169,8 +169,8 @@ struct Config2 {
 
 @helper
 fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
-  let val1 = cfg1.value1
-  let val2 = cfg2.value2
+  var val1 = cfg1.value1
+  var val2 = cfg2.value2
   
   if (val1 > val2) {
     return 1
@@ -206,14 +206,14 @@ struct PacketLimits {
 
 @helper
 fn validate_packet(limits: PacketLimits) -> u32 {
-  let packet_size: u32 = 800
+  var packet_size: u32 = 800
   
   if (packet_size > limits.max_size || packet_size < limits.min_size) {
     return 1  // Invalid
   }
     
-  let total_range = limits.max_size - limits.min_size
-  let middle_point = limits.min_size + (total_range / 2)
+  var total_range = limits.max_size - limits.min_size
+  var middle_point = limits.min_size + (total_range / 2)
   
   if (packet_size > middle_point && limits.strict_mode > 0) {
     return 2  // Warning
@@ -252,8 +252,8 @@ struct LocalSettings {
 
 @helper
 fn process_settings(global: GlobalSettings, local: LocalSettings) -> u32 {
-  let g_limit = global.global_limit
-  let l_limit = local.local_limit
+  var g_limit = global.global_limit
+  var l_limit = local.local_limit
   return g_limit + l_limit
 }
 
@@ -284,8 +284,8 @@ struct PacketInfo {
 
 @helper
 fn should_drop(info: PacketInfo) -> u32 {
-  let size = info.size
-  let proto = info.proto
+  var size = info.size
+  var proto = info.proto
   if (size > 1500 || proto == 17) {
     return 1
   }
@@ -293,7 +293,7 @@ fn should_drop(info: PacketInfo) -> u32 {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let packet_size = ctx.data_end - ctx.data
+  var packet_size = ctx.data_end - ctx.data
   return 2
 }
 
@@ -319,7 +319,7 @@ struct SimpleConfig {
 
 @helper
 fn helper(cfg: SimpleConfig) -> u32 {
-  let value = cfg.nonexistent_field  // Should cause error
+  var value = cfg.nonexistent_field  // Should cause error
   return value
 }
 
@@ -382,9 +382,9 @@ struct LocalStats {
 
 @helper
 fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
-  let packets = stats.packet_count
-  let drops = stats.drop_count
-  let max_entries = cfg.max_entries
+  var packets = stats.packet_count
+  var drops = stats.drop_count
+  var max_entries = cfg.max_entries
   
   if (packets > max_entries) {
     return drops + 1
@@ -402,9 +402,9 @@ struct UserConfig {
 }
 
 fn process_user_config(user_cfg: UserConfig, global_cfg: GlobalConfig) -> i32 {
-  let level = user_cfg.log_level
-  let file = user_cfg.output_file
-  let timeout = global_cfg.timeout
+  var level = user_cfg.log_level
+  var file = user_cfg.output_file
+  var timeout = global_cfg.timeout
   
   if (level > 0 && file > 0 && timeout > 0) {
     return 1
@@ -434,7 +434,7 @@ let test_struct_field_assignment_type_checking () =
     }
     
     @xdp fn test_program(ctx: xdp_md) -> xdp_action {
-      let test_data = TestStruct { count: 1, value: 100 }
+      var test_data = TestStruct { count: 1, value: 100 }
       test_data.count = test_data.count + 1
       test_data.value = 200
       return 2
@@ -461,7 +461,7 @@ let test_struct_field_assignment_ir_generation () =
     }
     
     @xdp fn test_program(ctx: xdp_md) -> xdp_action {
-        let stats = Stats { packets: 1, bytes: 64 }
+        var stats = Stats { packets: 1, bytes: 64 }
         stats.packets = stats.packets + 1
         return 2
     }
@@ -487,7 +487,7 @@ let test_struct_field_assignment_c_generation () =
     }
     
     @xdp fn test_program(ctx: xdp_md) -> xdp_action {
-      let stats = Stats { packets: 1, bytes: 64 }
+      var stats = Stats { packets: 1, bytes: 64 }
       stats.packets = stats.packets + 1
       return 2
     }
@@ -513,7 +513,7 @@ let test_struct_field_assignment_errors () =
     }
     
     @xdp fn test_program(ctx: xdp_md) -> xdp_action {
-      let stats = Stats { packets: 1 }
+      var stats = Stats { packets: 1 }
       stats.nonexistent = 42
       return 2
     }
@@ -539,8 +539,8 @@ struct PacketStats {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let stats = PacketStats { count: 1, bytes: 100 }
-  let count_val = stats.count
+  var stats = PacketStats { count: 1, bytes: 100 }
+  var count_val = stats.count
   return 2
 }
 |} in

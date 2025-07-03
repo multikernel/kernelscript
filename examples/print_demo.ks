@@ -17,7 +17,7 @@ config demo {
 fn main() -> i32 {
     print("Userspace: Starting packet logger")
     print("Userspace: Logger initialized successfully")
-    let prog = load(simple_logger)
+    var prog = load(simple_logger)
     attach(prog, "lo", 0)
     return 0
 } 

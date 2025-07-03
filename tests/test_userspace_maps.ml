@@ -113,7 +113,7 @@ map<u32, u32> global_config : Array(256)
 
 fn main() -> i32 {
   global_counter[1] = 100  // This will trigger map operations generation
-  let value = global_config[0]
+  var value = global_config[0]
   return 0
 }
 |} in
@@ -203,7 +203,7 @@ map<u32, u64> test_map : HashMap(1024)
 
 fn main() -> i32 {
   test_map[123] = 456  // Use the map to trigger operations generation
-  let lookup_result = test_map[123]
+  var lookup_result = test_map[123]
   return 0
 }
 |} in

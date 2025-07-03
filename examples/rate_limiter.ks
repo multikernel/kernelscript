@@ -5,9 +5,9 @@ config network {
 }
 
 @xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
-  let packet_start = ctx.data
-  let packet_end = ctx.data_end
-  let packet_size = packet_end - packet_start
+  var packet_start = ctx.data
+  var packet_end = ctx.data_end
+  var packet_size = packet_end - packet_start
   
   // Basic packet size validation
   if (packet_size < 14) {
@@ -16,11 +16,11 @@ config network {
   
   // For simplicity, assume IPv4 and extract source IP
   // In reality, we'd need to parse Ethernet header first
-  let src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
+  var src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
   
   // Look up current packet count for this IP
-  let current_count = packet_counts[src_ip]
-  let new_count = current_count + 1
+  var current_count = packet_counts[src_ip]
+  var new_count = current_count + 1
   
   // Update the count
   packet_counts[src_ip] = new_count
@@ -40,7 +40,7 @@ struct Args {
 
 fn main(args: Args) -> i32 {
   network.limit = args.limit
-  let prog = load(rate_limiter)
+  var prog = load(rate_limiter)
   attach(prog, args.interface, 0)
   return 0
 }

@@ -10,8 +10,8 @@ let test_program_reference_type () =
 }
 
 fn main() -> i32 {
-  let prog_handle = load(packet_filter)
-  let result = attach(prog_handle, "eth0", 0)
+  var prog_handle = load(packet_filter)
+  var result = attach(prog_handle, "eth0", 0)
   return 0
 }
 |} in
@@ -40,11 +40,11 @@ let test_different_program_types () =
 }
 
 fn main() -> i32 {
-  let kprobe_handle = load(kprobe_tracer)
-  let tc_handle = load(tc_filter)
+  var kprobe_handle = load(kprobe_tracer)
+  var tc_handle = load(tc_filter)
   
-  let kprobe_result = attach(kprobe_handle, "sys_read", 0)
-  let tc_result = attach(tc_handle, "eth0", 1)
+  var kprobe_result = attach(kprobe_handle, "sys_read", 0)
+  var tc_result = attach(tc_handle, "eth0", 1)
   
   return 0
 }
@@ -69,7 +69,7 @@ fn main() -> i32 {
 let test_invalid_program_reference () =
   let program_text = {|
 fn main() -> i32 {
-  let prog_handle = load(non_existent_program)
+  var prog_handle = load(non_existent_program)
   return 0
 }
 |} in
@@ -94,8 +94,8 @@ let test_program_reference_as_variable () =
 }
 
 fn main() -> i32 {
-  let prog_ref = my_xdp  // Should work - program reference as variable
-  let prog_handle = load(prog_ref)
+  var prog_ref = my_xdp  // Should work - program reference as variable
+  var prog_handle = load(prog_ref)
   return 0
 }
 |} in
@@ -119,7 +119,7 @@ let test_wrong_argument_types () =
 }
 
 fn main() -> i32 {
-  let prog_handle = load("string_instead_of_program")  // Should fail
+  var prog_handle = load("string_instead_of_program")  // Should fail
   return 0
 }
 |} in
@@ -165,7 +165,7 @@ let test_attach_without_load_fails () =
 }
 
 fn main() -> i32 {
-  let result = attach(simple_xdp, "eth0", 0)  // Should fail - program ref instead of handle
+  var result = attach(simple_xdp, "eth0", 0)  // Should fail - program ref instead of handle
   return 0
 }
 |} in
@@ -193,11 +193,11 @@ let test_multiple_program_handles () =
 }
 
 fn main() -> i32 {
-  let xdp_handle = load(xdp_filter)
-  let tc_handle = load(tc_shaper)
+  var xdp_handle = load(xdp_filter)
+  var tc_handle = load(tc_shaper)
   
-  let xdp_result = attach(xdp_handle, "eth0", 0)
-  let tc_result = attach(tc_handle, "eth0", 1)
+  var xdp_result = attach(xdp_handle, "eth0", 0)
+  var tc_result = attach(tc_handle, "eth0", 1)
   
   return 0
 }
@@ -222,11 +222,11 @@ let test_program_handle_naming () =
 }
 
 fn main() -> i32 {
-  let program_handle = load(simple_xdp)  // Clear, non-fd naming
-  let network_prog = load(simple_xdp)    // Alternative naming
+  var program_handle = load(simple_xdp)  // Clear, non-fd naming
+  var network_prog = load(simple_xdp)    // Alternative naming
   
-  let result1 = attach(program_handle, "eth0", 0)
-  let result2 = attach(network_prog, "lo", 0)
+  var result1 = attach(program_handle, "eth0", 0)
+  var result2 = attach(network_prog, "lo", 0)
   
   return 0
 }

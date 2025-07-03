@@ -9,7 +9,7 @@ let test_for_constant_bounds () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 0..5) {
-    let x = i * 2
+    var x = i * 2
   }
   return 2
 }
@@ -25,10 +25,10 @@ let test_for_constant_bounds () =
 let test_for_variable_bounds () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let start = 1
-  let endval = 10
+  var start = 1
+  var endval = 10
   for (i in start..endval) {
-    let x = i
+    var x = i
   }
   return 2
 }
@@ -61,7 +61,7 @@ let test_for_single_iteration () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 5..5) {
-    let y = 42
+    var y = 42
   }
   return 0
 }
@@ -78,7 +78,7 @@ let test_for_simple_arithmetic () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 1..3) {
-    let temp = i * 2
+    var temp = i * 2
   }
   return 1
 }
@@ -98,7 +98,7 @@ let test_for_with_break () =
     if (i == 5) {
       break
     }
-    let x = i
+    var x = i
   }
   return 2
 }
@@ -118,7 +118,7 @@ let test_for_with_continue () =
     if (i % 2 == 0) {
       continue
     }
-    let x = i
+    var x = i
   }
   return 2
 }
@@ -134,10 +134,10 @@ let test_for_with_continue () =
 let test_for_complex_bounds () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let base = 5
-  let multiplier = 2
+  var base = 5
+  var multiplier = 2
   for (i in (base - 1)..(base + multiplier)) {
-    let result = i * base
+    var result = i * base
   }
   return 2
 }
@@ -162,10 +162,10 @@ let test_for_different_integer_types () =
   List.iter (fun (type_name, _) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let start: %s = 1
-  let end_val: %s = 5
+  var start: %s = 1
+  var end_val: %s = 5
   for (i in start..end_val) {
-    let x = i
+    var x = i
   }
   return 2
 }
@@ -183,7 +183,7 @@ let test_for_large_bounds () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 0..1000000) {
-    let large = i
+    var large = i
   }
   return 2
 }
@@ -200,7 +200,7 @@ let test_for_reverse_bounds () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   for (i in 10..5) {
-    let never_executed = i
+    var never_executed = i
   }
   return 2
 }
@@ -216,11 +216,11 @@ let test_for_reverse_bounds () =
 let test_for_variable_scoping () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-  let i = 100
+  var i = 100
   for (i in 0..5) {
-    let x = i * 2
+    var x = i * 2
   }
-  let after_loop = i
+  var after_loop = i
   return 2
 }
 |} in
@@ -240,7 +240,7 @@ let test_for_in_global_function () =
 
 fn helper() -> u32 {
   for (i in 1..3) {
-    let helper_var = i + 10
+    var helper_var = i + 10
   }
   return 0
 }

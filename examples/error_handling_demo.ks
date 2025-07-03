@@ -2,11 +2,11 @@
 map<u32, u64> counters : HashMap(1024)
 
 @xdp fn error_demo(ctx: xdp_md) -> i32 {
-    let key = 42
+    var key = 42
     
     try {
         // Try to get value from map
-        let value = counters[key]
+        var value = counters[key]
         if (value == 0) {
             throw 1  // Key not found
         }
@@ -22,7 +22,7 @@ map<u32, u64> counters : HashMap(1024)
 fn main() -> i32 {
     try {
         // Simulate some operation that might fail
-        let result = 42
+        var result = 42
         if (result > 40) {
             throw 2  // Throw error code 2
         }

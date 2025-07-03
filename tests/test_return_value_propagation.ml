@@ -76,7 +76,7 @@ let test_multiple_return_statements () =
 }
 
 fn main() -> i32 {
-  let x = 10
+  var x = 10
   if (x > 5) {
     return 1
   }
@@ -142,7 +142,7 @@ fn helper() -> u32 {
 }
 
 fn main() -> i32 {
-  let result = helper()
+  var result = helper()
   return 0
 }
 |} in

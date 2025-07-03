@@ -187,7 +187,7 @@ config test_config {
 }
 
 fn main() -> i32 {
-    let prog_handle = load(test)  // This will cause BPF functions to be generated
+    var prog_handle = load(test)  // This will cause BPF functions to be generated
     return 0
 }
 |} in
@@ -318,7 +318,7 @@ config demo {
 
 fn main() -> i32 {
     print("Userspace: Starting packet logger")
-    let prog = load(simple_logger)
+    var prog = load(simple_logger)
     attach(prog, "lo", 0)
     return 0
 }
@@ -384,7 +384,7 @@ config settings {
 
 fn main() -> i32 {
     // No direct config access in userspace - only eBPF uses it
-    let prog = load(packet_filter)
+    var prog = load(packet_filter)
     attach(prog, "eth0", 0)
     return 0
 }
@@ -429,7 +429,7 @@ config security {
 }
 
 fn main() -> i32 {
-    let prog = load(test)
+    var prog = load(test)
     return 0
 }
 |} in

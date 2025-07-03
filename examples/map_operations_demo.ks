@@ -52,14 +52,14 @@ struct ArrayElement {
 
 // Program 1: Reader-heavy workload demonstrating safe concurrent access
 @xdp fn traffic_monitor(ctx: xdp_md) -> xdp_action {
-    let key = ctx.ingress_ifindex()
+    var key = ctx.ingress_ifindex()
     
     // Safe concurrent read access - multiple programs can read simultaneously
-    let counter = global_counter[key]
+    var counter = global_counter[key]
     if (counter != null) {
         // High-frequency lookup pattern - will generate optimization suggestions
         for (i in 0..100) {
-            let _ = global_counter[key + i]
+            var _ = global_counter[key + i]
         }
     } else {
         // Initialize counter for new interface
@@ -67,13 +67,13 @@ struct ArrayElement {
     }
     
     // Per-CPU access for maximum performance
-    let cpu_id = bpf_get_smp_processor_id()
-    let data = percpu_data[cpu_id]
+    var cpu_id = bpf_get_smp_processor_id()
+    var data = percpu_data[cpu_id]
     if (data != null) {
         data.local_counter += 1
         percpu_data[cpu_id] = data
     } else {
-        let new_data = PerCpuData {
+        var new_data = PerCpuData {
             local_counter: 1,
             temp_storage: [0; 64],
         }
@@ -85,10 +85,10 @@ struct ArrayElement {
 
 // Program 2: Writer workload demonstrating conflict detection
 @tc fn stats_updater(ctx: TcContext) -> TcAction {
-    let ifindex = ctx.ifindex()
+    var ifindex = ctx.ifindex()
     
     // Potential write conflict with other programs
-    let stats = shared_stats[ifindex]
+    var stats = shared_stats[ifindex]
     if (stats == null) {
         stats = Statistics {
             packet_count: 0,
@@ -112,8 +112,8 @@ struct ArrayElement {
     
     // Batch operation pattern - will be detected as batch access
     for (i in 0..20) {
-        let batch_key = ifindex + i
-        let entry = shared_stats[batch_key]
+        var batch_key = ifindex + i
+        var entry = shared_stats[batch_key]
         if (entry != null) {
             entry.packet_count += 1
             shared_stats[batch_key] = entry
@@ -125,11 +125,11 @@ struct ArrayElement {
 
 // Program 3: Event streaming demonstrating ring buffer usage
 @tracepoint fn event_logger(ctx: TracepointContext) -> i32 {
-    let event = Event {
+    var event = Event {
         timestamp: bpf_ktime_get_ns(),
         event_type: ctx.event_id(),
         data: [0; 32],  // Simplified data
-    };
+    }
     
     // Ring buffer output - single writer recommended
     match event_stream.output(&event, sizeof(Event)) {
@@ -147,7 +147,7 @@ struct ArrayElement {
 @kprobe fn data_processor(ctx: KprobeContext) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
-        let element = sequential_data[i]
+        var element = sequential_data[i]
         if (element != null) {
             if (!element.processed) {
                 element.value = element.value * 2
@@ -155,7 +155,7 @@ struct ArrayElement {
                 sequential_data[i] = element
             }
         } else {
-            let new_element = ArrayElement {
+            var new_element = ArrayElement {
                 value: i as u64,
                 processed: false,
             }
@@ -201,10 +201,10 @@ config {
 }
 
 fn main() -> i32 {
-    let prog1 = load(traffic_monitor)
-    let prog2 = load(stats_updater)
-    let prog3 = load(event_logger)
-    let prog4 = load(data_processor)
+    var prog1 = load(traffic_monitor)
+    var prog2 = load(stats_updater)
+    var prog3 = load(event_logger)
+    var prog4 = load(data_processor)
     
     attach(prog1, "eth0", 0)
     attach(prog2, "eth0", 0)

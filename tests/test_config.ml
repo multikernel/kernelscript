@@ -143,10 +143,10 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size: u32 = network.max_size
-    let timeout: u32 = network.timeout
-    let logging: bool = network.enable_logging
-    let limit: u64 = network.rate_limit
+    var size: u32 = network.max_size
+    var timeout: u32 = network.timeout
+    var logging: bool = network.enable_logging
+    var limit: u64 = network.rate_limit
     return 2
 }
 
@@ -174,7 +174,7 @@ config limits {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let packet_size: u32 = 800
+    var packet_size: u32 = 800
     if (packet_size > limits.max_packet_size || packet_size < limits.min_packet_size) {
         return 1  // DROP
     }
@@ -206,7 +206,7 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let bad_field = network.nonexistent_field
+    var bad_field = network.nonexistent_field
     return 2
 }
 
@@ -225,7 +225,7 @@ fn main() -> i32 {
 let test_invalid_config_access () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let bad_config = nonexistent_config.some_field
+    var bad_config = nonexistent_config.some_field
     return 2
 }
 
@@ -246,7 +246,7 @@ let test_accessing_map_as_config () =
 map<u32, u64> packet_counts : HashMap(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let bad_access = packet_counts.some_field
+    var bad_access = packet_counts.some_field
     return 2
 }
 
@@ -333,7 +333,7 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size = network.max_size
+    var size = network.max_size
     return 2
 }
 
@@ -362,7 +362,7 @@ config settings {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size = settings.buffer_size
+    var size = settings.buffer_size
     return 2
 }
 
@@ -431,7 +431,7 @@ config database {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let host = database.host
+    var host = database.host
     return 2
 }
 
@@ -465,9 +465,9 @@ config application {
 map<u32, u64> stats : HashMap(1024)
 
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-    let version = application.version
-    let debug = application.debug_mode
-    let memory_limit = application.max_memory
+    var version = application.version
+    var debug = application.debug_mode
+    var memory_limit = application.max_memory
     
     stats[1] = version
     
@@ -517,9 +517,9 @@ config types_test {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let u32_val = types_test.flag_u32
-    let u64_val = types_test.flag_u64
-    let bool_val = types_test.flag_bool
+    var u32_val = types_test.flag_u32
+    var u64_val = types_test.flag_u64
+    var bool_val = types_test.flag_bool
     return 2
 }
 
@@ -562,7 +562,7 @@ config network {
 }
 
 fn main() -> i32 {
-    let prog = load(packet_filter)
+    var prog = load(packet_filter)
     return 0
 }
 |} in

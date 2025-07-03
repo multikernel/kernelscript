@@ -202,7 +202,7 @@ fn main(args: Args) -> i32 {
     if (args.enable_debug > 0) {
         print("Debug mode enabled")
     }
-    let prog = load(packet_filter)
+    var prog = load(packet_filter)
     attach(prog, args.interface, 0)
     return 0
 }

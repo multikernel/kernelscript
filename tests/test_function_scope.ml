@@ -34,7 +34,7 @@ fn calculate_hash(seed: u32) -> u32 {
     }
     
     @xdp fn hash_filter(ctx: xdp_md) -> xdp_action {
-      let hash = calculate_hash(123)
+      var hash = calculate_hash(123)
       return 2
     }
   |} in
@@ -71,7 +71,7 @@ fn get_counter(index: u32) -> u64 {
     
     @tc fn tc_monitor(ctx: TcContext) -> TcAction {
       increment_counter(1)
-      let count = get_counter(1)
+      var count = get_counter(1)
       return 0
     }
     
@@ -125,12 +125,12 @@ fn kernel_helper(x: u32) -> u32 {
     }
     
     @xdp fn test_prog(ctx: xdp_md) -> xdp_action {
-      let result = kernel_helper(42)  // This should work
+      var result = kernel_helper(42)  // This should work
       return 2
     }
     
     fn main() -> i32 {
-      let result = kernel_helper(42)  // This should fail
+      var result = kernel_helper(42)  // This should fail
       return result
     }
   |} in
@@ -168,12 +168,12 @@ fn kernel_helper(x: u32) -> u32 {
     }
     
     @xdp fn mixed_prog(ctx: xdp_md) -> xdp_action {
-      let result = kernel_helper(42)  // Should work
+      var result = kernel_helper(42)  // Should work
       return 2
     }
     
     fn main() -> i32 {
-      let result = userspace_helper(200)  // Should work
+      var result = userspace_helper(200)  // Should work
       return result
     }
   |} in
@@ -205,7 +205,7 @@ fn validate_packet(size: u32) -> bool {
     }
     
     @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-      let packet_size: u32 = 100
+      var packet_size: u32 = 100
       if (validate_packet(packet_size)) {
         return 2
       } else {
@@ -313,7 +313,7 @@ fn advanced_validation(size: u32, protocol: u16) -> bool {
 let test_undefined_kernel_function_error () =
   let source = {|
     @xdp fn test(ctx: xdp_md) -> xdp_action {
-      let result = undefined_kernel_func(42)
+      var result = undefined_kernel_func(42)
       return 2
     }
     
@@ -350,8 +350,8 @@ let test_userspace_function_calling_userspace () =
     }
     
     fn main() -> i32 {
-      let x: i32 = 21
-      let result = helper_function(x)  // Should work
+      var x: i32 = 21
+      var result = helper_function(x)  // Should work
       return result
     }
     
@@ -404,7 +404,7 @@ fn safe_increment(index: u32) -> bool {
     }
     
     @tc fn counter_tc(ctx: TcContext) -> TcAction {
-      let count = get_global_counter(0)
+      var count = get_global_counter(0)
       safe_increment(1)
       return 0
     }
@@ -539,8 +539,8 @@ let test_attributed_function_userspace_restriction () =
     }
     
     fn main() -> i32 {
-      let dummy_ctx: xdp_md = null
-      let result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
+      var dummy_ctx = null
+      var result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
       return result
     }
   |} in
@@ -573,9 +573,9 @@ let test_attributed_function_kernel_restriction () =
     }
     
     @helper
-fn helper() -> u32 {
-      let dummy_ctx: xdp_md = null
-      let result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
+    fn helper() -> u32 {
+      var dummy_ctx = null
+      var result = packet_filter(dummy_ctx)  // This should fail - calling attributed function directly
       return result
     }
     
@@ -612,7 +612,7 @@ let test_attributed_function_cross_call_restriction () =
     }
     
     @tc fn main_filter(ctx: TcContext) -> TcAction {
-      let result = helper_filter(ctx)  // This should fail
+      var result = helper_filter(ctx)  // This should fail
       return result
     }
     

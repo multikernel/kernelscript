@@ -11,8 +11,8 @@ fn another_helper() -> u32 {
 }
 
 @xdp fn test_functions(ctx: xdp_md) -> xdp_action {
-  let result = helper_function(5)
-  let const_val = another_helper()
+  var result = helper_function(5)
+  var const_val = another_helper()
   return XDP_PASS
 }
 
@@ -21,6 +21,6 @@ fn global_function(x: u32) -> u32 {
 }
 
 fn main() -> i32 {
-  let result = global_function(21)
+  var result = global_function(21)
   return 0
 } 

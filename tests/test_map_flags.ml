@@ -286,9 +286,9 @@ fn process_array() -> u64 {
 }
 
 @xdp fn optimization_test(ctx: xdp_md) -> xdp_action {
-  let freq_result = process_frequent()
-  let sparse_result = process_sparse()
-  let array_result = process_array()
+  var freq_result = process_frequent()
+  var sparse_result = process_sparse()
+  var array_result = process_array()
   return 2
 }
 |} in
@@ -315,23 +315,23 @@ map<u32, u64> flow_cache : LruHash(1024)
 
 @helper
 fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
-  let protocol = 6  // TCP
-  let current_count = packet_count[protocol]
+  var protocol = 6  // TCP
+  var current_count = packet_count[protocol]
   packet_count[protocol] = current_count + 1
-  let port_count = port_stats[dst_port]
+  var port_count = port_stats[dst_port]
   port_stats[dst_port] = port_count + 1
   
-  let flow_key = src_ip + dst_port
+  var flow_key = src_ip + dst_port
   flow_cache[flow_key] = current_count
   
   return current_count + 1
 }
 
 @xdp fn comprehensive(ctx: xdp_md) -> xdp_action {
-  let src_ip = 0x0A000001
-  let dst_port = 80
+  var src_ip = 0x0A000001
+  var dst_port = 80
   
-  let count = track_packet(src_ip, dst_port)
+  var count = track_packet(src_ip, dst_port)
   
   if (count > 1000) {
     return 1  // DROP

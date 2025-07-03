@@ -441,7 +441,7 @@ fn main() -> i32 {
 let test_basic_ir_analysis () =
   let program_text = {|
 @xdp fn basic(ctx: xdp_md) -> xdp_action {
-  let x = 42
+  var x = 42
   return 2
 }
 
@@ -469,7 +469,7 @@ fn main() -> i32 {
 let test_control_flow_analysis () =
   let program_text = {|
 @xdp fn control_flow(ctx: xdp_md) -> xdp_action {
-  let x = 10
+  var x = 10
   if (x > 5) {
     return 2
   } else {
@@ -922,7 +922,7 @@ let test_comprehensive_ir_analysis () =
 let test_basic_cfg_construction () =
   let program_text = {|
 @xdp fn cfg_test(ctx: xdp_md) -> xdp_action {
-  let x = 42
+  var x = 42
   if (x > 10) {
     return 2
   } else {

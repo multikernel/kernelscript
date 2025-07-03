@@ -666,12 +666,12 @@ let test_function_symbol_management () =
   let program_text = {|
 @helper
 fn add(a: u32, b: u32) -> u32 {
-  let sum = a + b
+  var sum = a + b
   return sum
 }
 
 @xdp fn func_test(ctx: xdp_md) -> xdp_action {
-  let result = add(10, 20)
+  var result = add(10, 20)
   return 2
 }
 |} in
@@ -701,10 +701,10 @@ fn add(a: u32, b: u32) -> u32 {
 let test_variable_resolution () =
   let program_text = {|
 @xdp fn var_test(ctx: xdp_md) -> xdp_action {
-  let x: u32 = 42
-  let y: u64 = x + 10
+  var x: u32 = 42
+  var y: u64 = x + 10
   if (x > 0) {
-    let z: bool = true
+    var z: bool = true
     if (z) {
       return 2
     } else {
@@ -800,12 +800,12 @@ let test_type_checking_integration () =
   let program_text = {|
 @helper
 fn calculate(x: u32, y: u32) -> u64 {
-  let result: u64 = x + y
+  var result: u64 = x + y
   return result
 }
 
 @xdp fn type_test(ctx: xdp_md) -> xdp_action {
-  let value = calculate(100, 200)
+  var value = calculate(100, 200)
   if (value > 250) {
     return 2
   } else {
@@ -866,8 +866,8 @@ map<u32, u64> stats : HashMap(1024) { }
 
 @helper
 fn update_counter(key: u32, increment: u64) -> u64 {
-  let current = stats[key]
-  let new_value = current + increment
+  var current = stats[key]
+  var new_value = current + increment
   stats[key] = new_value
   return new_value
 }
@@ -878,15 +878,15 @@ fn validate_packet(size: u32) -> bool {
 }
 
 @xdp fn comprehensive(ctx: xdp_md) -> xdp_action {
-  let data = ctx.data
-  let data_end = ctx.data_end
-  let packet_size = data_end - data
+  var data = ctx.data
+  var data_end = ctx.data_end
+  var packet_size = data_end - data
   
   if (!validate_packet(packet_size)) {
     return 1
   }
   
-  let count = update_counter(6, 1)  // TCP protocol
+  var count = update_counter(6, 1)  // TCP protocol
   
   if (count > 1000) {
     return 1  // DROP - rate limit

@@ -79,7 +79,7 @@
     | "return" -> RETURN
     | "break" -> BREAK
     | "continue" -> CONTINUE
-    | "let" -> LET
+    | "var" -> VAR
     | "const" -> CONST
     | "config" -> CONFIG
     | "in" -> IN

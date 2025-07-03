@@ -62,7 +62,7 @@ let test_const_integer_types_only () =
 let test_const_must_be_literal () =
   let program_text = {|
     @xdp fn test_program(ctx: xdp_md) -> xdp_action {
-      let x = 10
+      var x = 10
       const MAX_SIZE: u32 = x
       return 2
     }

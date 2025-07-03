@@ -8,15 +8,15 @@ map<u32, u64> test_map : HashMap(1024)
 @helper
 fn process_key(key: u32) -> u32 {
     // Example of defer for resource cleanup
-    let lock_acquired = true
+    var lock_acquired = true
     defer cleanup_lock()
     
     try {
         // Check if key exists (expected absence - use null)
-        let value = test_map[key]
+        var value = test_map[key]
         if (value == null) {
             // Key doesn't exist - create default value (expected pattern)
-            let default_value = 42
+            var default_value = 42
             test_map[key] = default_value
             return default_value as u32
         }
@@ -38,15 +38,15 @@ fn process_key(key: u32) -> u32 {
 @helper
 fn cleanup_lock() {
     // Simulate cleanup operation
-    let result = 0
+    var result = 0
 }
 
 @xdp fn error_test(ctx: xdp_md) -> xdp_action {
-    let packet_len = 64  // Simulate packet length
-    let key = packet_len % 100  // Use packet length as key
+    var packet_len = 64  // Simulate packet length
+    var key = packet_len % 100  // Use packet length as key
     
     try {
-        let result = process_key(key)
+        var result = process_key(key)
         if (result > 1000) {
             throw 2  // Overflow detected
         }
@@ -63,7 +63,7 @@ fn cleanup_lock() {
 }
 
 fn main() -> i32 {
-    let prog = load(error_test)
+    var prog = load(error_test)
     attach(prog, "eth0", 0)
     return 0
 } 

@@ -7,10 +7,10 @@ struct PacketInfo {
 
 @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
   // Context access - tests IRContextAccess pattern
-  let packet_size = ctx.data_end - ctx.data
+  var packet_size = ctx.data_end - ctx.data
   
   // Struct literal initialization - tests IRStructLiteral pattern
-  let info = PacketInfo {
+  var info = PacketInfo {
       size: packet_size,
       action: 2,
   }
@@ -24,7 +24,7 @@ struct PacketInfo {
 }
 
 fn main() -> i32 {
-  let prog = load(packet_filter)
+  var prog = load(packet_filter)
   attach(prog, "lo", 0)
   return 0
 } 

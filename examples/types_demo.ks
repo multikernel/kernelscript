@@ -49,7 +49,7 @@ map<Protocol, Counter> protocol_stats : PercpuArray(32)
 fn extract_packet_info(ctx: xdp_md) -> option PacketInfo {
   // This would contain actual packet parsing logic
   // For now, return a dummy PacketInfo
-  let info: PacketInfo = PacketInfo {
+  var info: PacketInfo = PacketInfo {
     src_ip: 0xC0A80001,  // 192.168.0.1
     dst_ip: 0xC0A80002,  // 192.168.0.2
     protocol: 6,         // TCP
@@ -63,7 +63,7 @@ fn extract_packet_info(ctx: xdp_md) -> option PacketInfo {
 @helper
 fn get_filter_action(info: PacketInfo) -> FilterAction {
   // Look up in the filter map
-  let action = packet_filter[info]
+  var action = packet_filter[info]
   if (action != null) {
     return action
   } else {
@@ -74,7 +74,7 @@ fn get_filter_action(info: PacketInfo) -> FilterAction {
 @helper
 fn update_stats(info: PacketInfo) {
   // Update connection count
-  let current_count = connection_count[info.src_ip]
+  var current_count = connection_count[info.src_ip]
   if (current_count != null) {
     connection_count[info.src_ip] = current_count + 1;
   } else {
@@ -82,9 +82,9 @@ fn update_stats(info: PacketInfo) {
   }
   
   // Update protocol stats
-  let proto = protocol_from_u8(info.protocol)
+  var proto = protocol_from_u8(info.protocol)
   if (proto != null) {
-    let stats = protocol_stats[proto]
+    var stats = protocol_stats[proto]
     if (stats != null) {
       protocol_stats[proto] = stats + 1
     } else {
@@ -96,7 +96,7 @@ fn update_stats(info: PacketInfo) {
 // Program using all the new types
 @xdp fn packet_inspector(ctx: xdp_md) -> xdp_action {
   // Extract packet information
-  let packet_info = extract_packet_info(ctx)
+  var packet_info = extract_packet_info(ctx)
   
   match packet_info {
     some info -> {
@@ -104,10 +104,10 @@ fn update_stats(info: PacketInfo) {
       update_stats(info)
       
       // Get filtering decision
-      let action = get_filter_action(info)
+      var action = get_filter_action(info)
       
       // Store in recent packets for userspace inspection
-      let packet_id = ctx.get_packet_id()
+      var packet_id = ctx.get_packet_id()
       recent_packets[packet_id] = info
       
       // Apply filtering action

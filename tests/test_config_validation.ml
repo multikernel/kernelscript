@@ -22,10 +22,10 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size: u32 = network.max_packet_size
-    let logging: bool = network.enable_logging
-    let timeout_val: u64 = network.timeout
-    let proto: u8 = network.protocol
+    var size: u32 = network.max_packet_size
+    var logging: bool = network.enable_logging
+    var timeout_val: u64 = network.timeout
+    var proto: u8 = network.protocol
     return 2
 }
 |} in
@@ -45,7 +45,7 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size = nonexistent_config.max_packet_size
+    var size = nonexistent_config.max_packet_size
     return 2
 }
 |} in
@@ -70,7 +70,7 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let value = network.nonexistent_field
+    var value = network.nonexistent_field
     return 2
 }
 |} in
@@ -96,9 +96,9 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size: u32 = network.max_packet_size  // Correct type
-    let logging: bool = network.enable_logging  // Correct type
-    let timeout_val: u64 = network.timeout  // Correct type
+    var size: u32 = network.max_packet_size  // Correct type
+    var logging: bool = network.enable_logging  // Correct type
+    var timeout_val: u64 = network.timeout  // Correct type
     return 2
 }
 |} in
@@ -124,8 +124,8 @@ config security {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let size = network.max_packet_size
-    let threat = security.threat_level
+    var size = network.max_packet_size
+    var threat = security.threat_level
     return 2
 }
 |} in
@@ -147,14 +147,14 @@ config limits {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let packet_size: u32 = 800
+    var packet_size: u32 = 800
     
     if (limits.enable_check && 
         (packet_size > limits.max_size || packet_size < limits.min_size)) {
         return 1  // DROP
     }
     
-    let total = limits.max_size + limits.min_size
+    var total = limits.max_size + limits.min_size
     return 2  // PASS
 }
 |} in
@@ -175,8 +175,8 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let ports = network.blocked_ports
-    let ips = network.allowed_ips
+    var ports = network.blocked_ports
+    var ips = network.allowed_ips
     return 2
 }
 |} in
@@ -197,7 +197,7 @@ config network {
 }
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let value = network.settings  // Valid
+    var value = network.settings  // Valid
     return 2
 }
 |} in
@@ -218,7 +218,7 @@ config network {
 }
 
 @xdp fn config_test(ctx: xdp_md) -> xdp_action {
-    let size: u32 = 1500  // Simple test without config access for now
+    var size: u32 = 1500  // Simple test without config access for now
     return 2
 }
 |} in

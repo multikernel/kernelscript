@@ -54,11 +54,11 @@ let test_complex_map_assignments () =
 map<u32, u64> stats : HashMap(1024) { }
 
 @xdp fn complex_assign(ctx: xdp_md) -> xdp_action {
-  let key = 42
-  let old_value = stats[key]
+  var key = 42
+  var old_value = stats[key]
   stats[key] = old_value + 1
   
-  let another_key = key * 2
+  var another_key = key * 2
   stats[another_key] = old_value * 2
   
   return 2
@@ -124,7 +124,7 @@ let test_assignment_optimization () =
 map<u32, u64> data : HashMap(1024) { }
 
 @xdp fn optimize_assign(ctx: xdp_md) -> xdp_action {
-  let key = 1
+  var key = 1
   
   // Multiple assignments to same key
   data[key] = 100
@@ -164,13 +164,13 @@ let test_assignment_dependency_analysis () =
 map<u32, u64> flow_data : HashMap(1024) { }
 
 @xdp fn dependency_test(ctx: xdp_md) -> xdp_action {
-  let key = 1
+  var key = 1
   
   // Chain of dependent assignments
   flow_data[key] = 100
-  let value1 = flow_data[key]
+  var value1 = flow_data[key]
   flow_data[key + 1] = value1 + 50
-  let value2 = flow_data[key + 1]
+  var value2 = flow_data[key + 1]
   flow_data[key + 2] = value2 * 2
   
   return 2
@@ -237,8 +237,8 @@ let test_assignment_safety_analysis () =
 map<u32, u64> bounds_map : Array(10) { }
 
 @xdp fn safety_test(ctx: xdp_md) -> xdp_action {
-  let safe_index = 5
-  let unsafe_index = 15
+  var safe_index = 5
+  var unsafe_index = 15
   
   bounds_map[safe_index] = 100    // Safe
   bounds_map[unsafe_index] = 200  // Potentially unsafe
@@ -306,10 +306,10 @@ map<u16, u32> port_counts : Array(65536) { }
 
 @helper
 fn update_packet_stats(protocol: u32, size: u32) -> u64 {
-  let current_count = packet_stats[protocol]
-  let new_count = current_count + 1
+  var current_count = packet_stats[protocol]
+  var new_count = current_count + 1
   packet_stats[protocol] = new_count
-  let current_bytes = packet_stats[protocol + 1000]
+  var current_bytes = packet_stats[protocol + 1000]
   packet_stats[protocol + 1000] = current_bytes + size
   
   return new_count
@@ -317,18 +317,18 @@ fn update_packet_stats(protocol: u32, size: u32) -> u64 {
 
 @helper
 fn update_port_stats(port: u16) -> u32 {
-  let current = port_counts[port]
+  var current = port_counts[port]
   port_counts[port] = current + 1
   return current + 1
 }
 
 @xdp fn comprehensive(ctx: xdp_md) -> xdp_action {
-  let protocol = 6   // TCP
-  let port = 80      // HTTP
-  let packet_size = 1500
+  var protocol = 6   // TCP
+  var port = 80      // HTTP
+  var packet_size = 1500
   
-  let pkt_count = update_packet_stats(protocol, packet_size)
-  let port_count = update_port_stats(port)
+  var pkt_count = update_packet_stats(protocol, packet_size)
+  var port_count = update_port_stats(port)
   
   if (pkt_count > 1000 || port_count > 500) {
     return 1  // DROP

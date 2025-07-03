@@ -129,9 +129,9 @@ let test_variable_declaration_string_syntax () =
 }
 
 fn main() -> i32 {
-  let small_buffer: str<16> = "small"
-  let medium_buffer: str<64> = "medium"
-  let large_buffer: str<256> = "large"
+  var small_buffer: str<16> = "small"
+  var medium_buffer: str<64> = "medium"
+  var large_buffer: str<256> = "large"
   return 0
 }
 |} in
@@ -263,7 +263,7 @@ struct Config {
 }
 
 fn main(config: Config) -> i32 {
-    let local_buffer: str<32> = "test"
+    var local_buffer: str<32> = "test"
     return 0
 } 
 |} in

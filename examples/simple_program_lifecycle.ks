@@ -5,7 +5,7 @@
 
 // Userspace program lifecycle management
 fn main() -> i32 {
-    let prog_handle = load(simple_xdp)
-    let result = attach(prog_handle, "lo", 0)
+    var prog_handle = load(simple_xdp)
+    var result = attach(prog_handle, "lo", 0)
     return 0
 } 

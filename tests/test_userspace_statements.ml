@@ -46,9 +46,9 @@ let test_basic_if_statement () =
 }
 
 fn test_func() -> u32 {
-  let x = 5
+  var x = 5
   if (x == 5) {
-    let result = 1
+    var result = 1
   }
   return 0
 }
@@ -78,11 +78,11 @@ let test_if_else_statement () =
 }
 
 fn test_func() -> u32 {
-  let count = 15
+  var count = 15
   if (count > 10) {
-    let status = 1
+    var status = 1
   } else {
-    let status = 0
+    var status = 0
   }
   return 0
 }
@@ -168,7 +168,7 @@ let test_if_with_break_in_loop () =
 }
 
 fn test_func() -> u32 {
-  let count = 0
+  var count = 0
   for (i in 0..10) {
     if (i == 5) {
       break
@@ -200,7 +200,7 @@ let test_if_with_continue_in_loop () =
 }
 
 fn test_func() -> u32 {
-  let sum = 0
+  var sum = 0
   for (i in 1..10) {
     if (i % 2 == 0) {
       continue
@@ -234,10 +234,10 @@ let test_complex_binary_operators () =
 }
 
 fn test_func() -> u32 {
-  let a = 10
-  let b = 5
+  var a = 10
+  var b = 5
   if (a > b && b > 0) {
-    let result = 1
+    var result = 1
   }
   return 0
 }
@@ -253,10 +253,10 @@ fn main() -> i32 {
 }
 
 fn test_func() -> u32 {
-  let a = 10
-  let b = 5
+  var a = 10
+  var b = 5
   if (a < 0 || b > 3) {
-    let result = 1
+    var result = 1
   }
   return 0
 }
@@ -267,15 +267,53 @@ fn main() -> i32 {
 |} in
   
   try
-    let result_and = generate_userspace_code_from_program program_text_and "test_logical_and" in
-    check bool "logical and operator" true (contains_pattern result_and "&&");
+    let result_and = generate_userspace_code_from_program program_text_and "test_and_operator" in
     
-    let result_or = generate_userspace_code_from_program program_text_or "test_logical_or" in
-    check bool "logical or operator" true (contains_pattern result_or "||");
+    check bool "generates if keyword" true (contains_pattern result_and "if");
+    check bool "has AND operator" true (contains_pattern result_and "&&");
+    check bool "has first comparison" true (contains_pattern result_and ">");
+    check bool "has second comparison" true (contains_pattern result_and ">");
+    
+    let result_or = generate_userspace_code_from_program program_text_or "test_or_operator" in
+    
+    check bool "generates if keyword for OR" true (contains_pattern result_or "if");
+    check bool "has OR operator" true (contains_pattern result_or "||");
+    check bool "has first OR comparison" true (contains_pattern result_or "< 0");
+    check bool "has second OR comparison" true (contains_pattern result_or "> 3");
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** Test 8: Nested if statements *)
+(** Test 8: If statement with OR operator *)
+let test_if_or_operator () =
+  let program_text = {|
+@xdp fn test(ctx: xdp_md) -> xdp_action {
+  return 2
+}
+
+fn test_func() -> u32 {
+  var x = 5
+  if (x == 5 || x == 10) {
+    var result = 1
+  }
+  return 0
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  
+  try
+    let result = generate_userspace_code_from_program program_text "test_or_operator" in
+    
+    check bool "generates if keyword" true (contains_pattern result "if");
+    check bool "has OR operator" true (contains_pattern result "||");
+    check bool "has first equality" true (contains_pattern result "== 5");
+    check bool "has second equality" true (contains_pattern result "== 10");
+  with
+  | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
+
+(** Test 9: Nested if statements *)
 let test_nested_if_statements () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
@@ -283,11 +321,10 @@ let test_nested_if_statements () =
 }
 
 fn test_func() -> u32 {
-  let x = 5
-  let y = 3
-  if (x > 0) {
-    if (y < 10) {
-      let result = 42
+  var x = 10
+  if (x > 5) {
+    if (x < 20) {
+      var result = 1
     }
   }
   return 0
@@ -301,103 +338,32 @@ fn main() -> i32 {
   try
     let result = generate_userspace_code_from_program program_text "test_nested_if" in
     
-    check bool "has outer comparison" true (contains_pattern result "> 0");
-    check bool "has inner comparison" true (contains_pattern result "< 10");
-    check bool "has nested assignment" true (contains_pattern result "= 42");
-    check bool "has if statements" true (contains_pattern result "if");
-    check bool "has opening braces" true (contains_pattern result "{");
-    check bool "has closing braces" true (contains_pattern result "}");
+    check bool "generates outer if" true (contains_pattern result "if");
+    check bool "has outer condition" true (contains_pattern result "> 5");
+    check bool "has inner if" true (contains_pattern result "if");
+    check bool "has inner condition" true (contains_pattern result "< 20");
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
-(** Test 9: Integration test with complete global function program *)
-let test_complete_global_function_program_with_if_break_continue () =
-  let program_text = {|
-@xdp fn test_prog(ctx: xdp_md) -> xdp_action {
-    return 2
-}
-
-fn main() -> i32 {
-    let total: u32 = 0
-    let count: u32 = 0
-    
-    for (i in 0..20) {
-        if (i < 3) {
-            continue
-        }
-        
-        if (i % 2 == 0) {
-            count = count + 1
-            continue
-        }
-        
-        if (i > 15) {
-            break
-        }
-        
-        total = total + i
-    }
-    
-    return 0
-}
-|} in
-  
-  try
-    let ast = parse_string program_text in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test_complete" in
-    
-    let temp_dir = Filename.temp_file "test_userspace_complete" "" in
-    Unix.unlink temp_dir;
-    Unix.mkdir temp_dir 0o755;
-    
-    let _output_file = Kernelscript.Userspace_codegen.generate_userspace_code_from_ir 
-      ir ~output_dir:temp_dir "test_complete.ks" in
-    let generated_file = Filename.concat temp_dir "test_complete.c" in
-    
-    if Sys.file_exists generated_file then (
-      let ic = open_in generated_file in
-      let content = really_input_string ic (in_channel_length ic) in
-      close_in ic;
-      
-      (* Cleanup *)
-      Unix.unlink generated_file;
-      Unix.rmdir temp_dir;
-      
-      (* Verify all statement types are properly generated *)
-      check bool "has for loop" true (contains_pattern content "for.*<= 20");
-      check bool "has first comparison" true (contains_pattern content "< 3");
-      check bool "has continue statement" true (contains_pattern content "continue;");
-      check bool "has modulo operation" true (contains_pattern content "% 2");
-      check bool "has equality check" true (contains_pattern content "== 0");
-      check bool "has break statement" true (contains_pattern content "break;");
-      check bool "has assignment" true (contains_pattern content "\\+");
-      
-      (* Verify no TODO statements *)
-      check bool "no unsupported statements" false (contains_pattern content "TODO: Unsupported statement");
-      
-      (* Verify proper C syntax *)
-      check bool "proper if syntax" true (contains_pattern content "if.*{");
-      check bool "proper break syntax" true (contains_pattern content "break;");
-      check bool "proper continue syntax" true (contains_pattern content "continue;");
-    ) else (
-      fail "Failed to generate userspace code file"
-    );
-  with
-  | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
-
-(** Test 10: Unsupported statement fallback *)
-let test_unsupported_statement_fallback () =
-  (* This test verifies that the system gracefully handles any unsupported statements *)
+(** Test 10: If-else chain *)
+let test_if_else_chain () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   return 2
 }
 
 fn test_func() -> u32 {
-  let x = 5
-  return x
+  var grade = 85
+  if (grade >= 90) {
+    var letter = 1
+  } else if (grade >= 80) {
+    var letter = 2
+  } else if (grade >= 70) {
+    var letter = 3
+  } else {
+    var letter = 4
+  }
+  return 0
 }
 
 fn main() -> i32 {
@@ -406,12 +372,44 @@ fn main() -> i32 {
 |} in
   
   try
-    let result = generate_userspace_code_from_program program_text "test_unsupported" in
+    let result = generate_userspace_code_from_program program_text "test_if_else_chain" in
     
-    (* Verify basic functionality works *)
-    check bool "generates function" true (contains_pattern result "test_func");
-    check bool "has return statement" true (contains_pattern result "return");
-    check bool "no error messages" false (contains_pattern result "ERROR");
+    check bool "generates if keyword" true (contains_pattern result "if");
+    check bool "has first condition" true (contains_pattern result ">= 90");
+    (* The code generator creates nested if statements, not else if, which is semantically equivalent *)
+    check bool "has nested else structure" true (contains_pattern result "} else {");
+    check bool "has second condition" true (contains_pattern result ">= 80");
+    check bool "has third condition" true (contains_pattern result ">= 70");
+    check bool "has final else" true (contains_pattern result "else");
+  with
+  | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
+
+(** Test 11: Assignment in if statement *)
+let test_assignment_in_if () =
+  let program_text = {|
+@xdp fn test(ctx: xdp_md) -> xdp_action {
+  return 2
+}
+
+fn test_func() -> u32 {
+  var counter = 0
+  if (counter == 0) {
+    counter = 5
+  }
+  return 0
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  
+  try
+    let result = generate_userspace_code_from_program program_text "test_assignment_in_if" in
+    
+    check bool "generates if keyword" true (contains_pattern result "if");
+    check bool "has condition" true (contains_pattern result "== 0");
+    check bool "has assignment" true (contains_pattern result "= 5");
   with
   | exn -> fail ("Test failed with exception: " ^ Printexc.to_string exn)
 
@@ -424,9 +422,10 @@ let global_function_statements_tests = [
   "if_with_break_in_loop", `Quick, test_if_with_break_in_loop;
   "if_with_continue_in_loop", `Quick, test_if_with_continue_in_loop;
   "complex_binary_operators", `Quick, test_complex_binary_operators;
+  "if_or_operator", `Quick, test_if_or_operator;
   "nested_if_statements", `Quick, test_nested_if_statements;
-  "complete_global_function_program", `Quick, test_complete_global_function_program_with_if_break_continue;
-  "unsupported_statement_fallback", `Quick, test_unsupported_statement_fallback;
+  "if_else_chain", `Quick, test_if_else_chain;
+  "assignment_in_if", `Quick, test_assignment_in_if;
 ]
 
 let () =

@@ -22,7 +22,7 @@ let test_array_literal_basic_types () =
   List.iter (fun (array_literal, description) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let arr = %s
+    var arr = %s
     return 2
 }
 |} array_literal in
@@ -47,7 +47,7 @@ let test_array_literal_type_consistency () =
   List.iter (fun (array_literal, description) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let arr = %s
+    var arr = %s
     return 2
 }
 |} array_literal in
@@ -72,7 +72,7 @@ let test_array_literal_type_inconsistency () =
   List.iter (fun (array_literal, description) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let arr = %s
+    var arr = %s
     return 2
 }
 |} array_literal in
@@ -91,7 +91,7 @@ let test_array_literal_type_inconsistency () =
 let test_empty_array_literals () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let empty_arr = []
+    var empty_arr = []
     return 2
 }
 |} in
@@ -149,7 +149,7 @@ config test_config {
 let test_nested_array_literals () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let nested = [[1, 2], [3, 4]]
+    var nested = [[1, 2], [3, 4]]
     return 2
 }
 |} in
@@ -166,7 +166,7 @@ let test_large_array_literals () =
   let large_array = String.concat ", " (List.init 100 string_of_int) in
   let program_text = Printf.sprintf {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let large_arr = [%s]
+    var large_arr = [%s]
     return 2
 }
 |} large_array in
@@ -182,8 +182,8 @@ let test_large_array_literals () =
 let test_array_literal_ir_generation () =
   let program_text = {|
 @xdp fn test(ctx: xdp_md) -> xdp_action {
-    let numbers = [1, 2, 3, 4]
-    let flags = [true, false]
+    var numbers = [1, 2, 3, 4]
+    var flags = [true, false]
     return 2
 }
 |} in
