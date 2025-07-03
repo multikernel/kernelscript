@@ -5,8 +5,15 @@
           multi_program_analyzer multi_program_ir_optimizer ebpf_c_codegen
           userspace_codegen evaluator safety_checker stdlib
 tail_call_analyzer kernel_module_codegen dynptr_bridge
-          btf_parser btf_binary_parser kernel_types)
- (libraries unix str kernelscript_context))
+          btf_parser btf_binary_parser kernel_types struct_ops_registry)
+ (libraries unix str kernelscript_context)
+ (foreign_stubs
+  (language c)
+  (names btf_stubs)
+  (flags -fPIC -I/usr/include)
+  (extra_deps)
+  (include_dirs))
+ (c_library_flags -lbpf -lelf -lz))
 
 (executable
  (public_name kernelscript)

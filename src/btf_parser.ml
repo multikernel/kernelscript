@@ -50,19 +50,14 @@ let rec get_program_template prog_type btf_path =
     | _ -> ("GenericContext", "i32", [])
   in
   
-  (* Extract types from BTF if path is provided *)
+  (* Extract types from BTF - BTF file is required *)
   let extracted_types = match btf_path with
     | Some path when Sys.file_exists path -> extract_types_from_btf path common_types
-    | _ -> []
+    | Some path -> failwith (sprintf "BTF file not found: %s" path)
+    | None -> failwith "BTF file path is required. Use --btf-vmlinux-path option."
   in
   
-  (* If no types extracted, use fallback types since builtin files were removed *)
-  let final_types = if List.length extracted_types = 0 then (
-    printf "No BTF types found, using fallback types for %s program\n" prog_type;
-    generate_fallback_types common_types
-  ) else
-    extracted_types
-  in
+  let final_types = extracted_types in
   
   (* No need to filter types since builtin files were removed *)
   let filtered_types = final_types in
@@ -96,139 +91,52 @@ and extract_types_from_btf btf_path type_names =
       printf "Successfully extracted %d types from BTF\n" (List.length converted_types);
       converted_types
     ) else (
-      printf "No types extracted from BTF\n";
-      [] (* Don't use fallback types anymore - let caller decide *)
+      failwith "No types extracted from BTF - requested types not found"
     )
   with
   | exn ->
-      printf "Warning: BTF extraction failed (%s)\n" (Printexc.to_string exn);
-      [] (* Don't use fallback types anymore - let caller decide *)
+      failwith (sprintf "BTF extraction failed: %s" (Printexc.to_string exn))
 
-(** Generate fallback types when BTF extraction fails *)
-and generate_fallback_types type_names =
-  List.map (fun type_name ->
-    match type_name with
-    | "xdp_md" -> {
-        name = "xdp_md";
-        kind = "struct";
-        size = Some 32;
-        members = Some [
-          ("data", "u32");
-          ("data_end", "u32");
-          ("data_meta", "u32");
-          ("ingress_ifindex", "u32");
-          ("rx_queue_index", "u32");
-          ("egress_ifindex", "u32");
-        ];
-        kernel_defined = true;
-      }
-    | "xdp_action" -> {
-        name = "xdp_action";
-        kind = "enum";
-        size = Some 4;
-        members = Some [
-          ("XDP_ABORTED", "0");
-          ("XDP_DROP", "1");
-          ("XDP_PASS", "2");
-          ("XDP_TX", "3");
-          ("XDP_REDIRECT", "4");
-        ];
-        kernel_defined = true;
-      }
-    | "__sk_buff" -> {
-        name = "__sk_buff";
-        kind = "struct";
-        size = Some 192;
-        members = Some [
-          ("len", "u32");
-          ("pkt_type", "u32");
-          ("mark", "u32");
-          ("queue_mapping", "u32");
-          ("protocol", "u32");
-          ("vlan_present", "u32");
-          ("vlan_tci", "u32");
-          ("vlan_proto", "u32");
-          ("priority", "u32");
-          ("ingress_ifindex", "u32");
-          ("ifindex", "u32");
-          ("tc_index", "u32");
-          ("cb", "u32[5]");
-          ("hash", "u32");
-          ("tc_classid", "u32");
-          ("data", "u32");
-          ("data_end", "u32");
-          ("napi_id", "u32");
-          ("family", "u32");
-          ("remote_ip4", "u32");
-          ("local_ip4", "u32");
-          ("remote_ip6", "u32[4]");
-          ("local_ip6", "u32[4]");
-          ("remote_port", "u32");
-          ("local_port", "u32");
-          ("data_meta", "u32");
-          ("flow_keys", "u32");
-          ("tstamp", "u64");
-          ("wire_len", "u32");
-          ("gso_segs", "u32");
-          ("sk", "u32");
-          ("gso_size", "u32");
-        ];
-        kernel_defined = true;
-      }
-    | "tc_action" -> {
-        name = "tc_action";
-        kind = "enum";
-        size = Some 4;
-        members = Some [
-          ("TC_ACT_UNSPEC", "-1");
-          ("TC_ACT_OK", "0");
-          ("TC_ACT_RECLASSIFY", "1");
-          ("TC_ACT_SHOT", "2");
-          ("TC_ACT_PIPE", "3");
-          ("TC_ACT_STOLEN", "4");
-          ("TC_ACT_QUEUED", "5");
-          ("TC_ACT_REPEAT", "6");
-          ("TC_ACT_REDIRECT", "7");
-        ];
-        kernel_defined = true;
-      }
-    | "pt_regs" -> {
-        name = "pt_regs";
-        kind = "struct";
-        size = Some 168;
-        members = Some [
-          ("r15", "u64");
-          ("r14", "u64");
-          ("r13", "u64");
-          ("r12", "u64");
-          ("bp", "u64");
-          ("bx", "u64");
-          ("r11", "u64");
-          ("r10", "u64");
-          ("r9", "u64");
-          ("r8", "u64");
-          ("ax", "u64");
-          ("cx", "u64");
-          ("dx", "u64");
-          ("si", "u64");
-          ("di", "u64");
-          ("orig_ax", "u64");
-          ("ip", "u64");
-          ("cs", "u64");
-          ("flags", "u64");
-          ("sp", "u64");
-          ("ss", "u64");
-        ];
-        kernel_defined = true;
-      }
-    | other -> {
-        name = other;
-        kind = "struct";
-        size = None;
-        members = Some [("placeholder", "u32")];
-        kernel_defined = false;
-      }
-  ) type_names
+
+
+(** Extract struct_ops definitions from BTF and generate KernelScript code *)
+let extract_struct_ops_definitions btf_path struct_ops_names =
+  match btf_path with
+  | Some path when Sys.file_exists path ->
+      printf "🔧 Extracting struct_ops definitions: %s\n" (String.concat ", " struct_ops_names);
+      Struct_ops_registry.extract_struct_ops_from_btf path struct_ops_names
+  | Some path ->
+      failwith (sprintf "BTF file not found: %s" path)
+  | None ->
+      failwith "BTF file path is required for struct_ops extraction. Use --btf-vmlinux-path option."
+
+(** Generate struct_ops template with BTF extraction *)
+let generate_struct_ops_template btf_path struct_ops_names project_name =
+  let struct_ops_definitions = extract_struct_ops_definitions btf_path struct_ops_names in
+  let struct_ops_code = String.concat "\n\n" struct_ops_definitions in
+  
+  let example_usage = List.map (fun name ->
+    Struct_ops_registry.generate_struct_ops_usage_example name
+  ) struct_ops_names |> String.concat "\n\n" in
+  
+  sprintf {|// Generated struct_ops template for %s
+// Extracted from BTF: %s
+
+%s
+
+%s
+
+fn main() -> i32 {
+    // TODO: Initialize and register your struct_ops
+    print("struct_ops template generated for %s")
+    return 0
+}|} project_name 
+    (match btf_path with 
+     | Some path -> sprintf "definitions from %s" path 
+     | None -> "placeholder definitions")
+    struct_ops_code
+    example_usage
+    project_name
 
 (** Generate KernelScript source code from template *)
 let generate_kernelscript_source template project_name =

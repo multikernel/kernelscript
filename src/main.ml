@@ -16,11 +16,12 @@ let rec parse_args () =
       printf "KernelScript Compiler\n";
       printf "Usage: %s <subcommand> [options]\n\n" (List.hd args);
       printf "Subcommands:\n";
-      printf "  init <prog_type> <project_name> [--btf-vmlinux-path <path>]\n";
+      printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>]\n";
       printf "    Initialize a new KernelScript project\n";
       printf "    prog_type: xdp | tc | kprobe | uprobe | tracepoint | lsm | cgroup_skb\n";
+      printf "    struct_ops: tcp_congestion_ops | bpf_iter_ops | bpf_struct_ops_test | custom_name\n";
       printf "    project_name: Name of the project directory to create\n";
-      printf "    --btf-vmlinux-path: Path to BTF vmlinux file for type extraction\n\n";
+      printf "    --btf-vmlinux-path: Path to BTF vmlinux file for type/struct_ops extraction\n\n";
       printf "  compile <input_file> [options]\n";
       printf "    Compile KernelScript source to C code\n";
       printf "    -o, --output <dir>            Specify output directory\n";
@@ -103,15 +104,19 @@ and parse_compile_args args =
   parse_aux None None false true None args
 
 (** Initialize a new KernelScript project *)
-let init_project prog_type project_name btf_path =
+let init_project prog_type_or_struct_ops project_name btf_path =
   printf "🚀 Initializing KernelScript project: %s\n" project_name;
-  printf "📋 Program type: %s\n" prog_type;
+  printf "📋 Type: %s\n" prog_type_or_struct_ops;
   
-  (* Validate program type *)
-  let valid_types = ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] in
-  if not (List.mem prog_type valid_types) then (
-    printf "❌ Error: Invalid program type '%s'\n" prog_type;
-    printf "Valid types: %s\n" (String.concat ", " valid_types);
+  (* Check if this is a struct_ops or a regular program type *)
+  let valid_program_types = ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] in
+  let is_struct_ops = Struct_ops_registry.is_known_struct_ops prog_type_or_struct_ops in
+  let is_program_type = List.mem prog_type_or_struct_ops valid_program_types in
+  
+  if not is_struct_ops && not is_program_type then (
+    printf "❌ Error: Invalid type '%s'\n" prog_type_or_struct_ops;
+    printf "Valid program types: %s\n" (String.concat ", " valid_program_types);
+    printf "Known struct_ops: %s\n" (String.concat ", " (Struct_ops_registry.get_all_known_struct_ops ()));
     exit 1
   );
   
@@ -127,13 +132,20 @@ let init_project prog_type project_name btf_path =
       printf "❌ Error creating directory: %s\n" (Printexc.to_string exn);
       exit 1);
   
-  (* Generate program template *)
-  printf "🔧 Extracting types for %s program...\n" prog_type;
-  let template = Btf_parser.get_program_template prog_type btf_path in
-  printf "✅ Found %d type definitions\n" (List.length template.types);
+  (* Generate template based on type *)
+  let source_content = 
+    if is_struct_ops then (
+      printf "🔧 Extracting struct_ops definition for %s...\n" prog_type_or_struct_ops;
+      let content = Btf_parser.generate_struct_ops_template btf_path [prog_type_or_struct_ops] project_name in
+      printf "✅ Generated struct_ops template\n";
+      content
+    ) else (
+      printf "🔧 Extracting types for %s program...\n" prog_type_or_struct_ops;
+      let template = Btf_parser.get_program_template prog_type_or_struct_ops btf_path in
+      printf "✅ Found %d type definitions\n" (List.length template.types);
+      Btf_parser.generate_kernelscript_source template project_name
+    ) in
   
-  (* Generate KernelScript source *)
-  let source_content = Btf_parser.generate_kernelscript_source template project_name in
   let source_filename = project_name ^ "/" ^ project_name ^ ".ks" in
   
   (* Write source file *)
@@ -143,7 +155,47 @@ let init_project prog_type project_name btf_path =
   printf "✅ Generated source file: %s\n" source_filename;
   
   (* Create a simple README *)
-  let readme_content = sprintf {|# %s
+  let readme_content = 
+    if is_struct_ops then (
+      let struct_ops_info = Struct_ops_registry.get_struct_ops_info prog_type_or_struct_ops in
+      let description = match struct_ops_info with
+        | Some info -> info.description
+        | None -> sprintf "Custom struct_ops implementation for %s" prog_type_or_struct_ops
+      in
+      sprintf {|# %s
+
+A KernelScript struct_ops project implementing %s.
+
+## Building
+
+```bash
+# Compile the KernelScript source
+kernelscript compile %s.ks
+
+# Build the generated C code
+cd %s && make
+
+# Run the program (requires root privileges)
+cd %s && make run
+```
+
+## Project Structure
+
+- `%s.ks` - Main KernelScript source file with struct_ops definition
+- Generated files will be placed in `%s/` directory after compilation
+
+## Struct_ops Type: %s
+
+%s
+
+## BTF Integration
+
+This project uses BTF (BPF Type Format) to extract the exact kernel definition of `%s`.
+If you provided --btf-vmlinux-path during initialization, the struct definition matches the kernel.
+During compilation, the definition is verified against BTF to ensure compatibility.
+|} project_name description project_name project_name project_name project_name project_name prog_type_or_struct_ops description prog_type_or_struct_ops
+    ) else (
+      sprintf {|# %s
 
 A KernelScript %s program.
 
@@ -168,16 +220,17 @@ cd %s && make run
 ## Program Type: %s
 
 %s
-|} project_name prog_type project_name project_name project_name project_name project_name prog_type (match prog_type with
-    | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
-    | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
-    | "kprobe" -> "Kprobe programs allow dynamic tracing of kernel functions."
-    | "uprobe" -> "Uprobe programs enable tracing of userspace functions."
-    | "tracepoint" -> "Tracepoint programs provide static tracing points in the kernel."
-    | "lsm" -> "LSM programs implement security policies and access control."
-    | "cgroup_skb" -> "Cgroup SKB programs filter network packets based on cgroup membership."
-    | _ -> "eBPF program for kernel-level processing."
-  ) in
+|} project_name prog_type_or_struct_ops project_name project_name project_name project_name project_name prog_type_or_struct_ops (match prog_type_or_struct_ops with
+        | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
+        | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
+        | "kprobe" -> "Kprobe programs allow dynamic tracing of kernel functions."
+        | "uprobe" -> "Uprobe programs enable tracing of userspace functions."
+        | "tracepoint" -> "Tracepoint programs provide static tracing points in the kernel."
+        | "lsm" -> "LSM programs implement security policies and access control."
+        | "cgroup_skb" -> "Cgroup SKB programs filter network packets based on cgroup membership."
+        | _ -> "eBPF program for kernel-level processing."
+      )
+    ) in
   
   let readme_filename = project_name ^ "/README.md" in
   let oc = open_out readme_filename in
@@ -191,9 +244,16 @@ cd %s && make run
   printf "   ├── %s.ks      # KernelScript source\n" project_name;
   printf "   └── README.md      # Project documentation\n";
   printf "\n🚀 Next steps:\n";
-  printf "   1. Edit %s/%s.ks to implement your program logic\n" project_name project_name;
-  printf "   2. Run 'kernelscript compile %s/%s.ks' to compile\n" project_name project_name;
-  printf "   3. Run 'cd %s && make' to build the generated C code\n" project_name
+  if is_struct_ops then (
+    printf "   1. Edit %s/%s.ks to implement your struct_ops fields\n" project_name project_name;
+    printf "   2. Refer to kernel documentation for %s implementation details\n" prog_type_or_struct_ops;
+    printf "   3. Run 'kernelscript compile %s/%s.ks' to compile with BTF verification\n" project_name project_name;
+    printf "   4. Run 'cd %s && make' to build the generated C code\n" project_name
+  ) else (
+    printf "   1. Edit %s/%s.ks to implement your program logic\n" project_name project_name;
+    printf "   2. Run 'kernelscript compile %s/%s.ks' to compile\n" project_name project_name;
+    printf "   3. Run 'cd %s && make' to build the generated C code\n" project_name
+  )
 
 (** Compile KernelScript source (existing functionality) *)
 let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_path =
@@ -234,6 +294,34 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     (* Phase 2: Symbol table analysis with BTF type loading *)
     current_phase := "Symbol Analysis";
     Printf.printf "Phase 2: %s\n" !current_phase;
+    
+    (* Extract struct_ops from AST for BTF verification *)
+    let struct_ops_to_verify = List.filter_map (function
+      | Ast.StructDecl struct_def ->
+          List.fold_left (fun acc attr ->
+            match attr with
+            | Ast.AttributeWithArg ("struct_ops", kernel_name) -> Some (kernel_name, struct_def.struct_fields)
+            | _ -> acc
+          ) None struct_def.struct_attributes
+      | _ -> None
+    ) ast in
+    
+    (* Verify struct_ops definitions against BTF if BTF path is provided *)
+    (match btf_vmlinux_path with
+     | Some btf_path when struct_ops_to_verify <> [] ->
+         Printf.printf "🔍 Verifying %d struct_ops definitions against BTF...\n" (List.length struct_ops_to_verify);
+         List.iter (fun (kernel_name, user_fields) ->
+           match Struct_ops_registry.verify_struct_ops_against_btf btf_path kernel_name user_fields with
+           | Ok () ->
+               Printf.printf "✅ struct_ops '%s' verified against BTF\n" kernel_name
+           | Error msg ->
+               Printf.printf "❌ BTF verification failed for struct_ops '%s': %s\n" kernel_name msg;
+               Printf.printf "💡 Hint: Use 'kernelscript init %s <project_name> --btf-vmlinux-path %s' to generate the correct definition\n" kernel_name btf_path;
+               exit 1
+         ) struct_ops_to_verify
+     | Some _ when struct_ops_to_verify <> [] ->
+         Printf.printf "⚠️ struct_ops found but no BTF path provided - skipping verification\n"
+     | _ -> ());
     
     (* Load BTF types for eBPF context types and action constants *)
     let btf_types = try

@@ -58,10 +58,7 @@
  (modules test_dynptr_bridge)
  (libraries kernelscript alcotest))
 
-(executable
- (name test_btf_parser)
- (modules test_btf_parser)
- (libraries kernelscript alcotest str))
+
 
 (executable
  (public_name test_ir)

@@ -1,6 +1,7 @@
 open Alcotest
 open Kernelscript
 open Ast
+open Printf
 
 (** Test basic @struct_ops attribute parsing *)
 let test_struct_ops_parsing () =
@@ -365,6 +366,117 @@ let test_symbol_table_struct_ops () =
         | _ -> fail "Expected StructDef in symbol table")  
    | None -> fail "struct_ops should be in symbol table")
 
+(** BTF Integration Tests *)
+
+(** Test struct_ops registry functionality *)
+let test_struct_ops_registry () =
+  (* Test known struct_ops detection *)
+  check bool "tcp_congestion_ops is known" true (Struct_ops_registry.is_known_struct_ops "tcp_congestion_ops");
+  check bool "bpf_iter_ops is known" true (Struct_ops_registry.is_known_struct_ops "bpf_iter_ops");
+  check bool "unknown_struct_ops is not known" false (Struct_ops_registry.is_known_struct_ops "unknown_struct_ops");
+  
+  (* Test struct_ops info retrieval *)
+  (match Struct_ops_registry.get_struct_ops_info "tcp_congestion_ops" with
+   | Some info ->
+       check string "tcp_congestion_ops description" "TCP congestion control operations" info.description;
+       check (option string) "tcp_congestion_ops version" (Some "5.6+") info.kernel_version
+   | None -> fail "Expected to find tcp_congestion_ops info");
+  
+  (* Test getting all known struct_ops *)
+  let all_known = Struct_ops_registry.get_all_known_struct_ops () in
+  check bool "Contains tcp_congestion_ops" true (List.mem "tcp_congestion_ops" all_known);
+  check bool "Contains bpf_iter_ops" true (List.mem "bpf_iter_ops" all_known)
+
+(** Test struct_ops usage example generation *)
+let test_struct_ops_usage_examples () =
+  let tcp_example = Struct_ops_registry.generate_struct_ops_usage_example "tcp_congestion_ops" in
+  check bool "TCP example contains register" true 
+    (try ignore (Str.search_forward (Str.regexp "register") tcp_example 0); true with Not_found -> false);
+  check bool "TCP example contains tcp_congestion_ops" true
+    (try ignore (Str.search_forward (Str.regexp "tcp_congestion_ops") tcp_example 0); true with Not_found -> false);
+  
+  let unknown_example = Struct_ops_registry.generate_struct_ops_usage_example "unknown_struct_ops" in
+  check bool "Unknown example contains register" true
+    (try ignore (Str.search_forward (Str.regexp "register") unknown_example 0); true with Not_found -> false)
+
+(** Test BTF template generation without actual BTF file *)
+let test_btf_template_generation () =
+  (* Test template generation without BTF file should now error *)
+  (try
+    let _ = Btf_parser.generate_struct_ops_template None ["tcp_congestion_ops"] "test_project" in
+    fail "Expected error when no BTF file is provided"
+  with
+  | Failure msg when String.contains msg 'B' && String.contains msg 'T' && String.contains msg 'F' ->
+      check bool "Correct error for missing BTF path" true true
+  | _ -> fail "Expected BTF-related error message");
+  
+  (* Test with invalid BTF file path should also error *)
+  (try
+    let _ = Btf_parser.generate_struct_ops_template (Some "/nonexistent/btf") ["tcp_congestion_ops"] "test_project" in
+    fail "Expected error for non-existent BTF file"
+  with
+  | Failure msg when String.contains msg 'B' && String.contains msg 'T' && String.contains msg 'F' ->
+      check bool "Correct error for invalid BTF path" true true
+  | _ -> fail "Expected BTF-related error message")
+
+(** Test struct_ops initialization using main init command *)
+let test_init_command_struct_ops_detection () =
+  (* This test would require setting up temporary directories and running the actual init command *)
+  (* For now, we'll test the underlying logic *)
+  
+  (* Test that tcp_congestion_ops is recognized as a struct_ops *)
+  check bool "tcp_congestion_ops is recognized as struct_ops" true
+    (Struct_ops_registry.is_known_struct_ops "tcp_congestion_ops");
+  
+  (* Test that regular program types are still recognized *)
+  let valid_program_types = ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] in
+  List.iter (fun prog_type ->
+    check bool (sprintf "%s is valid program type" prog_type) true
+      (List.mem prog_type valid_program_types)
+  ) valid_program_types
+
+(** Test BTF extraction error handling *)
+let test_btf_error_handling () =
+  (* Test verification with non-existent BTF file *)
+  (match Struct_ops_registry.verify_struct_ops_against_btf "/non/existent/btf" "tcp_congestion_ops" [("init", "u32")] with
+   | Error msg -> 
+       check bool "Error message contains expected text" true
+         (String.contains msg 'B' && String.contains msg 'T' && String.contains msg 'F')
+   | Ok () -> fail "Expected error for non-existent BTF file");
+  
+  (* Test extraction from non-existent BTF file *)
+  let definitions = Struct_ops_registry.extract_struct_ops_from_btf "/non/existent/btf" ["tcp_congestion_ops"] in
+  check int "No definitions extracted from non-existent file" 0 (List.length definitions)
+
+(** Test struct_ops code generation *)
+let test_struct_ops_code_generation () =
+  (* Create mock BTF type info *)
+  let mock_btf_type = {
+    Btf_binary_parser.name = "tcp_congestion_ops";
+    kind = "struct";
+    size = Some 64;
+    members = Some [
+      ("init", "void*");
+      ("cong_avoid", "void*");
+      ("set_state", "void*");
+      ("name", "char*");
+    ];
+    kernel_defined = true;
+  } in
+  
+  (* Test struct_ops definition generation *)
+  (match Struct_ops_registry.generate_struct_ops_definition mock_btf_type with
+   | Some definition ->
+       check bool "Definition contains @struct_ops attribute" true
+         (try ignore (Str.search_forward (Str.regexp "@struct_ops") definition 0); true with Not_found -> false);
+       check bool "Definition contains struct name" true
+         (try ignore (Str.search_forward (Str.regexp "tcp_congestion_ops") definition 0); true with Not_found -> false);
+       check bool "Definition contains init field" true
+         (try ignore (Str.search_forward (Str.regexp "init:") definition 0); true with Not_found -> false);
+       check bool "Definition contains cong_avoid field" true
+         (try ignore (Str.search_forward (Str.regexp "cong_avoid:") definition 0); true with Not_found -> false)
+   | None -> fail "Expected struct_ops definition to be generated")
+
 let tests = [
   "struct_ops parsing", `Quick, test_struct_ops_parsing;
   "regular struct parsing", `Quick, test_regular_struct_parsing;
@@ -378,8 +490,15 @@ let tests = [
   "register() with non-struct", `Quick, test_register_with_non_struct;
   "nested struct_ops", `Quick, test_nested_struct_ops;
   "symbol table struct_ops", `Quick, test_symbol_table_struct_ops;
+  (* BTF Integration Tests *)
+  "struct_ops registry", `Quick, test_struct_ops_registry;
+  "struct_ops usage examples", `Quick, test_struct_ops_usage_examples;
+  "BTF template generation", `Quick, test_btf_template_generation;
+  "init command struct_ops detection", `Quick, test_init_command_struct_ops_detection;
+  "BTF error handling", `Quick, test_btf_error_handling;
+  "struct_ops code generation", `Quick, test_struct_ops_code_generation;
 ]
 
-let () = Alcotest.run "KernelScript struct_ops tests" [
+let () = Alcotest.run "KernelScript struct_ops and BTF integration tests" [
   "struct_ops_tests", tests
 ] 

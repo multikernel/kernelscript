@@ -2,6 +2,8 @@
 
 (name kernelscript)
 
+(use_standard_c_and_cxx_flags true)
+
 (package
  (name kernelscript)
  (synopsis "KernelScript - eBPF programming language with integrated userspace support")

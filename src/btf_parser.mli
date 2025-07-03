@@ -22,5 +22,11 @@ val get_program_template : string -> string option -> program_template
 (** Check if a type name is a well-known eBPF kernel type *)
 val is_well_known_kernel_type : string -> bool
 
+(** Extract struct_ops definitions from BTF and generate KernelScript code *)
+val extract_struct_ops_definitions : string option -> string list -> string list
+
+(** Generate struct_ops template with BTF extraction *)
+val generate_struct_ops_template : string option -> string list -> string -> string
+
 (** Generate KernelScript source code from template *)
 val generate_kernelscript_source : program_template -> string -> string 
