@@ -31,9 +31,7 @@ enum Protocol {
 }
 
 // Global map declarations with different types
-map<IpAddress, Counter> connection_count : HashMap(1024) {
-  pinned: "/sys/fs/bpf/connection_count"
-}
+pin map<IpAddress, Counter> connection_count : HashMap(1024)
 
 map<PacketInfo, FilterAction> packet_filter : LruHash(512)
 

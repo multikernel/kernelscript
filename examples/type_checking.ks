@@ -24,10 +24,7 @@ enum FilterDecision {
 }
 
 // Global map for demonstration
-map<IpAddress, u64> connection_stats : hash_map(1024) {
-  max_entries = 1024,
-  pinned = "/sys/fs/bpf/stats"
-}
+pin map<IpAddress, u64> connection_stats : HashMap(1024)
 
 @helper
 fn extract_header(ctx: xdp_md) -> xdp_action {

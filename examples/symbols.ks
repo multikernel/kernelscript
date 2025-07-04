@@ -18,17 +18,11 @@ enum xdp_action {
 }
 
 // Global maps (accessible from all programs)
-map<u32, u64> global_stats : HashMap(1024) {
-    pinned: "/sys/fs/bpf/global_stats",
-}
+pin map<u32, u64> global_stats : HashMap(1024)
 
-map<u32, PacketInfo> packet_cache : LruHash(256) {
-    pinned: "/sys/fs/bpf/packet_cache",
-}
+pin map<u32, PacketInfo> packet_cache : LruHash(256)
 
-map<u32, u32> traffic_data : Array(128) {
-    pinned: "/sys/fs/bpf/traffic_data",
-}
+pin map<u32, u32> traffic_data : Array(128)
 
 // Global function (public visibility)
 pub fn log_packet(info: PacketInfo) -> u32 {

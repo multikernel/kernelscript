@@ -13,9 +13,7 @@ struct PacketInfo {
 }
 
 // Global map for statistics
-map<u32, Counter> packet_stats : HashMap(1024) {
-  pinned: "/sys/fs/bpf/packet_stats",
-}
+pin map<u32, Counter> packet_stats : HashMap(1024)
 
 // Kernel-shared functions accessible by all eBPF programs
 @helper
