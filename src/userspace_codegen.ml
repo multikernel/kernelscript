@@ -753,8 +753,11 @@ let generate_c_value_from_ir ctx ir_value =
         if global_var.is_local then
           (* Local global variables are not accessible from userspace *)
           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
+        else if global_var.is_pinned then
+          (* Pinned global variables are accessed through map lookup *)
+          sprintf "({ struct pinned_globals_struct __pg; uint32_t __key = 0; if (bpf_map_lookup_elem(pinned_globals_map_fd, &__key, &__pg) == 0) __pg.%s; else (typeof(__pg.%s)){0}; })" name name
         else
-          (* Shared global variables are accessed through skeleton bss section *)
+          (* Regular shared global variables are accessed through skeleton bss section *)
           sprintf "obj->bss->%s" name
       else
         name  (* Function parameters and regular variables use their names directly *)
@@ -972,43 +975,43 @@ let generate_config_field_update_from_ir ctx map_val key_val field value_val =
 
 
 (** Generate variable assignment with optional const keyword *)
-and generate_variable_assignment ctx dest src is_const =
+let generate_variable_assignment ctx dest src is_const =
   let assignment_prefix = if is_const then "const " else "" in
   let src_str = generate_c_expression_from_ir ctx src in
   
   (* Check if this is a global variable assignment - handle specially *)
-  (match dest.value_desc with
-   | IRVariable name ->
-       let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
-       if is_global then
-         (* Global variable assignment - add null check to prevent segfault *)
-         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
-         if global_var.is_local then
-           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
-         else
-            (* Global variable assignment through skeleton bss section *)
-            sprintf "%sobj->bss->%s = %s;" 
-              assignment_prefix name src_str
-       else
-         (* Regular variable assignment *)
-         let dest_str = generate_c_value_from_ir ctx dest in
-         (* For string assignments, use safer approach to avoid truncation warnings *)
-         (match dest.val_type with
-          | IRStr size -> 
-              sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
-                assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
-          | _ -> 
-              sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-   | _ ->
-       (* Non-variable assignment (registers, etc.) *)
-       let dest_str = generate_c_value_from_ir ctx dest in
-       (* For string assignments, use safer approach to avoid truncation warnings *)
-       (match dest.val_type with
-        | IRStr size -> 
-            sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" 
-              assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
-        | _ -> 
-            sprintf "%s%s = %s;" assignment_prefix dest_str src_str))
+  match dest.value_desc with
+  | IRVariable name ->
+      let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
+      if is_global then
+        (* Global variable assignment - add null check to prevent segfault *)
+        let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
+        if global_var.is_local then
+          failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
+        else if global_var.is_pinned then
+          (* Pinned global variable assignment through map update *)
+          sprintf "{ struct pinned_globals_struct __pg; uint32_t __key = 0; if (bpf_map_lookup_elem(pinned_globals_map_fd, &__key, &__pg) == 0) { __pg.%s = %s; bpf_map_update_elem(pinned_globals_map_fd, &__key, &__pg, BPF_ANY); } }" name src_str
+        else
+          (* Regular global variable assignment through skeleton bss section *)
+          sprintf "%sobj->bss->%s = %s;" assignment_prefix name src_str
+      else
+        (* Regular variable assignment *)
+        let dest_str = generate_c_value_from_ir ctx dest in
+        (* For string assignments, use safer approach to avoid truncation warnings *)
+        (match dest.val_type with
+         | IRStr size -> 
+             sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+         | _ -> 
+             sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+  | _ ->
+      (* Non-variable assignment (registers, etc.) *)
+      let dest_str = generate_c_value_from_ir ctx dest in
+      (* For string assignments, use safer approach to avoid truncation warnings *)
+      (match dest.val_type with
+       | IRStr size -> 
+           sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+       | _ -> 
+           sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
 
 (** Generate C instruction from IR instruction *)
 let rec generate_c_instruction_from_ir ctx instruction =
@@ -1516,6 +1519,49 @@ let generate_map_fd_declarations maps =
     sprintf "int %s_fd = -1;" map.map_name
   ) maps |> String.concat "\n"
 
+(** Generate pinned globals support code *)
+let generate_pinned_globals_support project_name global_variables =
+  let pinned_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
+  if pinned_vars = [] then
+    ("", "", "")
+  else
+    let struct_definition = 
+      let fields_str = String.concat ";\n    " (List.map (fun gv ->
+        let c_type = c_type_from_ir_type gv.global_var_type in
+        match gv.global_var_type with
+        | IRStr size -> sprintf "char %s[%d]" gv.global_var_name size
+        | _ -> sprintf "%s %s" c_type gv.global_var_name
+      ) pinned_vars) in
+      sprintf "struct pinned_globals_struct {\n    %s;\n};" fields_str
+    in
+    
+    let map_fd_declaration = "int pinned_globals_map_fd = -1;" in
+    
+    let pin_path = sprintf "/sys/fs/bpf/%s/globals/pinned_globals" project_name in
+    let map_setup_code = sprintf {|    /* Load or create pinned globals map */
+    pinned_globals_map_fd = bpf_obj_get("%s");
+    if (pinned_globals_map_fd < 0) {
+        /* Map not pinned yet, load from eBPF object and pin it */
+        struct bpf_map *pinned_globals_map = bpf_object__find_map_by_name(bpf_obj, "__pinned_globals");
+        if (!pinned_globals_map) {
+            fprintf(stderr, "Failed to find pinned globals map in eBPF object\n");
+            return -1;
+        }
+        /* Pin the map to the specified path */
+        if (bpf_map__pin(pinned_globals_map, "%s") < 0) {
+            fprintf(stderr, "Failed to pin globals map\n");
+            return -1;
+        }
+        /* Get file descriptor after pinning */
+        pinned_globals_map_fd = bpf_map__fd(pinned_globals_map);
+        if (pinned_globals_map_fd < 0) {
+            fprintf(stderr, "Failed to get fd for pinned globals map\n");
+            return -1;
+        }
+    }|} pin_path pin_path in
+    
+    (struct_definition, map_fd_declaration, map_setup_code)
+
 (** Generate map operation functions *)
 let generate_map_operation_functions maps =
   List.map (fun map ->
@@ -1551,49 +1597,10 @@ let generate_map_setup_code maps =
     match map.pin_path with
     | Some pin_path ->
         (* For pinned maps, try multiple approaches in order *)
-        sprintf {|    /* Load or create pinned %s map */
-    %s_fd = bpf_obj_get("%s");
-    if (%s_fd < 0) {
-        /* Map not pinned yet, load from eBPF object and pin it */
-        struct bpf_map *%s_map = bpf_object__find_map_by_name(bpf_obj, "%s");
-        if (!%s_map) {
-            fprintf(stderr, "Failed to find %s map in eBPF object\n");
-            return -1;
-        }
-        /* Pin the map to the specified path */
-        if (bpf_map__pin(%s_map, "%s") < 0) {
-            fprintf(stderr, "Failed to pin %s map to %s\n");
-            return -1;
-        }
-        /* Get file descriptor after pinning */
-        %s_fd = bpf_map__fd(%s_map);
-        if (%s_fd < 0) {
-            fprintf(stderr, "Failed to get fd for %s map\n");
-            return -1;
-        }
-    }|}
-          map.map_name
-          map.map_name pin_path
-          map.map_name
-          map.map_name map.map_name
-          map.map_name
-          map.map_name
-          map.map_name pin_path
-          map.map_name pin_path
-          map.map_name map.map_name
-          map.map_name
-          map.map_name
+        Printf.sprintf "/* Load or create pinned %s map at %s */" map.map_name pin_path
     | None ->
         (* For non-pinned maps, just load from BPF object *)
-        sprintf {|    /* Load %s map from eBPF object */
-    %s_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s");
-    if (%s_fd < 0) {
-        fprintf(stderr, "Failed to find %s map in eBPF object\n");
-        return -1;
-    }|}
-          map.map_name
-          map.map_name map.map_name
-          map.map_name map.map_name
+        Printf.sprintf "/* Load %s map from eBPF object */" map.map_name
   ) maps |> String.concat "\n"
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
@@ -1900,6 +1907,11 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     generate_map_fd_declarations used_global_maps
   else "" in
   
+  (* Generate pinned globals support *)
+  let project_name = Filename.remove_extension (Filename.basename source_filename) in
+  let (pinned_globals_struct, pinned_globals_fd, pinned_globals_setup) = 
+    generate_pinned_globals_support project_name ir_multi_prog.global_variables in
+  
   (* Generate config map file descriptors if there are config declarations *)
   let config_fd_declarations = if List.length config_declarations > 0 then
     List.map (fun config_decl ->
@@ -1907,9 +1919,10 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     ) config_declarations
   else [] in
   
-  let all_fd_declarations = if all_usage.uses_map_operations || List.length config_declarations > 0 then
-    map_fd_declarations :: config_fd_declarations |> String.concat "\n"
-  else "" in
+  let all_fd_declarations = 
+    let parts = [map_fd_declarations; pinned_globals_fd] @ config_fd_declarations in
+    let non_empty_parts = List.filter (fun s -> s <> "") parts in
+    if non_empty_parts = [] then "" else String.concat "\n" non_empty_parts in
   
   let map_operation_functions = if all_usage.uses_map_operations then
     generate_map_operation_functions used_global_maps
@@ -1938,11 +1951,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Generate struct_ops registration code *)
   let struct_ops_registration_code = generate_struct_ops_registration_code ir_multi_prog in
   
-  let all_setup_code = map_setup_code ^ 
-    (if map_setup_code <> "" && config_setup_code <> "" then "\n" else "") ^ 
-    config_setup_code ^
-    (if config_setup_code <> "" && struct_ops_registration_code <> "" then "\n" else "") ^
-    struct_ops_registration_code in
+  let all_setup_code = 
+    let parts = [map_setup_code; pinned_globals_setup; config_setup_code; struct_ops_registration_code] in
+    let non_empty_parts = List.filter (fun s -> s <> "") parts in
+    String.concat "\n" non_empty_parts in
+  
+  let structs_with_pinned = if pinned_globals_struct <> "" then
+    structs ^ "\n\n" ^ pinned_globals_struct
+  else structs in
   
   (* Base name already extracted earlier *)
   
@@ -2059,7 +2075,7 @@ void cleanup_bpf_maps(void) {
 %s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs skeleton_code all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =

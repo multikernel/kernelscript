@@ -200,6 +200,13 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
+ (name test_pinned_globals)
+ (modules test_pinned_globals)
+ (libraries kernelscript alcotest str))
+
+
+
+(executable
  (name test_string_struct_fixes)
  (modules test_string_struct_fixes)
  (libraries kernelscript alcotest str unix))

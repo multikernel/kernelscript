@@ -1431,7 +1431,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
     | _ -> ()
   ) ctx.types;
   
-  (* First pass: collect type definitions and map declarations *)
+  (* First pass: collect type definitions, map declarations, and validate global variables *)
   List.iter (function
     | TypeDef type_def ->
         (match type_def with
@@ -1439,7 +1439,17 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
              Hashtbl.replace ctx.types name type_def)
     | MapDecl map_decl ->
         Hashtbl.replace ctx.maps map_decl.name map_decl
-
+    | GlobalVarDecl global_var_decl ->
+        (* Validate pinning rules: cannot pin local variables *)
+        if global_var_decl.is_pinned && global_var_decl.is_local then
+          type_error "Cannot pin local variables - only shared variables can be pinned" global_var_decl.global_var_pos;
+        
+        (* Add global variable to type checker context *)
+        let var_type = match global_var_decl.global_var_type with
+          | Some t -> resolve_user_type ctx t
+          | None -> U32  (* Default type if not specified *)
+        in
+        Hashtbl.replace ctx.variables global_var_decl.global_var_name var_type
     | _ -> ()
   ) ast;
   
@@ -1709,6 +1719,10 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | ConfigDecl config_decl ->
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
     | GlobalVarDecl global_var_decl ->
+        (* Validate pinning rules: cannot pin local variables *)
+        if global_var_decl.is_pinned && global_var_decl.is_local then
+          type_error "Cannot pin local variables - only shared variables can be pinned" global_var_decl.global_var_pos;
+        
         (* Add global variable to type checker context *)
         let var_type = match global_var_decl.global_var_type with
           | Some t -> 

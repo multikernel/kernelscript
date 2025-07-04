@@ -389,6 +389,7 @@ and ir_global_variable = {
   global_var_init: ir_value option;
   global_var_pos: ir_position;
   is_local: bool; (* true if declared with 'local' keyword *)
+  is_pinned: bool; (* true if declared with 'pin' keyword *)
 }
 
 (** Utility functions for creating IR nodes *)
@@ -560,12 +561,13 @@ let make_ir_config_management loads updates sync = {
   runtime_config_sync = sync;
 }
 
-let make_ir_global_variable name var_type init pos ?(is_local=false) () = {
+let make_ir_global_variable name var_type init pos ?(is_local=false) ?(is_pinned=false) () = {
   global_var_name = name;
   global_var_type = var_type;
   global_var_init = init;
   global_var_pos = pos;
   is_local;
+  is_pinned;
 }
 
 (** Type conversion utilities *)

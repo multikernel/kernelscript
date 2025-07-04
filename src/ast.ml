@@ -243,6 +243,7 @@ type global_variable_declaration = {
   global_var_init: literal option;
   global_var_pos: position;
   is_local: bool; (* true if declared with 'local' keyword *)
+  is_pinned: bool; (* true if declared with 'pin' keyword *)
 }
 
 (** Top-level declarations *)
@@ -369,12 +370,13 @@ let make_config_declaration name fields pos = {
   config_pos = pos;
 }
 
-let make_global_var_decl name typ init pos ?(is_local=false) () = {
+let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) () = {
   global_var_name = name;
   global_var_type = typ;
   global_var_init = init;
   global_var_pos = pos;
   is_local;
+  is_pinned;
 }
 
 (** Pretty-printing functions for debugging *)
@@ -642,6 +644,8 @@ let string_of_declaration = function
       ) struct_def.struct_fields) in
       Printf.sprintf "%sstruct %s {\n    %s\n}" attrs_str struct_def.struct_name fields_str
   | GlobalVarDecl decl ->
+      let pin_str = if decl.is_pinned then "pin " else "" in
+      let local_str = if decl.is_local then "local " else "" in
       let type_str = match decl.global_var_type with
         | None -> ""
         | Some t -> ": " ^ string_of_bpf_type t
@@ -650,7 +654,7 @@ let string_of_declaration = function
         | None -> ""
         | Some lit -> " = " ^ string_of_literal lit
       in
-      Printf.sprintf "var %s%s%s;" decl.global_var_name type_str init_str
+      Printf.sprintf "%s%svar %s%s%s;" pin_str local_str decl.global_var_name type_str init_str
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

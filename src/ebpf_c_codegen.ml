@@ -127,6 +127,8 @@ type c_context = {
   mutable current_error_var: string option;
   (* Variable name to original type alias mapping *)
   mutable variable_type_aliases: (string * string) list;
+  (* Pinned global variables for transparent access *)
+  mutable pinned_globals: string list;
 }
 
 let create_c_context () = {
@@ -140,6 +142,7 @@ let create_c_context () = {
   pending_callbacks = [];
   current_error_var = None;
   variable_type_aliases = [];
+  pinned_globals = [];
 }
 
 (** Helper functions for code generation *)
@@ -902,6 +905,51 @@ let generate_global_variables ctx global_variables =
       emit_blank_line ctx
     );
     
+    (* Separate pinned and non-pinned variables *)
+    let pinned_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
+    let regular_vars = List.filter (fun gv -> not gv.is_pinned) global_variables in
+    
+    (* Generate pinned globals struct if there are any pinned variables *)
+    if pinned_vars <> [] then (
+      (* Track pinned globals in the context *)
+      ctx.pinned_globals <- List.map (fun gv -> gv.global_var_name) pinned_vars;
+      
+      emit_line ctx "/* Pinned global variables struct */";
+      emit_line ctx "struct __pinned_globals {";
+      List.iter (fun global_var ->
+        let c_type = ebpf_type_from_ir_type global_var.global_var_type in
+        emit_line ctx (sprintf "    %s %s;" c_type global_var.global_var_name)
+      ) pinned_vars;
+      emit_line ctx "};";
+      emit_blank_line ctx;
+      
+      (* Generate the pinned globals map *)
+      emit_line ctx "/* Pinned globals map - single entry array */";
+      emit_line ctx "struct {";
+      emit_line ctx "    __uint(type, BPF_MAP_TYPE_ARRAY);";
+      emit_line ctx "    __type(key, __u32);";
+      emit_line ctx "    __type(value, struct __pinned_globals);";
+      emit_line ctx "    __uint(max_entries, 1);";
+      emit_line ctx "    __uint(map_flags, BPF_F_NO_PREALLOC);";
+      emit_line ctx "} __pinned_globals SEC(\".maps\");";
+      emit_blank_line ctx;
+      
+      (* Generate access helpers for pinned variables *)
+      emit_line ctx "/* Pinned globals access helpers */";
+      emit_line ctx "static __always_inline struct __pinned_globals *get_pinned_globals(void) {";
+      emit_line ctx "    __u32 key = 0;";
+      emit_line ctx "    return bpf_map_lookup_elem(&__pinned_globals, &key);";
+      emit_line ctx "}";
+      emit_blank_line ctx;
+      
+      emit_line ctx "static __always_inline void update_pinned_globals(struct __pinned_globals *globals) {";
+      emit_line ctx "    __u32 key = 0;";
+      emit_line ctx "    bpf_map_update_elem(&__pinned_globals, &key, globals, BPF_ANY);";
+      emit_line ctx "}";
+      emit_blank_line ctx
+    );
+    
+    (* Generate regular (non-pinned) global variables *)
     List.iter (fun global_var ->
       let c_type = ebpf_type_from_ir_type global_var.global_var_type in
       let var_name = global_var.global_var_name in
@@ -927,7 +975,7 @@ let generate_global_variables ctx global_variables =
              emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
            else
              emit_line ctx (sprintf "%s %s;" c_type var_name))
-    ) global_variables;
+    ) regular_vars;
     emit_blank_line ctx
   )
 
@@ -981,8 +1029,12 @@ let generate_c_value ctx ir_val =
        | _ -> sprintf "\"%s\"" s) (* Fallback for non-string types *)
   | IRLiteral (ArrayLit _) -> "/* Array literal not supported */"
   | IRVariable name -> 
+      (* Check if this is a pinned global variable *)
+      if List.mem name ctx.pinned_globals then
+        (* Generate transparent access to pinned global through map *)
+        sprintf "({ struct __pinned_globals *__pg = get_pinned_globals(); __pg ? __pg->%s : (typeof(__pg->%s)){0}; })" name name
       (* Check if this is a config access *)
-      if String.contains name '.' then
+      else if String.contains name '.' then
         let parts = String.split_on_char '.' name in
         match parts with
         | [config_name; field_name] -> 
@@ -1333,7 +1385,19 @@ let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
 and generate_assignment ctx dest_val expr is_const =
   let assignment_prefix = if is_const then "const " else "" in
   
-  (* Check if this is a string assignment *)
+  (* Check if this is a pinned global variable assignment *)
+  (match dest_val.value_desc with
+   | IRVariable name when List.mem name ctx.pinned_globals ->
+       (* Special handling for pinned global variable assignment *)
+       let expr_str = generate_c_expression ctx expr in
+       emit_line ctx (sprintf "{ struct __pinned_globals *__pg = get_pinned_globals();");
+       emit_line ctx (sprintf "  if (__pg) {");
+       emit_line ctx (sprintf "    __pg->%s = %s;" name expr_str);
+       emit_line ctx (sprintf "    update_pinned_globals(__pg);");
+       emit_line ctx (sprintf "  }");
+       emit_line ctx (sprintf "}")
+   | _ ->
+       (* Check if this is a string assignment *)
   (match dest_val.val_type, expr.expr_desc with
    | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
        (* String to string assignment - need to copy struct *)
@@ -1365,7 +1429,7 @@ and generate_assignment ctx dest_val expr is_const =
         | _ ->
             (* Other expressions *)
             let expr_str = generate_c_expression ctx expr in
-            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)))
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str))))
 
 let rec generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with

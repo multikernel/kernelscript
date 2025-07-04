@@ -1479,6 +1479,7 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
     ir_init
     global_var_decl.global_var_pos
     ~is_local:global_var_decl.is_local
+    ~is_pinned:global_var_decl.is_pinned
     ()
 
 (** Convert AST types to IR types *)

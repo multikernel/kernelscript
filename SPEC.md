@@ -102,6 +102,8 @@ as          is          try         catch       throw       defer       go
 delete
 ```
 
+**Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
+
 ### 2.2 Identifiers
 ```ebnf
 identifier = letter { letter | digit | "_" } 
@@ -195,7 +197,7 @@ KernelScript supports global variable declarations at the top level that are acc
 
 #### 3.3.1 Global Variable Declaration Syntax
 
-Global variables support three forms of declaration:
+Global variables support three forms of declaration, with optional `pin` keyword for persistence:
 
 ```kernelscript
 // Form 1: Full declaration with type and initial value
@@ -212,6 +214,12 @@ var inferred_int = 42           // Type: u32 (default for integer literals)
 var inferred_string = "hello"   // Type: str<6> (inferred from string length)
 var inferred_bool = false       // Type: bool
 var inferred_char = 'a'         // Type: char
+
+// Pinned global variables - persisted to filesystem
+pin var persistent_counter: u64 = 0
+pin var persistent_config: str<64> = "default_config"
+pin var persistent_flag: bool = false
+pin var persistent_buffer: [u8; 256] = [0; 256]
 ```
 
 #### 3.3.2 Type Inference Rules
@@ -276,9 +284,9 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-#### 3.3.4 Global Variable Scoping
+#### 3.3.4 Global Variable Scoping and Pinning
 
-KernelScript provides explicit control over global variable visibility between kernel and userspace:
+KernelScript provides explicit control over global variable visibility between kernel and userspace, with optional persistence:
 
 ```kernelscript
 // Shared variables (default) - accessible from both kernel and userspace
@@ -286,32 +294,51 @@ var packet_count: u64 = 0
 var enable_logging: bool = true
 var shared_buffer: str<256> = "default"
 
+// Pinned shared variables - persisted to filesystem and shared
+pin var persistent_packet_count: u64 = 0
+pin var persistent_config: str<128> = "default_config"
+pin var persistent_state: bool = false
+
 // Local variables - kernel-only, not exposed to userspace
 local var crypto_nonce: u64 = 0x123456789ABCDEF0
 local var internal_debug_flags: u32 = 0
 local var temp_calculation_buffer: [u8; 1024] = [0; 1024]
 
-// eBPF program using both shared and local variables
+// ❌ COMPILATION ERROR: Cannot pin local variables
+// pin local var invalid_pinned_local: u32 = 0
+
+// eBPF program using shared, pinned, and local variables
 @xdp
 fn secure_packet_filter(ctx: xdp_md) -> xdp_action {
-    packet_count += 1          // Shared: accessible via skeleton
-    crypto_nonce += 1          // Local: kernel-only, not in skeleton
+    packet_count += 1                    // Shared: accessible via skeleton
+    persistent_packet_count += 1         // Pinned: persisted and accessible
+    crypto_nonce += 1                    // Local: kernel-only, not in skeleton
     
-    if (enable_logging) {      // Shared: configurable from userspace
-        internal_debug_flags |= 0x1  // Local: internal state only
+    if (enable_logging) {                // Shared: configurable from userspace
+        internal_debug_flags |= 0x1      // Local: internal state only
         print("Processing packet")
+    }
+    
+    // Use pinned configuration
+    if (persistent_state) {
+        print("Persistent mode enabled")
     }
     
     return XDP_PASS
 }
 
-// Userspace program accessing shared variables only
+// Userspace program accessing shared and pinned variables
 fn main() -> i32 {
     // Can access shared variables via skeleton
     enable_logging = true
     
+    // Can access pinned variables (persisted across program restarts)
+    persistent_state = true
+    
     while (true) {
-        print("Packets processed: ", packet_count)  // Via skeleton
+        print("Packets processed: ", packet_count)             // Via skeleton
+        print("Total packets: ", persistent_packet_count)      // Via pinned map
+        print("Config: ", persistent_config)                   // Via pinned map
         // Cannot access crypto_nonce or internal_debug_flags
         sleep(1000)
     }
@@ -321,24 +348,109 @@ fn main() -> i32 {
 ```
 
 **Scoping Rules:**
-- **Shared variables** (default): Accessible from both kernel and userspace via libbpf skeleton
+- **Shared variables** (`var`): Accessible from both kernel and userspace via libbpf skeleton
+- **Pinned shared variables** (`pin var`): Accessible from both kernel and userspace, persisted to filesystem
 - **Local variables** (`local var`): Kernel-only, hidden from userspace, not included in skeleton generation
+
+**Pinning Rules:**
+- Only shared variables can be pinned (not `local var`)
+- Pinned variables are persisted to `/sys/fs/bpf/<PROJECT_NAME>/globals/pinned_globals`
+- Compilation error if attempting to pin local variables: `pin local var` is invalid
 
 **Security Benefits:**
 - Sensitive data like cryptographic nonces remain kernel-only
 - Internal debugging state isn't exposed to userspace
 - Clear separation between public API and internal implementation
+- Pinned variables provide persistent state across program restarts
 
-#### 3.3.5 Global Variables vs Maps and Configs
+#### 3.3.5 Pinned Global Variables Implementation
 
-| Feature | Global Variables | Maps | Configs |
-|---------|------------------|------|---------|
-| **Syntax** | `var name: type = value` | `[pin] [@flags(...)] map<K,V> name : Type(size)` | `config name { field: type = value }` |
-| **Use Case** | Simple shared state | Complex data structures | Structured configuration |
-| **Access** | Direct variable access | Key-value lookup | Dotted field access |
-| **Performance** | Fastest | Medium | Fastest |
-| **Flexibility** | Limited | High | Medium |
-| **Scoping** | Shared or local | Always shared | Always shared |
+Since eBPF doesn't support pinning global variables directly, the compiler implements pinned global variables using a transparent map-based approach:
+
+**Compiler Implementation Strategy:**
+1. **Collect all pinned global variables** in order of declaration
+2. **Generate a struct** containing all pinned variables with their original types
+3. **Create a single-entry map** to store and pin this struct
+4. **Generate access wrappers** to maintain the original variable access syntax
+
+```kernelscript
+// User writes this:
+pin var packet_count: u64 = 0
+pin var config_string: str<64> = "default"
+pin var enable_feature: bool = false
+
+// Compiler generates (conceptually):
+struct PinnedGlobals {
+    packet_count: u64,
+    config_string: str<64>,
+    enable_feature: bool,
+}
+
+// Single-entry pinned map
+@flags(BPF_F_NO_PREALLOC)
+pin map<u32, PinnedGlobals> __pinned_globals : Array(1)
+
+// Access wrappers (transparent to user):
+// packet_count access becomes: __pinned_globals[0].packet_count
+// config_string access becomes: __pinned_globals[0].config_string
+// enable_feature access becomes: __pinned_globals[0].enable_feature
+```
+
+**Filesystem Location:**
+- Pinned globals map is stored at: `/sys/fs/bpf/<PROJECT_NAME>/globals/pinned_globals`
+- Multiple programs can share the same pinned globals if they have the same project name
+
+**Initialization Behavior:**
+- On first program load, the map is created and initialized with default values
+- On subsequent loads, existing values are preserved from the filesystem
+- Default values are only used when no pinned map exists
+
+**Example Usage:**
+```kernelscript
+// Declaration - user syntax remains clean
+pin var session_counter: u64 = 0
+pin var last_interface: str<16> = "eth0"
+pin var debug_mode: bool = false
+
+@xdp
+fn persistent_monitor(ctx: xdp_md) -> xdp_action {
+    // Compiler transparently converts to map access
+    session_counter += 1  // Becomes: __pinned_globals[0].session_counter += 1
+    
+    if (debug_mode) {     // Becomes: if (__pinned_globals[0].debug_mode) {
+        print("Session: ", session_counter, " Interface: ", last_interface)
+    }
+    
+    return XDP_PASS
+}
+
+// Userspace access - same transparent conversion
+fn main() -> i32 {
+    // Values persist across program restarts
+    print("Previous session count: ", session_counter)
+    
+    // Configure for this session
+    last_interface = "eth1"
+    debug_mode = true
+    
+    var prog_handle = load(persistent_monitor)
+    attach(prog_handle, last_interface, 0)
+    
+    return 0
+}
+```
+
+#### 3.3.6 Global Variables vs Maps and Configs
+
+| Feature | Global Variables | Pinned Global Variables | Maps | Configs |
+|---------|------------------|-------------------------|------|---------|
+| **Syntax** | `var name: type = value` | `pin var name: type = value` | `[pin] [@flags(...)] map<K,V> name : Type(size)` | `config name { field: type = value }` |
+| **Use Case** | Simple shared state | Persistent simple state | Complex data structures | Structured configuration |
+| **Access** | Direct variable access | Direct variable access | Key-value lookup | Dotted field access |
+| **Performance** | Fastest | Fast (single map lookup) | Medium | Fastest |
+| **Flexibility** | Limited | Limited | High | Medium |
+| **Scoping** | Shared or local | Always shared | Always shared | Always shared |
+| **Persistence** | No | Yes (filesystem) | Optional (if pinned) | No |
 
 ### 3.4 Kernel-Userspace Scoping Model
 
@@ -1734,6 +1846,8 @@ Maps declared with the `pin` keyword are automatically pinned to the BPF filesys
 ```
 
 The project name is automatically determined from the package/executable name.
+
+**Note**: The `pin` keyword is also used for global variables (see section 3.3.5), which are pinned to `/sys/fs/bpf/<PROJECT_NAME>/globals/pinned_globals`.
 
 ### 5.1.2 Map Flags
 
@@ -3196,6 +3310,11 @@ var packet_count: u64 = 0
 var enable_debug: bool = false
 var max_allowed_size: u32 = 1500
 
+// Pinned global variables - persisted across program restarts
+pin var total_sessions: u64 = 0
+pin var persistent_config: str<64> = "default_config"
+pin var crash_count: u32 = 0
+
 // Type inference examples
 var inferred_counter = 0            // Type: u32
 var inferred_message = "startup"    // Type: str<8>
@@ -3205,7 +3324,7 @@ var inferred_flag = true            // Type: bool
 var total_bytes: u64
 var interface_name: str<16>
 
-// eBPF program using global variables
+// eBPF program using global and pinned variables
 @xdp
 fn packet_counter(ctx: xdp_md) -> xdp_action {
     var packet = ctx.packet()
@@ -3228,11 +3347,12 @@ fn packet_counter(ctx: xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-// Userspace program using global variables
+// Userspace program using global and pinned variables
 struct Args {
     interface: str<16>,
     debug: bool,
     max_size: u32,
+    reset_stats: bool,
 }
 
 fn main(args: Args) -> i32 {
@@ -3244,10 +3364,24 @@ fn main(args: Args) -> i32 {
     // Initialize uninitialized globals
     total_bytes = 0
     
+    // Handle pinned variables (persistent across restarts)
+    if (args.reset_stats) {
+        total_sessions = 0
+        crash_count = 0
+        persistent_config = "reset_config"
+    } else {
+        // Values persist from previous runs
+        total_sessions += 1  // Increment session counter
+        print("Previous sessions: %d", total_sessions - 1)
+        print("Previous crashes: %d", crash_count)
+        print("Persistent config: %s", persistent_config)
+    }
+    
     if (enable_debug) {
         print("Debug mode enabled")
         print("Max packet size: %d", max_allowed_size)
         print("Interface: %s", interface_name)
+        print("Session number: %d", total_sessions)
     }
     
     // Load and attach program
@@ -3256,15 +3390,18 @@ fn main(args: Args) -> i32 {
     
     if (result != 0) {
         print("Failed to attach program")
+        crash_count += 1  // Track failures in pinned variable
         return 1
     }
     
     print("Packet counter started on interface: %s", interface_name)
+    print("Session %d started", total_sessions)
     
     // Monitor global state
     while (true) {
         if (enable_debug) {
             print("Packets: %d, Total bytes: %d", packet_count, total_bytes)
+            print("Session: %d, Total sessions: %d", total_sessions, total_sessions)
         }
         sleep(5000)
     }
@@ -3456,7 +3593,14 @@ config_declaration = "config" identifier "{" { config_field } "}"
 config_field = identifier ":" type_annotation [ "=" expression ] ","
 
 (* Global variable declarations *)
-global_variable_declaration = [ "local" ] "var" identifier [ ":" type_annotation ] [ "=" expression ] 
+global_variable_declaration = [ "pin" ] [ "local" ] "var" identifier [ ":" type_annotation ] [ "=" expression ]
+
+(* Pinning restrictions:
+   - "pin local var" is a compilation error - local variables cannot be pinned
+   - Only shared variables (without "local") can be pinned
+   - Pinned variables are automatically shared between kernel and userspace
+   - Compiler generates a struct containing all pinned variables and uses a single-entry map
+*) 
 
 (* Scoping rules for KernelScript:
    - Attributed functions (e.g., @xdp, @tc): Kernel space (eBPF) - compiles to eBPF bytecode
