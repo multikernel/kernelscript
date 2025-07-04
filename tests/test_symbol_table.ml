@@ -45,7 +45,6 @@ let create_test_map_decl name is_global =
     max_entries = 256;
     key_size = None;
     value_size = None;
-    attributes = [];
     flags = [];
   } in
   {
@@ -55,6 +54,7 @@ let create_test_map_decl name is_global =
     map_type = HashMap;
     config;
     is_global;
+    is_pinned = false;
     map_pos = dummy_pos;
   }
 
@@ -766,8 +766,8 @@ let test_symbol_conflicts () =
 (** Test map symbol handling *)
 let test_map_symbol_handling () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024) { }
-map<u16, bool> flags : Array(256) { }
+map<u32, u64> counter : HashMap(1024)
+map<u16, bool> flags : Array(256)
 
 @xdp fn map_test(ctx: xdp_md) -> xdp_action {
   counter[1] = 100
@@ -863,7 +863,7 @@ let test_symbol_table_serialization () =
 (** Test comprehensive symbol analysis *)
 let test_comprehensive_symbol_analysis () =
   let program_text = {|
-map<u32, u64> stats : HashMap(1024) { }
+map<u32, u64> stats : HashMap(1024)
 
 @helper
 fn update_counter(key: u32, increment: u64) -> u64 {

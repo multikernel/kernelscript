@@ -36,7 +36,7 @@ let comprehensive_flags_analysis _ _ = ({
 (** Test basic map flag operations *)
 let test_basic_map_flags () =
   let program_text = {|
-map<u32, u64> basic_map : HashMap(1024) { }
+map<u32, u64> basic_map : HashMap(1024)
 
 @xdp fn flag_test(ctx: xdp_md) -> xdp_action {
   return 2
@@ -59,10 +59,10 @@ map<u32, u64> basic_map : HashMap(1024) { }
 (** Test different map types and their flags *)
 let test_different_map_type_flags () =
   let program_text = {|
-map<u32, u64> hash_map : HashMap(1024) { }
-map<u32, u64> array_map : Array(256) { }
-map<u32, u64> lru_map : LruHash(512) { }
-map<u32, u64> percpu_map : PercpuHash(2048) { }
+map<u32, u64> hash_map : HashMap(1024)
+map<u32, u64> array_map : Array(256)
+map<u32, u64> lru_map : LruHash(512)
+map<u32, u64> percpu_map : PercpuHash(2048)
 
 @xdp fn types_test(ctx: xdp_md) -> xdp_action {
   return 2
@@ -104,7 +104,7 @@ map<u32, u64> percpu_map : PercpuHash(2048) { }
 (** Test map flags validation *)
 let test_map_flags_validation () =
   let valid_program = {|
-map<u32, u64> valid_map : HashMap(1024) { }
+map<u32, u64> valid_map : HashMap(1024)
 
 @xdp fn valid_flags(ctx: xdp_md) -> xdp_action {
   return 2
@@ -112,7 +112,7 @@ map<u32, u64> valid_map : HashMap(1024) { }
 |} in
   
   let invalid_program = {|
-map<u32, u64> invalid_map : HashMap(0) { }  // Invalid size
+map<u32, u64> invalid_map : HashMap(0)  // Invalid size
 
 @xdp fn invalid_flags(ctx: xdp_md) -> xdp_action {
   return 2
@@ -142,7 +142,7 @@ map<u32, u64> invalid_map : HashMap(0) { }  // Invalid size
 (** Test map flags with initialization *)
 let test_map_flags_with_initialization () =
   let program_text = {|
-map<u32, u64> initialized_map : HashMap(1024) { }
+map<u32, u64> initialized_map : HashMap(1024)
 
 @xdp fn init_test(ctx: xdp_md) -> xdp_action {
   return 2
@@ -167,10 +167,10 @@ map<u32, u64> initialized_map : HashMap(1024) { }
 (** Test map flags for different key/value types *)
 let test_map_flags_key_value_types () =
   let program_text = {|
-map<u8, u16> small_map : HashMap(64) { }
-map<u32, u64> medium_map : HashMap(1024) { }
-map<u64, bool> large_key_map : HashMap(512) { }
-map<bool, u32> bool_key_map : HashMap(2) { }
+map<u8, u16> small_map : HashMap(64)
+map<u32, u64> medium_map : HashMap(1024)
+map<u64, bool> large_key_map : HashMap(512)
+map<bool, u32> bool_key_map : HashMap(2)
 
 @xdp fn types_test(ctx: xdp_md) -> xdp_action {
   return 2
@@ -201,7 +201,7 @@ map<bool, u32> bool_key_map : HashMap(2) { }
 (** Test map flags compatibility with program types *)
 let test_map_flags_program_compatibility () =
   let xdp_program = {|
-map<u32, u64> xdp_map : HashMap(1024) { }
+map<u32, u64> xdp_map : HashMap(1024)
 
 @xdp fn xdp_test(ctx: xdp_md) -> xdp_action {
   return 2
@@ -209,7 +209,7 @@ map<u32, u64> xdp_map : HashMap(1024) { }
 |} in
   
   let tc_program = {|
-map<u32, u64> tc_map : Array(256) { }
+map<u32, u64> tc_map : Array(256)
 
 @tc fn tc_test(ctx: TcContext) -> TcAction {
   return 0
@@ -239,11 +239,11 @@ map<u32, u64> tc_map : Array(256) { }
 (** Test map flags size limits *)
 let test_map_flags_size_limits () =
   let test_cases = [
-    ("map<u32, u64> tiny : HashMap(1) { }", 1, true);
-    ("map<u32, u64> small : HashMap(256) { }", 256, true);
-    ("map<u32, u64> medium : HashMap(1024) { }", 1024, true);
-    ("map<u32, u64> large : HashMap(65536) { }", 65536, true);
-    ("map<u32, u64> too_large : HashMap(1000000) { }", 1000000, false);
+    ("map<u32, u64> tiny : HashMap(1)", 1, true);
+    ("map<u32, u64> small : HashMap(256)", 256, true);
+    ("map<u32, u64> medium : HashMap(1024)", 1024, true);
+    ("map<u32, u64> large : HashMap(65536)", 65536, true);
+    ("map<u32, u64> too_large : HashMap(1000000)", 1000000, false);
   ] in
   
   List.iter (fun (map_def, expected_size, should_be_valid) ->

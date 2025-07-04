@@ -94,7 +94,7 @@ fn main(args: Args) -> i32 {
 ### 2.1 Keywords
 ```
 program     fn          var         const       config      local
-map         type        struct      enum        if          else
+map         pin         type        struct      enum        if          else
 for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
@@ -333,7 +333,7 @@ fn main() -> i32 {
 
 | Feature | Global Variables | Maps | Configs |
 |---------|------------------|------|---------|
-| **Syntax** | `var name: type = value` | `map<K,V> name : Type(size)` | `config name { field: type = value }` |
+| **Syntax** | `var name: type = value` | `[pin] [@flags(...)] map<K,V> name : Type(size)` | `config name { field: type = value }` |
 | **Use Case** | Simple shared state | Complex data structures | Structured configuration |
 | **Access** | Direct variable access | Key-value lookup | Dotted field access |
 | **Performance** | Fastest | Medium | Fastest |
@@ -1716,39 +1716,75 @@ fn bounds_safety_example(ctx: xdp_md) -> xdp_action {
 
 ### 5.1 Map Declaration Syntax
 ```ebnf
-map_declaration = "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")" 
-                  [ map_attributes ] ";" 
+map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")"
 
 map_type = "HashMap" | "Array" | "ProgArray" | "PerCpuHash" | "PerCpuArray" |
            "LruHash" | "RingBuffer" | "PerfEvent" | "StackTrace" 
 
-map_config = max_entries [ "," additional_config ] 
-map_attributes = "{" { map_attribute "," } "}" 
-map_attribute = "pinned" | "read_only" | "write_only" | "userspace_writable" |
-                "pin_path" "=" string_literal | "permissions" "=" string_literal 
+map_config = max_entries [ "," additional_config ]
+flag_expression = identifier | ( identifier { "|" identifier } )
 ```
+
+### 5.1.1 Map Pinning
+
+Maps declared with the `pin` keyword are automatically pinned to the BPF filesystem using standardized paths:
+
+```
+/sys/fs/bpf/<PROJECT_NAME>/maps/<MAP_NAME>
+```
+
+The project name is automatically determined from the package/executable name.
+
+### 5.1.2 Map Flags
+
+Map flags can be specified using the `@flags` attribute:
+
+```kernelscript
+// Map with flags
+@flags(BPF_F_NO_PREALLOC | BPF_F_NO_COMMON_LRU)
+map<u32, PacketData> dynamic_cache : HashMap(1024)
+
+// Pinned map with flags
+@flags(BPF_F_NO_PREALLOC)
+pin map<u32, FlowData> persisted_flows : HashMap(2048)
+```
+
+**Supported flags:**
+- `BPF_F_NO_PREALLOC` - Disable preallocation of map elements
+- `BPF_F_NO_COMMON_LRU` - Disable common LRU for LRU maps
+- `BPF_F_NUMA_NODE` - Specify NUMA node for map allocation
+- `BPF_F_RDONLY` - Map is read-only from program side
+- `BPF_F_WRONLY` - Map is write-only from program side
+- `BPF_F_RDONLY_PROG` - Map is read-only from program side
+- `BPF_F_WRONLY_PROG` - Map is write-only from program side
 
 ### 5.2 Global Maps (Shared Across Programs)
 
-Global maps are declared at the global scope and are automatically shared between all eBPF programs:
+Global maps are declared at the global scope and are automatically shared between all eBPF programs.
+
+**Map Declaration Syntax:**
+- `map<K,V> name : Type(size)` - Local map (program-specific)
+- `pin map<K,V> name : Type(size)` - Pinned map (persisted to filesystem)
+- `@flags(...) map<K,V> name : Type(size)` - Map with specific flags
+- `@flags(...) pin map<K,V> name : Type(size)` - Pinned map with flags
+
+**Automatic Path Generation:**
+Pinned maps are automatically stored at `/sys/fs/bpf/<PROJECT_NAME>/maps/<MAP_NAME>`.
 
 ```kernelscript
 // Global maps - automatically shared between all programs
-map<FlowKey, FlowStats> global_flows : HashMap(10000) {
-    pinned: "/sys/fs/bpf/global_flows",
-}
 
-map<u32, InterfaceStats> interface_stats : Array(256) {
-    pinned: "/sys/fs/bpf/interface_stats",
-}
+// Pinned maps - persisted to filesystem (/sys/fs/bpf/<PROJECT>/maps/<NAME>)
+pin map<FlowKey, FlowStats> global_flows : HashMap(10000)
+pin map<u32, InterfaceStats> interface_stats : Array(256)
+pin map<SecurityEvent> security_events : RingBuffer(1024 * 1024)
 
-map<SecurityEvent> security_events : RingBuffer(1024 * 1024) {
-    pinned: "/sys/fs/bpf/security_events",
-}
+// Non-pinned maps - shared during runtime but not persisted
+map<u32, TempData> session_cache : HashMap(512)
 
-map<ConfigKey, ConfigValue> global_config : Array(64) {
-    pinned: "/sys/fs/bpf/global_config",
-}
+// Maps with flags
+@flags(BPF_F_NO_PREALLOC)
+pin map<ConfigKey, ConfigValue> global_config : Array(64)
 
 // Program 1: Can access all global maps
 @xdp
@@ -1825,8 +1861,8 @@ fn security_analyzer(ctx: LsmContext) -> i32 {
 
 ```kernelscript
 // Global maps - accessible by all eBPF programs
-map<u32, GlobalCounter> global_counters : Array(256)
-map<Event> event_stream : RingBuffer(1024 * 1024)
+pin map<u32, GlobalCounter> global_counters : Array(256)
+pin map<Event> event_stream : RingBuffer(1024 * 1024)
 
 @kprobe("sys_read")
 fn producer(ctx: KprobeContext) -> i32 {
@@ -1863,25 +1899,15 @@ fn consumer(ctx: KprobeContext) -> i32 {
 ### 5.4 Map Examples
 ```kernelscript
 // Global maps accessible by all programs
-map<u32, PacketStats> packet_stats : HashMap(1024) {
-    pinned: "/sys/fs/bpf/packet_stats",
-}
+pin map<u32, PacketStats> packet_stats : HashMap(1024)
 
-map<u32, u64> counters : PerCpuArray(256) {
-    pinned: "/sys/fs/bpf/counters",
-}
+pin map<u32, u64> counters : PerCpuArray(256)
 
-map<FlowKey, FlowInfo> active_flows : LruHash(10000) {
-    pinned: "/sys/fs/bpf/active_flows",
-}
+pin map<FlowKey, FlowInfo> active_flows : LruHash(10000)
 
-map<PacketEvent> events : RingBuffer(1024 * 1024) {
-    pinned: "/sys/fs/bpf/events",
-}
+pin map<PacketEvent> events : RingBuffer(1024 * 1024)
 
-map<ConfigKey, ConfigValue> config_map : Array(16) {
-    pinned: "/sys/fs/bpf/config",
-}
+pin map<ConfigKey, ConfigValue> config_map : Array(16)
 
 @xdp
 fn simple_monitor(ctx: xdp_md) -> xdp_action {
@@ -2491,17 +2517,11 @@ fn main() -> i32 {
 ### 8.2 Top-Level Userspace Coordination with Global Maps
 ```kernelscript
 // Global maps (accessible from all programs and userspace)
-map<FlowKey, FlowStats> global_flows : HashMap(10000) {
-    pinned: "/sys/fs/bpf/global_flows",
-}
+pin map<FlowKey, FlowStats> global_flows : HashMap(10000)
 
-map<Event> global_events : RingBuffer(1024 * 1024) {
-    pinned: "/sys/fs/bpf/global_events",
-}
+pin map<Event> global_events : RingBuffer(1024 * 1024)
 
-map<ConfigKey, ConfigValue> global_config : Array(64) {
-    pinned: "/sys/fs/bpf/global_config",
-}
+pin map<ConfigKey, ConfigValue> global_config : Array(64)
 
 // Multiple eBPF programs working together
 @xdp fn network_monitor(ctx: xdp_md) -> xdp_action {
@@ -3414,8 +3434,7 @@ global_declaration = config_declaration | map_declaration | type_declaration |
                     global_variable_declaration | bindings_declaration | import_declaration 
 
 (* Map declarations - global scope *)
-map_declaration = "map" "<" key_type "," value_type ">" identifier 
-                  ":" map_type "(" map_config ")" [ map_attributes ] 
+map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")"
 
 map_type = "HashMap" | "Array" | "PerCpuHash" | "PerCpuArray" | "LruHash" |
            "RingBuffer" | "PerfEvent" | "StackTrace" | "ProgArray" 
@@ -3423,8 +3442,7 @@ map_type = "HashMap" | "Array" | "PerCpuHash" | "PerCpuArray" | "LruHash" |
 map_config = integer_literal [ "," map_config_item { "," map_config_item } ] 
 map_config_item = identifier "=" literal 
 
-map_attributes = "{" map_attribute { "," map_attribute } [ "," ] "}" 
-map_attribute = identifier [ "=" literal ] 
+flag_expression = identifier | ( identifier { "|" identifier } ) 
 
 (* eBPF program function attributes *)
 attribute_list = attribute { attribute }

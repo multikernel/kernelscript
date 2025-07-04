@@ -24,7 +24,7 @@ end
 let make_test_position () = make_position 1 1 "test.ks"
 
 let make_test_map_config max_entries =
-  make_map_config max_entries []
+  make_map_config max_entries ()
 
 let make_test_global_map () =
   make_map_declaration 
@@ -34,6 +34,7 @@ let make_test_global_map () =
     Array 
     (make_test_map_config 256) 
     true 
+    ~is_pinned:false
     (make_test_position ())
 
 let make_test_global_map_2 () =
@@ -44,6 +45,7 @@ let make_test_global_map_2 () =
     HashMap 
     (make_test_map_config 100) 
     true 
+    ~is_pinned:false
     (make_test_position ())
 
 let make_test_main_function () =

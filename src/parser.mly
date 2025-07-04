@@ -14,7 +14,7 @@
 %token NULL
 
 /* Keywords */
-%token FN MAP TYPE STRUCT ENUM
+%token FN MAP PIN TYPE STRUCT ENUM
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
@@ -64,8 +64,6 @@
 %type <string * int option> enum_variant
 %type <Ast.map_type> map_type
 
-%type <Ast.map_attribute list> map_attributes
-%type <Ast.map_attribute> map_attribute
 %type <Ast.map_flag list> flag_expression
 %type <Ast.map_flag> flag_item
 
@@ -407,20 +405,19 @@ struct_literal_field:
 /* Map Declarations */
 map_declaration:
   | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
-    { let config = make_map_config (fst $11) [] in
-      make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
-    { let config = make_map_config (fst $11) $14 in
-      make_map_declaration $7 $3 $5 $9 config true (make_pos ()) }
-
-/* Local Map Declarations (inside program blocks) */
-local_map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
-    { let config = make_map_config (fst $11) [] in
-      make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN LBRACE map_attributes RBRACE
-    { let config = make_map_config (fst $11) $14 in
-      make_map_declaration $7 $3 $5 $9 config false (make_pos ()) }
+    { let config = make_map_config (fst $11) ~flags:[] () in
+      make_map_declaration $7 $3 $5 $9 config true ~is_pinned:false (make_pos ()) }
+  | PIN MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+    { let config = make_map_config (fst $12) ~flags:[] () in
+      make_map_declaration $8 $4 $6 $10 config true ~is_pinned:true (make_pos ()) }
+  | AT IDENTIFIER LPAREN flag_expression RPAREN MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+    { if $2 <> "flags" then failwith ("Unknown map attribute: " ^ $2);
+      let config = make_map_config (fst $16) ~flags:$4 () in
+      make_map_declaration $12 $8 $10 $14 config true ~is_pinned:false (make_pos ()) }
+  | AT IDENTIFIER LPAREN flag_expression RPAREN PIN MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+    { if $2 <> "flags" then failwith ("Unknown map attribute: " ^ $2);
+      let config = make_map_config (fst $17) ~flags:$4 () in
+      make_map_declaration $13 $9 $11 $15 config true ~is_pinned:true (make_pos ()) }
 
 map_type:
   | IDENTIFIER { 
@@ -433,33 +430,6 @@ map_type:
       | "RingBuffer" -> RingBuffer
       | "PerfEvent" -> PerfEvent
       | unknown -> failwith ("Unknown map type: " ^ unknown)
-    }
-
-map_attributes:
-  | /* empty */ { [] }
-  | map_attribute { [$1] }
-  | map_attribute COMMA map_attributes { $1 :: $3 }
-
-map_attribute:
-  | IDENTIFIER COLON STRING { 
-      match $1 with
-      | "pinned" -> Pinned $3
-      | "max_entries" -> failwith "max_entries should be specified in map type declaration (e.g., HashMap(1024)), not in attributes block"
-      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
-    }
-  | IDENTIFIER COLON INT { 
-      match $1 with
-      | "max_entries" -> failwith "max_entries should be specified in map type declaration (e.g., HashMap(1024)), not in attributes block"
-      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
-    }
-  | IDENTIFIER COLON flag_expression {
-      match $1 with
-      | "flags" -> FlagsAttr $3
-      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
-    }
-  | IDENTIFIER { 
-      match $1 with
-      | unknown -> failwith ("Unknown map attribute: " ^ unknown)
     }
 
 flag_expression:

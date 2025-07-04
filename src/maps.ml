@@ -246,10 +246,7 @@ let ebpf_to_ast_map_type = function
   | PerfEvent -> Ast.PerfEvent
   | _ -> Ast.HashMap (* Default fallback *)
 
-(** Convert AST map_attribute to Maps map_attribute *)
-let ast_to_maps_attribute = function
-  | Ast.Pinned path -> Pinned path
-  | Ast.FlagsAttr _ -> failwith "FlagsAttr should be handled separately"
+(** Convert AST map_attribute to Maps map_attribute - removed since old attribute system is gone *)
 
 (** Convert AST map flags to integer representation *)
 let ast_flags_to_int flags =
@@ -266,13 +263,12 @@ let ast_flags_to_int flags =
 (** Convert AST map declaration to Maps map declaration *)
 let ast_to_maps_declaration ast_map =
   let ebpf_map_type = ast_to_ebpf_map_type ast_map.Ast.map_type in
-  let attributes = List.map ast_to_maps_attribute ast_map.Ast.config.attributes in
   let flags = ast_flags_to_int ast_map.Ast.config.flags in
   let config = {
     max_entries = ast_map.Ast.config.max_entries;
     key_size = ast_map.Ast.config.key_size;
     value_size = ast_map.Ast.config.value_size;
-    attributes = attributes;
+    attributes = []; (* No attributes since old attribute system is removed *)
     inner_map_fd = None;
     flags = flags;
   } in

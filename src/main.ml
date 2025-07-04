@@ -291,6 +291,9 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     in
     Printf.printf "✅ Successfully parsed %d declarations\n\n" (List.length ast);
     
+    (* Extract base name for project name *)
+    let base_name = Filename.remove_extension (Filename.basename input_file) in
+    
     (* Phase 2: Symbol table analysis with BTF type loading *)
     current_phase := "Symbol Analysis";
     Printf.printf "Phase 2: %s\n" !current_phase;
@@ -412,7 +415,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
         (List.length filtered_btf_declarations) 
         (List.length btf_declarations - List.length filtered_btf_declarations);
       
-      let symbol_table = Symbol_table.build_symbol_table ~builtin_asts:[filtered_btf_declarations] ast in
+      let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[filtered_btf_declarations] ast in
     Printf.printf "✅ Symbol table created successfully with BTF types\n\n";
     
     (* Phase 3: Multi-program analysis *)
@@ -493,7 +496,6 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       ~type_aliases ~variable_type_aliases ~kfunc_declarations optimized_ir in
       
     (* Determine output directory *)
-    let base_name = Filename.remove_extension (Filename.basename input_file) in
     let output_dir = match output_dir with
       | Some dir -> dir
       | None -> base_name

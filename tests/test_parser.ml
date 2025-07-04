@@ -73,6 +73,15 @@ let make_for_iter_stmt index_var value_var expr body = {
   stmt_pos = dummy_loc;
 }
 
+(** Helper function to parse string with builtin types loaded via symbol table *)
+let parse_string_with_builtins code =
+  let ast = parse_string code in
+  (* Create symbol table with test builtin types *)
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  (* Run type checking with builtin types loaded *)
+  let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+  typed_ast
+
 (** Helper function to test parsing statements *)
 let test_parse_statements input expected =
   let program_text = Printf.sprintf {|
@@ -322,7 +331,7 @@ let test_operator_precedence () =
 (** Test complete program parsing *)
 let test_complete_program_parsing () =
   let program_text = {|
-map<u32, u64> packet_count : HashMap(1024) { }
+map<u32, u64> packet_count : HashMap(1024)
 
 @helper
 fn process_packet(src_ip: u32) -> u64 {
@@ -336,14 +345,14 @@ fn process_packet(src_ip: u32) -> u64 {
   var count = process_packet(src_ip)
   
   if (count > 100) {
-    return 1  // DROP
+    return XDP_DROP
   }
   
-  return 2  // PASS
+  return XDP_PASS
 }
 |} in
   try
-    let ast = parse_string program_text in
+    let ast = parse_string_with_builtins program_text in
     check int "complete program AST length" 3 (List.length ast);
     
     (* Check map declaration *)

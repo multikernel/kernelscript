@@ -35,9 +35,9 @@ open Alcotest
 let parse_string_with_builtins code =
   let ast = parse_string code in
   (* Create symbol table with test builtin types *)
-  let _symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
   (* Run type checking with builtin types *)
-  let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+  let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
   typed_ast
 
 (** Helper function for position printing *)
@@ -399,18 +399,16 @@ fn main(wrong_param: u32) -> i32 {
 (** Test 6: Map file descriptor generation for userspace *)
 let test_map_fd_generation () =
   let code = {|
-map<u32, u32> shared_counter : HashMap(1024) {
-  pinned: "/sys/fs/bpf/shared_counter"
-}
+pin map<u32, u32> shared_counter : HashMap(1024)
 
 @xdp fn packet_counter(ctx: xdp_md) -> xdp_action {
   shared_counter[1] = 100
-  return 2  // XDP_PASS
+  return XDP_PASS
 }
 
 @tc fn packet_filter(ctx: TcContext) -> TcAction {
   shared_counter[2] = 200
-  return 0  // TC_ACT_OK
+  return TC_ACT_OK
 }
 
 fn main() -> i32 {

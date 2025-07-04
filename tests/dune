@@ -21,7 +21,7 @@
 (executable
  (name test_parser)
  (modules test_parser)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_type_checker)
@@ -87,7 +87,7 @@
 (executable
  (name test_map_syntax)
  (modules test_map_syntax)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest str test_utils))
 
 (executable
  (name test_map_assignment)

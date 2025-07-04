@@ -1431,18 +1431,14 @@ let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
   let ir_key_type = ast_type_to_ir_type_with_context symbol_table map_decl.Ast.key_type in
   let ir_value_type = ast_type_to_ir_type_with_context symbol_table map_decl.Ast.value_type in
   let ir_map_type = ast_map_type_to_ir_map_type map_decl.Ast.map_type in
-  
-  let ir_attributes = List.filter_map (fun attr ->
-    match attr with
-    | Ast.Pinned _ -> None (* Handled separately *)
-    | Ast.FlagsAttr _ -> None (* Handled separately *)
-  ) map_decl.Ast.config.attributes in
-  
-  let pin_path = List.fold_left (fun _acc attr ->
-    match attr with
-    | Ast.Pinned path -> Some path
-    | _ -> None
-  ) None map_decl.Ast.config.attributes in
+
+  (* Generate standardized pin path if map is pinned *)
+  let pin_path = 
+    if map_decl.Ast.is_pinned then
+      Some (Printf.sprintf "/sys/fs/bpf/%s/maps/%s" symbol_table.project_name map_decl.Ast.name)
+    else
+      None
+  in
   
   (* Convert AST flags to integer representation *)
   let flags = Maps.ast_flags_to_int map_decl.Ast.config.flags in
@@ -1453,7 +1449,6 @@ let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
     ir_value_type
     ir_map_type
     map_decl.Ast.config.max_entries
-    ~attributes:ir_attributes
     ~flags:flags
     ~is_global:map_decl.Ast.is_global
     ?pin_path:pin_path

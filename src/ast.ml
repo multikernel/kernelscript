@@ -66,16 +66,11 @@ and bpf_type =
   (* Program handle type - represents a loaded program *)
   | ProgramHandle
 
-(** Map configuration and attributes *)
-type map_attribute =
-  | Pinned of string
-  | FlagsAttr of map_flag list
-
+(** Map configuration *)
 type map_config = {
   max_entries: int;
   key_size: int option;
   value_size: int option;
-  attributes: map_attribute list;
   flags: map_flag list;
 }
 
@@ -87,6 +82,7 @@ type map_declaration = {
   map_type: map_type;
   config: map_config;
   is_global: bool;
+  is_pinned: bool;
   map_pos: position;
 }
 
@@ -333,28 +329,22 @@ let make_kernel_struct_def name fields = StructDef (name, fields, true) (* Mark 
 
 let make_type_alias name bpf_type = TypeAlias (name, bpf_type)
 
-let make_map_config max_entries ?key_size ?value_size ?(flags=[]) attributes = 
-  (* Extract flags from attributes and combine with explicit flags *)
-  let (regular_attrs, extracted_flags) = List.fold_left (fun (attrs, flags_acc) attr ->
-    match attr with
-    | FlagsAttr flag_list -> (attrs, flag_list @ flags_acc)
-    | other -> (other :: attrs, flags_acc)
-  ) ([], flags) attributes in
+let make_map_config max_entries ?key_size ?value_size ?(flags=[]) () = 
   {
     max_entries;
     key_size;
     value_size;
-    attributes = List.rev regular_attrs;
-    flags = extracted_flags;
+    flags;
   }
 
-let make_map_declaration name key_type value_type map_type config is_global pos = {
+let make_map_declaration name key_type value_type map_type config is_global ~is_pinned pos = {
   name;
   key_type;
   value_type;
   map_type;
   config;
   is_global;
+  is_pinned;
   map_pos = pos;
 }
 
@@ -623,21 +613,18 @@ let string_of_declaration = function
       in
       type_str
   | MapDecl md ->
-      let attr_strs = List.map (fun attr ->
-        match attr with
-        | Pinned path -> Printf.sprintf "pinned = \"%s\"" path
-        | FlagsAttr flags -> Printf.sprintf "flags = %s" 
-            (String.concat " | " (List.map string_of_map_flag flags))
-      ) md.config.attributes in
-      let config_str = Printf.sprintf "max_entries = %d" md.config.max_entries in
-      let all_config = config_str :: attr_strs in
-      Printf.sprintf "map<%s, %s> %s : %s(%s) {\n  %s\n}"
+      let pin_str = if md.is_pinned then "pin " else "" in
+      let flags_str = if md.config.flags = [] then "" else
+        "@flags(" ^ (String.concat " | " (List.map string_of_map_flag md.config.flags)) ^ ") "
+      in
+      Printf.sprintf "%s%smap<%s, %s> %s : %s(%s)"
+        flags_str
+        pin_str
         (string_of_bpf_type md.key_type)
         (string_of_bpf_type md.value_type)
         md.name
         (string_of_map_type md.map_type)
         (string_of_int md.config.max_entries)
-        (String.concat ";\n  " all_config)
   | ConfigDecl config_decl ->
       let fields_str = String.concat ",\n    " (List.map (fun field ->
         let default_str = match field.field_default with

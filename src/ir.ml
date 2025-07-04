@@ -656,9 +656,7 @@ let ast_map_type_to_ir_map_type = function
   | RingBuffer -> IRRingBuffer
   | PerfEvent -> IRPerfEvent
 
-let ast_map_attr_to_ir_map_attr = function
-  | Ast.Pinned path -> Pinned path
-  | Ast.FlagsAttr _ -> failwith "FlagsAttr should be handled separately in IR conversion"
+(* ast_map_attr_to_ir_map_attr function removed since old attribute system is gone *)
 
 (** Pretty printing functions for debugging *)
 

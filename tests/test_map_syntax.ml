@@ -1,11 +1,19 @@
 open Kernelscript.Ast
 open Kernelscript.Parse
-open Kernelscript.Type_checker
 open Alcotest
 
 (** Test suite for Map Syntax and Operations *)
 
 let _test_position = make_position 1 1 "test.ks"
+
+(** Helper function to parse string with builtin types loaded via symbol table *)
+let parse_string_with_builtins code =
+  let ast = parse_string code in
+  (* Create symbol table with test builtin types *)
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  (* Run type checking with builtin types loaded *)
+  let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+  (typed_ast, symbol_table)
 
 (** Helper function to check if string contains substring *)
 let contains_substr str substr =
@@ -20,15 +28,17 @@ let contains_substr str substr =
 let test_map_declaration_parsing () =
   let test_cases = [
     (* Basic HashMap *)
-    ("map<u32, u64> test_map : HashMap(1024) { }", true);
+    ("map<u32, u64> test_map : HashMap(1024)", true);
     (* Array map *)
-    ("map<u32, u32> array_map : Array(512) { }", true);
+    ("map<u32, u32> array_map : Array(512)", true);
     (* PercpuHash *)
-    ("map<u64, u64> percpu_map : PercpuHash(256) { }", true);
+    ("map<u64, u64> percpu_map : PercpuHash(256)", true);
     (* Invalid syntax - wrong order *)
-    ("map bad_map : HashMap<u32, u64>(1024) { }", false);
+    ("map bad_map : HashMap<u32, u64>(1024)", false);
     (* Invalid syntax - missing max_entries *)
-    ("map<u32, u64> default_map : HashMap() { }", false);
+    ("map<u32, u64> default_map : HashMap()", false);
+    (* Old syntax with blocks - should fail *)
+    ("map<u32, u64> old_map : HashMap(1024) { }", false);
   ] in
   
   List.iter (fun (code, should_succeed) ->
@@ -52,9 +62,13 @@ let test_blockless_map_declaration () =
     ("map<u64, u64> percpu_map : PercpuHash(256)", true);
     (* Block-less LruHash *)
     ("map<u32, u64> lru_map : LruHash(128)", true);
-    (* Invalid - missing semicolon *)
-    ("map<u32, u64> invalid_map : HashMap(1024)", false);
-    (* Invalid - missing semicolon with block *)
+    (* Pinned map *)
+    ("pin map<u32, u64> pinned_map : HashMap(1024)", true);
+    (* Map with flags *)
+    ("@flags(no_prealloc) map<u32, u64> flags_map : HashMap(1024)", true);
+    (* Combined pin and flags *)
+    ("@flags(rdonly) pin map<u32, u64> combined_map : HashMap(1024)", true);
+    (* Invalid - old syntax with blocks *)
     ("map<u32, u64> invalid_map : HashMap(1024) { }", false);
   ] in
   
@@ -68,21 +82,23 @@ let test_blockless_map_declaration () =
       check bool ("blockless parsing: " ^ code) should_succeed false
   ) test_cases
 
-(** Test map declarations with attributes *)
+(** Test map declarations with new attributes *)
 let test_map_attributes_syntax () =
   let test_cases = [
-    (* Map with pinned attribute *)
-    ("map<u32, u64> pinned_map : HashMap(1024) {\n    pinned: \"/sys/fs/bpf/test_map\"\n}", true);
-    (* Map with pinned attribute (single line) *)
-    ("map<u32, u64> pinned_map : HashMap(1024) { pinned: \"/path\" }", true);
-    (* Empty block *)
-    ("map<u32, u64> empty_map : HashMap(1024) { }", true);
-    (* Map with multiline empty block *)
-    ("map<u32, u64> multiline_map : HashMap(1024) {\n}", true);
-    (* Invalid attribute *)
-    ("map<u32, u64> invalid_map : HashMap(1024) { invalid_attr: \"value\" }", false);
-    (* Invalid max_entries in block *)
-    ("map<u32, u64> invalid_map : HashMap(1024) { max_entries: 512 }", false);
+    (* Pinned map *)
+    ("pin map<u32, u64> pinned_map : HashMap(1024)", true);
+    (* Map with flags *)
+    ("@flags(no_prealloc) map<u32, u64> flags_map : HashMap(1024)", true);
+    (* Combined attributes *)
+    ("@flags(rdonly) pin map<u32, u64> combined_map : HashMap(1024)", true);
+    (* Multiple flags *)
+    ("@flags(no_prealloc | rdonly) map<u32, u64> multi_flags_map : HashMap(1024)", true);
+    (* Regular map without attributes *)
+    ("map<u32, u64> regular_map : HashMap(1024)", true);
+    (* Invalid - old syntax with blocks *)
+    ("map<u32, u64> invalid_map : HashMap(1024) { pinned: \"/path\" }", false);
+    (* Invalid - old syntax with empty blocks *)
+    ("map<u32, u64> invalid_map : HashMap(1024) { }", false);
   ] in
   
   List.iter (fun (code, should_succeed) ->
@@ -103,47 +119,44 @@ map<u32, u64> simple_counter : HashMap(512)
 map<u32, u32> lookup_array : Array(256)
 map<u64, u64> percpu_stats : PercpuHash(128)
 
-// Maps with empty blocks
-map<u32, u64> empty_block_map : HashMap(1024) { }
-map<u32, u32> multiline_empty : LruHash(256) {
-}
+// Pinned maps
+pin map<u32, u64> pinned_global : HashMap(2048)
+pin map<u32, u64> pinned_local : HashMap(512)
 
-// Maps with attributes
-map<u32, u64> pinned_global : HashMap(2048) {
-    pinned: "/sys/fs/bpf/global_map"
-}
+// Maps with flags
+@flags(no_prealloc) map<u32, u64> efficient_map : HashMap(1024)
+@flags(rdonly) map<u32, u64> readonly_map : HashMap(256)
 
-map<u32, u64> pinned_local : HashMap(512) {
-    pinned: "/sys/fs/bpf/local_map"
-}
+// Combined attributes
+@flags(no_prealloc | rdonly) pin map<u32, u64> combined_map : HashMap(1024)
 
 @xdp fn test_syntax(ctx: xdp_md) -> xdp_action {
   // Test all map types can be used
   simple_counter[42] = 100
   lookup_array[10] = 200
   percpu_stats[123] = 300
-  empty_block_map[1] = 400
-  multiline_empty[2] = 500
-  pinned_global[3] = 600
-  pinned_local[4] = 700
+  pinned_global[1] = 400
+  pinned_local[2] = 500
+  efficient_map[3] = 600
+  readonly_map[4] = 700
+  combined_map[5] = 800
   
-  return 2
+  return XDP_PASS
 }
 |} in
   try
-    let _ = parse_string program in
+    let _ = parse_string_with_builtins program in
     check bool "comprehensive syntax parsing" true true
   with
-  | _ ->
-    check bool "comprehensive syntax parsing" false true
+  | exn ->
+    Printf.printf "Comprehensive syntax parsing failed with: %s\n" (Printexc.to_string exn);
+    check bool "comprehensive syntax parsing" true false
 
 (** Test map syntax type checking *)
 let test_new_syntax_type_checking () =
   let program = {|
 map<u32, u64> blockless_map : HashMap(512)
-map<u32, u64> pinned_map : HashMap(1024) {
-    pinned: "/sys/fs/bpf/test"
-}
+pin map<u32, u64> pinned_map : HashMap(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   // Test type checking works with new syntax
@@ -154,68 +167,61 @@ map<u32, u64> pinned_map : HashMap(1024) {
   blockless_map[key] = value1 + 1
   pinned_map[key] = value2 + 1
   
-  return 2
+  return XDP_PASS
 }
 |} in
   try
-    let ast = parse_string program in
-    let _ = type_check_ast ast in
+    let (_ast, _) = parse_string_with_builtins program in
     check bool "new syntax type checking" true true
   with
-  | _ ->
-    check bool "new syntax type checking" false true
+  | exn ->
+    Printf.printf "New syntax type checking failed with: %s\n" (Printexc.to_string exn);
+    check bool "new syntax type checking" true false
 
 (** Test IR generation with new syntax *)
 let test_new_syntax_ir_generation () =
   let program = {|
 map<u32, u64> simple_map : HashMap(512)
-map<u32, u64> attr_map : HashMap(1024) {
-    pinned: "/sys/fs/bpf/test_map"
-}
+pin map<u32, u64> pinned_map : HashMap(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   simple_map[42] = 100
-  attr_map[42] = 200
+  pinned_map[42] = 200
   
   var val1 = simple_map[42]
-  var val2 = attr_map[42]
+  var val2 = pinned_map[42]
   
-  return 2
+  return XDP_PASS
 }
 |} in
   try
     (* Follow the complete compiler pipeline *)
-    let ast = parse_string program in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let (typed_ast, symbol_table) = parse_string_with_builtins program in
     
     (* Test that IR generation completes without errors *)
-    let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let _ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
     check bool "test passed" true true
   with
-  | _ ->
-    check bool "IR generation test failed" false true
+  | exn ->
+    Printf.printf "IR generation failed with: %s\n" (Printexc.to_string exn);
+    check bool "IR generation test failed" true false
 
 (** Test C code generation with new syntax *)
 let test_new_syntax_c_generation () =
   let program = {|
 map<u32, u64> blockless_counter : HashMap(512)
-map<u32, u64> pinned_stats : HashMap(1024) {
-    pinned: "/sys/fs/bpf/stats"
-}
+pin map<u32, u64> pinned_stats : HashMap(1024)
 
 @xdp fn counter(ctx: xdp_md) -> xdp_action {
   var key = 42
   blockless_counter[key] = blockless_counter[key] + 1
   pinned_stats[key] = pinned_stats[key] + 1
-  return 2
+  return XDP_PASS
 }
 |} in
   try
-    let ast = parse_string program in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let (typed_ast, symbol_table) = parse_string_with_builtins program in
+    let ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
     (* Verify both maps are generated *)
@@ -227,22 +233,23 @@ map<u32, u64> pinned_stats : HashMap(1024) {
     let _ = has_blockless && has_pinned && has_map_ops in
     check bool "C code generation test" true (has_blockless && has_pinned && has_map_ops)
   with
-  | _ ->
-    check bool "C code generation test" false true
+  | exn ->
+    Printf.printf "C generation failed with: %s\n" (Printexc.to_string exn);
+    check bool "C code generation test" true false
 
 (** Test error cases for new syntax *)
 let test_new_syntax_error_cases () =
   let invalid_cases = [
-    (* Invalid attribute *)
-    "map<u32, u64> invalid : HashMap(512) { invalid_attr: \"val\" }";
-    (* max_entries in attributes *)
-    "map<u32, u64> invalid : HashMap(512) { max_entries: 1024 }";
-    (* Permission attributes (should be rejected) *)
-    "map<u32, u64> invalid : HashMap(512) { read_only: \"true\" }";
+    (* Old syntax with blocks - should fail *)
+    "map<u32, u64> invalid : HashMap(512) { }";
+    (* Old syntax with attributes - should fail *)
+    "map<u32, u64> invalid : HashMap(512) { pinned: \"/path\" }";
     (* Wrong type order *)
-    "map bad_map : HashMap<u32, u64>(1024) { }";
+    "map bad_map : HashMap<u32, u64>(1024)";
     (* Missing colon *)
-    "map<u32, u64> bad_map HashMap(1024) { }";
+    "map<u32, u64> bad_map HashMap(1024)";
+    (* Invalid flags *)
+    "@flags(invalid_flag) map<u32, u64> invalid : HashMap(512)";
   ] in
   
   let all_failed_as_expected = List.for_all (fun invalid_code ->
@@ -278,8 +285,7 @@ let test_map_operations_parsing () =
 (** Test complete map program parsing *)
 let test_complete_map_program_parsing () =
   let program = {|
-map<u32, u64> packet_counts : HashMap(1024) {
-}
+map<u32, u64> packet_counts : HashMap(1024)
 
 @xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
   var src_ip = 0x08080808
@@ -288,68 +294,67 @@ map<u32, u64> packet_counts : HashMap(1024) {
   packet_counts[src_ip] = new_count
   
   if (new_count > 100) {
-    return 1
+    return XDP_DROP
   }
   
-  return 2
+  return XDP_PASS
 }
 |} in
   try
-    let _ = parse_string program in
+    let _ = parse_string_with_builtins program in
     check bool "test passed" true true
   with
-  | _ ->
-    check bool "test passed" false true
+  | exn ->
+    Printf.printf "Complete map program parsing failed with: %s\n" (Printexc.to_string exn);
+    check bool "test passed" true false
 
 (** Test map type checking *)
 let test_map_type_checking () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) {
-}
+map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test() -> u32 {
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
   test_map[key] = value + 1
-  return 0
+  return XDP_PASS
 }
 |} in
   try
-    let ast = parse_string program in
-    let _ = type_check_ast ast in
+    let (_ast, _) = parse_string_with_builtins program in
     check bool "test passed" true true
   with
-  | _ ->
-    check bool "test passed" false true
+  | exn ->
+    Printf.printf "Type checking failed with: %s\n" (Printexc.to_string exn);
+    check bool "test passed" true false
 
 (** Test map type validation *)
 let test_map_type_validation () =
   let test_cases = [
     (* Valid: u32 key with u32 access *)
     ({|
-map<u32, u64> valid_map : HashMap(1024) { }
-@xdp fn test() -> u32 {
+map<u32, u64> valid_map : HashMap(1024)
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   var key: u32 = 42
   var value = valid_map[key]
-  return 0
+  return XDP_PASS
 }
 |}, true);
     
     (* Invalid: string key with u32 map *)
     ({|
-map<u32, u64> invalid_map : HashMap(1024) { }
-@xdp fn test() -> u32 {
+map<u32, u64> invalid_map : HashMap(1024)
+@xdp fn test(ctx: xdp_md) -> xdp_action {
   var key = "invalid"
   var value = invalid_map[key]
-  return 0
+  return XDP_PASS
 }
 |}, false)
   ] in
   
   let all_validation_passed = List.for_all (fun (code, should_succeed) ->
     try
-      let ast = parse_string code in
-      let _ = type_check_ast ast in
+      let (_ast, _) = parse_string_with_builtins code in
       should_succeed
     with
     | _ -> not should_succeed
@@ -359,19 +364,16 @@ map<u32, u64> invalid_map : HashMap(1024) { }
 (** Test map identifier resolution *)
 let test_map_identifier_resolution () =
   let program = {|
-map<u32, u64> global_map : HashMap(1024) {
-}
+map<u32, u64> global_map : HashMap(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   var value = global_map[42]
-  return 2
+  return XDP_PASS
 }
 |} in
   try
-    let ast = parse_string program in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let (_typed_ast, _) = parse_string_with_builtins program in
     (* If we get here, the map identifier was resolved successfully *)
-    let _ = annotated_ast in
     check bool "map identifier resolution" true true
   with
   | _ ->
@@ -380,50 +382,45 @@ map<u32, u64> global_map : HashMap(1024) {
 (** Test IR generation for maps *)
 let test_map_ir_generation () =
   let program = {|
-map<u32, u64> test_map : HashMap(1024) {
-}
+map<u32, u64> test_map : HashMap(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
   test_map[key] = value + 1
-  return 0
+  return XDP_PASS
 }
 |} in
   try
     (* Follow the complete compiler pipeline *)
-    let ast = parse_string program in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let (typed_ast, symbol_table) = parse_string_with_builtins program in
     
     (* Test that IR generation completes without errors *)
-    let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let _ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
     check bool "test passed" true true
   with
-  | _ ->
-    check bool "IR generation test failed" false true
+  | exn ->
+    Printf.printf "Map IR generation failed with: %s\n" (Printexc.to_string exn);
+    check bool "IR generation test failed" true false
 
 (** Test C code generation for maps *)
 let test_map_c_generation () =
   let program = {|
-map<u32, u64> packet_counter : HashMap(1024) {
-}
+map<u32, u64> packet_counter : HashMap(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   var src_ip = 0x12345678
   var count = packet_counter[src_ip]
   packet_counter[src_ip] = count + 1
-  return 2
+  return XDP_PASS
 }
 |} in
   try
     (* Follow the complete compiler pipeline *)
-    let ast = parse_string program in
-    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    let (typed_ast, symbol_table) = parse_string_with_builtins program in
     
     (* Test that C code generation completes and produces expected output *)
-    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    let ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
     let contains_map_decl = contains_substr c_code "BPF_MAP_TYPE_HASH" &&
@@ -433,8 +430,9 @@ map<u32, u64> packet_counter : HashMap(1024) {
     
     check bool "C code generation test" true (contains_map_decl && contains_lookup && contains_update)
   with
-  | _ ->
-    check bool "C code generation test" false true
+  | exn ->
+    Printf.printf "Map C generation failed with: %s\n" (Printexc.to_string exn);
+    check bool "C code generation test" true false
 
 (** Test different map types *)
 let test_different_map_types () =
@@ -448,23 +446,20 @@ let test_different_map_types () =
   
   let all_map_types_work = List.for_all (fun (ks_type, c_type) ->
     let program = Printf.sprintf {|
-map<u32, u64> test_map : %s(1024) {
-}
+map<u32, u64> test_map : %s(1024)
 
 @xdp fn test(ctx: xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
-  return 2
+  return XDP_PASS
 }
 |} ks_type in
     try
       (* Follow the complete compiler pipeline *)
-      let ast = parse_string program in
-      let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
-      let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+      let (typed_ast, symbol_table) = parse_string_with_builtins program in
       
       (* Test compilation and C code generation *)
-      let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+      let ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
       let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
       contains_substr c_code c_type
     with

@@ -39,6 +39,7 @@ type symbol_table = {
   current_program: string option;
   current_function: string option;
   global_maps: (string, map_declaration) Hashtbl.t;
+  project_name: string;  (* project name for pin path generation *)
 }
 
 (** Symbol table exceptions *)
@@ -47,12 +48,13 @@ exception Scope_error of string * position
 exception Visibility_error of string * position
 
 (** Create new symbol table *)
-let create_symbol_table () = {
+let create_symbol_table ?(project_name = "kernelscript") () = {
   symbols = Hashtbl.create 128;
   scopes = [GlobalScope];
   current_program = None;
   current_function = None;
   global_maps = Hashtbl.create 32;
+  project_name;
 }
 
 (** Helper functions *)
@@ -116,6 +118,7 @@ let enter_scope table scope_type =
     current_program = table.current_program;
     current_function = table.current_function;
     global_maps = new_global_maps;
+    project_name = table.project_name;
   } in
   match scope_type with
   | ProgramScope name -> 
@@ -139,6 +142,7 @@ let exit_scope table =
         current_program = table.current_program;
         current_function = table.current_function;
         global_maps = new_global_maps;
+        project_name = table.project_name;
       } in
       match rest with
       | ProgramScope name :: _ -> { new_table with current_program = Some name; current_function = None }
@@ -339,8 +343,8 @@ let get_global_symbols table =
   ) table.symbols []
 
 (** Build symbol table from AST with optional builtins *)
-let rec build_symbol_table ?builtin_asts ast =
-  let table = create_symbol_table () in
+let rec build_symbol_table ?(project_name = "kernelscript") ?builtin_asts ast =
+  let table = create_symbol_table ~project_name () in
   
   (* Load builtin definitions if provided *)
   (match builtin_asts with

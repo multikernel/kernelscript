@@ -3,15 +3,25 @@ open Kernelscript.Type_checker
 open Kernelscript.Parse
 open Alcotest
 
+(** Helper function to parse string with builtin types loaded via symbol table *)
+let parse_string_with_builtins code =
+  let ast = parse_string code in
+  (* Create symbol table with test builtin types *)
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  (* Run type checking with builtin types loaded *)
+  let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+  typed_ast
+
 (** Helper function to create symbol table with builtin loading *)
 let create_symbol_table_with_builtins ast =
   Test_utils.Helpers.create_test_symbol_table ast
 
 (** Helper function to type check with builtin types loaded *)
 let type_check_and_annotate_ast_with_builtins ast =
-  (* For now, just use the regular function without builtin_path since we removed the files *)
-  (* The test utilities should handle providing the necessary types *)
-  Kernelscript.Type_checker.type_check_and_annotate_ast ast
+  (* Create symbol table with test builtin types *)
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  (* Run type checking with builtin types loaded *)
+  Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast
 
 (** Helper function to check if two types can unify *)
 let can_unify t1 t2 =
@@ -348,7 +358,7 @@ fn is_tcp(protocol: u8) -> bool {
 (** Test integer type promotion *)
 let test_integer_type_promotion () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024) { }
+map<u32, u64> counter : HashMap(1024)
 
 @xdp fn test_promotion(ctx: xdp_md) -> xdp_action {
   // Test U32 literal assignment to U64 map value
@@ -364,7 +374,7 @@ map<u32, u64> counter : HashMap(1024) { }
   var val1 = counter[1] + 50  // U64 + U32 -> U64
   counter[3] = val1
   
-  return 2  // 2 // XDP_PASS
+  return XDP_PASS
 }
 |} in
   try
@@ -398,7 +408,7 @@ let test_type_unification_enhanced () =
 (** Test comprehensive type checking *)
 let test_comprehensive_type_checking () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024) { }
+map<u32, u64> counter : HashMap(1024)
 
 @helper
 fn increment_counter(key: u32) -> u64 {
@@ -419,14 +429,14 @@ fn process_packet(size: u32) -> bool {
   var is_large = process_packet(packet_size)
   
   if (is_large && counter_val > 100) {
-    return 1 // XDP_DROP
+    return XDP_DROP
   } else {
-    return 2 // XDP_PASS
+    return XDP_PASS
   }
 }
 |} in
   try
-    let ast = parse_string program_text in
+    let ast = parse_string_with_builtins program_text in
     let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
     check int "comprehensive AST length" 3 (List.length typed_attributed_functions);
     
