@@ -1446,9 +1446,36 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
     else "" in
     
     (* Include setup code when object is loaded in main() *)
-    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations) then
+    let pinned_globals_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
+    let has_pinned_globals = List.length pinned_globals_vars > 0 in
+    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations || has_pinned_globals) then
       let all_setup_parts = List.filter (fun s -> s <> "") [
         (if func_usage.uses_map_operations then "    // Map setup would go here if needed" else "");
+        (if has_pinned_globals then
+          let project_name = base_name in
+          let pin_path = sprintf "/sys/fs/bpf/%s/globals/pinned_globals" project_name in
+          sprintf {|    /* Load or create pinned globals map */
+    pinned_globals_map_fd = bpf_obj_get("%s");
+    if (pinned_globals_map_fd < 0) {
+        /* Map not pinned yet, load from eBPF object and pin it */
+        struct bpf_map *pinned_globals_map = bpf_object__find_map_by_name(obj->obj, "__pinned_globals");
+        if (!pinned_globals_map) {
+            fprintf(stderr, "Failed to find pinned globals map in eBPF object\n");
+            return 1;
+        }
+        /* Pin the map to the specified path */
+        if (bpf_map__pin(pinned_globals_map, "%s") < 0) {
+            fprintf(stderr, "Failed to pin globals map\n");
+            return 1;
+        }
+        /* Get file descriptor after pinning */
+        pinned_globals_map_fd = bpf_map__fd(pinned_globals_map);
+        if (pinned_globals_map_fd < 0) {
+            fprintf(stderr, "Failed to get fd for pinned globals map\n");
+            return 1;
+        }
+    }|} pin_path pin_path
+        else "");
         (if List.length config_declarations > 0 then 
           String.concat "\n" (List.map (fun config_decl ->
             let config_name = config_decl.Ast.config_name in
@@ -1618,7 +1645,7 @@ let generate_map_fd_declarations maps =
   ) maps |> String.concat "\n"
 
 (** Generate pinned globals support code *)
-let generate_pinned_globals_support project_name global_variables =
+let generate_pinned_globals_support _project_name global_variables =
   let pinned_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
   if pinned_vars = [] then
     ("", "", "")
@@ -1635,30 +1662,8 @@ let generate_pinned_globals_support project_name global_variables =
     
     let map_fd_declaration = "int pinned_globals_map_fd = -1;" in
     
-    let pin_path = sprintf "/sys/fs/bpf/%s/globals/pinned_globals" project_name in
-    let map_setup_code = sprintf {|    /* Load or create pinned globals map */
-    pinned_globals_map_fd = bpf_obj_get("%s");
-    if (pinned_globals_map_fd < 0) {
-        /* Map not pinned yet, load from eBPF object and pin it */
-        struct bpf_map *pinned_globals_map = bpf_object__find_map_by_name(bpf_obj, "__pinned_globals");
-        if (!pinned_globals_map) {
-            fprintf(stderr, "Failed to find pinned globals map in eBPF object\n");
-            return -1;
-        }
-        /* Pin the map to the specified path */
-        if (bpf_map__pin(pinned_globals_map, "%s") < 0) {
-            fprintf(stderr, "Failed to pin globals map\n");
-            return -1;
-        }
-        /* Get file descriptor after pinning */
-        pinned_globals_map_fd = bpf_map__fd(pinned_globals_map);
-        if (pinned_globals_map_fd < 0) {
-            fprintf(stderr, "Failed to get fd for pinned globals map\n");
-            return -1;
-        }
-    }|} pin_path pin_path in
-    
-    (struct_definition, map_fd_declaration, map_setup_code)
+    (* Setup code is now handled in main function generation to avoid duplication *)
+    (struct_definition, map_fd_declaration, "")
 
 (** Generate map operation functions *)
 let generate_map_operation_functions maps =
