@@ -372,6 +372,12 @@ let collect_string_sizes_from_ir_expr ir_expr =
       List.fold_left (fun acc (_, field_val) ->
         acc @ (collect_string_sizes_from_ir_value field_val)
       ) [] field_assignments
+  | IRMatch (matched_val, arms) ->
+      (* Collect string sizes from matched expression and all arms *)
+      (collect_string_sizes_from_ir_value matched_val) @
+      (List.fold_left (fun acc arm ->
+        acc @ (collect_string_sizes_from_ir_value arm.ir_arm_value)
+      ) [] arms)
 
 let collect_string_sizes_from_ir_instruction ir_instr =
   match ir_instr.instr_desc with
@@ -450,6 +456,10 @@ let collect_enum_definitions_from_userspace userspace_prog =
     | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
     | IRStructLiteral (_, field_assignments) ->
         List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
+    | IRMatch (matched_val, arms) ->
+        (* Collect from matched expression and all arms *)
+        collect_from_value matched_val;
+        List.iter (fun arm -> collect_from_value arm.ir_arm_value) arms
   in
   
   let rec collect_from_instr ir_instr =
@@ -877,6 +887,32 @@ let generate_c_expression_from_ir ctx ir_expr =
         sprintf ".%s = %s" field_name field_value_str
       ) field_assignments in
       sprintf "{%s}" (String.concat ", " field_strs)
+
+  | IRMatch (matched_val, arms) ->
+      (* Generate switch statement for userspace *)
+      let matched_str = generate_c_value_from_ir ctx matched_val in
+      let temp_var = fresh_temp_var ctx "match_result" in
+      let result_type = c_type_from_ir_type ir_expr.expr_type in
+      
+      (* Generate temporary variable for the result *)
+      let decl = sprintf "%s %s;" result_type temp_var in
+      
+      (* Generate switch statement *)
+      let switch_header = sprintf "switch (%s) {" matched_str in
+      let switch_arms = List.map (fun arm ->
+        let arm_val_str = generate_c_value_from_ir ctx arm.ir_arm_value in
+        match arm.ir_arm_pattern with
+        | IRConstantPattern const_val ->
+            let const_str = generate_c_value_from_ir ctx const_val in
+            sprintf "case %s: %s = %s; break;" const_str temp_var arm_val_str
+        | IRDefaultPattern ->
+            sprintf "default: %s = %s; break;" temp_var arm_val_str
+      ) arms in
+      let switch_footer = "}" in
+      
+      (* Combine everything and return the temp variable *)
+      let switch_code = String.concat "\n" ([decl; switch_header] @ switch_arms @ [switch_footer]) in
+      sprintf "({ %s; %s; })" switch_code temp_var
 
 (** Generate map operations from IR *)
 let generate_map_load_from_ir ctx map_val key_val dest_val load_type =

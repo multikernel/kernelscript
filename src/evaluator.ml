@@ -27,6 +27,34 @@ exception Return_value of runtime_value
 exception Break_loop
 exception Continue_loop
 
+(** Compare runtime values for equality *)
+let rec runtime_values_equal v1 v2 =
+  match v1, v2 with
+  | IntValue i1, IntValue i2 -> i1 = i2
+  | StringValue s1, StringValue s2 -> s1 = s2
+  | CharValue c1, CharValue c2 -> c1 = c2
+  | BoolValue b1, BoolValue b2 -> b1 = b2
+  | EnumValue (name1, val1), EnumValue (name2, val2) -> name1 = name2 && val1 = val2
+  | NullValue, NullValue -> true
+  | UnitValue, UnitValue -> true
+  | PointerValue addr1, PointerValue addr2 -> addr1 = addr2
+  | MapHandle name1, MapHandle name2 -> name1 = name2
+  | ArrayValue arr1, ArrayValue arr2 -> 
+      Array.length arr1 = Array.length arr2 && 
+      Array.for_all2 runtime_values_equal arr1 arr2
+  | StructValue fields1, StructValue fields2 ->
+      List.length fields1 = List.length fields2 &&
+      List.for_all2 (fun (name1, val1) (name2, val2) ->
+        name1 = name2 && runtime_values_equal val1 val2
+      ) fields1 fields2
+  | ContextValue (name1, fields1), ContextValue (name2, fields2) ->
+      name1 = name2 && 
+      List.length fields1 = List.length fields2 &&
+      List.for_all2 (fun (n1, v1) (n2, v2) ->
+        n1 = n2 && runtime_values_equal v1 v2
+      ) fields1 fields2
+  | _ -> false  (* Different types are not equal *)
+
 (** Memory region types for enhanced dynptr integration *)
 type memory_region_type =
   | PacketDataRegion of int  (* Base address of packet data *)
@@ -629,6 +657,43 @@ and eval_expression ctx expr =
         (field_name, field_value)
       ) field_assignments in
       StructValue field_values
+      
+  | Match (matched_expr, arms) ->
+      (* Evaluate the matched expression *)
+      let matched_value = eval_expression ctx matched_expr in
+      
+      (* Find the matching arm and evaluate its expression *)
+      let rec find_matching_arm = function
+        | [] -> eval_error "No matching arm found in match expression" expr.expr_pos
+        | arm :: rest_arms ->
+            (match arm.arm_pattern with
+             | ConstantPattern lit ->
+                 let pattern_value = runtime_value_of_literal lit in
+                 if runtime_values_equal matched_value pattern_value then
+                   eval_expression ctx arm.arm_expr
+                 else
+                   find_matching_arm rest_arms
+             | IdentifierPattern name ->
+                 (* For identifier patterns, try to get the value from symbol table *)
+                 (match ctx.symbol_table with
+                  | Some symbol_table ->
+                      (match Symbol_table.lookup_symbol symbol_table name with
+                       | Some { kind = Symbol_table.EnumConstant (_, Some value); _ } ->
+                           let pattern_value = EnumValue (name, value) in
+                           if runtime_values_equal matched_value pattern_value then
+                             eval_expression ctx arm.arm_expr
+                           else
+                             find_matching_arm rest_arms
+                       | _ ->
+                           (* Pattern not found or not an enum constant, treat as wildcard *)
+                           find_matching_arm rest_arms)
+                  | None ->
+                      find_matching_arm rest_arms)
+             | DefaultPattern ->
+                 (* Default pattern always matches *)
+                 eval_expression ctx arm.arm_expr)
+      in
+      find_matching_arm arms
 
 (** Evaluate statements *)
 and eval_statements ctx stmts =

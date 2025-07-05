@@ -48,6 +48,14 @@ and typed_expr_desc =
   | TBinaryOp of typed_expr * binary_op * typed_expr
   | TUnaryOp of unary_op * typed_expr
   | TStructLiteral of string * (string * typed_expr) list
+  | TMatch of typed_expr * typed_match_arm list  (* match (expr) { arms } *)
+
+(** Typed match arm *)
+and typed_match_arm = {
+  tarm_pattern: match_pattern;
+  tarm_expr: typed_expr;
+  tarm_pos: position;
+}
 
 type typed_statement = {
   tstmt_desc: typed_stmt_desc;
@@ -304,7 +312,7 @@ let type_check_literal lit pos =
         (match literals with
          | [] -> Array (U32, 0)  (* Empty array defaults to u32 *)
          | first_lit :: rest_lits ->
-             let first_type = match first_lit with
+             let get_lit_type lit = match lit with
                | IntLit (value, _) -> if value < 0 then I32 else U32
                | BoolLit _ -> Bool
                | CharLit _ -> Char
@@ -312,16 +320,10 @@ let type_check_literal lit pos =
                | ArrayLit _ -> U32  (* Nested arrays default to u32 for now *)
                | NullLit -> Pointer U32  (* null in arrays as nullable pointer *)
              in
+             let first_type = get_lit_type first_lit in
              (* Verify all elements have the same type *)
              let all_same_type = List.for_all (fun lit ->
-               let lit_type = match lit with
-                 | IntLit (value, _) -> if value < 0 then I32 else U32
-                 | BoolLit _ -> Bool
-                 | CharLit _ -> Char
-                 | StringLit s -> Str (max 1 (String.length s))
-                 | ArrayLit _ -> U32
-                 | NullLit -> Pointer U32
-               in
+               let lit_type = get_lit_type lit in
                lit_type = first_type
              ) rest_lits in
              if not all_same_type then
@@ -330,6 +332,31 @@ let type_check_literal lit pos =
                Array (first_type, List.length literals))
   in
   { texpr_desc = TLiteral lit; texpr_type = typ; texpr_pos = pos }
+
+(** Get the type of a literal without creating a typed expression *)
+let type_of_literal lit =
+  match lit with
+  | IntLit (value, _) -> 
+      if value < 0 then I32 else U32
+  | StringLit s -> 
+      let len = String.length s in
+      Str (max 1 len)
+  | CharLit _ -> Char
+  | BoolLit _ -> Bool
+  | NullLit -> Pointer U32
+  | ArrayLit literals ->
+      (match literals with
+       | [] -> Array (U32, 0)
+       | first_lit :: _ ->
+           let first_type = match first_lit with
+             | IntLit (value, _) -> if value < 0 then I32 else U32
+             | StringLit s -> Str (max 1 (String.length s))
+             | CharLit _ -> Char
+             | BoolLit _ -> Bool
+             | NullLit -> Pointer U32
+             | ArrayLit _ -> U32  (* Nested arrays default to u32 *)
+           in
+           Array (first_type, List.length literals))
 
 (** Set multi-program context for an expression *)
 let set_multi_program_context ctx expr =
@@ -887,6 +914,60 @@ and type_check_expression ctx expr =
           type_error ("Wrong number of arguments for tail call: " ^ name) expr.expr_pos
       with Not_found ->
         type_error ("Undefined tail call target: " ^ name) expr.expr_pos)
+        
+  | Match (matched_expr, arms) ->
+      (* Type check the matched expression *)
+      let typed_matched_expr = type_check_expression ctx matched_expr in
+      
+      (* Type check all arms and ensure they have compatible types *)
+      let typed_arms = List.map (fun arm ->
+        (* Type check the arm expression *)
+        let typed_arm_expr = type_check_expression ctx arm.arm_expr in
+        
+        (* Validate the pattern *)
+        (match arm.arm_pattern with
+         | ConstantPattern lit ->
+             (* Check that the pattern literal type is compatible with matched expression type *)
+             let pattern_type = type_of_literal lit in
+             (match unify_types typed_matched_expr.texpr_type pattern_type with
+              | Some _ -> () (* Compatible *)
+              | None -> 
+                  type_error ("Pattern type " ^ string_of_bpf_type pattern_type ^ 
+                             " is not compatible with matched expression type " ^ 
+                             string_of_bpf_type typed_matched_expr.texpr_type) arm.arm_pos)
+         | IdentifierPattern name ->
+             (* Check that the identifier exists and is compatible with matched expression type *)
+             (match type_check_identifier ctx name arm.arm_pos with
+              | texpr when (match unify_types typed_matched_expr.texpr_type texpr.texpr_type with
+                           | Some _ -> true | None -> false) -> ()
+              | texpr -> 
+                  type_error ("Pattern identifier " ^ name ^ " of type " ^ string_of_bpf_type texpr.texpr_type ^ 
+                             " is not compatible with matched expression type " ^ 
+                             string_of_bpf_type typed_matched_expr.texpr_type) arm.arm_pos)
+         | DefaultPattern -> () (* Default pattern is always valid *)
+        );
+        
+        (* Return typed arm *)
+        { tarm_pattern = arm.arm_pattern; tarm_expr = typed_arm_expr; tarm_pos = arm.arm_pos }
+      ) arms in
+      
+      (* Determine the result type - all arms must have compatible types *)
+      let result_type = match typed_arms with
+        | [] -> type_error "Match expression must have at least one arm" expr.expr_pos
+        | first_arm :: rest_arms ->
+            let first_type = first_arm.tarm_expr.texpr_type in
+            List.iter (fun arm ->
+              match unify_types first_type arm.tarm_expr.texpr_type with
+              | Some _ -> () (* Compatible *)
+              | None -> 
+                  type_error ("All match arms must return compatible types. Expected " ^ 
+                             string_of_bpf_type first_type ^ " but got " ^ 
+                             string_of_bpf_type arm.tarm_expr.texpr_type) arm.tarm_pos
+            ) rest_arms;
+            first_type
+      in
+      
+      { texpr_desc = TMatch (typed_matched_expr, typed_arms); texpr_type = result_type; texpr_pos = expr.expr_pos }
 
 (** Type check statement *)
 let rec type_check_statement ctx stmt =
@@ -1588,6 +1669,14 @@ let rec typed_expr_to_expr texpr =
           (field_name, typed_expr_to_expr typed_field_expr)
         ) field_assignments in
         StructLiteral (struct_name, converted_field_assignments)
+    | TMatch (typed_matched_expr, typed_arms) ->
+        (* Convert typed match expression back to untyped AST *)
+        let matched_expr = typed_expr_to_expr typed_matched_expr in
+        let arms = List.map (fun tarm ->
+          let arm_expr = typed_expr_to_expr tarm.tarm_expr in
+          { arm_pattern = tarm.tarm_pattern; arm_expr = arm_expr; arm_pos = tarm.tarm_pos }
+        ) typed_arms in
+        Match (matched_expr, arms)
   in
   (* Handle special cases for type annotations *)
   let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with

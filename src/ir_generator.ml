@@ -614,6 +614,62 @@ let rec lower_expression ctx (expr : Ast.expr) =
       emit_instruction ctx instr;
       result_val
 
+  | Ast.Match (matched_expr, arms) ->
+      (* Lower the matched expression *)
+      let matched_val = lower_expression ctx matched_expr in
+      
+      (* Determine the result type from the type annotation *)
+      let result_type = match expr.expr_type with
+        | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+        | None -> 
+            (* Try to infer from the first arm *)
+            (match arms with
+             | [] -> IRU32 (* Default to U32 if no arms *)
+             | first_arm :: _ -> 
+                 (match first_arm.arm_expr.expr_type with
+                  | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+                  | None -> IRU32))
+      in
+      
+      let result_reg = allocate_register ctx in
+      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      
+      (* Lower each match arm *)
+      let lowered_arms = List.map (fun arm ->
+        let arm_value = lower_expression ctx arm.arm_expr in
+        
+        (* Convert AST match pattern to IR match pattern *)
+        let ir_pattern = match arm.arm_pattern with
+          | ConstantPattern lit ->
+              let lit_val = lower_literal lit arm.arm_pos in
+              make_ir_constant_pattern lit_val
+          | IdentifierPattern name ->
+              (* For now, treat identifier patterns as constants - lookup their value *)
+              (match Symbol_table.lookup_symbol ctx.symbol_table name with
+               | Some symbol ->
+                   (match symbol.kind with
+                    | Symbol_table.EnumConstant (_, Some value) ->
+                        let const_val = make_ir_value (IRLiteral (IntLit (value, None))) IRU32 arm.arm_pos in
+                        make_ir_constant_pattern const_val
+                    | _ ->
+                        (* For now, treat unknown identifiers as default patterns *)
+                        make_ir_default_pattern ())
+               | None ->
+                   (* Unknown identifier, treat as default *)
+                   make_ir_default_pattern ())
+          | DefaultPattern ->
+              make_ir_default_pattern ()
+        in
+        
+        make_ir_match_arm ir_pattern arm_value arm.arm_pos
+      ) arms in
+      
+      (* Generate match expression *)
+      let match_expr = make_ir_expr (IRMatch (matched_val, lowered_arms)) result_type expr.expr_pos in
+      let instr = make_ir_instruction (IRAssign (result_val, match_expr)) expr.expr_pos in
+      emit_instruction ctx instr;
+      result_val
+
 (** Lower AST statements to IR instructions *)
 let rec lower_statement ctx stmt =
   match stmt.stmt_desc with

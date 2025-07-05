@@ -673,6 +673,22 @@ and process_expression table expr =
            symbol_error (struct_name ^ " is not a struct") expr.expr_pos
        | None -> 
            symbol_error ("Undefined struct: " ^ struct_name) expr.expr_pos)
+           
+  | Match (matched_expr, arms) ->
+      (* Process the matched expression *)
+      process_expression table matched_expr;
+      (* Process all arms *)
+      List.iter (fun arm ->
+        (* Process the arm expression *)
+        process_expression table arm.arm_expr;
+        (* Validate the pattern if it's an identifier *)
+        (match arm.arm_pattern with
+         | IdentifierPattern name ->
+             (match lookup_symbol table name with
+              | Some _ -> () (* Found, all good *)
+              | None -> symbol_error ("Undefined identifier in pattern: " ^ name) arm.arm_pos)
+         | ConstantPattern _ | DefaultPattern -> ())
+      ) arms
 
 (** Query functions for symbol table *)
 

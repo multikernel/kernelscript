@@ -344,8 +344,48 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       ) [] program_types
     with
     | _ -> 
-        Printf.printf "⚠️ Warning: Could not load BTF types, using defaults\n";
-        []
+        Printf.printf "⚠️ Warning: Could not load BTF types, using context defaults\n";
+        (* Initialize context codegens *)
+        Kernelscript_context.Xdp_codegen.register ();
+        Kernelscript_context.Tc_codegen.register ();
+        
+        (* Get context types from AST *)
+        let program_types = Multi_program_analyzer.get_program_types_from_ast ast in
+        List.fold_left (fun acc prog_type ->
+          match prog_type with
+          | Ast.Xdp -> 
+              (* Get XDP action constants from context system *)
+              let xdp_constants = Kernelscript_context.Context_codegen.get_context_action_constants "xdp" in
+              let xdp_action_type = {
+                Btf_parser.name = "xdp_action";
+                kind = "enum";
+                size = Some 4;
+                members = Some (List.map (fun (name, value) -> 
+                  (name, string_of_int value)) xdp_constants);
+                kernel_defined = true;
+              } in
+              let xdp_md_type = {
+                Btf_parser.name = "xdp_md";
+                kind = "struct";
+                size = Some 32;
+                members = Some (Kernelscript_context.Context_codegen.get_context_struct_fields "xdp");
+                kernel_defined = true;
+              } in
+              xdp_action_type :: xdp_md_type :: acc
+          | Ast.Tc ->
+              (* Get TC action constants from context system *)
+              let tc_constants = Kernelscript_context.Context_codegen.get_context_action_constants "tc" in
+              let tc_action_type = {
+                Btf_parser.name = "tc_action";
+                kind = "enum";
+                size = Some 4;
+                members = Some (List.map (fun (name, value) -> 
+                  (name, string_of_int value)) tc_constants);
+                kernel_defined = true;
+              } in
+              tc_action_type :: acc
+          | _ -> acc
+        ) [] program_types
     in
     
     (* Convert BTF types to AST declarations *)

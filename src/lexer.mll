@@ -90,6 +90,8 @@
     | "catch" -> CATCH
     | "throw" -> THROW
     | "defer" -> DEFER
+    | "match" -> MATCH
+    | "default" -> DEFAULT
     
     | "true" -> BOOL_LIT true
     | "false" -> BOOL_LIT false

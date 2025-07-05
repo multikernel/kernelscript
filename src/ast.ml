@@ -143,6 +143,20 @@ and expr_desc =
   | BinaryOp of expr * binary_op * expr
   | UnaryOp of unary_op * expr
   | StructLiteral of string * (string * expr) list
+  | Match of expr * match_arm list  (* match (expr) { arms } *)
+
+(** Match pattern for basic match expressions *)
+and match_pattern =
+  | ConstantPattern of literal  (* 42, "string", true, etc. *)
+  | IdentifierPattern of string (* CONST_VALUE, enum variants *)
+  | DefaultPattern              (* default case *)
+
+(** Match arm: pattern : expression *)
+and match_arm = {
+  arm_pattern: match_pattern;
+  arm_expr: expr;
+  arm_pos: position;
+}
 
 (** Statements with position tracking *)
 type statement = {
@@ -380,6 +394,20 @@ let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) 
   is_pinned;
 }
 
+(** Utility functions for match expressions *)
+let make_match_arm pattern expr pos = {
+  arm_pattern = pattern;
+  arm_expr = expr;
+  arm_pos = pos;
+}
+
+let make_constant_pattern lit = ConstantPattern lit
+let make_identifier_pattern name = IdentifierPattern name
+let make_default_pattern () = DefaultPattern
+
+let make_match_expr matched_expr arms pos =
+  make_expr (Match (matched_expr, arms)) pos
+
 (** Pretty-printing functions for debugging *)
 
 let string_of_position pos =
@@ -512,6 +540,19 @@ let rec string_of_expr expr =
         Printf.sprintf "%s = %s" field_name (string_of_expr expr)
       ) field_assignments in
       Printf.sprintf "struct %s {\n  %s\n}" struct_name (String.concat ",\n  " field_strs)
+  | Match (expr, arms) ->
+      let arms_str = String.concat ",\n    " (List.map string_of_match_arm arms) in
+      Printf.sprintf "match (%s) {\n    %s\n}" (string_of_expr expr) arms_str
+
+and string_of_match_pattern = function
+  | ConstantPattern lit -> string_of_literal lit
+  | IdentifierPattern name -> name
+  | DefaultPattern -> "default"
+
+and string_of_match_arm arm =
+  Printf.sprintf "%s: %s" 
+    (string_of_match_pattern arm.arm_pattern) 
+    (string_of_expr arm.arm_expr)
 
 let rec string_of_stmt stmt =
   match stmt.stmt_desc with

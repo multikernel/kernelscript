@@ -245,6 +245,12 @@ let collect_string_sizes_from_expr ir_expr =
       List.fold_left (fun acc (_, field_val) ->
         acc @ (collect_string_sizes_from_value field_val)
       ) [] field_assignments
+  | IRMatch (matched_val, arms) ->
+      (* Collect string sizes from matched expression and all arms *)
+      (collect_string_sizes_from_value matched_val) @
+      (List.fold_left (fun acc arm ->
+        acc @ (collect_string_sizes_from_value arm.ir_arm_value)
+      ) [] arms)
 
 let rec collect_string_sizes_from_instr ir_instr =
   match ir_instr.instr_desc with
@@ -396,6 +402,10 @@ let collect_enum_definitions ir_multi_prog =
     | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
     | IRStructLiteral (_, field_assignments) ->
         List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
+    | IRMatch (matched_val, arms) ->
+        (* Collect from matched expression and all arms *)
+        collect_from_value matched_val;
+        List.iter (fun arm -> collect_from_value arm.ir_arm_value) arms
   in
   
   let rec collect_from_instr ir_instr =
@@ -521,6 +531,10 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     | IRUnOp (_, ir_val) -> collect_from_value ir_val
     | IRCast (ir_val, _) -> collect_from_value ir_val
     | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+    | IRMatch (matched_val, arms) ->
+        (* Collect from matched expression and all arms *)
+        collect_from_value matched_val;
+        List.iter (fun arm -> collect_from_value arm.ir_arm_value) arms
   and collect_from_instr ir_instr =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
@@ -1254,6 +1268,45 @@ let generate_c_expression ctx ir_expr =
       ) field_assignments in
       sprintf "{%s}" (String.concat ", " field_strs)
 
+  | IRMatch (matched_val, arms) ->
+      (* Generate if-else chain for eBPF *)
+      let matched_str = generate_c_value ctx matched_val in
+      let temp_var = fresh_var ctx "match_result" in
+      let result_type = ebpf_type_from_ir_type ir_expr.expr_type in
+      
+      (* Generate temporary variable for the result *)
+      emit_line ctx (sprintf "%s %s;" result_type temp_var);
+      
+      (* Generate if-else chain *)
+      let generate_match_arm is_first arm =
+        let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+        match arm.ir_arm_pattern with
+        | IRConstantPattern const_val ->
+            let const_str = generate_c_value ctx const_val in
+            let keyword = if is_first then "if" else "else if" in
+            emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
+            increase_indent ctx;
+            emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+            decrease_indent ctx;
+            emit_line ctx "}"
+        | IRDefaultPattern ->
+            emit_line ctx "else {";
+            increase_indent ctx;
+            emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+            decrease_indent ctx;
+            emit_line ctx "}"
+      in
+      
+      (* Generate all arms *)
+      (match arms with
+       | [] -> () (* No arms - should not happen *)
+       | first_arm :: rest_arms ->
+           generate_match_arm true first_arm;
+           List.iter (generate_match_arm false) rest_arms);
+      
+      (* Return the temporary variable *)
+      temp_var
+
 
 
 (** Generate bounds checking *)
@@ -1709,6 +1762,10 @@ let rec generate_c_instruction ctx ir_instr =
           | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
           | IRStructLiteral (_, field_assignments) ->
               List.iter (fun (_, field_val) -> collect_in_value field_val) field_assignments
+          | IRMatch (matched_val, arms) ->
+              (* Collect from matched expression and all arms *)
+              collect_in_value matched_val;
+              List.iter (fun arm -> collect_in_value arm.ir_arm_value) arms
         in
                  let collect_in_instr ir_instr =
            match ir_instr.instr_desc with
@@ -1944,6 +2001,10 @@ let collect_registers_in_function ir_func =
     | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
     | IRStructLiteral (_, field_assignments) ->
         List.iter (fun (_, field_val) -> collect_in_value field_val) field_assignments
+    | IRMatch (matched_val, arms) ->
+        (* Collect from matched expression and all arms *)
+        collect_in_value matched_val;
+        List.iter (fun arm -> collect_in_value arm.ir_arm_value) arms
   in
   let rec collect_in_instr ir_instr =
     match ir_instr.instr_desc with

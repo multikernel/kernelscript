@@ -217,6 +217,19 @@ and ir_expr_desc =
   | IRCast of ir_value * ir_type
   | IRFieldAccess of ir_value * string
   | IRStructLiteral of string * (string * ir_value) list  (* struct_name, field_assignments *)
+  | IRMatch of ir_value * ir_match_arm list  (* match (value) { arms } *)
+
+(** Match arm for IR match expressions *)
+and ir_match_arm = {
+  ir_arm_pattern: ir_match_pattern;
+  ir_arm_value: ir_value;
+  ir_arm_pos: ir_position;
+}
+
+(** Match pattern for IR *)
+and ir_match_pattern =
+  | IRConstantPattern of ir_value  (* constant values *)
+  | IRDefaultPattern               (* default case *)
 
 and ir_binary_op =
   | IRAdd | IRSub | IRMul | IRDiv | IRMod
@@ -570,6 +583,19 @@ let make_ir_global_variable name var_type init pos ?(is_local=false) ?(is_pinned
   is_pinned;
 }
 
+(** Utility functions for match expressions *)
+let make_ir_match_arm pattern value pos = {
+  ir_arm_pattern = pattern;
+  ir_arm_value = value;
+  ir_arm_pos = pos;
+}
+
+let make_ir_constant_pattern value = IRConstantPattern value
+let make_ir_default_pattern () = IRDefaultPattern
+
+let make_ir_match_expr matched_value arms result_type pos =
+  make_ir_expr (IRMatch (matched_value, arms)) result_type pos
+
 (** Type conversion utilities *)
 
 let rec ast_type_to_ir_type = function
@@ -713,7 +739,7 @@ let string_of_ir_binary_op = function
 let string_of_ir_unary_op = function
   | IRNot -> "!" | IRNeg -> "-" | IRBitNot -> "~" | IRDeref -> "*" | IRAddressOf -> "&"
 
-let string_of_ir_expr expr =
+let rec string_of_ir_expr expr =
   match expr.expr_desc with
   | IRValue value -> string_of_ir_value value
   | IRBinOp (left, op, right) ->
@@ -730,6 +756,18 @@ let string_of_ir_expr expr =
         Printf.sprintf "%s = %s" field_name (string_of_ir_value value)) field_assignments
       in
       Printf.sprintf "%s { %s }" struct_name (String.concat ", " field_strs)
+  | IRMatch (matched_value, arms) ->
+      let arms_str = String.concat ", " (List.map string_of_ir_match_arm arms) in
+      Printf.sprintf "match (%s) { %s }" (string_of_ir_value matched_value) arms_str
+
+and string_of_ir_match_pattern = function
+  | IRConstantPattern value -> string_of_ir_value value
+  | IRDefaultPattern -> "default"
+
+and string_of_ir_match_arm arm =
+  Printf.sprintf "%s: %s" 
+    (string_of_ir_match_pattern arm.ir_arm_pattern) 
+    (string_of_ir_value arm.ir_arm_value)
 
 let rec string_of_ir_instruction instr =
   match instr.instr_desc with

@@ -99,7 +99,7 @@ for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
 as          is          try         catch       throw       defer       go
-delete
+delete      match
 ```
 
 **Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
@@ -2314,11 +2314,11 @@ The compiler automatically converts function calls to eBPF tail calls when **all
 fn packet_classifier(ctx: xdp_md) -> xdp_action {
     var protocol = get_protocol(ctx)  // Regular call (@helper)
     
-    return match protocol {
-        HTTP => process_http(ctx),    // Tail call - meets all conditions
-        DNS => process_dns(ctx),     // Tail call - meets all conditions  
-        ICMP => handle_icmp(ctx),    // Tail call - meets all conditions
-        _ => XDP_DROP                // Regular return
+    return match (protocol) {
+        HTTP: process_http(ctx),    // Tail call - meets all conditions
+        DNS: process_dns(ctx),      // Tail call - meets all conditions  
+        ICMP: handle_icmp(ctx),     // Tail call - meets all conditions
+        default: XDP_DROP           // Regular return
     }
 }
 
@@ -2393,10 +2393,10 @@ The compiler automatically generates and manages eBPF program arrays behind the 
 ```kernelscript
 // User writes this clean code:
 @xdp fn classifier(ctx: xdp_md) -> xdp_action {
-    return match get_protocol(ctx) {
-        HTTP => process_http(ctx),
-        DNS => process_dns(ctx),
-        _ => XDP_DROP
+    return match (get_protocol(ctx)) {
+        HTTP: process_http(ctx),
+        DNS: process_dns(ctx),
+        default: XDP_DROP
     }
 }
 
@@ -2444,6 +2444,8 @@ fn main(args: Args) -> i32 {
 - **Same context type**: All programs in the chain must accept the same context
 
 ### 7.5 Control Flow Statements
+
+#### 7.5.1 Conditional Statements
 ```kernelscript
 // Conditional statements
 if (condition) {
@@ -2453,19 +2455,59 @@ if (condition) {
 } else {
     // statements
 }
+```
 
-// Pattern matching (simplified)
-var protocol = packet.protocol()
-if (protocol == PROTOCOL_TCP) {
-    handle_tcp(packet)
-} else if (protocol == PROTOCOL_UDP) {
-    handle_udp(packet)
-} else if (protocol == PROTOCOL_ICMP) {
-    handle_icmp(packet)
-} else {
-    // default case
+#### 7.5.2 Match Expressions
+
+KernelScript provides `match` expressions for efficient multi-way branching. Match is an expression that returns a value and can be used anywhere an expression is expected.
+
+```kernelscript
+// Basic match expression with constant patterns
+var action = match (packet.protocol()) {
+    IPPROTO_TCP: XDP_PASS,
+    IPPROTO_UDP: XDP_PASS,
+    IPPROTO_ICMP: XDP_DROP,
+    default: XDP_ABORTED
 }
 
+// Match in return statements - ideal for packet processing
+@xdp
+fn packet_filter(ctx: xdp_md) -> xdp_action {
+    var packet = ctx.packet()
+    if (packet == null) return XDP_PASS
+    
+    return match (packet.protocol()) {
+        IPPROTO_TCP: handle_tcp(ctx),    // Function call in match arm
+        IPPROTO_UDP: handle_udp(ctx),    // Can be tail call candidates
+        IPPROTO_ICMP: XDP_DROP,          // Or direct return values
+        default: XDP_PASS
+    }
+}
+
+// Match with complex expressions in arms
+var result = match (security_level) {
+    HIGH: process_high_security(packet),
+    MEDIUM: if (packet.is_encrypted()) { XDP_PASS } else { XDP_DROP },
+    LOW: XDP_PASS,
+    default: XDP_ABORTED
+};
+
+// Nested match expressions
+var final_action = match (packet.protocol()) {
+    IPPROTO_TCP: match (tcp_header.dst_port) {
+        80: handle_http(ctx),
+        443: handle_https(ctx),
+        22: handle_ssh(ctx),
+        default: XDP_PASS
+    },
+    IPPROTO_UDP: handle_udp(ctx),
+    default: XDP_DROP
+}
+```
+
+#### 7.5.3 Loop Statements
+
+```kernelscript
 // Loops with automatic bounds checking
 for (i in 0..MAX_ITERATIONS) {
     if (should_break()) {
@@ -3846,7 +3888,7 @@ unary_operator = "!" | "-" | "*" | "&"
 *)
 
 primary_expression = config_access | identifier | literal | function_call | field_access | 
-                     array_access | parenthesized_expression | struct_literal 
+                     array_access | parenthesized_expression | struct_literal | match_expression 
 
 config_access = identifier "." identifier 
 
@@ -3859,6 +3901,10 @@ parenthesized_expression = "(" expression ")"
 
 struct_literal = identifier "{" struct_literal_field { "," struct_literal_field } [ "," ] "}" 
 struct_literal_field = identifier ":" expression 
+
+match_expression = "match" "(" expression ")" "{" match_arm { "," match_arm } [ "," ] "}"
+match_arm = match_pattern ":" expression
+match_pattern = integer_literal | identifier | "default" 
 
 (* Type annotations *)
 type_annotation = primitive_type | compound_type | identifier 

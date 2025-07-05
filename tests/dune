@@ -200,6 +200,11 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
+ (name test_match)
+ (modules test_match)
+ (libraries kernelscript alcotest test_utils))
+
+(executable
  (name test_pinned_globals)
  (modules test_pinned_globals)
  (libraries kernelscript alcotest str))
@@ -487,6 +492,10 @@
  (alias runtest_pointer_syntax)
  (action (run ./test_pointer_syntax.exe)))
 
+(rule
+ (alias runtest_match)
+ (action (run ./test_match.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -566,7 +575,8 @@
   test_return_path_analysis.exe
   test_tail_call.exe
   test_struct_ops.exe
-  test_pointer_syntax.exe)
+  test_pointer_syntax.exe
+  test_match.exe)
  (action
   (progn
    (run ./test_lexer.exe)
@@ -600,7 +610,8 @@
    (run ./test_return_path_analysis.exe)
    (run ./test_tail_call.exe)
    (run ./test_struct_ops.exe)
-   (run ./test_pointer_syntax.exe))))
+   (run ./test_pointer_syntax.exe)
+   (run ./test_match.exe))))
 
 (rule
  (alias ir-tests)

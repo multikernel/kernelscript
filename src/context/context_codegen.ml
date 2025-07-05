@@ -55,4 +55,28 @@ let get_context_includes ctx_type =
 let map_context_action_constant ctx_type action_value =
   match get_context_codegen ctx_type with
   | Some codegen -> codegen.map_action_constant action_value
-  | None -> None 
+  | None -> None
+
+(** Get all action constants for a context type as (name, value) pairs *)
+let get_context_action_constants ctx_type =
+  match get_context_codegen ctx_type with
+  | Some codegen ->
+      (* Generate constants by testing integer values *)
+      let rec collect_constants acc value =
+        if value > 10 then acc  (* Reasonable limit *)
+        else
+          match codegen.map_action_constant value with
+          | Some name -> collect_constants ((name, value) :: acc) (value + 1)
+          | None -> collect_constants acc (value + 1)
+      in
+      List.rev (collect_constants [] 0)
+  | None -> []
+
+(** Get struct field definitions for a context type as (name, c_type) pairs *)
+let get_context_struct_fields ctx_type =
+  match get_context_codegen ctx_type with
+  | Some codegen ->
+      List.map (fun (field_name, field_access) ->
+        (field_name, field_access.field_type)
+      ) codegen.field_mappings
+  | None -> [] 

@@ -18,7 +18,7 @@
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
-%token IN DELETE TRY CATCH THROW DEFER
+%token IN DELETE TRY CATCH THROW DEFER MATCH DEFAULT
 
 
 /* Operators */
@@ -104,6 +104,10 @@
 %type <Ast.expr> field_access
 %type <Ast.expr> array_access
 %type <Ast.expr> struct_literal
+%type <Ast.expr> match_expression
+%type <Ast.match_arm list> match_arms
+%type <Ast.match_arm> match_arm
+%type <Ast.match_pattern> match_pattern
 %type <Ast.literal> literal
 %type <Ast.expr * Ast.expr> range_expression
 %type <Ast.expr list> argument_list
@@ -344,6 +348,7 @@ expression:
   | field_access { $1 }
   | array_access { $1 }
   | struct_literal { $1 }
+  | match_expression { $1 }
   /* Binary operations - precedence handled by %left/%right declarations */
   | expression PLUS expression { make_expr (BinaryOp ($1, Add, $3)) (make_pos ()) }
   | expression MINUS expression { make_expr (BinaryOp ($1, Sub, $3)) (make_pos ()) }
@@ -533,5 +538,27 @@ global_variable_declaration:
     { make_global_var_decl $4 (Some $6) None (make_pos ()) ~is_local:true ~is_pinned:true () }
   | PIN LOCAL VAR IDENTIFIER ASSIGN expression
     { make_global_var_decl $4 None (Some $6) (make_pos ()) ~is_local:true ~is_pinned:true () }
+
+/* Match expressions: match (expr) { pattern: expr, ... } */
+match_expression:
+  | MATCH LPAREN expression RPAREN LBRACE match_arms RBRACE
+    { make_expr (Match ($3, $6)) (make_pos ()) }
+
+match_arms:
+  | match_arm { [$1] }
+  | match_arm COMMA match_arms { $1 :: $3 }
+  | match_arm COMMA { [$1] }  /* Allow trailing comma */
+
+match_arm:
+  | match_pattern COLON expression
+    { make_match_arm $1 $3 (make_pos ()) }
+
+match_pattern:
+  | INT { make_constant_pattern (IntLit (fst $1, snd $1)) }
+  | STRING { make_constant_pattern (StringLit $1) }
+  | CHAR_LIT { make_constant_pattern (CharLit $1) }
+  | BOOL_LIT { make_constant_pattern (BoolLit $1) }
+  | IDENTIFIER { make_identifier_pattern $1 }
+  | DEFAULT { make_default_pattern () }
 
 %% 
