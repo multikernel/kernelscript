@@ -195,13 +195,13 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let userspace_code = generate_userspace_with_configs ast in
     
-    (* Verify dynamic filename (should be test.ebpf.o based on source filename) *)
-    check bool "dynamic filename test.ebpf.o found" true 
-      (try ignore (Str.search_forward (Str.regexp "test\\.ebpf\\.o") userspace_code 0); true with Not_found -> false);
+    (* Verify dynamic skeleton function (should be test_ebpf__open_and_load based on source filename) *)
+    check bool "dynamic skeleton function test_ebpf__open_and_load found" true 
+      (try ignore (Str.search_forward (Str.regexp "test_ebpf__open_and_load") userspace_code 0); true with Not_found -> false);
     
-    (* Verify NO hardcoded test_config.ebpf.o *)
-    check bool "no hardcoded test_config.ebpf.o" true 
-      (try ignore (Str.search_forward (Str.regexp "test_config\\.ebpf\\.o") userspace_code 0); false with Not_found -> true)
+    (* Verify NO hardcoded test_config skeleton function *)
+    check bool "no hardcoded test_config_ebpf skeleton function" true 
+      (try ignore (Str.search_forward (Str.regexp "test_config_ebpf__open_and_load") userspace_code 0); false with Not_found -> true)
   with
   | e -> fail ("Error in dynamic filename test: " ^ Printexc.to_string e)
 

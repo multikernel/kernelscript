@@ -686,8 +686,8 @@ let test_map_loading_code_generation () =
         Unix.rmdir temp_dir;
         
         (* Verify BPF helper functions are generated (since load is called) *)
-        check bool "load_bpf_program function exists" true 
-          (try ignore (Str.search_forward (Str.regexp "int load_bpf_program") content 0); true with Not_found -> false);
+        check bool "get_bpf_program_handle function exists" true 
+          (try ignore (Str.search_forward (Str.regexp "int get_bpf_program_handle") content 0); true with Not_found -> false);
         
         (* Verify the user's explicit code is present *)
         check bool "user main function exists" true 
@@ -695,11 +695,11 @@ let test_map_loading_code_generation () =
         
         (* Verify load call is present *)
   check bool "load call present" true 
-          (try ignore (Str.search_forward (Str.regexp "load_bpf_program.*test") content 0); true with Not_found -> false);
+          (try ignore (Str.search_forward (Str.regexp "get_bpf_program_handle.*test") content 0); true with Not_found -> false);
         
-        (* Verify BPF object filename is correct *)
-        check bool "correct eBPF object filename" true 
-          (try ignore (Str.search_forward (Str.regexp "test\\.ebpf\\.o") content 0); true with Not_found -> false);
+        (* Verify BPF skeleton function is correct *)
+        check bool "correct eBPF skeleton function" true 
+          (try ignore (Str.search_forward (Str.regexp "test_ebpf__open_and_load") content 0); true with Not_found -> false);
         
         (* Verify map file descriptor declarations are NOT present (maps not used in userspace) *)
         check bool "packet_stats_fd declaration not generated (not used)" false 

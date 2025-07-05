@@ -697,6 +697,23 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
     "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
   ) else ""
 
+(** Determine which ELF section a global variable belongs to *)
+let determine_global_var_section (global_var : ir_global_variable) =
+  match global_var.global_var_init with
+  | None -> "bss"  (* Uninitialized variables go to .bss *)
+  | Some init_val ->
+      (match init_val.value_desc with
+       | IRLiteral (Ast.IntLit (0, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
+       | IRLiteral (Ast.BoolLit false) -> "bss"      (* False booleans go to .bss *)
+       | IRLiteral (Ast.NullLit) -> "bss"            (* Null pointers go to .bss *)
+       | IRLiteral (Ast.IntLit (_, _)) -> "data"     (* Non-zero integers go to .data *)
+       | IRLiteral (Ast.BoolLit true) -> "data"      (* True booleans go to .data *)
+       | IRLiteral (Ast.StringLit _) -> "data"       (* String literals go to .data *)
+       | IRLiteral (Ast.CharLit _) -> "data"         (* Character literals go to .data *)
+       | IRLiteral (Ast.ArrayLit _) -> "data"        (* Array literals go to .data *)
+       | _ -> "bss"  (* Default to .bss for unknown initialization *)
+      )
+
 (** Generate string helper functions *)
 let generate_string_helpers _string_sizes =
   (* For userspace, we don't need complex string helper functions - just use standard C *)
@@ -757,8 +774,9 @@ let generate_c_value_from_ir ctx ir_value =
           (* Pinned global variables are accessed through map lookup *)
           sprintf "({ struct pinned_globals_struct __pg; uint32_t __key = 0; if (bpf_map_lookup_elem(pinned_globals_map_fd, &__key, &__pg) == 0) __pg.%s; else (typeof(__pg.%s)){0}; })" name name
         else
-          (* Regular shared global variables are accessed through skeleton bss section *)
-          sprintf "obj->bss->%s" name
+          (* Regular shared global variables are accessed through skeleton - determine correct section *)
+          let section = determine_global_var_section global_var in
+          sprintf "obj->%s->%s" section name
       else
         name  (* Function parameters and regular variables use their names directly *)
   | IRRegister reg_id -> get_register_var_name ctx reg_id ir_value.val_type
@@ -992,8 +1010,9 @@ let generate_variable_assignment ctx dest src is_const =
           (* Pinned global variable assignment through map update *)
           sprintf "{ struct pinned_globals_struct __pg; uint32_t __key = 0; if (bpf_map_lookup_elem(pinned_globals_map_fd, &__key, &__pg) == 0) { __pg.%s = %s; bpf_map_update_elem(pinned_globals_map_fd, &__key, &__pg, BPF_ANY); } }" name src_str
         else
-          (* Regular global variable assignment through skeleton bss section *)
-          sprintf "%sobj->bss->%s = %s;" assignment_prefix name src_str
+          (* Regular global variable assignment through skeleton - determine correct section *)
+          let section = determine_global_var_section global_var in
+          sprintf "%sobj->%s->%s = %s;" assignment_prefix section name src_str
       else
         (* Regular variable assignment *)
         let dest_str = generate_c_value_from_ir ctx dest in
@@ -1069,7 +1088,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       (userspace_impl, fixed_format :: rest_args)
                   | args, _ -> (userspace_impl, args @ ["\"\\n\""]))
              | "load" ->
-                 (* Special handling for load: generate libbpf program loading code with error checking *)
+                 (* Special handling for load: now lightweight - just get program handle from skeleton *)
                  ctx.function_usage.uses_load <- true;
                  (match c_args with
                   | [program_name] ->
@@ -1077,7 +1096,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       let clean_name = if String.contains program_name '"' then
                         String.sub program_name 1 (String.length program_name - 2)
                       else program_name in
-                      ("load_bpf_program", [sprintf "\"%s\"" clean_name])
+                      ("get_bpf_program_handle", [sprintf "\"%s\"" clean_name])
                   | _ -> failwith "load expects exactly one argument")
              | "attach" ->
                  (* Special handling for attach: now takes program handle (not program name) *)
@@ -1103,7 +1122,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
         match ret_opt with
         | Some result ->
             let result_var = generate_c_value_from_ir ctx result in
-            sprintf "%s\n    if (%s < 0) {\n        fprintf(stderr, \"Failed to load BPF program\\n\");\n        return 1;\n    }" basic_call result_var
+            sprintf "%s\n    if (%s < 0) {\n        fprintf(stderr, \"Failed to get BPF program handle\\n\");\n        return 1;\n    }" basic_call result_var
         | None -> basic_call
       else basic_call
   
@@ -1311,8 +1330,43 @@ let collect_function_usage_from_ir_function ?(global_variables = []) ir_func =
   ) ir_func.basic_blocks;
   ctx.function_usage
 
+(** Generate config initialization from declaration defaults *)
+let generate_config_initialization (config_decl : Ast.config_declaration) =
+  let config_name = config_decl.config_name in
+  let struct_name = sprintf "%s_config" config_name in
+  
+  (* Generate field initializations with default values *)
+  let field_initializations = List.map (fun field ->
+    let initialization = match field.Ast.field_default with
+      | Some default_value -> 
+          (match default_value with
+           | Ast.IntLit (i, _) -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
+           | Ast.BoolLit b -> sprintf "    init_config.%s = %s;" field.Ast.field_name (if b then "true" else "false")
+           | Ast.ArrayLit elements ->
+               (* Handle array initialization *)
+               let elements_str = List.mapi (fun i element ->
+                 match element with
+                 | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
+                 | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
+               ) elements in
+               String.concat "\n" elements_str
+           | _ -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* fallback *))
+      | None -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* default to 0 if no default specified *)
+    in
+    initialization
+  ) config_decl.Ast.config_fields in
+  
+  sprintf {|    /* Initialize %s config map with default values */
+    struct %s init_config = {0};
+    uint32_t config_key = 0;
+%s
+    if (bpf_map_update_elem(%s_config_map_fd, &config_key, &init_config, BPF_ANY) < 0) {
+        fprintf(stderr, "Failed to initialize %s config map with default values\n");
+        return -1;
+    }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
+
 (** Generate C function from IR function *)
-let generate_c_function_from_ir ?(global_variables = []) (ir_func : ir_function) =
+let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
        (* Handle string types specially for function parameters *)
@@ -1368,6 +1422,22 @@ let generate_c_function_from_ir ?(global_variables = []) (ir_func : ir_function)
     (* No need to copy function parameters to local variables - use them directly *)
     let args_assignment_code = "" in
     
+    (* Always load eBPF object at the beginning of main() if global variables exist or load() is used *)
+    let has_global_vars = List.length global_variables > 0 in
+    let func_usage = collect_function_usage_from_ir_function ir_func in
+    let needs_object_loading = has_global_vars || func_usage.uses_load in
+    let skeleton_loading_code = if needs_object_loading then
+      sprintf {|    // Implicit eBPF skeleton loading - makes global variables immediately accessible
+    if (!obj) {
+        obj = %s_ebpf__open_and_load();
+        if (!obj) {
+            fprintf(stderr, "Failed to open and load eBPF skeleton\n");
+            return 1;
+        }
+    }|} base_name
+    else ""
+    in
+    
     (* Check if this main function uses maps and needs auto-initialization *)
     let func_usage = collect_function_usage_from_ir_function ir_func in
     let needs_auto_init = func_usage.uses_map_operations && not func_usage.uses_load in
@@ -1375,20 +1445,48 @@ let generate_c_function_from_ir ?(global_variables = []) (ir_func : ir_function)
       "    \n    // Auto-initialize BPF maps\n    atexit(cleanup_bpf_maps);\n    if (init_bpf_maps() < 0) {\n        return 1;\n    }"
     else "" in
     
-    (* Add error handling notice for BPF program loading *)
-    let error_handling_notice = if func_usage.uses_load then
-      "    // Error handling: BPF program loading failures are handled by null checks on 'obj'"
+    (* Include setup code when object is loaded in main() *)
+    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations) then
+      let all_setup_parts = List.filter (fun s -> s <> "") [
+        (if func_usage.uses_map_operations then "    // Map setup would go here if needed" else "");
+        (if List.length config_declarations > 0 then 
+          String.concat "\n" (List.map (fun config_decl ->
+            let config_name = config_decl.Ast.config_name in
+            let load_code = sprintf {|    
+    // Load %s config map from eBPF object
+    %s_config_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s_config_map");
+    if (%s_config_map_fd < 0) {
+        fprintf(stderr, "Failed to find %s config map in eBPF object\n");
+        return 1;
+    }|} config_name config_name config_name config_name config_name in
+            let init_code = generate_config_initialization config_decl in
+            load_code ^ "\n" ^ init_code
+          ) config_declarations)
+        else "");
+      ] in
+      if all_setup_parts <> [] then "\n" ^ String.concat "\n" all_setup_parts else ""
     else "" in
     
-    (* Generate ONLY what the user explicitly wrote with auto-initialization if needed *)
+    (* Add error handling notice for BPF program loading *)
+    let error_handling_notice = if func_usage.uses_load then
+      "    // Note: Skeleton loaded implicitly above, load() now gets program handles"
+    else "" in
+    
+    (* Combine skeleton loading with other initialization *)
+    let initialization_code = String.concat "\n" (List.filter (fun s -> s <> "") [
+      skeleton_loading_code;
+      setup_call;
+      auto_init_call;
+      error_handling_notice;
+    ]) in
+    
+    (* Generate ONLY what the user explicitly wrote with skeleton loading at the beginning *)
     sprintf {|%s %s(%s) {
-%s    
-%s%s
-%s
+%s%s%s
 %s
     
     %s
-}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code auto_init_call error_handling_notice body_c
+}|} adjusted_return_type ir_func.func_name adjusted_params var_decls args_parsing_code args_assignment_code initialization_code body_c
   else
     sprintf {|%s %s(%s) {
 %s    %s
@@ -1632,40 +1730,7 @@ let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
   
   sprintf "struct %s {\n%s\n};" struct_name (String.concat "\n" field_declarations)
 
-(** Generate config initialization from declaration defaults *)
-let generate_config_initialization (config_decl : Ast.config_declaration) =
-  let config_name = config_decl.config_name in
-  let struct_name = sprintf "%s_config" config_name in
-  
-  (* Generate field initializations with default values *)
-  let field_initializations = List.map (fun field ->
-    let initialization = match field.Ast.field_default with
-      | Some default_value -> 
-          (match default_value with
-           | Ast.IntLit (i, _) -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
-           | Ast.BoolLit b -> sprintf "    init_config.%s = %s;" field.Ast.field_name (if b then "true" else "false")
-           | Ast.ArrayLit elements ->
-               (* Handle array initialization *)
-               let elements_str = List.mapi (fun i element ->
-                 match element with
-                 | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
-                 | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
-               ) elements in
-               String.concat "\n" elements_str
-           | _ -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* fallback *))
-      | None -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* default to 0 if no default specified *)
-    in
-    initialization
-  ) config_decl.Ast.config_fields in
-  
-  sprintf {|    /* Initialize %s config map with default values */
-    struct %s init_config = {0};
-    uint32_t config_key = 0;
-%s
-    if (bpf_map_update_elem(%s_config_map_fd, &config_key, &init_config, BPF_ANY) < 0) {
-        fprintf(stderr, "Failed to initialize %s config map with default values\n");
-        return -1;
-    }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
+
 
 (** Generate necessary headers based on maps used *)
 let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
@@ -1700,7 +1765,7 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
 
 (** Generate userspace code with tail call dependency management *)
-let generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies _global_variables =
+let generate_load_function_with_tail_calls _base_name all_usage tail_call_analysis _all_setup_code kfunc_dependencies _global_variables =
   (* kfunc_dependencies is used implicitly in the generated C code via ensure_kfunc_dependencies_loaded call *)
   let _ensure_deps_exist = kfunc_dependencies in  (* Suppress unused warning *)
   if all_usage.uses_load then
@@ -1708,7 +1773,7 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
       if tail_call_analysis.Tail_call_analyzer.prog_array_size > 0 then
         sprintf {|
     // Load tail call dependencies automatically
-    struct bpf_map *prog_array_map = bpf_object__find_map_by_name(bpf_obj, "prog_array");
+    struct bpf_map *prog_array_map = bpf_object__find_map_by_name(obj->obj, "prog_array");
     if (!prog_array_map) {
         fprintf(stderr, "Failed to find prog_array map\n");
         return -1;
@@ -1726,7 +1791,7 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
         (String.concat "\n    " 
           (Hashtbl.fold (fun target index acc ->
             (sprintf {|{
-        struct bpf_program *target_prog = bpf_object__find_program_by_name(bpf_obj, "%s");
+        struct bpf_program *target_prog = bpf_object__find_program_by_name(obj->obj, "%s");
         if (target_prog) {
             int target_fd = bpf_program__fd(target_prog);
             if (target_fd >= 0) {
@@ -1742,46 +1807,11 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
         "" 
     in
 
-    let combined_setup_code = 
-      if all_setup_code <> "" && dep_loading_code <> "" then
-        all_setup_code ^ "\n" ^ dep_loading_code
-      else if all_setup_code <> "" then
-        all_setup_code
-      else
-        dep_loading_code
-    in
-    
-    let kfunc_dependency_check = if has_kfunc_dependencies kfunc_dependencies then
-      {|    /* Ensure kfunc dependencies are loaded before loading eBPF program */
-    if (ensure_kfunc_dependencies_loaded(program_name) != 0) {
-        fprintf(stderr, "Failed to load required kernel modules for program '%%s'\n", program_name);
+    (* Lightweight load function - skeleton already loaded in main() *)
+    sprintf {|int get_bpf_program_handle(const char *program_name) {
+    if (!obj) {
+        fprintf(stderr, "eBPF skeleton not loaded - this should not happen with implicit loading\n");
         return -1;
-    }
-    |}
-    else
-      ""
-    in
-    
-    (* Standard libbpf skeleton handles global variable initialization automatically *)
-    
-    sprintf {|int load_bpf_program(const char *program_name) {
-%s    if (!obj) {
-        /* Use standard libbpf skeleton (equivalent to loading %s.ebpf.o) */
-        obj = %s_ebpf__open_and_load();
-        if (!obj) {
-            fprintf(stderr, "Failed to open and load BPF skeleton\n");
-            return -1;
-        }
-        
-        /* Ensure global variable sections are accessible */
-        if (!obj->bss) {
-            fprintf(stderr, "Failed to access global variables section\n");
-            %s_ebpf__destroy(obj);
-            obj = NULL;
-            return -1;
-        }
-        
-        %s
     }
     
     struct bpf_program *prog = bpf_object__find_program_by_name(obj->obj, program_name);
@@ -1796,8 +1826,9 @@ let generate_load_function_with_tail_calls base_name all_usage tail_call_analysi
         return -1;
     }
     
+%s
     return prog_fd;
-}|} kfunc_dependency_check base_name base_name base_name combined_setup_code
+}|} dep_loading_code
   else ""
 
 (** Generate complete userspace program from IR *)
@@ -1872,14 +1903,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Generate type alias definitions from AST *)
   let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
 
-  (* Generate skeleton instance - use standard libbpf skeleton *)
-  let skeleton_code = if ir_multi_prog.global_variables <> [] then
-    sprintf "/* Standard libbpf skeleton */\nstruct %s_ebpf *obj = NULL;\n" base_name
+  (* Generate eBPF object instance *)
+  let skeleton_code = if ir_multi_prog.global_variables <> [] || all_usage.uses_load then
+    sprintf "/* eBPF skeleton instance */\nstruct %s_ebpf *obj = NULL;\n" base_name
   else "" in
   
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
-    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables) userspace_prog.userspace_functions) in
+    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations) userspace_prog.userspace_functions) in
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
@@ -1938,7 +1969,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     List.map (fun config_decl ->
       let config_name = config_decl.Ast.config_name in
       let load_code = sprintf {|    /* Load %s config map from eBPF object */
-    %s_config_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "%s_config_map");
+    %s_config_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s_config_map");
     if (%s_config_map_fd < 0) {
         fprintf(stderr, "Failed to find %s config map in eBPF object\n");
         return -1;
