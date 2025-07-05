@@ -179,8 +179,11 @@ let integer_promotion t1 t2 =
   
   (* Mixed signed/unsigned promotions - like C allows *)
   | I8, U32 | I16, U32 | I32, U32 -> Some I32   (* U32 literals can be assigned to signed types if they fit *)
-  | I64, U32 -> Some I64   (* U32 can always fit in I64 *)
-  | I64, U64 -> Some I64   (* U64 literals to I64 (may truncate but allowed in C-style) *)
+  | U32, I8 | U32, I16 -> Some I32   (* U32 can be assigned to signed types if they fit *)
+  | I64, U32 | U32, I64 -> Some I64   (* U32 can always fit in I64 *)
+  | I64, U64 | U64, I64 -> Some I64   (* U64 literals to I64 (may truncate but allowed in C-style) *)
+  | I8, U8 | U8, I8 -> Some I8   (* Small integer promotions *)
+  | I16, U16 | U16, I16 -> Some I16   (* Medium integer promotions *)
   
   (* No other unification possible *)
   | _ -> None
@@ -1729,20 +1732,10 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
               let resolved_type = resolve_user_type ctx t in
               (* If both type and initial value are present, check for type mismatch *)
               (match global_var_decl.global_var_init with
-               | Some init_value ->
-                                       let inferred_type = match init_value with
-                      | IntLit (_, _) -> 
-                          (* For integer literals, use the declared type if it's an integer type *)
-                          (match resolved_type with
-                           | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 -> resolved_type
-                           | _ -> U32)
-                      | StringLit s -> Str (String.length s + 1)
-                      | BoolLit _ -> Bool
-                      | CharLit _ -> Char
-                      | NullLit -> Pointer U8
-                      | ArrayLit elems -> Array (U32, List.length elems)
-                    in
-                                        if (unify_types resolved_type inferred_type) = None then
+               | Some init_expr ->
+                   let typed_init_expr = type_check_expression ctx init_expr in
+                   let inferred_type = typed_init_expr.texpr_type in
+                   if not (can_assign resolved_type inferred_type) then
                      type_error ("Type mismatch in global variable declaration: expected " ^ 
                                 string_of_bpf_type resolved_type ^ ", got " ^ 
                                 string_of_bpf_type inferred_type) global_var_decl.global_var_pos;
@@ -1751,12 +1744,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
           | None -> 
               (* If no type specified, infer from initial value *)
               (match global_var_decl.global_var_init with
-               | Some (IntLit (_, _)) -> U32  (* Default integer type *)
-               | Some (StringLit s) -> Str (String.length s + 1)  (* String length + null terminator *)
-               | Some (BoolLit _) -> Bool
-               | Some (CharLit _) -> Char
-               | Some (NullLit) -> Pointer U8  (* Default pointer type *)
-               | Some (ArrayLit elems) -> Array (U32, List.length elems)  (* Infer array size from elements *)
+               | Some init_expr ->
+                   let typed_init_expr = type_check_expression ctx init_expr in
+                   typed_init_expr.texpr_type
                | None -> U32)  (* Default type when no type or value specified *)
         in
         Hashtbl.replace ctx.variables global_var_decl.global_var_name var_type

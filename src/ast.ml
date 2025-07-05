@@ -240,7 +240,7 @@ type config_declaration = {
 type global_variable_declaration = {
   global_var_name: string;
   global_var_type: bpf_type option;
-  global_var_init: literal option;
+  global_var_init: expr option;
   global_var_pos: position;
   is_local: bool; (* true if declared with 'local' keyword *)
   is_pinned: bool; (* true if declared with 'pin' keyword *)
@@ -652,7 +652,7 @@ let string_of_declaration = function
       in
       let init_str = match decl.global_var_init with
         | None -> ""
-        | Some lit -> " = " ^ string_of_literal lit
+        | Some expr -> " = " ^ string_of_expr expr
       in
       Printf.sprintf "%s%svar %s%s%s;" pin_str local_str decl.global_var_name type_str init_str
 

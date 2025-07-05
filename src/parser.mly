@@ -24,6 +24,8 @@
 /* Operators */
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
 %token EQ NE LT LE GT GE AND OR NOT AMPERSAND
+%token UMINUS  /* Virtual token for unary minus precedence */
+
 
 /* Punctuation */
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET
@@ -32,16 +34,16 @@
 /* Special */
 %token EOF
 
-/* Operator precedence (lowest to highest) - Restored for compatibility */
+/* Operator precedence (lowest to highest) */
 %left OR
-%left AND
-%nonassoc EQ NE   /* Equality - NON-ASSOCIATIVE to prevent conflicts */
-%nonassoc LT LE GT GE /* Relational - NON-ASSOCIATIVE */
+%left AND  
+%left EQ NE
+%left LT LE GT GE
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
-%right NOT NEG DEREF ADDR_OF  /* Unary operators */
-%left DOT ARROW   /* Field access - dot and arrow have same precedence */
-%left LBRACKET  /* Array access */
+%right UMINUS /* Precedence for unary minus - higher than binary ops */
+%left DOT ARROW
+%left LBRACKET
 
 /* Type declarations for non-terminals */
 %type <Ast.ast> program
@@ -342,10 +344,10 @@ expression:
   | expression AND expression { make_expr (BinaryOp ($1, And, $3)) (make_pos ()) }
   | expression OR expression { make_expr (BinaryOp ($1, Or, $3)) (make_pos ()) }
   /* Unary operations */
-  | NOT expression %prec NOT { make_expr (UnaryOp (Not, $2)) (make_pos ()) }
-  | MINUS expression %prec NEG { make_expr (UnaryOp (Neg, $2)) (make_pos ()) }
-  | MULTIPLY expression %prec DEREF { make_expr (UnaryOp (Deref, $2)) (make_pos ()) }
-  | AMPERSAND expression %prec ADDR_OF { make_expr (UnaryOp (AddressOf, $2)) (make_pos ()) }
+  | NOT expression %prec UMINUS { make_expr (UnaryOp (Not, $2)) (make_pos ()) }
+  | MINUS expression %prec UMINUS { make_expr (UnaryOp (Neg, $2)) (make_pos ()) }
+  | MULTIPLY expression %prec UMINUS { make_expr (UnaryOp (Deref, $2)) (make_pos ()) }
+  | AMPERSAND expression %prec UMINUS { make_expr (UnaryOp (AddressOf, $2)) (make_pos ()) }
 
 primary_expression:
   | literal { make_expr (Literal $1) (make_pos ()) }
@@ -492,29 +494,29 @@ type_alias_declaration:
 
 /* Global variable declaration: [pin] [local] var name: type = value */
 global_variable_declaration:
-  | VAR IDENTIFIER COLON bpf_type ASSIGN literal
+  | VAR IDENTIFIER COLON bpf_type ASSIGN expression
     { make_global_var_decl $2 (Some $4) (Some $6) (make_pos ()) () }
   | VAR IDENTIFIER COLON bpf_type
     { make_global_var_decl $2 (Some $4) None (make_pos ()) () }
-  | VAR IDENTIFIER ASSIGN literal
+  | VAR IDENTIFIER ASSIGN expression
     { make_global_var_decl $2 None (Some $4) (make_pos ()) () }
-  | LOCAL VAR IDENTIFIER COLON bpf_type ASSIGN literal
+  | LOCAL VAR IDENTIFIER COLON bpf_type ASSIGN expression
     { make_global_var_decl $3 (Some $5) (Some $7) (make_pos ()) ~is_local:true () }
   | LOCAL VAR IDENTIFIER COLON bpf_type
     { make_global_var_decl $3 (Some $5) None (make_pos ()) ~is_local:true () }
-  | LOCAL VAR IDENTIFIER ASSIGN literal
+  | LOCAL VAR IDENTIFIER ASSIGN expression
     { make_global_var_decl $3 None (Some $5) (make_pos ()) ~is_local:true () }
-  | PIN VAR IDENTIFIER COLON bpf_type ASSIGN literal
+  | PIN VAR IDENTIFIER COLON bpf_type ASSIGN expression
     { make_global_var_decl $3 (Some $5) (Some $7) (make_pos ()) ~is_pinned:true () }
   | PIN VAR IDENTIFIER COLON bpf_type
     { make_global_var_decl $3 (Some $5) None (make_pos ()) ~is_pinned:true () }
-  | PIN VAR IDENTIFIER ASSIGN literal
+  | PIN VAR IDENTIFIER ASSIGN expression
     { make_global_var_decl $3 None (Some $5) (make_pos ()) ~is_pinned:true () }
-  | PIN LOCAL VAR IDENTIFIER COLON bpf_type ASSIGN literal
+  | PIN LOCAL VAR IDENTIFIER COLON bpf_type ASSIGN expression
     { make_global_var_decl $4 (Some $6) (Some $8) (make_pos ()) ~is_local:true ~is_pinned:true () }
   | PIN LOCAL VAR IDENTIFIER COLON bpf_type
     { make_global_var_decl $4 (Some $6) None (make_pos ()) ~is_local:true ~is_pinned:true () }
-  | PIN LOCAL VAR IDENTIFIER ASSIGN literal
+  | PIN LOCAL VAR IDENTIFIER ASSIGN expression
     { make_global_var_decl $4 None (Some $6) (make_pos ()) ~is_local:true ~is_pinned:true () }
 
 %% 

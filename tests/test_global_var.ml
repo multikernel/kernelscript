@@ -185,7 +185,7 @@ fn test_program(ctx: xdp_md) -> xdp_action {
     
     (* Test global_int *)
     (match lookup_symbol symbol_table "global_int" with
-     | Some {kind = GlobalVariable (U32, Some (IntLit (42, None))); scope = []; _} ->
+     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (42, None)); _}); scope = []; _} ->
          check bool "global_int correctly stored" true true
      | Some {kind = GlobalVariable _; _} ->
          fail "global_int has wrong type or value"
@@ -193,13 +193,13 @@ fn test_program(ctx: xdp_md) -> xdp_action {
     
     (* Test global_string *)
     (match lookup_symbol symbol_table "global_string" with
-     | Some {kind = GlobalVariable (Str 256, Some (StringLit "test")); scope = []; _} ->
+     | Some {kind = GlobalVariable (Str 256, Some {expr_desc = Literal (StringLit "test"); _}); scope = []; _} ->
          check bool "global_string correctly stored" true true
      | _ -> fail "global_string not found or incorrect");
     
     (* Test inferred_var *)
     (match lookup_symbol symbol_table "inferred_var" with
-     | Some {kind = GlobalVariable (U32, Some (IntLit (100, None))); scope = []; _} ->
+     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (100, None)); _}); scope = []; _} ->
          check bool "inferred_var correctly stored" true true
      | _ -> fail "inferred_var not found or incorrect")
   with
@@ -866,6 +866,51 @@ fn test_program(ctx: xdp_md) -> xdp_action {
   with
   | e -> fail ("Global variables in eBPF C code test failed: " ^ Printexc.to_string e)
 
+(** Test negative numbers in global variables *)
+let test_negative_numbers_in_global_vars () =
+  let program_text = {|
+var negative_int = -42
+var negative_typed: i32 = -123
+var negative_large: i64 = -9223372036854775
+var negative_small: i8 = -127
+
+@xdp
+fn test_program(ctx: xdp_md) -> xdp_action {
+    return 2
+}
+|} in
+  try
+    let ast = parse_program_string program_text in
+    let symbol_table = create_test_symbol_table ast in
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
+    
+    (* Verify all negative global variables are processed *)
+    check int "negative numbers global variable count" 4 (List.length ir.global_variables);
+    
+    (* Check specific variable types and values *)
+    (match lookup_symbol symbol_table "negative_int" with
+     | Some {kind = GlobalVariable (I32, _); _} ->
+         check bool "negative_int correctly inferred as I32" true true
+     | _ -> fail "negative_int variable not found or wrong type");
+    
+    (match lookup_symbol symbol_table "negative_typed" with
+     | Some {kind = GlobalVariable (I32, _); _} ->
+         check bool "negative_typed correctly typed as I32" true true
+     | _ -> fail "negative_typed variable not found or wrong type");
+    
+    (match lookup_symbol symbol_table "negative_large" with
+     | Some {kind = GlobalVariable (I64, _); _} ->
+         check bool "negative_large correctly typed as I64" true true
+     | _ -> fail "negative_large variable not found or wrong type");
+    
+    (match lookup_symbol symbol_table "negative_small" with
+     | Some {kind = GlobalVariable (I8, _); _} ->
+         check bool "negative_small correctly typed as I8" true true
+     | _ -> fail "negative_small variable not found or wrong type")
+  with
+  | e -> fail ("Negative numbers test failed: " ^ Printexc.to_string e)
+
 let global_variable_tests = [
   ("parsing_forms", `Quick, test_global_var_parsing_forms);
   ("type_inference", `Quick, test_global_var_type_inference);
@@ -889,6 +934,7 @@ let global_variable_tests = [
   ("local_keyword_all_forms", `Quick, test_local_keyword_all_forms);
   ("local_keyword_invalid_usage", `Quick, test_local_keyword_invalid_usage);
   ("global_vars_in_generated_ebpf_code", `Quick, test_global_vars_in_generated_ebpf_code);
+  ("negative_numbers_in_global_vars", `Quick, test_negative_numbers_in_global_vars);
 ]
 
 let () =

@@ -6,7 +6,7 @@ open Ast
 type symbol_kind =
   | Variable of bpf_type
   | ConstVariable of bpf_type * literal  (* Type and constant value *)
-  | GlobalVariable of bpf_type * literal option  (* Type and optional initial value *)
+  | GlobalVariable of bpf_type * expr option  (* Type and optional initial value *)
   | Function of bpf_type list * bpf_type  (* Parameter types, return type *)
   | TypeDef of type_def
   | GlobalMap of map_declaration
@@ -299,12 +299,16 @@ let add_global_var_decl table global_var_decl =
     | None -> 
         (* If no type specified, infer from initial value *)
         (match global_var_decl.global_var_init with
-         | Some (IntLit (_, _)) -> U32  (* Default integer type *)
-         | Some (StringLit s) -> Str (String.length s + 1)  (* String length + null terminator *)
-         | Some (BoolLit _) -> Bool
-         | Some (CharLit _) -> Char
-         | Some (NullLit) -> Pointer U8  (* Default pointer type *)
-         | Some (ArrayLit elems) -> Array (U32, List.length elems)  (* Infer array size from elements *)
+         | Some expr -> 
+             (match expr.expr_desc with
+              | Literal (IntLit (_, _)) -> U32  (* Default integer type *)
+              | Literal (StringLit s) -> Str (String.length s + 1)  (* String length + null terminator *)
+              | Literal (BoolLit _) -> Bool
+              | Literal (CharLit _) -> Char
+              | Literal (NullLit) -> Pointer U8  (* Default pointer type *)
+              | Literal (ArrayLit elems) -> Array (U32, List.length elems)  (* Infer array size from elements *)
+              | UnaryOp (Neg, _) -> I32  (* Negative expressions default to signed *)
+              | _ -> U32)  (* Default to U32 for other expressions *)
          | None -> U32)  (* Default type when no type or value specified *)
   in
   add_symbol table global_var_decl.global_var_name (GlobalVariable (var_type, global_var_decl.global_var_init)) Public pos

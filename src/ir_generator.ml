@@ -1461,16 +1461,35 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
     | None -> 
         (* If no type specified, infer from initial value *)
         (match global_var_decl.global_var_init with
-         | Some (IntLit (_, _)) -> IRU32  (* Default integer type *)
-         | Some (StringLit s) -> IRStr (max 1 (String.length s))  (* String type *)
-         | Some (BoolLit _) -> IRBool
-         | Some (CharLit _) -> IRChar
-         | Some (NullLit) -> IRPointer (IRU8, make_bounds_info ~nullable:true ())  (* Default pointer type *)
-         | Some (ArrayLit _) -> IRArray (IRU32, 1, make_bounds_info ())  (* Default array type *)
+         | Some init_expr ->
+             (* Convert the expression to get its type information *)
+             (match init_expr.expr_desc with
+              | Literal (IntLit (_, _)) -> IRU32  (* Default integer type *)
+              | Literal (StringLit s) -> IRStr (max 1 (String.length s))  (* String type *)
+              | Literal (BoolLit _) -> IRBool
+              | Literal (CharLit _) -> IRChar
+              | Literal (NullLit) -> IRPointer (IRU8, make_bounds_info ~nullable:true ())  (* Default pointer type *)
+              | Literal (ArrayLit _) -> IRArray (IRU32, 1, make_bounds_info ())  (* Default array type *)
+              | UnaryOp (Neg, _) -> IRI32  (* Negative expressions default to signed *)
+              | _ -> IRU32)  (* Default to U32 for other expressions *)
          | None -> IRU32)  (* Default type when no type or value specified *)
   in
   let ir_init = match global_var_decl.global_var_init with
-    | Some literal -> Some (make_ir_value (IRLiteral literal) ir_type global_var_decl.global_var_pos)
+    | Some init_expr ->
+        (* For simple literals, extract the literal directly *)
+        (match init_expr.expr_desc with
+         | Literal lit -> Some (make_ir_value (IRLiteral lit) ir_type global_var_decl.global_var_pos)
+         | UnaryOp (Neg, {expr_desc = Literal (IntLit (n, orig)); _}) ->
+             (* Handle negative integer literals by creating a negated literal *)
+             Some (make_ir_value (IRLiteral (IntLit (-n, orig))) ir_type global_var_decl.global_var_pos)
+         | _ -> 
+             (* For more complex expressions, we need to evaluate them at compile time *)
+             (* For now, default to zero/null initialization *)
+             (match ir_type with
+              | IRU32 | IRI32 -> Some (make_ir_value (IRLiteral (IntLit (0, None))) ir_type global_var_decl.global_var_pos)
+              | IRBool -> Some (make_ir_value (IRLiteral (BoolLit false)) ir_type global_var_decl.global_var_pos)
+              | IRStr _ -> Some (make_ir_value (IRLiteral (StringLit "")) ir_type global_var_decl.global_var_pos)
+              | _ -> None))
     | None -> None
   in
   make_ir_global_variable
