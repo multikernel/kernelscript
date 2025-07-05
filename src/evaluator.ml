@@ -643,15 +643,23 @@ and eval_statement ctx stmt =
   
   | Assignment (name, expr) ->
       let value = eval_expression ctx expr in
-      update_variable ctx name value
+      Hashtbl.replace ctx.variables name value
+  
+  | CompoundAssignment (name, op, expr) ->
+      let right_value = eval_expression ctx expr in
+      let left_value = try Hashtbl.find ctx.variables name 
+                      with Not_found -> raise (Evaluation_error ("Undefined variable: " ^ name, stmt.stmt_pos)) in
+      let result = eval_binary_op left_value op right_value stmt.stmt_pos in
+      Hashtbl.replace ctx.variables name result
   
   | FieldAssignment (obj_expr, field, value_expr) ->
       (* For evaluation purposes, treat config field assignment as no-op with debug output *)
-      let value = eval_expression ctx value_expr in
+      let _ = eval_expression ctx obj_expr in
+      let field_value = eval_expression ctx value_expr in
       (match obj_expr.expr_desc with
        | Identifier config_name ->
            Printf.printf "[CONFIG ASSIGN]: %s.%s = %s\n" 
-             config_name field (string_of_runtime_value value)
+             config_name field (string_of_runtime_value field_value)
        | _ -> eval_error ("Field assignment only supported for config objects") stmt.stmt_pos)
   
   | ArrowAssignment (obj_expr, field, value_expr) ->

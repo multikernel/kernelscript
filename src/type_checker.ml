@@ -57,6 +57,7 @@ type typed_statement = {
 and typed_stmt_desc =
   | TExprStmt of typed_expr
   | TAssignment of string * typed_expr
+  | TCompoundAssignment of string * binary_op * typed_expr  (* var op= expr *)
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TArrowAssignment of typed_expr * string * typed_expr  (* pointer, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
@@ -913,7 +914,35 @@ let rec type_check_statement ctx stmt =
                               " to variable of type " ^ string_of_bpf_type resolved_var_type) stmt.stmt_pos)
             with Not_found ->
               type_error ("Undefined variable: " ^ name) stmt.stmt_pos))
-
+  
+  | CompoundAssignment (name, op, expr) ->
+      let typed_expr = type_check_expression ctx expr in
+      (* Check if the variable is const by looking it up in the symbol table *)
+      (match Symbol_table.lookup_symbol ctx.symbol_table name with
+       | Some symbol when Symbol_table.is_const_variable symbol ->
+           type_error ("Cannot assign to const variable: " ^ name) stmt.stmt_pos
+       | _ ->
+           (try
+              let var_type = Hashtbl.find ctx.variables name in
+              let resolved_var_type = resolve_user_type ctx var_type in
+              let resolved_expr_type = resolve_user_type ctx typed_expr.texpr_type in
+              (* For compound assignment, both operands must be the same type *)
+              (match unify_types resolved_var_type resolved_expr_type with
+               | Some _ ->
+                   (* Check if operator is valid for this type *)
+                   (match op, resolved_var_type with
+                    | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
+                        { tstmt_desc = TCompoundAssignment (name, op, typed_expr); tstmt_pos = stmt.stmt_pos }
+                    | _, _ ->
+                        type_error ("Operator " ^ string_of_binary_op op ^ 
+                                   " not supported for type " ^ string_of_bpf_type resolved_var_type) stmt.stmt_pos)
+               | None ->
+                   type_error ("Cannot apply " ^ string_of_binary_op op ^ 
+                              " between " ^ string_of_bpf_type resolved_var_type ^ 
+                              " and " ^ string_of_bpf_type resolved_expr_type) stmt.stmt_pos)
+            with Not_found ->
+              type_error ("Undefined variable: " ^ name) stmt.stmt_pos))
+  
   | FieldAssignment (obj_expr, field, value_expr) ->
       let typed_value = type_check_expression ctx value_expr in
       
@@ -1579,6 +1608,7 @@ let rec typed_stmt_to_stmt tstmt =
   let stmt_desc = match tstmt.tstmt_desc with
     | TExprStmt expr -> ExprStmt (typed_expr_to_expr expr)
     | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)
+    | TCompoundAssignment (name, op, expr) -> CompoundAssignment (name, op, typed_expr_to_expr expr)
     | TFieldAssignment (obj_expr, field, value_expr) ->
         FieldAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TArrowAssignment (obj_expr, field, value_expr) ->
@@ -1955,6 +1985,8 @@ and populate_multi_program_context ast multi_prog_analysis =
         enhance_expr prog_type expr
     | Assignment (_, expr) ->
         enhance_expr prog_type expr
+    | CompoundAssignment (_, _, expr) ->
+        enhance_expr prog_type expr
     | FieldAssignment (obj_expr, _, value_expr) ->
         enhance_expr prog_type obj_expr;
         enhance_expr prog_type value_expr
@@ -2013,103 +2045,86 @@ and populate_multi_program_context ast multi_prog_analysis =
         enhance_expr prog_type expr
   in
 
-  (* Enhance userspace expressions and statements *)
-  let rec enhance_userspace_expr expr =
-    (* Set program context to None for userspace/global functions *)
-    expr.program_context <- None;
+  (* For userspace functions, we don't have a program type, so create a simple enhancement *)
+  let enhance_userspace_stmt stmt =
+    let rec enhance_userspace_expr expr =
+      expr.program_context <- None;
+      expr.type_checked <- true;
+      
+      (* Recursively enhance sub-expressions *)
+      (match expr.expr_desc with
+       | FunctionCall (_, args) ->
+           List.iter enhance_userspace_expr args
+       | ArrayAccess (arr_expr, idx_expr) ->
+           enhance_userspace_expr arr_expr;
+           enhance_userspace_expr idx_expr
+       | BinaryOp (left, _, right) ->
+           enhance_userspace_expr left;
+           enhance_userspace_expr right
+       | UnaryOp (_, sub_expr) ->
+           enhance_userspace_expr sub_expr
+       | FieldAccess (obj_expr, _) ->
+           enhance_userspace_expr obj_expr
+       | _ -> ())
+    in
     
-    (* Set map scope if this expression accesses a map *)
-    (match expr.expr_desc with
-     | Identifier name ->
-         if List.exists (fun (map_name, _) -> map_name = name) multi_prog_analysis.map_usage_patterns then
-           expr.map_scope <- Some Global
-     | ArrayAccess ({expr_desc = Identifier map_name; _}, _) ->
-         if List.exists (fun (name, _) -> name = map_name) multi_prog_analysis.map_usage_patterns then
-           expr.map_scope <- Some Global
-     | _ -> ());
-    
-    (* Mark as type checked *)
-    expr.type_checked <- true;
-    
-    (* Recursively enhance sub-expressions *)
-    (match expr.expr_desc with
-     | FunctionCall (_, args) ->
-         List.iter enhance_userspace_expr args
-     | ArrayAccess (arr_expr, idx_expr) ->
-         enhance_userspace_expr arr_expr;
-         enhance_userspace_expr idx_expr
-     | BinaryOp (left, _, right) ->
-         enhance_userspace_expr left;
-         enhance_userspace_expr right
-     | UnaryOp (_, sub_expr) ->
-         enhance_userspace_expr sub_expr
-     | FieldAccess (obj_expr, _) ->
-         enhance_userspace_expr obj_expr
-     | _ -> ())
-  in
-  
-  let rec enhance_userspace_stmt stmt =
-    match stmt.stmt_desc with
-    | ExprStmt expr ->
-        enhance_userspace_expr expr
-    | Assignment (_, expr) ->
-        enhance_userspace_expr expr
-    | FieldAssignment (obj_expr, _, value_expr) ->
-        enhance_userspace_expr obj_expr;
-        enhance_userspace_expr value_expr
-    | ArrowAssignment (obj_expr, _, value_expr) ->
-        enhance_userspace_expr obj_expr;
-        enhance_userspace_expr value_expr
-    | IndexAssignment (map_expr, key_expr, value_expr) ->
-        (* This is a write operation *)
-        enhance_userspace_expr map_expr;
-        enhance_userspace_expr key_expr;
-        enhance_userspace_expr value_expr;
-        (* Update the map expression to indicate write access *)
-        (match map_expr.program_context with
-         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
-         | None -> ())
-    | Declaration (_, _, expr) ->
-        enhance_userspace_expr expr
-    | ConstDeclaration (_, _, expr) ->
-        enhance_userspace_expr expr
-    | Return (Some expr) ->
-        enhance_userspace_expr expr
-    | If (cond_expr, then_stmts, else_stmts_opt) ->
-        enhance_userspace_expr cond_expr;
-        List.iter enhance_userspace_stmt then_stmts;
-        (match else_stmts_opt with
-         | Some else_stmts -> List.iter enhance_userspace_stmt else_stmts
-         | None -> ())
-    | For (_, start_expr, end_expr, body_stmts) ->
-        enhance_userspace_expr start_expr;
-        enhance_userspace_expr end_expr;
-        List.iter enhance_userspace_stmt body_stmts
-    | ForIter (_, _, iter_expr, body_stmts) ->
-        enhance_userspace_expr iter_expr;
-        List.iter enhance_userspace_stmt body_stmts
-    | While (cond_expr, body_stmts) ->
-        enhance_userspace_expr cond_expr;
-        List.iter enhance_userspace_stmt body_stmts
-    | Delete (map_expr, key_expr) ->
-        enhance_userspace_expr map_expr;
-        enhance_userspace_expr key_expr;
-        (* Delete is a write operation *)
-        (match map_expr.program_context with
-         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
-         | None -> ())
-    | Return None -> ()
-    | Break -> ()
-    | Continue -> ()
-    | Try (try_stmts, catch_clauses) ->
-        List.iter enhance_userspace_stmt try_stmts;
-        List.iter (fun clause ->
-          List.iter enhance_userspace_stmt clause.catch_body
-        ) catch_clauses
-    | Throw expr ->
-        enhance_userspace_expr expr
-    | Defer expr ->
-        enhance_userspace_expr expr
+    let rec enhance_userspace_stmt_inner stmt =
+      match stmt.stmt_desc with
+      | ExprStmt expr ->
+          enhance_userspace_expr expr
+      | Assignment (_, expr) ->
+          enhance_userspace_expr expr
+      | CompoundAssignment (_, _, expr) ->
+          enhance_userspace_expr expr
+      | FieldAssignment (obj_expr, _, value_expr) ->
+          enhance_userspace_expr obj_expr;
+          enhance_userspace_expr value_expr
+      | ArrowAssignment (obj_expr, _, value_expr) ->
+          enhance_userspace_expr obj_expr;
+          enhance_userspace_expr value_expr
+      | IndexAssignment (map_expr, key_expr, value_expr) ->
+          enhance_userspace_expr map_expr;
+          enhance_userspace_expr key_expr;
+          enhance_userspace_expr value_expr
+      | Declaration (_, _, expr) ->
+          enhance_userspace_expr expr
+      | ConstDeclaration (_, _, expr) ->
+          enhance_userspace_expr expr
+      | Return (Some expr) ->
+          enhance_userspace_expr expr
+      | If (cond_expr, then_stmts, else_stmts_opt) ->
+          enhance_userspace_expr cond_expr;
+          List.iter enhance_userspace_stmt_inner then_stmts;
+          (match else_stmts_opt with
+           | Some else_stmts -> List.iter enhance_userspace_stmt_inner else_stmts
+           | None -> ())
+      | For (_, start_expr, end_expr, body_stmts) ->
+          enhance_userspace_expr start_expr;
+          enhance_userspace_expr end_expr;
+          List.iter enhance_userspace_stmt_inner body_stmts
+      | ForIter (_, _, iter_expr, body_stmts) ->
+          enhance_userspace_expr iter_expr;
+          List.iter enhance_userspace_stmt_inner body_stmts
+      | While (cond_expr, body_stmts) ->
+          enhance_userspace_expr cond_expr;
+          List.iter enhance_userspace_stmt_inner body_stmts
+      | Delete (map_expr, key_expr) ->
+          enhance_userspace_expr map_expr;
+          enhance_userspace_expr key_expr
+      | Return None -> ()
+      | Break -> ()
+      | Continue -> ()
+      | Try (try_stmts, catch_clauses) ->
+          List.iter enhance_userspace_stmt_inner try_stmts;
+          List.iter (fun clause ->
+            List.iter enhance_userspace_stmt_inner clause.catch_body
+          ) catch_clauses
+      | Throw expr ->
+          enhance_userspace_expr expr
+      | Defer expr ->
+          enhance_userspace_expr expr
+    in
+    enhance_userspace_stmt_inner stmt
   in
 
   (* Enhance attributed functions and global functions with multi-program context *)

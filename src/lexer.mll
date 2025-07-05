@@ -136,6 +136,11 @@ rule token = parse
   | ">=" { GE }
   | "&&" { AND }
   | "||" { OR }
+  | "+=" { PLUS_ASSIGN }
+  | "-=" { MINUS_ASSIGN }
+  | "*=" { MULTIPLY_ASSIGN }
+  | "/=" { DIVIDE_ASSIGN }
+  | "%=" { MODULO_ASSIGN }
   
   (* Single-character operators and punctuation *)
   | '=' { ASSIGN }

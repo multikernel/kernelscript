@@ -491,7 +491,8 @@ and process_statement table stmt =
       
   | Assignment (_name, expr) ->
       process_expression table expr
-      
+  | CompoundAssignment (_name, _, expr) ->
+      process_expression table expr
   | FieldAssignment (obj_expr, _field, value_expr) ->
       process_expression table obj_expr;
       process_expression table value_expr

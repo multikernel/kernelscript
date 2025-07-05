@@ -115,6 +115,17 @@ let rec generate_statement_translation stmt =
       "    return;"
   | Assignment (var_name, expr) ->
       sprintf "    %s = %s;" var_name (generate_expression_translation expr)
+  | CompoundAssignment (var_name, op, expr) ->
+      let expr_str = generate_expression_translation expr in
+      let op_str = match op with
+        | Add -> "+"
+        | Sub -> "-"  
+        | Mul -> "*"
+        | Div -> "/"
+        | Mod -> "%"
+        | _ -> failwith "Unsupported operator in compound assignment"
+      in
+      sprintf "    %s %s= %s;" var_name op_str expr_str
   | Declaration (var_name, Some var_type, expr) ->
       sprintf "    %s %s = %s;" 
         (kernelscript_type_to_c_type var_type) 

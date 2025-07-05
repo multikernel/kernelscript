@@ -68,6 +68,7 @@ let validate_ast ast =
     match stmt.stmt_desc with
     | ExprStmt expr -> validate_expr expr
     | Assignment (_, expr) -> validate_expr expr
+    | CompoundAssignment (_, _, expr) -> validate_expr expr
     | FieldAssignment (obj_expr, _, value_expr) ->
         validate_expr obj_expr && validate_expr value_expr
     | ArrowAssignment (obj_expr, _, value_expr) ->

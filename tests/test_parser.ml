@@ -939,6 +939,50 @@ let test_multiple_statements_parsing () =
     | e -> Printf.printf "✗ %s failed: %s\n" description (Printexc.to_string e)
   ) complex_tests
 
+let test_compound_assignment () =
+  let source = {|
+    fn test() -> i32 {
+      var x: u32 = 10
+      x += 5
+      x -= 3
+      x *= 2
+      x /= 4
+      x %= 3
+      return 0
+    }
+  |} in
+  try
+    let ast = parse_string source in
+    let func = List.find (function 
+      | GlobalFunction f when f.func_name = "test" -> true 
+      | _ -> false) ast in
+    (match func with
+     | GlobalFunction f ->
+         let statements = f.func_body in
+         (* Check that we have 6 statements: var declaration + 5 compound assignments + return *)
+         assert (List.length statements = 7);
+         (* Check the compound assignment statements *)
+         (match List.nth statements 1 with
+          | { stmt_desc = CompoundAssignment ("x", Add, _); _ } -> ()
+          | _ -> failwith "Expected x += 5");
+         (match List.nth statements 2 with
+          | { stmt_desc = CompoundAssignment ("x", Sub, _); _ } -> ()
+          | _ -> failwith "Expected x -= 3");
+         (match List.nth statements 3 with
+          | { stmt_desc = CompoundAssignment ("x", Mul, _); _ } -> ()
+          | _ -> failwith "Expected x *= 2");
+         (match List.nth statements 4 with
+          | { stmt_desc = CompoundAssignment ("x", Div, _); _ } -> ()
+          | _ -> failwith "Expected x /= 4");
+         (match List.nth statements 5 with
+          | { stmt_desc = CompoundAssignment ("x", Mod, _); _ } -> ()
+          | _ -> failwith "Expected x %= 3");
+         print_endline "✓ Compound assignment parsing test passed"
+     | _ -> failwith "Expected GlobalFunction")
+  with
+  | Parse_error (msg, _) -> failwith ("Parse error: " ^ msg)
+  | e -> failwith ("Unexpected error: " ^ Printexc.to_string e)
+
 let parser_tests = [
   "simple_program", `Quick, test_simple_program;
   "expression_parsing", `Quick, test_expression_parsing;
@@ -976,6 +1020,7 @@ let parser_tests = [
   "combined_statements", `Quick, test_combined_statements;
   "range_boundary_conditions", `Quick, test_range_boundary_conditions;
   "multiple_statements_parsing", `Quick, test_multiple_statements_parsing;
+  "compound_assignment", `Quick, test_compound_assignment;
 ]
 
 let () =

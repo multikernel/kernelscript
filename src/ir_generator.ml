@@ -661,6 +661,43 @@ let rec lower_statement ctx stmt =
         in
         let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
         emit_instruction ctx instr
+  
+  | Ast.CompoundAssignment (name, op, expr) ->
+      let value = lower_expression ctx expr in
+      
+      (* Check if this is a global variable assignment *)
+      if Hashtbl.mem ctx.global_variables name then
+        (* Global variable compound assignment *)
+        let global_var = Hashtbl.find ctx.global_variables name in
+        let target_val = make_ir_value (IRVariable name) global_var.global_var_type stmt.stmt_pos in
+        
+        (* Create binary operation: target = target op value *)
+        let current_val = make_ir_value (IRVariable name) global_var.global_var_type stmt.stmt_pos in
+        let ir_op = lower_binary_op op in
+        let bin_expr = make_ir_expr (IRBinOp (current_val, ir_op, value)) global_var.global_var_type stmt.stmt_pos in
+        
+        let instr = make_ir_instruction (IRAssign (target_val, bin_expr)) stmt.stmt_pos in
+        emit_instruction ctx instr
+      else
+        (* Local variable compound assignment *)
+        let reg = get_variable_register ctx name in
+        (* Get the target variable's actual type from the symbol table *)
+        let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
+          | Some symbol -> 
+              (match symbol.kind with
+               | Symbol_table.Variable var_type -> ast_type_to_ir_type_with_context ctx.symbol_table var_type
+               | _ -> value.val_type)
+          | None -> value.val_type (* Fallback to value type if not found *)
+        in
+        let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
+        
+        (* Create binary operation: target = target op value *)
+        let current_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
+        let ir_op = lower_binary_op op in
+        let bin_expr = make_ir_expr (IRBinOp (current_val, ir_op, value)) target_type stmt.stmt_pos in
+        
+        let instr = make_ir_instruction (IRAssign (target_val, bin_expr)) stmt.stmt_pos in
+        emit_instruction ctx instr
       
   | Ast.IndexAssignment (map_expr, key_expr, value_expr) ->
       let map_val = lower_expression ctx map_expr in

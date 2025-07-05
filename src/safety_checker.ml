@@ -190,13 +190,13 @@ let analyze_statement_bounds stmt =
     | Declaration (name, Some typ, expr) ->
         errors := check_array_declaration name typ @ !errors;
         errors := check_array_bounds expr @ !errors
-    | Assignment (_, expr) ->
+    | ExprStmt expr | Assignment (_, expr) ->
+        errors := check_array_bounds expr @ !errors
+    | CompoundAssignment (_, _, expr) ->
         errors := check_array_bounds expr @ !errors
     | FieldAssignment (obj_expr, _, value_expr) ->
         errors := check_array_bounds obj_expr @ !errors;
         errors := check_array_bounds value_expr @ !errors
-    | ExprStmt expr ->
-        errors := check_array_bounds expr @ !errors
     | If (cond, then_stmts, else_opt) ->
         errors := check_array_bounds cond @ !errors;
         List.iter check_stmt then_stmts;

@@ -25,6 +25,7 @@
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
 %token EQ NE LT LE GT GE AND OR NOT AMPERSAND
 %token UMINUS  /* Virtual token for unary minus precedence */
+%token PLUS_ASSIGN MINUS_ASSIGN MULTIPLY_ASSIGN DIVIDE_ASSIGN MODULO_ASSIGN
 
 
 /* Punctuation */
@@ -80,6 +81,7 @@
 %type <Ast.statement> variable_declaration
 %type <Ast.statement> const_declaration
 %type <Ast.statement> assignment_or_expression_statement
+%type <Ast.statement> compound_assignment_statement
 %type <Ast.statement> field_assignment_statement
 %type <Ast.statement> arrow_assignment_statement
 %type <Ast.statement> index_assignment_statement
@@ -218,6 +220,7 @@ statement:
   | variable_declaration { $1 }
   | const_declaration { $1 }
   | assignment_or_expression_statement { $1 }
+  | compound_assignment_statement { $1 }
   | field_assignment_statement { $1 }
   | arrow_assignment_statement { $1 }
   | index_assignment_statement { $1 }
@@ -248,6 +251,18 @@ assignment_or_expression_statement:
   | IDENTIFIER ASSIGN expression
     { make_stmt (Assignment ($1, $3)) (make_pos ()) }
   | expression { make_stmt (ExprStmt $1) (make_pos ()) }
+
+compound_assignment_statement:
+  | IDENTIFIER PLUS_ASSIGN expression
+    { make_stmt (CompoundAssignment ($1, Add, $3)) (make_pos ()) }
+  | IDENTIFIER MINUS_ASSIGN expression
+    { make_stmt (CompoundAssignment ($1, Sub, $3)) (make_pos ()) }
+  | IDENTIFIER MULTIPLY_ASSIGN expression
+    { make_stmt (CompoundAssignment ($1, Mul, $3)) (make_pos ()) }
+  | IDENTIFIER DIVIDE_ASSIGN expression
+    { make_stmt (CompoundAssignment ($1, Div, $3)) (make_pos ()) }
+  | IDENTIFIER MODULO_ASSIGN expression
+    { make_stmt (CompoundAssignment ($1, Mod, $3)) (make_pos ()) }
 
 field_assignment_statement:
   | expression DOT IDENTIFIER ASSIGN expression

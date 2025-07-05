@@ -1909,10 +1909,10 @@ fn ingress_monitor(ctx: xdp_md) -> xdp_action {
     if (global_flows[flow_key] == null) {
         global_flows[flow_key] = FlowStats::new()
     }
-    global_flows[flow_key].ingress_packets += 1
-    global_flows[flow_key].ingress_bytes += ctx.packet_size()
+    global_flows[flow_key].ingress_packets += 1      // Compound assignment
+    global_flows[flow_key].ingress_bytes += ctx.packet_size()  // Compound assignment
     
-    // Update interface stats
+    // Update interface stats using compound assignment
     interface_stats[ctx.ingress_ifindex()].packets += 1
     
     return XDP_PASS
@@ -1923,10 +1923,10 @@ fn ingress_monitor(ctx: xdp_md) -> xdp_action {
 fn egress_monitor(ctx: TcContext) -> TcAction {
     var flow_key = extract_flow_key(ctx)?
     
-    // Same global map, no import needed
+    // Same global map, no import needed - compound assignments work everywhere
     if (global_flows[flow_key] != null) {
-        global_flows[flow_key].egress_packets += 1
-        global_flows[flow_key].egress_bytes += ctx.packet_size()
+        global_flows[flow_key].egress_packets += 1        // Compound assignment
+        global_flows[flow_key].egress_bytes += ctx.packet_size()   // Compound assignment
     }
     
     // Check global configuration
@@ -2037,9 +2037,158 @@ fn simple_monitor(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-## 6. Functions and Control Flow
+## 6. Assignment Operators
 
-### 6.1 Function Declaration
+### 6.1 Simple Assignment
+```kernelscript
+var x: u32 = 10
+x = 20  // Simple assignment
+```
+
+### 6.2 Compound Assignment Operators
+
+KernelScript supports compound assignment operators that provide a concise way to perform arithmetic operations combined with assignment. These operators work identically to their C counterparts and are supported in both eBPF and userspace contexts.
+
+#### 6.2.1 Supported Operators
+```kernelscript
+// Compound assignment operators
+x += y   // Equivalent to: x = x + y
+x -= y   // Equivalent to: x = x - y  
+x *= y   // Equivalent to: x = x * y
+x /= y   // Equivalent to: x = x / y
+x %= y   // Equivalent to: x = x % y
+```
+
+#### 6.2.2 Type Requirements and Safety
+
+Compound assignment operators enforce type safety and const variable protection:
+
+```kernelscript
+// Valid usage with compatible types
+var counter: u32 = 0
+var increment: u32 = 5
+
+counter += increment    // ✅ Both u32 - valid
+counter *= 2           // ✅ u32 with literal - valid
+counter %= 10          // ✅ Modulo with u32 - valid
+
+// Type restrictions
+const MAX_VALUE: u32 = 1000
+// MAX_VALUE += 1      // ❌ Compilation error: cannot assign to const
+
+var float_val: f32 = 3.14
+// counter += float_val  // ❌ Compilation error: type mismatch
+
+// Operator restrictions - only arithmetic types support arithmetic operators
+var flag: bool = true
+// flag += true         // ❌ Compilation error: operator not supported for bool
+```
+
+#### 6.2.3 Usage in eBPF Programs
+
+Compound assignments work seamlessly in eBPF programs with automatic bounds checking:
+
+```kernelscript
+// Global counters using compound assignment
+var packet_count: u64 = 0
+var total_bytes: u64 = 0
+
+@xdp
+fn packet_counter(ctx: xdp_md) -> xdp_action {
+    var packet = ctx.packet()
+    if (packet == null) {
+        return XDP_PASS
+    }
+    
+    // Compound assignments in eBPF context
+    packet_count += 1                    // Increment packet counter
+    total_bytes += packet.len            // Add packet size to total
+    
+    var processing_time = measure_time()
+    processing_time *= 2                 // Double the processing time
+    processing_time /= 1000              // Convert to milliseconds
+    
+    return XDP_PASS
+}
+
+// Map operations with compound assignment
+map<u32, FlowStats> flow_stats : HashMap(1024)
+
+@helper
+fn update_flow_stats(flow_id: u32, packet_size: u32) {
+    var stats = flow_stats[flow_id]
+    if (stats != null) {
+        stats.packet_count += 1
+        stats.total_bytes += packet_size
+        stats.avg_packet_size = stats.total_bytes / stats.packet_count
+    }
+}
+```
+
+#### 6.2.4 Usage in Userspace Programs
+
+Compound assignments work identically in userspace code:
+
+```kernelscript
+struct Statistics {
+    processed: u64,
+    errors: u32,
+    total_time: u64,
+}
+
+fn process_batch(stats: *Statistics, batch_size: u32, processing_time: u64) {
+    // Compound assignment with struct fields
+    stats->processed += batch_size
+    stats->total_time += processing_time
+    
+    // Local variable compound assignment
+    var error_rate: u32 = stats->errors * 100
+    error_rate /= stats->processed as u32
+    
+    if (error_rate > 5) {
+        stats->errors += 1
+    }
+}
+
+fn main() -> i32 {
+    var stats = Statistics { processed: 0, errors: 0, total_time: 0 }
+    var batch_count: u32 = 0
+    var total_items: u64 = 0
+    
+    for (i in 0..100) {
+        batch_count += 1
+        total_items += 50    // Process 50 items per batch
+        
+        process_batch(&stats, 50, measure_batch_time())
+    }
+    
+    // Final calculations using compound assignment
+    stats.total_time /= 1000000  // Convert nanoseconds to milliseconds
+    
+    print("Processed %d items in %d batches", total_items, batch_count)
+    print("Total time: %d ms", stats.total_time)
+    
+    return 0
+}
+```
+
+#### 6.2.5 Performance and Code Generation
+
+Compound assignments generate efficient code in both contexts:
+
+**eBPF bytecode**: Optimized to minimize instruction count
+**Userspace C**: Direct compound assignment operators (`x += y`)
+
+```c
+// Generated C code for userspace
+total_bytes = (total_bytes + packet_size);  // From: total_bytes += packet_size
+counter = (counter * 2);                    // From: counter *= 2
+value = (value % modulus);                  // From: value %= modulus
+```
+
+## 7. Functions and Control Flow
+
+### 7.1 Function Declaration
 ```ebnf
 function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
 
@@ -2055,7 +2204,7 @@ parameter = identifier ":" type_annotation
 return_type = type_annotation 
 ```
 
-### 6.2 eBPF Program Functions
+### 7.2 eBPF Program Functions
 ```kernelscript
 // eBPF program function with attribute - entry point
 @xdp
@@ -2070,7 +2219,7 @@ fn simple_xdp(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-### 6.3 Helper Functions
+### 7.3 Helper Functions
 
 KernelScript supports two types of functions with different scoping rules:
 
@@ -2146,11 +2295,11 @@ fn main() -> i32 {
 }
 ```
 
-### 6.4 eBPF Tail Calls
+### 7.4 eBPF Tail Calls
 
 KernelScript provides transparent eBPF tail call support that automatically converts function calls to tail calls when appropriate. Tail calls enable efficient program chaining without stack overhead and are especially useful for packet processing pipelines.
 
-#### 6.4.1 Automatic Tail Call Detection
+#### 7.4.1 Automatic Tail Call Detection
 
 The compiler automatically converts function calls to eBPF tail calls when **all** of the following conditions are met:
 
@@ -2203,7 +2352,7 @@ fn is_malicious_http(ctx: xdp_md) -> bool {
 }
 ```
 
-#### 6.4.2 Tail Call Rules and Restrictions
+#### 7.4.2 Tail Call Rules and Restrictions
 
 **✅ Valid Tail Calls:**
 ```kernelscript
@@ -2236,7 +2385,7 @@ fn invalid_examples(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-#### 6.4.3 Implementation Details
+#### 7.4.3 Implementation Details
 
 **Automatic ProgArray Management:**
 The compiler automatically generates and manages eBPF program arrays behind the scenes:
@@ -2282,7 +2431,7 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-#### 6.4.4 Performance and Limitations
+#### 7.4.4 Performance and Limitations
 
 **Benefits:**
 - **Zero stack overhead**: Tail calls replace the current program rather than adding stack frames
@@ -2294,7 +2443,7 @@ fn main(args: Args) -> i32 {
 - **No return to caller**: Tail calls are terminal - they replace the current program
 - **Same context type**: All programs in the chain must accept the same context
 
-### 6.5 Control Flow Statements
+### 7.5 Control Flow Statements
 ```kernelscript
 // Conditional statements
 if (condition) {
@@ -2333,9 +2482,9 @@ while (condition && iterations < MAX_ITERATIONS) {
 }
 ```
 
-## 7. Error Handling and Resource Management
+## 8. Error Handling and Resource Management
 
-### 7.1 Throw and Catch Statements
+### 8.1 Throw and Catch Statements
 
 KernelScript provides modern error handling through `throw` and `catch` statements that compile to efficient C error checking code. Error handling uses integer values for maximum performance and compatibility with both eBPF and userspace environments.
 
@@ -2411,7 +2560,7 @@ fn validate_input(value: i32) {
 }
 ```
 
-### 7.2 Resource Management with Defer
+### 8.2 Resource Management with Defer
 
 The `defer` statement ensures cleanup code runs automatically at function exit, regardless of how the function returns (normal return, throw, or early exit).
 
@@ -2454,7 +2603,7 @@ fn complex_resource_management() -> bool {
 }
 ```
 
-### 7.3 Defer with Try/Catch
+### 8.3 Defer with Try/Catch
 
 Defer statements work seamlessly with error handling - cleanup always occurs even when exceptions are thrown or caught.
 
@@ -2482,9 +2631,9 @@ fn safe_packet_processing(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-### 7.4 Error Handling Rules and Compiler Behavior
+### 8.4 Error Handling Rules and Compiler Behavior
 
-#### 7.4.1 eBPF Program Functions
+#### 8.4.1 eBPF Program Functions
 
 **All throws must be caught** in eBPF program functions. Uncaught throws result in **compilation errors**.
 
@@ -2506,7 +2655,7 @@ program packet_filter : xdp {
 }
 ```
 
-#### 7.4.2 Helper Functions
+#### 8.4.2 Helper Functions
 
 Helper functions can propagate errors without catching them - this enables natural error composition and reduces boilerplate.
 
@@ -2531,7 +2680,7 @@ fn validate_flow(key: FlowKey) -> FlowState {
 }
 ```
 
-#### 7.4.3 Userspace Functions
+#### 8.4.3 Userspace Functions
 
 Userspace functions generate **compiler warnings** for uncaught throws, but compilation succeeds. Uncaught throws at runtime terminate the program.
 
@@ -2562,7 +2711,7 @@ fn main() -> i32 {
 }
 ```
 
-### 7.5 Panic and Assertions
+### 8.5 Panic and Assertions
 
 For unrecoverable errors, KernelScript provides panic and assert macros:
 
@@ -2580,9 +2729,9 @@ fn validate_state() {
 }
 ```
 
-## 8. User-Space Integration
+## 9. User-Space Integration
 
-### 8.1 Command Line Argument Handling
+### 9.1 Command Line Argument Handling
 
 KernelScript provides automatic command line argument parsing for userspace programs. Users can define a custom struct to describe their command line options, and the compiler generates the parsing code using `getopt_long()`.
 
@@ -2628,7 +2777,7 @@ fn main() -> i32 {
 - Type validation ensures only supported primitive types (u8, u16, u32, u64, i8, i16, i32, i64) are used
 - Help text is automatically generated based on struct field names
 
-### 8.2 Top-Level Userspace Coordination with Global Maps
+### 9.2 Top-Level Userspace Coordination with Global Maps
 ```kernelscript
 // Global maps (accessible from all programs and userspace)
 pin map<FlowKey, FlowStats> global_flows : HashMap(10000)
@@ -2745,7 +2894,7 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 8.3 Cross-Language Bindings
+### 9.3 Cross-Language Bindings
 ```kernelscript
 // Runtime configuration for system behavior
 config runtime {
@@ -2811,9 +2960,9 @@ fn handle_system_events(verbose: bool) {
 
 ```
 
-## 9. Memory Management and Safety
+## 10. Memory Management and Safety
 
-### 9.1 Pointer Safety and Bounds Checking
+### 10.1 Pointer Safety and Bounds Checking
 
 KernelScript employs context-aware pointer safety mechanisms that adapt to the execution environment while maintaining a consistent programming model.
 
@@ -2847,7 +2996,7 @@ fn safe_userspace_access(data: *u8, len: usize) -> Result<u8, Error> {
 }
 ```
 
-### 9.2 Dynamic Pointer Integration (Transparent Dynptr)
+### 10.2 Dynamic Pointer Integration (Transparent Dynptr)
 
 The compiler transparently uses eBPF's dynamic pointer (dynptr) APIs when beneficial, without exposing complexity to the programmer.
 
@@ -2878,7 +3027,7 @@ fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
 // - bpf_ringbuf_submit_dynptr() for submission
 ```
 
-### 9.3 Stack Management and Large Struct Handling
+### 10.3 Stack Management and Large Struct Handling
 
 ```kernelscript
 // Context-aware stack management
@@ -2918,7 +3067,7 @@ fn stack_aware_function(ctx: xdp_md) -> xdp_action {
 }
 ```
 
-### 9.4 Memory Lifetime and Resource Management
+### 10.4 Memory Lifetime and Resource Management
 
 ```kernelscript
 // Automatic resource tracking and cleanup
@@ -2965,7 +3114,7 @@ fn map_lifetime_safety(key: u32) {
 }
 ```
 
-### 9.5 Null Safety Enforcement
+### 10.5 Null Safety Enforcement
 
 ```kernelscript
 // Compile-time null safety checks
@@ -2997,7 +3146,7 @@ fn optional_pointer_example() -> ProcessResult {
 }
 ```
 
-### 9.6 Cross-Context Memory Safety
+### 10.6 Cross-Context Memory Safety
 
 ```kernelscript
 // Context boundary safety
@@ -3031,9 +3180,9 @@ fn userspace_processing() -> i32 {
 }
 ```
 
-## 10. Compilation and Build System
+## 11. Compilation and Build System
 
-### 10.1 Deployment Configuration (deploy.yaml)
+### 11.1 Deployment Configuration (deploy.yaml)
 ```yaml
 # Deployment configuration for KernelScript programs
 apiVersion: kernelscript.dev/v1
@@ -3070,7 +3219,7 @@ spec:
     restart_policy: "always"
 ```
 
-### 10.3 Build Commands
+### 11.3 Build Commands
 ```bash
 # Compile KernelScript to eBPF bytecode
 kernelscript build
@@ -3085,9 +3234,9 @@ kernelscript deploy --config=deploy.yaml
 kernelscript attach perf_monitor --function=sys_read
 ```
 
-## 11. Standard Library
+## 12. Standard Library
 
-### 11.1 Core Library Functions
+### 12.1 Core Library Functions
 ```kernelscript
 // Network utilities
 mod net {
@@ -3128,7 +3277,7 @@ mod program {
 }
 ```
 
-### 11.2 Context Helpers
+### 12.2 Context Helpers
 ```kernelscript
 // XDP context helpers
 impl xdp_md {
@@ -3145,9 +3294,9 @@ impl KprobeContext {
 }
 ```
 
-## 12. Example Programs
+## 13. Example Programs
 
-### 12.1 Simple Packet Filter
+### 13.1 Simple Packet Filter
 ```kernelscript
 // Named configuration for packet filtering
 config filtering {
@@ -3201,7 +3350,7 @@ fn simple_filter(ctx: xdp_md) -> xdp_action {
         return XDP_PASS
     }
     
-    system.packets_processed += 1
+    system.packets_processed += 1    // Compound assignment - increment packet counter
     
     if (packet.is_tcp()) {
         var tcp = packet.tcp_header()
@@ -3209,7 +3358,7 @@ fn simple_filter(ctx: xdp_md) -> xdp_action {
         // First check simple blocked ports (kernel-shared function)
         if (is_port_blocked(tcp.dst_port)) {
             log_blocked_port(tcp.dst_port)
-            system.packets_dropped += 1
+            system.packets_dropped += 1   // Compound assignment - increment drop counter
             return XDP_DROP
         }
         
@@ -3217,7 +3366,7 @@ fn simple_filter(ctx: xdp_md) -> xdp_action {
         var policy_result = advanced_port_check(tcp.dst_port, packet.protocol(), packet.src_ip())
         if (policy_result != 0) {
             log_blocked_port(tcp.dst_port)
-            system.packets_dropped += 1
+            system.packets_dropped += 1   // Compound assignment - track policy drops
             return XDP_DROP
         }
     }
@@ -3303,7 +3452,7 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 12.2 Global Variables Example
+### 13.2 Global Variables Example
 ```kernelscript
 // Global variables - shared between kernel and userspace
 var packet_count: u64 = 0
@@ -3410,7 +3559,7 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 12.3 Performance Monitoring
+### 13.3 Performance Monitoring
 ```kernelscript
 // Global maps for performance data
 map<u32, CallInfo> active_calls : HashMap(1024)
@@ -3558,7 +3707,7 @@ fn print_summary_stats() {
 }
 ```
 
-## 13. Complete Formal Grammar (EBNF)
+## 14. Complete Formal Grammar (EBNF)
 
 ```ebnf
 (* KernelScript Complete Grammar *)
