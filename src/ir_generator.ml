@@ -1689,10 +1689,19 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   (* Lower function body with context *)
   List.iteri (lower_statement_with_context func_def.func_body) func_def.func_body;
   
-  (* Create final block if needed *)
+  (* Handle any remaining instructions by adding them to the last block or creating a sequential block *)
   (if ctx.current_block <> [] then
-    let _ = create_basic_block ctx "final_block" in
-    ()
+    (* If there are remaining instructions, add them to the last block if it exists *)
+    match ctx.blocks with
+    | last_block :: rest_blocks ->
+        (* Add remaining instructions to the last block *)
+        let updated_last_block = { last_block with instructions = last_block.instructions @ (List.rev ctx.current_block) } in
+        ctx.blocks <- updated_last_block :: rest_blocks;
+        ctx.current_block <- []
+    | [] ->
+        (* If no blocks exist, create an entry block with these instructions *)
+        let _ = create_basic_block ctx "entry" in
+        ()
   );
   
   (* Convert return type *)

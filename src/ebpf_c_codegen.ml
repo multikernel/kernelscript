@@ -2224,8 +2224,10 @@ let rec generate_c_instruction ctx ir_instr =
 (** Generate C code for basic block *)
 
 let generate_c_basic_block ctx ir_block =
-  (* Emit label *)
-  if ir_block.label <> "entry" then (
+  (* Skip labels for "entry" since eBPF code generation uses structured control flow *)
+  let should_emit_label = ir_block.label <> "entry" in
+  
+  if should_emit_label then (
     decrease_indent ctx;
     emit_line ctx (sprintf "%s:" ir_block.label);
     increase_indent ctx
