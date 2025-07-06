@@ -531,9 +531,26 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       | _ -> None
     ) annotated_ast in
     
-    (* Generate eBPF C code (with automatic tail call detection and kfunc declarations) *)
-    let (ebpf_c_code, tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table optimized_ir in
+    (* Perform tail call analysis on AST *)
+    let tail_call_analysis = Tail_call_analyzer.analyze_tail_calls annotated_ast in
+    
+    (* Update IR functions with correct tail call indices *)
+    let updated_optimized_ir = 
+      let updated_programs = List.map (fun prog ->
+        let updated_entry_function = Tail_call_analyzer.update_ir_function_tail_call_indices prog.Ir.entry_function tail_call_analysis in
+        { prog with entry_function = updated_entry_function }
+      ) optimized_ir.programs in
+      
+      let updated_kernel_functions = List.map (fun func ->
+        Tail_call_analyzer.update_ir_function_tail_call_indices func tail_call_analysis
+      ) optimized_ir.kernel_functions in
+      
+      { optimized_ir with programs = updated_programs; kernel_functions = updated_kernel_functions }
+    in
+    
+    (* Generate eBPF C code (with updated IR and kfunc declarations) *)
+    let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
+      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table updated_optimized_ir in
       
     (* Determine output directory *)
     let output_dir = match output_dir with
@@ -550,7 +567,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~symbol_table optimized_ir ~output_dir input_file;
+      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~symbol_table updated_optimized_ir ~output_dir input_file;
     
     (* Create output directory if it doesn't exist *)
     (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());

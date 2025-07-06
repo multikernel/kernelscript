@@ -232,6 +232,19 @@ and ir_match_pattern =
   | IRConstantPattern of ir_value  (* constant values *)
   | IRDefaultPattern               (* default case *)
 
+(** Match arm for IRMatchReturn instruction - represents match arms that can contain function calls/tail calls *)
+and ir_match_return_arm = {
+  match_pattern: ir_match_pattern;
+  return_action: ir_return_action;
+  arm_pos: ir_position;
+}
+
+(** Return action for match arms in return position *)
+and ir_return_action =
+  | IRReturnValue of ir_value           (* return literal_value; *)
+  | IRReturnCall of string * ir_value list  (* return function_call(args); - will be converted to tail call *)
+  | IRReturnTailCall of string * ir_value list * int  (* explicit tail call with index *)
+
 and ir_binary_op =
   | IRAdd | IRSub | IRMul | IRDiv | IRMod
   | IREq | IRNe | IRLt | IRLe | IRGt | IRGe
@@ -267,6 +280,7 @@ and ir_instr_desc =
   | IRCondJump of ir_value * string * string
   | IRIf of ir_value * ir_instruction list * ir_instruction list option (* condition, then_body, else_body *)
   | IRIfElseChain of (ir_value * ir_instruction list) list * ir_instruction list option (* (condition, then_body) list, final_else_body *)
+  | IRMatchReturn of ir_value * ir_match_return_arm list (* matched_value, match_arms - for match expressions in return position *)
   | IRReturn of ir_value option
   | IRComment of string (* for debugging and analysis comments *)
   | IRBpfLoop of ir_value * ir_value * ir_value * ir_value * ir_instruction list (* start, end, counter, ctx, body_instructions *)
@@ -847,6 +861,25 @@ let rec string_of_ir_instruction instr =
             Printf.sprintf " else {\n%s\n}" (String.concat "\n  " (List.map string_of_ir_instruction else_instrs))
       in
       String.concat " " if_parts ^ else_part
+  | IRMatchReturn (matched_val, arms) ->
+      let matched_str = string_of_ir_value matched_val in
+      let arms_str = List.map (fun arm ->
+        let pattern_str = match arm.match_pattern with
+          | IRConstantPattern const_val -> string_of_ir_value const_val
+          | IRDefaultPattern -> "default"
+        in
+        let action_str = match arm.return_action with
+          | IRReturnValue ret_val -> Printf.sprintf "return %s" (string_of_ir_value ret_val)
+          | IRReturnCall (func_name, args) -> 
+              let args_str = String.concat ", " (List.map string_of_ir_value args) in
+              Printf.sprintf "return %s(%s)" func_name args_str
+          | IRReturnTailCall (func_name, args, index) -> 
+              let args_str = String.concat ", " (List.map string_of_ir_value args) in
+              Printf.sprintf "tail_call %s(%s) [index=%d]" func_name args_str index
+        in
+        Printf.sprintf "%s: %s" pattern_str action_str
+      ) arms in
+      Printf.sprintf "match (%s) {\n  %s\n}" matched_str (String.concat ";\n  " arms_str)
   | IRReturn None -> "return"
   | IRReturn (Some value) -> Printf.sprintf "return %s" (string_of_ir_value value)
   | IRComment comment -> Printf.sprintf "/* %s */" comment

@@ -26,6 +26,7 @@ type context = {
   mutable current_program_type: program_type option;
   mutable multi_program_analysis: Multi_program_analyzer.multi_program_analysis option;
   in_tail_call_context: bool; (* Flag to indicate we're processing a potential tail call *)
+  in_match_return_context: bool; (* Flag to indicate we're inside a match expression in return position *)
   ast_context: Ast.declaration list; (* Store original AST for struct_ops attribute checking *)
 }
 
@@ -136,6 +137,7 @@ let create_context symbol_table ast =
     current_program_type = None;
     multi_program_analysis = None;
     in_tail_call_context = false;
+    in_match_return_context = false;
     attributed_function_map = Hashtbl.create 16;
     ast_context = ast;
   }
@@ -249,6 +251,10 @@ let rec unify_types t1 t2 =
   (* Enum-integer compatibility: enums are represented as u32 *)
   | Enum _, U32 | U32, Enum _ -> Some U32
   | Enum enum_name, Enum other_name when enum_name = other_name -> Some (Enum enum_name)
+  
+  (* Special built-in type compatibility for specific enums *)
+  | Enum "xdp_action", Xdp_action | Xdp_action, Enum "xdp_action" -> Some Xdp_action
+  | Enum "TcAction", TcAction | TcAction, Enum "TcAction" -> Some TcAction
   
   (* No unification possible *)
   | _ -> None
@@ -454,6 +460,10 @@ let detect_tail_call_in_return_expr ctx expr =
              None (* Not in attributed function context - regular call *))
       else
         None (* Not an attributed function - regular call *)
+  | Match (_matched_expr, _match_arms) ->
+      (* Match expressions should preserve their structure even if they contain tail calls *)
+      (* Individual function calls within arms will be converted to tail calls during type checking *)
+      None  (* Don't collapse match expressions to single tail calls *)
   | _ -> None (* Not a function call *)
 
 (** Type check array access *)
@@ -827,7 +837,8 @@ and type_check_expression ctx expr =
              let (expected_params, return_type) = Hashtbl.find ctx.functions name in
              
              (* Check attributed function call restrictions - attributed functions cannot be called directly, but kfuncs are allowed *)
-             if Hashtbl.mem ctx.attributed_functions name then
+             (* Exception: allow attributed function calls in match expressions that are in return position *)
+             if Hashtbl.mem ctx.attributed_functions name && not ctx.in_match_return_context then
                type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos;
              
              (* Check @helper function call restrictions *)
@@ -921,7 +932,7 @@ and type_check_expression ctx expr =
       
       (* Type check all arms and ensure they have compatible types *)
       let typed_arms = List.map (fun arm ->
-        (* Type check the arm expression *)
+        (* Type check the arm expression - pass through match return context *)
         let typed_arm_expr = type_check_expression ctx arm.arm_expr in
         
         (* Validate the pattern *)
@@ -1257,9 +1268,13 @@ let rec type_check_statement ctx stmt =
                   (* Regular return expression - type check normally *)
                   (* But first check if it's an attributed function being called directly *)
                   (match expr.expr_desc with
-                   | FunctionCall (name, _) when Hashtbl.mem ctx.attributed_functions name ->
+                   | FunctionCall (name, _) when Hashtbl.mem ctx.attributed_functions name && not ctx.in_match_return_context ->
                        (* This check already excludes kfuncs since they're not in attributed_functions *)
                        type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos
+                   | Match (_, _) ->
+                       (* For match expressions in return position, set the flag and type check normally *)
+                       let ctx_with_match_return = { ctx with in_match_return_context = true } in
+                       Some (type_check_expression ctx_with_match_return expr)
                    | _ ->
                        Some (type_check_expression ctx expr)))
         | None -> None

@@ -881,11 +881,68 @@ let rec lower_statement ctx stmt =
         stmt.stmt_pos in
       emit_instruction ctx instr
       
-  | Ast.Return expr_opt ->
+    | Ast.Return expr_opt ->
       let return_val = match expr_opt with
-        | Some expr -> 
-            (* Check if this is a tail call in return position *)
+        | Some expr ->
+            (* Check if this is a match expression in return position *)
             (match expr.expr_desc with
+             | Ast.Match (matched_expr, arms) ->
+                 (* Check if any arm contains function calls - if so, generate IRMatchReturn *)
+                 let has_function_calls = List.exists (fun arm ->
+                   match arm.arm_expr.expr_desc with
+                   | Ast.FunctionCall (_, _) -> true
+                   | Ast.TailCall (_, _) -> true
+                   | _ -> false
+                 ) arms in
+                 
+                 if has_function_calls then
+                   (* Generate IRMatchReturn instruction for control flow *)
+                   let matched_val = lower_expression ctx matched_expr in
+                   
+                   let ir_arms = List.map (fun arm ->
+                     let ir_pattern = match arm.arm_pattern with
+                       | ConstantPattern lit ->
+                           let const_val = lower_literal lit arm.arm_pos in
+                           IRConstantPattern const_val
+                       | IdentifierPattern name ->
+                           (* Look up enum constant value *)
+                           let enum_val = match Symbol_table.lookup_symbol ctx.symbol_table name with
+                             | Some symbol ->
+                                 (match symbol.kind with
+                                  | Symbol_table.EnumConstant (enum_name, Some value) ->
+                                      make_ir_value (IREnumConstant (enum_name, name, value)) IRU32 arm.arm_pos
+                                  | _ -> failwith ("Unknown identifier in match pattern: " ^ name))
+                             | None -> failwith ("Undefined identifier in match pattern: " ^ name)
+                           in
+                           IRConstantPattern enum_val
+                       | DefaultPattern -> IRDefaultPattern
+                     in
+                     
+                     let return_action = match arm.arm_expr.expr_desc with
+                       | Ast.FunctionCall (name, args) ->
+                           (* This will be converted to tail call by tail call analyzer *)
+                           let arg_vals = List.map (lower_expression ctx) args in
+                           IRReturnCall (name, arg_vals)
+                       | Ast.TailCall (name, args) ->
+                           (* Explicit tail call *)
+                           let arg_vals = List.map (lower_expression ctx) args in
+                           IRReturnTailCall (name, arg_vals, 0) (* Index will be set by tail call analyzer *)
+                       | _ ->
+                           (* Regular return value *)
+                           let ret_val = lower_expression ctx arm.arm_expr in
+                           IRReturnValue ret_val
+                     in
+                     
+                     { match_pattern = ir_pattern; return_action = return_action; arm_pos = arm.arm_pos }
+                   ) arms in
+                   
+                   let instr = make_ir_instruction (IRMatchReturn (matched_val, ir_arms)) stmt.stmt_pos in
+                   emit_instruction ctx instr;
+                   None  (* IRMatchReturn handles the return logic *)
+                 else (
+                   (* Regular match expression without function calls *)
+                   Some (lower_expression ctx expr)
+                 )
              | Ast.TailCall (name, args) ->
                  (* This is a tail call - generate tail call instruction *)
                  let arg_vals = List.map (lower_expression ctx) args in
@@ -932,8 +989,12 @@ let rec lower_statement ctx stmt =
                  Some (lower_expression ctx expr))
         | None -> None
       in
-      let instr = make_ir_instruction (IRReturn return_val) stmt.stmt_pos in
-      emit_instruction ctx instr
+      (* Only generate IRReturn if we have a return value (IRMatchReturn handles its own logic) *)
+      (match return_val with
+       | Some _ -> 
+           let instr = make_ir_instruction (IRReturn return_val) stmt.stmt_pos in
+           emit_instruction ctx instr
+       | None -> ())
       
   | Ast.If (cond_expr, then_stmts, else_opt) ->
       let cond_val = lower_expression ctx cond_expr in
@@ -1447,6 +1508,38 @@ let rec list_take n lst =
     | [] -> []
     | x :: xs -> x :: list_take (n - 1) xs
 
+(** Convert IRReturnCall actions to IRReturnTailCall with proper indices in IRMatchReturn instructions *)
+let convert_match_return_calls_to_tail_calls ir_function =
+  let rec update_instruction instr =
+    match instr.instr_desc with
+    | IRMatchReturn (matched_val, arms) ->
+        let updated_arms = List.map (fun arm ->
+          match arm.return_action with
+          | IRReturnCall (func_name, args) ->
+              (* Convert to tail call with index 0 - will be updated by tail call analyzer *)
+              { arm with return_action = IRReturnTailCall (func_name, args, 0) }
+          | _ -> arm
+        ) arms in
+        { instr with instr_desc = IRMatchReturn (matched_val, updated_arms) }
+    | IRIf (cond, then_body, else_body) ->
+        let updated_then = List.map update_instruction then_body in
+        let updated_else = Option.map (List.map update_instruction) else_body in
+        { instr with instr_desc = IRIf (cond, updated_then, updated_else) }
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        let updated_conditions_and_bodies = List.map (fun (cond, then_body) ->
+          (cond, List.map update_instruction then_body)
+        ) conditions_and_bodies in
+        let updated_final_else = Option.map (List.map update_instruction) final_else in
+        { instr with instr_desc = IRIfElseChain (updated_conditions_and_bodies, updated_final_else) }
+    | _ -> instr
+  in
+  
+  let updated_blocks = List.map (fun block ->
+    { block with instructions = List.map update_instruction block.instructions }
+  ) ir_function.basic_blocks in
+  
+  { ir_function with basic_blocks = updated_blocks }
+
 (** Lower AST function to IR function *)
 let lower_function ctx prog_name (func_def : Ast.function_def) =
   ctx.current_function <- Some func_def.func_name;
@@ -1510,14 +1603,17 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
   (* Clear function parameters for next function *)
   Hashtbl.clear ctx.function_parameters;
   
-  make_ir_function 
+  let ir_function = make_ir_function 
     ir_func_name 
     ir_params 
     ir_return_type 
     ir_blocks
     ~total_stack_usage:ctx.stack_usage
     ~is_main:is_main
-    func_def.func_pos
+    func_def.func_pos in
+  
+  (* Convert IRReturnCall actions to IRReturnTailCall in IRMatchReturn instructions *)
+  convert_match_return_calls_to_tail_calls ir_function
 
 (** Lower AST map declaration to IR map definition *)
 let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
@@ -2250,4 +2346,4 @@ let generate_ir ast symbol_table source_name =
   with
   | exn ->
       Printf.eprintf "IR generation failed: %s\n" (Printexc.to_string exn);
-      raise exn 
+      raise exn

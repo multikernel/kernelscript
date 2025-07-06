@@ -175,6 +175,156 @@ let test_validation_errors _ =
   (* Should have no errors since no valid dependencies were created *)
   check int "errors count" 0 (List.length errors)
 
+let test_tail_call_match_expressions _ =
+  (* Create match expression with tail calls *)
+  let protocol_var = make_expr (Identifier "protocol") make_test_position in
+  let tcp_call = make_expr (FunctionCall ("tcp_handler", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let udp_call = make_expr (FunctionCall ("udp_handler", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let aborted_const = make_expr (Identifier "XDP_ABORTED") make_test_position in
+  
+  let match_arms = [
+    { arm_pattern = IdentifierPattern "TCP"; arm_expr = tcp_call; arm_pos = make_test_position };
+    { arm_pattern = IdentifierPattern "UDP"; arm_expr = udp_call; arm_pos = make_test_position };
+    { arm_pattern = DefaultPattern; arm_expr = aborted_const; arm_pos = make_test_position };
+  ] in
+  
+  let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
+  
+  let tcp_handler = make_test_func "tcp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  let udp_handler = make_test_func "udp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_DROP") make_test_position))) make_test_position
+  ] in
+  
+  let packet_processor = make_test_func "packet_processor" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Declaration ("protocol", Some U32, make_expr (Literal (IntLit (6, None))) make_test_position)) make_test_position;
+    make_stmt (Return (Some match_expr)) make_test_position
+  ] in
+  
+  let attr_tcp = make_test_attr_func [SimpleAttribute "xdp"] tcp_handler in
+  let attr_udp = make_test_attr_func [SimpleAttribute "xdp"] udp_handler in
+  let attr_processor = make_test_attr_func [SimpleAttribute "xdp"] packet_processor in
+  
+  let ast = [AttributedFunction attr_tcp; AttributedFunction attr_udp; AttributedFunction attr_processor] in
+  let analysis = analyze_tail_calls ast in
+  
+  (* Should detect 2 tail call dependencies *)
+  check int "tail call dependencies count" (List.length analysis.dependencies) 2;
+  
+  (* Should create prog_array with 2 entries *)
+  check int "prog_array size" analysis.prog_array_size 2;
+  
+  (* Dependencies should be from packet_processor to tcp_handler and udp_handler *)
+  let has_tcp_dependency = List.exists (fun dep -> 
+    dep.caller = "packet_processor" && dep.target = "tcp_handler"
+  ) analysis.dependencies in
+  let has_udp_dependency = List.exists (fun dep -> 
+    dep.caller = "packet_processor" && dep.target = "udp_handler"
+  ) analysis.dependencies in
+  
+  check bool "has tcp tail call dependency" has_tcp_dependency true;
+  check bool "has udp tail call dependency" has_udp_dependency true
+
+let test_nested_match_tail_calls _ =
+  (* Create nested match expression with tail calls *)
+  let value_var = make_expr (Identifier "value") make_test_position in
+  let handler_a_call = make_expr (FunctionCall ("handler_a", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let handler_b_call = make_expr (FunctionCall ("handler_b", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let handler_c_call = make_expr (FunctionCall ("handler_c", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let xdp_tx_const = make_expr (Identifier "XDP_TX") make_test_position in
+  
+  (* Inner match expression *)
+  let inner_match_arms = [
+    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_expr = handler_a_call; arm_pos = make_test_position };
+    { arm_pattern = DefaultPattern; arm_expr = handler_b_call; arm_pos = make_test_position };
+  ] in
+  let inner_match = make_expr (Match (value_var, inner_match_arms)) make_test_position in
+  
+  (* Outer match expression *)
+  let outer_match_arms = [
+    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_expr = inner_match; arm_pos = make_test_position };
+    { arm_pattern = ConstantPattern (IntLit (2, None)); arm_expr = handler_c_call; arm_pos = make_test_position };
+    { arm_pattern = DefaultPattern; arm_expr = xdp_tx_const; arm_pos = make_test_position };
+  ] in
+  let outer_match = make_expr (Match (value_var, outer_match_arms)) make_test_position in
+  
+  let handler_a = make_test_func "handler_a" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  let handler_b = make_test_func "handler_b" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_DROP") make_test_position))) make_test_position
+  ] in
+  
+  let handler_c = make_test_func "handler_c" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_ABORTED") make_test_position))) make_test_position
+  ] in
+  
+  let dispatcher = make_test_func "dispatcher" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Declaration ("value", Some U32, make_expr (Literal (IntLit (1, None))) make_test_position)) make_test_position;
+    make_stmt (Return (Some outer_match)) make_test_position
+  ] in
+  
+  let attr_a = make_test_attr_func [SimpleAttribute "xdp"] handler_a in
+  let attr_b = make_test_attr_func [SimpleAttribute "xdp"] handler_b in
+  let attr_c = make_test_attr_func [SimpleAttribute "xdp"] handler_c in
+  let attr_dispatcher = make_test_attr_func [SimpleAttribute "xdp"] dispatcher in
+  
+  let ast = [AttributedFunction attr_a; AttributedFunction attr_b; AttributedFunction attr_c; AttributedFunction attr_dispatcher] in
+  let analysis = analyze_tail_calls ast in
+  
+  (* Should detect 3 tail call dependencies from nested match *)
+  check int "nested match tail call dependencies" (List.length analysis.dependencies) 3;
+  
+  (* Should create prog_array with 3 entries *)
+  check int "nested match prog_array size" analysis.prog_array_size 3
+
+let test_match_with_mixed_tail_calls _ =
+  (* Create match expression with mixed tail calls and direct returns *)
+  let value_var = make_expr (Identifier "value") make_test_position in
+  let tail_target_call1 = make_expr (FunctionCall ("tail_target", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let tail_target_call2 = make_expr (FunctionCall ("tail_target", [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let xdp_drop_const = make_expr (Identifier "XDP_DROP") make_test_position in
+  let xdp_aborted_const = make_expr (Identifier "XDP_ABORTED") make_test_position in
+  
+  let match_arms = [
+    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_expr = tail_target_call1; arm_pos = make_test_position };
+    { arm_pattern = ConstantPattern (IntLit (2, None)); arm_expr = xdp_drop_const; arm_pos = make_test_position };
+    { arm_pattern = ConstantPattern (IntLit (3, None)); arm_expr = tail_target_call2; arm_pos = make_test_position };
+    { arm_pattern = DefaultPattern; arm_expr = xdp_aborted_const; arm_pos = make_test_position };
+  ] in
+  
+  let match_expr = make_expr (Match (value_var, match_arms)) make_test_position in
+  
+  let tail_target = make_test_func "tail_target" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  let mixed_dispatcher = make_test_func "mixed_dispatcher" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Declaration ("value", Some U32, make_expr (Literal (IntLit (1, None))) make_test_position)) make_test_position;
+    make_stmt (Return (Some match_expr)) make_test_position
+  ] in
+  
+  let attr_target = make_test_attr_func [SimpleAttribute "xdp"] tail_target in
+  let attr_dispatcher = make_test_attr_func [SimpleAttribute "xdp"] mixed_dispatcher in
+  
+  let ast = [AttributedFunction attr_target; AttributedFunction attr_dispatcher] in
+  let analysis = analyze_tail_calls ast in
+  
+  (* Should detect 1 unique tail call dependency (deduplicated) *)
+  check int "mixed match tail call dependencies" (List.length analysis.dependencies) 1;
+  
+  (* Should create prog_array with 1 entry *)
+  check int "mixed match prog_array size" analysis.prog_array_size 1;
+  
+  (* Dependency should be from mixed_dispatcher to tail_target *)
+  let has_dependency = List.exists (fun dep -> 
+    dep.caller = "mixed_dispatcher" && dep.target = "tail_target"
+  ) analysis.dependencies in
+  check bool "has mixed match tail call dependency" has_dependency true
+
 let suite = [
   "test_tail_call_detection", `Quick, test_tail_call_detection;
   "test_program_type_compatibility", `Quick, test_program_type_compatibility;
@@ -183,6 +333,9 @@ let suite = [
   "test_dependency_chains", `Quick, test_dependency_chains;
   "test_no_tail_calls", `Quick, test_no_tail_calls;
   "test_validation_errors", `Quick, test_validation_errors;
+  "tail_call_match_expressions", `Quick, test_tail_call_match_expressions;
+  "nested_match_tail_calls", `Quick, test_nested_match_tail_calls;
+  "match_with_mixed_tail_calls", `Quick, test_match_with_mixed_tail_calls;
 ]
 
 let () = Alcotest.run "Tail Call Tests" [("main", suite)] 

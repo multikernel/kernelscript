@@ -200,6 +200,11 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
+ (name test_userspace_skeleton_header)
+ (modules test_userspace_skeleton_header)
+ (libraries kernelscript alcotest str))
+
+(executable
  (name test_match)
  (modules test_match)
  (libraries kernelscript alcotest test_utils))
@@ -457,6 +462,10 @@
  (action (run ./test_string_literal_bugs.exe)))
 
 (rule
+ (alias runtest_userspace_skeleton_header)
+ (action (run ./test_userspace_skeleton_header.exe)))
+
+(rule
  (alias runtest_return_path_analysis)
  (action (run ./test_return_path_analysis.exe)))
 
@@ -524,6 +533,7 @@
   test_userspace_statements.exe
   test_return_value_propagation.exe
   test_userspace_struct_flexibility.exe
+  test_userspace_skeleton_header.exe
   test_string_codegen.exe
   test_string_struct_fixes.exe
   test_string_type.exe
@@ -536,6 +546,7 @@
    (run ./test_userspace_statements.exe)
    (run ./test_return_value_propagation.exe)
    (run ./test_userspace_struct_flexibility.exe)
+   (run ./test_userspace_skeleton_header.exe)
    (run ./test_string_codegen.exe)
    (run ./test_string_struct_fixes.exe)
    (run ./test_string_type.exe)

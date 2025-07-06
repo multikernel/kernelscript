@@ -481,6 +481,17 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
     | IRMapStore (map_val, key_val, value_val, _) ->
         collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
     | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRMatchReturn (matched_val, arms) ->
+        collect_from_value matched_val;
+        List.iter (fun arm ->
+          (match arm.match_pattern with
+           | IRConstantPattern const_val -> collect_from_value const_val
+           | IRDefaultPattern -> ());
+          (match arm.return_action with
+           | IRReturnValue ret_val -> collect_from_value ret_val
+           | IRReturnCall (_, args) -> List.iter collect_from_value args
+           | IRReturnTailCall (_, args, _) -> List.iter collect_from_value args)
+        ) arms
     | IRIf (cond_val, then_instrs, else_instrs_opt) ->
         collect_from_value cond_val;
         List.iter collect_from_instr then_instrs;
@@ -585,6 +596,17 @@ let collect_type_aliases_from_userspace_program userspace_prog =
         List.iter collect_from_value args;
         (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
     | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRMatchReturn (matched_val, arms) ->
+        collect_from_value matched_val;
+        List.iter (fun arm ->
+          (match arm.match_pattern with
+           | IRConstantPattern const_val -> collect_from_value const_val
+           | IRDefaultPattern -> ());
+          (match arm.return_action with
+           | IRReturnValue ret_val -> collect_from_value ret_val
+           | IRReturnCall (_, args) -> List.iter collect_from_value args
+           | IRReturnTailCall (_, args, _) -> List.iter collect_from_value args)
+        ) arms
     | _ -> ()
   in
   
@@ -1350,6 +1372,56 @@ let rec generate_c_instruction_from_ir ctx instruction =
       (* For userspace, generate defer using function-scope cleanup *)
       let defer_body = String.concat "\n    " (List.map (generate_c_instruction_from_ir ctx) defer_instructions) in
       sprintf "/* defer block - executed at function exit */\n    {\n    %s\n    }" defer_body
+  | IRMatchReturn (matched_val, arms) ->
+      (* Generate if-else chain for match expression in return position for userspace *)
+      let matched_str = generate_c_value_from_ir ctx matched_val in
+      
+      let generate_match_arm is_first arm =
+        match arm.match_pattern with
+        | IRConstantPattern const_val ->
+            let const_str = generate_c_value_from_ir ctx const_val in
+            let keyword = if is_first then "if" else "else if" in
+            let condition_part = sprintf "%s (%s == %s)" keyword matched_str const_str in
+            
+            (* Generate appropriate return based on the return action *)
+            let action_part = match arm.return_action with
+              | IRReturnValue ret_val ->
+                  let ret_str = generate_c_value_from_ir ctx ret_val in
+                  sprintf "return %s;" ret_str
+              | IRReturnCall (func_name, args) ->
+                  (* For userspace, function calls in return position are regular calls *)
+                  let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
+                  sprintf "return %s(%s);" func_name args_str
+              | IRReturnTailCall (func_name, args, _) ->
+                  (* Tail calls are not supported in userspace - treat as regular function call *)
+                  let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
+                  sprintf "return %s(%s); /* Note: tail call converted to regular call in userspace */" func_name args_str
+            in
+            sprintf "%s {\n        %s\n    }" condition_part action_part
+        | IRDefaultPattern ->
+            let action_part = match arm.return_action with
+              | IRReturnValue ret_val ->
+                  let ret_str = generate_c_value_from_ir ctx ret_val in
+                  sprintf "return %s;" ret_str
+              | IRReturnCall (func_name, args) ->
+                  (* For userspace, function calls in return position are regular calls *)
+                  let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
+                  sprintf "return %s(%s);" func_name args_str
+              | IRReturnTailCall (func_name, args, _) ->
+                  (* Tail calls are not supported in userspace - treat as regular function call *)
+                  let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
+                  sprintf "return %s(%s); /* Note: tail call converted to regular call in userspace */" func_name args_str
+            in
+            sprintf "else {\n        %s\n    }" action_part
+      in
+      
+      (* Generate all arms *)
+      (match arms with
+       | [] -> "/* No match arms */"
+       | first_arm :: rest_arms ->
+           let first_part = generate_match_arm true first_arm in
+           let rest_parts = List.map (generate_match_arm false) rest_arms in
+           String.concat " " (first_part :: rest_parts))
   | IRStructOpsRegister (result_val, struct_ops_val) ->
       (* Generate struct_ops registration call *)
       let struct_ops_str = generate_c_value_from_ir ctx struct_ops_val in
@@ -1483,10 +1555,10 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
     (* No need to copy function parameters to local variables - use them directly *)
     let args_assignment_code = "" in
     
-    (* Always load eBPF object at the beginning of main() if global variables exist or load() is used *)
+    (* Always load eBPF object at the beginning of main() if global variables exist or BPF functions are used *)
     let has_global_vars = List.length global_variables > 0 in
     let func_usage = collect_function_usage_from_ir_function ir_func in
-    let needs_object_loading = has_global_vars || func_usage.uses_load in
+    let needs_object_loading = has_global_vars || func_usage.uses_load || func_usage.uses_attach in
     let skeleton_loading_code = if needs_object_loading then
       sprintf {|    // Implicit eBPF skeleton loading - makes global variables immediately accessible
     if (!obj) {
@@ -1932,7 +2004,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Generate skeleton header include for standard libbpf skeleton *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
-  let skeleton_include = if ir_multi_prog.global_variables <> [] then
+  let skeleton_include = if ir_multi_prog.global_variables <> [] || uses_bpf_functions then
     sprintf "#include \"%s.skel.h\"\n" base_name
   else "" in
   
@@ -1970,7 +2042,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
 
   (* Generate eBPF object instance *)
-  let skeleton_code = if ir_multi_prog.global_variables <> [] || all_usage.uses_load then
+  let skeleton_code = if ir_multi_prog.global_variables <> [] || uses_bpf_functions then
     sprintf "/* eBPF skeleton instance */\nstruct %s_ebpf *obj = NULL;\n" base_name
   else "" in
   

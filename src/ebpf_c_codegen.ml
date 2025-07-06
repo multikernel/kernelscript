@@ -129,6 +129,8 @@ type c_context = {
   mutable variable_type_aliases: (string * string) list;
   (* Pinned global variables for transparent access *)
   mutable pinned_globals: string list;
+  (* Flag to indicate if we're generating code for a return context *)
+  mutable in_return_context: bool;
 }
 
 let create_c_context () = {
@@ -143,6 +145,7 @@ let create_c_context () = {
   current_error_var = None;
   variable_type_aliases = [];
   pinned_globals = [];
+  in_return_context = false;
 }
 
 (** Helper functions for code generation *)
@@ -316,6 +319,23 @@ let rec collect_string_sizes_from_instr ir_instr =
         | None -> []
       in
       cond_sizes @ else_sizes
+  | IRMatchReturn (matched_val, arms) ->
+      let matched_sizes = collect_string_sizes_from_value matched_val in
+      let arms_sizes = List.fold_left (fun acc arm ->
+        let pattern_sizes = match arm.match_pattern with
+          | IRConstantPattern const_val -> collect_string_sizes_from_value const_val
+          | IRDefaultPattern -> []
+        in
+        let action_sizes = match arm.return_action with
+          | IRReturnValue ret_val -> collect_string_sizes_from_value ret_val
+          | IRReturnCall (_, args) -> List.fold_left (fun acc arg -> 
+              acc @ (collect_string_sizes_from_value arg)) [] args
+          | IRReturnTailCall (_, args, _) -> List.fold_left (fun acc arg -> 
+              acc @ (collect_string_sizes_from_value arg)) [] args
+        in
+        acc @ pattern_sizes @ action_sizes
+      ) [] arms in
+      matched_sizes @ arms_sizes
   | IRReturn ret_opt ->
       (match ret_opt with
        | Some ret_val -> collect_string_sizes_from_value ret_val
@@ -1294,43 +1314,80 @@ let generate_c_expression ctx ir_expr =
       sprintf "{%s}" (String.concat ", " field_strs)
 
   | IRMatch (matched_val, arms) ->
-      (* Generate if-else chain for eBPF *)
-      let matched_str = generate_c_value ctx matched_val in
-      let temp_var = fresh_var ctx "match_result" in
-      let result_type = ebpf_type_from_ir_type ir_expr.expr_type in
+      (* For match expressions, always generate control flow when in return context *)
+      (* This handles the case where match arms contain tail calls *)
+      let should_generate_control_flow = ctx.in_return_context in
       
-      (* Generate temporary variable for the result *)
-      emit_line ctx (sprintf "%s %s;" result_type temp_var);
-      
-      (* Generate if-else chain *)
-      let generate_match_arm is_first arm =
-        let arm_val_str = generate_c_value ctx arm.ir_arm_value in
-        match arm.ir_arm_pattern with
-        | IRConstantPattern const_val ->
-            let const_str = generate_c_value ctx const_val in
-            let keyword = if is_first then "if" else "else if" in
-            emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
-            increase_indent ctx;
-            emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
-            decrease_indent ctx;
-            emit_line ctx "}"
-        | IRDefaultPattern ->
-            emit_line ctx "else {";
-            increase_indent ctx;
-            emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
-            decrease_indent ctx;
-            emit_line ctx "}"
-      in
-      
-      (* Generate all arms *)
-      (match arms with
-       | [] -> () (* No arms - should not happen *)
-       | first_arm :: rest_arms ->
-           generate_match_arm true first_arm;
-           List.iter (generate_match_arm false) rest_arms);
-      
-      (* Return the temporary variable *)
-      temp_var
+      if should_generate_control_flow then
+        (* Generate if-else chain with returns for tail call scenarios *)
+        let matched_str = generate_c_value ctx matched_val in
+        
+        let generate_match_arm is_first arm =
+          let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+          match arm.ir_arm_pattern with
+          | IRConstantPattern const_val ->
+              let const_str = generate_c_value ctx const_val in
+              let keyword = if is_first then "if" else "else if" in
+              emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
+              increase_indent ctx;
+              emit_line ctx (sprintf "return %s;" arm_val_str);
+              decrease_indent ctx;
+              emit_line ctx "}"
+          | IRDefaultPattern ->
+              emit_line ctx "else {";
+              increase_indent ctx;
+              emit_line ctx (sprintf "return %s;" arm_val_str);
+              decrease_indent ctx;
+              emit_line ctx "}"
+        in
+        
+        (* Generate all arms *)
+        (match arms with
+         | [] -> () (* No arms - should not happen *)
+         | first_arm :: rest_arms ->
+             generate_match_arm true first_arm;
+             List.iter (generate_match_arm false) rest_arms);
+        
+        (* Return empty string since control flow handles the return *)
+        ""
+      else
+        (* Generate regular if-else chain with temporary variable for eBPF *)
+        let matched_str = generate_c_value ctx matched_val in
+        let temp_var = fresh_var ctx "match_result" in
+        let result_type = ebpf_type_from_ir_type ir_expr.expr_type in
+        
+        (* Generate temporary variable for the result *)
+        emit_line ctx (sprintf "%s %s;" result_type temp_var);
+        
+        (* Generate if-else chain *)
+        let generate_match_arm is_first arm =
+          let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+          match arm.ir_arm_pattern with
+          | IRConstantPattern const_val ->
+              let const_str = generate_c_value ctx const_val in
+              let keyword = if is_first then "if" else "else if" in
+              emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
+              increase_indent ctx;
+              emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+              decrease_indent ctx;
+              emit_line ctx "}"
+          | IRDefaultPattern ->
+              emit_line ctx "else {";
+              increase_indent ctx;
+              emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+              decrease_indent ctx;
+              emit_line ctx "}"
+        in
+        
+        (* Generate all arms *)
+        (match arms with
+         | [] -> () (* No arms - should not happen *)
+         | first_arm :: rest_arms ->
+             generate_match_arm true first_arm;
+             List.iter (generate_match_arm false) rest_arms);
+        
+        (* Return the temporary variable *)
+        temp_var
 
 
 
@@ -1722,9 +1779,80 @@ let rec generate_c_instruction ctx ir_instr =
        | None ->
            emit_line ctx "}")
 
+  | IRMatchReturn (matched_val, arms) ->
+      (* Generate if-else chain for match expression in return position *)
+      let matched_str = generate_c_value ctx matched_val in
+      
+      let generate_match_arm is_first arm =
+        match arm.match_pattern with
+        | IRConstantPattern const_val ->
+            let const_str = generate_c_value ctx const_val in
+            let keyword = if is_first then "if" else "} else if" in
+            emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
+            increase_indent ctx;
+            
+            (* Generate appropriate return/tail call based on the return action *)
+            (match arm.return_action with
+             | IRReturnValue ret_val ->
+                 let ret_str = generate_c_value ctx ret_val in
+                 emit_line ctx (sprintf "return %s;" ret_str)
+             | IRReturnCall (func_name, args) ->
+                 (* Generate tail call for function call in return position *)
+                 let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+                 emit_line ctx (sprintf "/* Tail call to %s */" func_name);
+                 emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, 0); /* %s(%s) */" func_name args_str);
+                 emit_line ctx "/* If tail call fails, continue execution */"
+             | IRReturnTailCall (func_name, args, index) ->
+                 (* Generate explicit tail call *)
+                 let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+                 emit_line ctx (sprintf "/* Tail call to %s (index %d) */" func_name index);
+                 emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, %d); /* %s(%s) */" index func_name args_str);
+                 emit_line ctx "/* If tail call fails, continue execution */");
+            
+            decrease_indent ctx
+        | IRDefaultPattern ->
+            emit_line ctx "} else {";
+            increase_indent ctx;
+            
+            (* Generate appropriate return/tail call for default case *)
+            (match arm.return_action with
+             | IRReturnValue ret_val ->
+                 let ret_str = generate_c_value ctx ret_val in
+                 emit_line ctx (sprintf "return %s;" ret_str)
+             | IRReturnCall (func_name, args) ->
+                 (* Generate tail call for function call in return position *)
+                 let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+                 emit_line ctx (sprintf "/* Tail call to %s */" func_name);
+                 emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, 0); /* %s(%s) */" func_name args_str);
+                 emit_line ctx "/* If tail call fails, continue execution */"
+             | IRReturnTailCall (func_name, args, index) ->
+                 (* Generate explicit tail call *)
+                 let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+                 emit_line ctx (sprintf "/* Tail call to %s (index %d) */" func_name index);
+                 emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, %d); /* %s(%s) */" index func_name args_str);
+                 emit_line ctx "/* If tail call fails, continue execution */");
+            
+            decrease_indent ctx;
+            emit_line ctx "}"
+      in
+      
+      (* Generate all arms *)
+      (match arms with
+       | [] -> () (* No arms - should not happen *)
+       | first_arm :: rest_arms ->
+           generate_match_arm true first_arm;
+           List.iter (generate_match_arm false) rest_arms;
+           (* Close the if-else chain if no default was provided *)
+           if not (List.exists (fun arm -> match arm.match_pattern with IRDefaultPattern -> true | _ -> false) arms) then
+             emit_line ctx "}")
+
   | IRReturn ret_opt ->
       begin match ret_opt with
       | Some ret_val ->
+          (* Set return context flag before generating the return value *)
+          let old_return_context = ctx.in_return_context in
+          ctx.in_return_context <- true;
+          
           let ret_str = match ret_val.value_desc with
             (* Use context-specific action constant mapping *)
             | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction Xdp_actionType ->
@@ -1737,6 +1865,10 @@ let rec generate_c_instruction ctx ir_instr =
                  | None -> string_of_int i)
             | _ -> generate_c_value ctx ret_val
           in
+          
+          (* Restore return context flag *)
+          ctx.in_return_context <- old_return_context;
+          
           emit_line ctx (sprintf "return %s;" ret_str)
       | None ->
           emit_line ctx "return XDP_PASS;"  (* Default XDP action *)
@@ -2067,6 +2199,17 @@ let collect_registers_in_function ir_func =
         (match final_else with
          | Some else_instrs -> List.iter collect_in_instr else_instrs
          | None -> ())
+    | IRMatchReturn (matched_val, arms) ->
+        collect_in_value matched_val;
+        List.iter (fun arm ->
+          (match arm.match_pattern with
+           | IRConstantPattern const_val -> collect_in_value const_val
+           | IRDefaultPattern -> ());
+          (match arm.return_action with
+           | IRReturnValue ret_val -> collect_in_value ret_val
+           | IRReturnCall (_, args) -> List.iter collect_in_value args
+           | IRReturnTailCall (_, args, _) -> List.iter collect_in_value args)
+        ) arms
     | IRReturn ret_opt -> Option.iter collect_in_value ret_opt
     | IRJump _ -> ()
     | IRComment _ -> () (* Comments don't use registers *)

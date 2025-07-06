@@ -62,7 +62,7 @@ let compatible_signatures caller_params caller_return target_params target_retur
   params_match && return_match
 
 (** Detect tail calls in a return statement *)
-let detect_tail_calls_in_expr expr attributed_functions =
+let rec detect_tail_calls_in_expr expr attributed_functions =
   match expr.expr_desc with
   | FunctionCall (name, _args) ->
       (* Check if this function is an attributed function *)
@@ -76,6 +76,11 @@ let detect_tail_calls_in_expr expr attributed_functions =
         [name]
       else
         []
+  | Match (_matched_expr, match_arms) ->
+      (* Handle match expressions - analyze each arm's expression for tail calls *)
+      List.fold_left (fun acc arm ->
+        acc @ (detect_tail_calls_in_expr arm.arm_expr attributed_functions)
+      ) [] match_arms
   | _ -> []
 
 let detect_tail_calls_in_stmt stmt attributed_functions =
@@ -92,6 +97,11 @@ let analyze_attributed_function attr_func attributed_functions =
   let tail_calls = List.fold_left (fun acc stmt ->
     acc @ (detect_tail_calls_in_stmt stmt attributed_functions)
   ) [] attr_func.attr_function.func_body in
+  
+  (* Remove duplicates from tail calls *)
+  let unique_tail_calls = List.fold_left (fun acc target ->
+    if List.mem target acc then acc else target :: acc
+  ) [] tail_calls in
   
   (* Create dependency records *)
   List.fold_left (fun acc target_name ->
@@ -125,7 +135,7 @@ let analyze_attributed_function attr_func attributed_functions =
     | None ->
         (* Target function not found - this will become a compilation error *)
         acc
-  ) [] tail_calls
+  ) [] unique_tail_calls
 
 (** Build complete tail call analysis for all attributed functions *)
 let analyze_tail_calls (ast : declaration list) =
@@ -240,3 +250,45 @@ let get_tail_call_dependencies func_name analysis =
   List.fold_left (fun acc dep ->
     if List.mem dep acc then acc else dep :: acc
   ) [] all_deps 
+
+(** Update IR function with correct tail call indices in IRMatchReturn instructions *)
+let update_ir_function_tail_call_indices ir_function analysis =
+  let open Ir in
+  let rec update_instruction instr =
+    match instr.instr_desc with
+    | IRMatchReturn (matched_val, arms) ->
+        let updated_arms = List.map (fun arm ->
+          match arm.return_action with
+          | IRReturnTailCall (func_name, args, _old_index) ->
+              (* Look up the correct index from analysis *)
+              let new_index = try
+                Hashtbl.find analysis.index_mapping func_name
+              with Not_found -> 0 in
+              { arm with return_action = IRReturnTailCall (func_name, args, new_index) }
+          | _ -> arm
+        ) arms in
+        { instr with instr_desc = IRMatchReturn (matched_val, updated_arms) }
+    | IRIf (cond, then_body, else_body) ->
+        let updated_then = List.map update_instruction then_body in
+        let updated_else = Option.map (List.map update_instruction) else_body in
+        { instr with instr_desc = IRIf (cond, updated_then, updated_else) }
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        let updated_conditions_and_bodies = List.map (fun (cond, then_body) ->
+          (cond, List.map update_instruction then_body)
+        ) conditions_and_bodies in
+        let updated_final_else = Option.map (List.map update_instruction) final_else in
+        { instr with instr_desc = IRIfElseChain (updated_conditions_and_bodies, updated_final_else) }
+    | IRTailCall (func_name, args, _old_index) ->
+        (* Also update regular tail calls *)
+        let new_index = try
+          Hashtbl.find analysis.index_mapping func_name
+        with Not_found -> 0 in
+        { instr with instr_desc = IRTailCall (func_name, args, new_index) }
+    | _ -> instr
+  in
+  
+  let updated_blocks = List.map (fun block ->
+    { block with instructions = List.map update_instruction block.instructions }
+  ) ir_function.basic_blocks in
+  
+  { ir_function with basic_blocks = updated_blocks } 

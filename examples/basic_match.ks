@@ -30,21 +30,7 @@ fn get_udp_dest_port(ctx: xdp_md) -> u32 {
     return 53 // DNS port
 }
 
-// Basic packet classifier using match construct
-@xdp
-fn packet_classifier(ctx: xdp_md) -> xdp_action {
-    var protocol = get_ip_protocol(ctx)
-    
-    // Match construct provides clean packet classification
-    return match (protocol) {
-        TCP: XDP_PASS,          // Allow TCP traffic
-        UDP: XDP_PASS,          // Allow UDP traffic  
-        ICMP: XDP_DROP,         // Drop ICMP for security
-        default: XDP_ABORTED    // Abort unknown protocols
-    }
-}
-
-// TCP port-based classifier  
+// Specialized TCP port-based classifier (tail-callable)
 @xdp
 fn tcp_port_classifier(ctx: xdp_md) -> xdp_action {
     var port = get_tcp_dest_port(ctx)
@@ -53,12 +39,13 @@ fn tcp_port_classifier(ctx: xdp_md) -> xdp_action {
         80: XDP_PASS,       // Allow HTTP
         443: XDP_PASS,      // Allow HTTPS  
         22: XDP_PASS,       // Allow SSH
-        21: XDP_DROP,       // Block FTP
-        default: XDP_PASS   // Allow other TCP ports
+        21: XDP_DROP,       // Block FTP for security
+        23: XDP_DROP,       // Block Telnet (insecure)
+        default: XDP_PASS   // Allow other TCP ports by default
     }
 }
 
-// UDP port-based classifier
+// Specialized UDP port-based classifier (tail-callable)
 @xdp  
 fn udp_port_classifier(ctx: xdp_md) -> xdp_action {
     var port = get_udp_dest_port(ctx)
@@ -66,9 +53,29 @@ fn udp_port_classifier(ctx: xdp_md) -> xdp_action {
     return match (port) {
         53: XDP_PASS,       // Allow DNS
         123: XDP_PASS,      // Allow NTP
-        161: XDP_DROP,      // Block SNMP
-        default: XDP_PASS   // Allow other UDP ports
+        161: XDP_DROP,      // Block SNMP (security risk)
+        69: XDP_DROP,       // Block TFTP (insecure)
+        default: XDP_PASS   // Allow other UDP ports by default
     }
+}
+
+// Main packet classifier using match construct with tail call delegation
+@xdp
+fn packet_classifier(ctx: xdp_md) -> xdp_action {
+    var protocol = get_ip_protocol(ctx)
+    
+    // Match construct provides clean protocol-based delegation
+    return match (protocol) {
+        TCP: tcp_port_classifier(ctx),    // Tail call to TCP specialist 
+        UDP: udp_port_classifier(ctx),    // Tail call to UDP specialist
+        ICMP: XDP_DROP,                   // Drop ICMP for security  
+        default: XDP_ABORTED              // Abort unknown protocols
+    }
+}
+
+fn main() -> i32 {
+    var prog = load(packet_classifier)
+    attach(prog, "lo", 0)
 }
 
  
