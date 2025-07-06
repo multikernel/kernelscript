@@ -274,30 +274,7 @@ let can_assign to_type from_type =
        | Some _ -> true
        | None -> false)
 
-(** Get built-in function signatures *)
-let get_builtin_function_signature name =
-  (* First check stdlib for built-in functions *)
-  match Stdlib.get_builtin_function_signature name with
-  | Some signature -> Some signature
-  | None ->
-      (* Fallback to existing hardcoded built-ins for compatibility *)
-      match name with
 
-      
-      (* Map operations *)
-      | name when String.contains name '.' ->
-          let parts = String.split_on_char '.' name in
-          (match parts with
-           | [_map_name; "lookup"] -> Some ([Pointer U8], Pointer U8)
-           | [_map_name; "insert"] -> Some ([Pointer U8; Pointer U8], U32)
-           | [_map_name; "update"] -> Some ([Pointer U8; Pointer U8], U32)
-           | [_map_name; "delete"] -> Some ([Pointer U8], U32)
-           | _ -> None)
-      
-      (* Type conversion functions *)
-      | "Protocol.from_u8" -> Some ([U8], Pointer (Enum "Protocol"))
-      
-      | _ -> None
 
 (** Type check literals *)
 let type_check_literal lit pos =
@@ -795,7 +772,7 @@ and type_check_expression ctx expr =
       let arg_types = List.map (fun e -> e.texpr_type) typed_args in
       
       (* Check if it's a built-in function *)
-      (match get_builtin_function_signature name with
+      (match Stdlib.get_builtin_function_signature name with
        | Some (expected_params, return_type) ->
            (* Check if this is a variadic function (indicated by empty parameter list) *)
            (match Stdlib.get_builtin_function name with
@@ -1672,7 +1649,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
 
 (** Utility functions *)
 let check_function_call name arg_types =
-  match get_builtin_function_signature name with
+  match Stdlib.get_builtin_function_signature name with
   | Some (expected_params, return_type) ->
       if List.length expected_params = List.length arg_types then
         let unified = List.map2 unify_types expected_params arg_types in
