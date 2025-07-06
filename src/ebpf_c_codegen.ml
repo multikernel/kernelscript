@@ -2395,6 +2395,7 @@ let generate_c_function ctx ir_func =
     | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> "SEC(\"xdp\")"
     | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
     | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
+    | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
     | _ -> "SEC(\"prog\")"
   else ""
   in

@@ -35,7 +35,7 @@ let test_different_program_types () =
   return 0
 }
 
-@tc fn tc_filter(ctx: TcContext) -> TcAction {
+@tc fn tc_filter(ctx: *__sk_buff) -> int {
   return 0
 }
 
@@ -188,7 +188,7 @@ let test_multiple_program_handles () =
   return 2
 }
 
-@tc fn tc_shaper(ctx: TcContext) -> TcAction {
+@tc fn tc_shaper(ctx: *__sk_buff) -> int {
   return 0
 }
 

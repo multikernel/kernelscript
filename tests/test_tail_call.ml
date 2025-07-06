@@ -52,7 +52,7 @@ let test_program_type_compatibility _ =
     make_stmt (Return (Some (make_expr (FunctionCall ("tc_handler", [])) make_test_position))) make_test_position
   ] in
   
-  let tc_func = make_test_func "tc_handler" [("ctx", TcContext)] (Some TcAction) [
+  let tc_func = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some I32) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) make_test_position))) make_test_position
   ] in
   
@@ -161,7 +161,7 @@ let test_validation_errors _ =
     make_stmt (Return (Some (make_expr (FunctionCall ("tc_handler", [])) make_test_position))) make_test_position
   ] in
   
-  let func2 = make_test_func "tc_handler" [("ctx", TcContext)] (Some TcAction) [
+  let func2 = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some I32) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) make_test_position))) make_test_position
   ] in
   

@@ -97,7 +97,7 @@ fn get_timestamp() -> u64 {
 }
 
 // TC program demonstrating different map usage patterns
-@tc fn traffic_shaper(ctx: TcContext) -> TcAction {
+@tc fn traffic_shaper(ctx: *__sk_buff) -> int {
   var cpu = get_cpu_id()
   var bytes = get_packet_len_tc(ctx)
   
@@ -106,10 +106,10 @@ fn get_timestamp() -> u64 {
   
   // Simple rate limiting logic
   if (bandwidth_usage[cpu] > 1000000) {
-    return TC_ACT_SHOT
+    return 2  // TC_ACT_SHOT
   }
   
-  return TC_ACT_OK
+  return 0  // TC_ACT_OK
 }
 
 fn main() -> i32 {

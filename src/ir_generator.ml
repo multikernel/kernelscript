@@ -304,7 +304,6 @@ let rec lower_expression ctx (expr : Ast.expr) =
                                (* Check if this is an action constant *)
                                (match enum_name, name with
                                 | "xdp_action", _ -> IRAction Xdp_actionType
-                                | "tc_action", _ -> IRAction TcActionType
                                 | _ -> ir_type)
                          in
                          make_ir_value (IREnumConstant (enum_name, name, value)) final_ir_type expr.expr_pos
@@ -1810,12 +1809,14 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
 (** Convert AST types to IR types *)
 let rec ast_type_to_ir_type = function
   | Ast.U8 -> IRU8 | Ast.U16 -> IRU16 | Ast.U32 -> IRU32 | Ast.U64 -> IRU64
-  | Ast.I8 -> IRI8 | Ast.I16 -> IRU16 | Ast.I32 -> IRU32 | Ast.I64 -> IRU64  (* Note: I16/I32/I64 map to unsigned in simple case *)
+  | Ast.I8 -> IRI8 | Ast.I16 -> IRI16 | Ast.I32 -> IRI32 | Ast.I64 -> IRI64  (* Use proper signed types *)
   | Ast.Bool -> IRBool | Ast.Char -> IRChar | Ast.Void -> IRVoid
   | Ast.Str size -> IRStr size
   | Ast.Array (elem_type, size) -> IRArray (ast_type_to_ir_type elem_type, size, make_bounds_info ())
+  | Ast.Pointer (Ast.Struct "__sk_buff") -> IRPointer (IRContext TcCtx, make_bounds_info ())  (* Map *__sk_buff to pointer to TC context *)
   | Ast.Pointer elem_type -> IRPointer (ast_type_to_ir_type elem_type, make_bounds_info ())
   | Ast.UserType type_name -> IRStruct (type_name, [], false)  (* Simplified *)
+  | Ast.Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
   | Ast.Struct struct_name -> IRStruct (struct_name, [], false)
   | Ast.Enum enum_name -> IREnum (enum_name, [], false)
   | Ast.Option inner_type -> 
@@ -1831,20 +1832,20 @@ let rec ast_type_to_ir_type = function
       let ir_value_type = ast_type_to_ir_type value_type in
       IRPointer (IRStruct ("map", [("key", ir_key_type); ("value", ir_value_type)], false), make_bounds_info ())
   | Ast.Xdp_md -> IRContext XdpCtx
-  | Ast.TcContext -> IRContext TcCtx
   | Ast.KprobeContext -> IRContext KprobeCtx
   | Ast.UprobeContext -> IRContext UprobeCtx
   | Ast.TracepointContext -> IRContext TracepointCtx
   | Ast.LsmContext -> IRContext LsmCtx
   | Ast.CgroupSkbContext -> IRContext CgroupSkbCtx
   | Ast.Xdp_action -> IRAction Xdp_actionType
-  | Ast.TcAction -> IRAction TcActionType
   | Ast.ProgramRef _prog_type -> IRU32  (* Program refs become integers *)
   | Ast.ProgramHandle -> IRI32  (* Program handles are file descriptors (i32) to support error codes *)
 
 (** Convert AST types to IR types with symbol table lookup for struct field resolution *)
 let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
   match ast_type with
+  | Ast.Pointer (Ast.Struct "__sk_buff") -> IRPointer (IRContext TcCtx, make_bounds_info ())  (* Map *__sk_buff to pointer to TC context *)
+  | Ast.UserType "__sk_buff" | Ast.Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
   | Ast.UserType name | Ast.Struct name ->
       let struct_name = name in
              (match Symbol_table.lookup_symbol symbol_table struct_name with

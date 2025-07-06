@@ -361,7 +361,7 @@ map<u32, u64> xdp_stats : HashMap(1024)
     ("tc", {|
 map<u32, u64> tc_stats : HashMap(1024)
 
-@tc fn tc_test(ctx: TcContext) -> TcAction {
+@tc fn tc_test(ctx: *__sk_buff) -> int {
   tc_stats[1] = tc_stats[2]
   return 0
 }

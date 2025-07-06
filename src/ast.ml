@@ -58,9 +58,9 @@ and bpf_type =
   | Function of bpf_type list * bpf_type
   | Map of bpf_type * bpf_type * map_type
   (* Built-in context types *)
-  | Xdp_md | TcContext | KprobeContext | UprobeContext 
+  | Xdp_md | KprobeContext | UprobeContext 
   | TracepointContext | LsmContext | CgroupSkbContext
-  | Xdp_action | TcAction
+  | Xdp_action
   (* Program reference types *)
   | ProgramRef of program_type
   (* Program handle type - represents a loaded program *)
@@ -480,14 +480,12 @@ let rec string_of_bpf_type = function
         (string_of_bpf_type value_type)
         (string_of_map_type map_type)
   | Xdp_md -> "xdp_md"
-  | TcContext -> "TcContext"
   | KprobeContext -> "KprobeContext"
   | UprobeContext -> "UprobeContext"
   | TracepointContext -> "TracepointContext"
   | LsmContext -> "LsmContext"
   | CgroupSkbContext -> "CgroupSkbContext"
   | Xdp_action -> "xdp_action"
-  | TcAction -> "TcAction"
   | ProgramRef pt -> string_of_program_type pt
   | ProgramHandle -> "ProgramHandle"
 

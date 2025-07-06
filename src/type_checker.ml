@@ -156,14 +156,14 @@ let type_error msg pos = raise (Type_error (msg, pos))
 (** Resolve user types to built-in types and type aliases *)
 let rec resolve_user_type ctx = function
   | UserType "xdp_md" -> Xdp_md
-  | UserType "TcContext" -> TcContext
   | UserType "KprobeContext" -> KprobeContext
   | UserType "UprobeContext" -> UprobeContext
   | UserType "TracepointContext" -> TracepointContext
   | UserType "LsmContext" -> LsmContext
   | UserType "CgroupSkbContext" -> CgroupSkbContext
   | UserType "xdp_action" -> Xdp_action
-  | UserType "TcAction" -> TcAction
+  | UserType "__sk_buff" -> Struct "__sk_buff"
+  | UserType "int" -> I32
   | UserType name ->
       (* Look up type alias in the context *)
       (try
@@ -260,7 +260,6 @@ let rec unify_types t1 t2 =
   
   (* Special built-in type compatibility for specific enums *)
   | Enum "xdp_action", Xdp_action | Xdp_action, Enum "xdp_action" -> Some Xdp_action
-  | Enum "TcAction", TcAction | TcAction, Enum "TcAction" -> Some TcAction
   
   (* No unification possible *)
   | _ -> None
@@ -398,7 +397,6 @@ let type_check_identifier ctx name pos =
     let filtered_parts = List.filter (fun s -> s <> "") parts in
     match filtered_parts with
     | ["xdp_action"; _] -> { texpr_desc = TIdentifier name; texpr_type = Xdp_action; texpr_pos = pos }
-    | ["TcAction"; _] -> { texpr_desc = TIdentifier name; texpr_type = TcAction; texpr_pos = pos }
     | [enum_name; _] ->
         (* Try to find enum type *)
         (try
@@ -557,6 +555,22 @@ and type_check_arrow_access ctx obj field pos =
   let typed_obj = type_check_expression ctx obj in
   
   match typed_obj.texpr_type with
+  | Pointer (Struct "__sk_buff") ->
+      (* __sk_buff context field access through pointer *)
+      (match field with
+       | "data" | "data_end" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
+       | "len" | "ifindex" | "protocol" | "mark" | "priority" | "ingress_ifindex" | "tc_index" | "hash" | "tc_classid" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
+       | "pkt_type" | "queue_mapping" | "vlan_present" | "vlan_tci" | "vlan_proto" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
+       | "cb" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Array (U32, 5); texpr_pos = pos }
+       | _ -> type_error ("Unknown __sk_buff context field: " ^ field) pos)
+  
+  | Pointer (Xdp_md | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext) ->
+      (* Built-in context field access through pointer *)
+      (match field with
+       | "data" | "data_end" | "data_meta" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
+       | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
+       | _ -> type_error ("Unknown context field: " ^ field) pos)
+  
   | Pointer (Struct struct_name) | Pointer (UserType struct_name) ->
       (* Look up struct definition and field type *)
       (try
@@ -572,13 +586,6 @@ and type_check_arrow_access ctx obj field pos =
              type_error (struct_name ^ " is not a struct") pos
        with Not_found ->
          type_error ("Undefined struct: " ^ struct_name) pos)
-  
-  | Pointer (Xdp_md | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext) ->
-      (* Built-in context field access through pointer *)
-      (match field with
-       | "data" | "data_end" | "data_meta" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
-       | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
-       | _ -> type_error ("Unknown context field: " ^ field) pos)
   
   | _ ->
       type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
@@ -1569,7 +1576,6 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
     | EnumDef (enum_name, enum_values, _) ->
         let enum_type = match enum_name with
           | "xdp_action" -> Xdp_action
-          | "TcAction" -> TcAction
           | _ -> UserType enum_name
         in
         List.iter (fun (const_name, _) ->
@@ -1854,7 +1860,6 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | EnumDef (enum_name, enum_values, _) ->
         let enum_type = match enum_name with
           | "xdp_action" -> Xdp_action
-          | "TcAction" -> TcAction
           | _ -> UserType enum_name
         in
         List.iter (fun (const_name, _) ->
@@ -2008,9 +2013,19 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
                | None -> None in
              
              if List.length params <> 1 ||
-                resolved_param_type <> TcContext ||
-                resolved_return_type <> Some TcAction then
-               type_error ("@tc attributed function must have signature (ctx: TcContext) -> TcAction") attr_func.attr_pos
+                resolved_param_type <> Pointer (Struct "__sk_buff") ||
+                resolved_return_type <> Some I32 then (
+               Printf.printf "DEBUG TC validation failed:\n";
+               Printf.printf "  param count: %d (expected 1)\n" (List.length params);
+               Printf.printf "  resolved_param_type: %s\n" (Ast.string_of_bpf_type resolved_param_type);
+               Printf.printf "  expected param type: %s\n" (Ast.string_of_bpf_type (Pointer (Struct "__sk_buff")));
+               Printf.printf "  resolved_return_type: %s\n" 
+                 (match resolved_return_type with 
+                  | Some t -> Ast.string_of_bpf_type t 
+                  | None -> "None");
+               Printf.printf "  expected return type: %s\n" (Ast.string_of_bpf_type I32);
+               type_error ("@tc attributed function must have signature (ctx: *__sk_buff) -> int") attr_func.attr_pos
+             )
          | Some Kprobe ->
              let params = attr_func.attr_function.func_params in
              let resolved_param_type = if List.length params = 1 then 

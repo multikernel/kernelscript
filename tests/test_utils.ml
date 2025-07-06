@@ -44,9 +44,9 @@ end
 
 (** TC-related test types and constants *)
 module Tc = struct
-  (** TC action enum values *)
+  (** TC action constants as enum values *)
   let action_constants = [
-    ("TC_ACT_UNSPEC", Some 255);
+    ("TC_ACT_UNSPEC", Some (-1));
     ("TC_ACT_OK", Some 0);
     ("TC_ACT_RECLASSIFY", Some 1);
     ("TC_ACT_SHOT", Some 2);
@@ -55,12 +55,13 @@ module Tc = struct
     ("TC_ACT_QUEUED", Some 5);
     ("TC_ACT_REPEAT", Some 6);
     ("TC_ACT_REDIRECT", Some 7);
+    ("TC_ACT_TRAP", Some 8);
   ]
   
-  (** TC context struct fields *)
+  (** TC context struct fields for __sk_buff *)
   let context_fields = [
-    ("data", U32);
-    ("data_end", U32);
+    ("data", Pointer U8);
+    ("data_end", Pointer U8);
     ("len", U32);
     ("pkt_type", U32);
     ("mark", U32);
@@ -79,10 +80,10 @@ module Tc = struct
   ]
   
   (** Create TC action enum AST *)
-  let action_enum = TypeDef (EnumDef ("TcAction", action_constants, true))
+  let action_enum = TypeDef (EnumDef ("tc_action", action_constants, false))
   
-  (** Create TC context struct AST *)
-  let context_struct = TypeDef (StructDef ("TcContext", context_fields, true))
+  (** Create TC context struct AST for __sk_buff *)
+  let context_struct = TypeDef (StructDef ("__sk_buff", context_fields, true))
   
   (** All TC builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]

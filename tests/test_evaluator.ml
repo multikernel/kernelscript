@@ -90,10 +90,10 @@ let test_various_enum_constants () =
     (* Test TC enum constant *)
     let tc_ok_expr = make_test_expr (Kernelscript.Ast.Identifier "TC_ACT_OK") in
     (match eval_expression eval_ctx tc_ok_expr with
-    | EnumValue ("TcAction", 0) ->
+    | EnumValue ("tc_action", 0) ->
         check bool "TC_ACT_OK correctly evaluated" true true  
     | _ ->
-        fail "TC_ACT_OK should evaluate to EnumValue(TcAction, 0)")
+        fail "TC_ACT_OK should evaluate to EnumValue(tc_action, 0)")
   with
   | e -> fail ("Unexpected exception: " ^ Printexc.to_string e)
 

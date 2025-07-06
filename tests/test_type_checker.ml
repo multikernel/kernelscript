@@ -1168,7 +1168,7 @@ fn convert_ip_to_u32(addr: IpAddress) -> u32 {
 let test_tail_call_cross_program_type_restriction _ =
   (* Test XDP -> TC tail call should fail *)
   let source_code = {|
-    @tc fn tc_drop_handler(ctx: TcContext) -> TcAction {
+    @tc fn tc_drop_handler(ctx: *__sk_buff) -> int {
       return 1  // TC_ACT_SHOT
     }
 

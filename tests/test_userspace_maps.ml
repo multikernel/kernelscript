@@ -406,9 +406,9 @@ pin map<u32, u32> shared_counter : HashMap(1024)
   return XDP_PASS
 }
 
-@tc fn packet_filter(ctx: TcContext) -> TcAction {
+@tc fn packet_filter(ctx: *__sk_buff) -> int {
   shared_counter[2] = 200
-  return TC_ACT_OK
+  return 0 // TC_ACT_OK
 }
 
 fn main() -> i32 {

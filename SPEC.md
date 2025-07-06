@@ -69,9 +69,9 @@ fn monitor(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn analyzer(ctx: TcContext) -> TcAction {
+fn analyzer(ctx: *__sk_buff) -> int {
     update_counters(1)  // Same kernel-shared function
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 
 // User space (regular functions)
@@ -502,14 +502,14 @@ fn packet_analyzer(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn flow_tracker(ctx: TcContext) -> TcAction {
+fn flow_tracker(ctx: *__sk_buff) -> int {
     // Track flow information using shared config
     if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
         // Sample this flow
         var key = ctx.hash() % 1024
         global_stats[key].bytes += ctx.packet_size()
     }
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 
 // Userspace coordination (regular functions)
@@ -571,8 +571,8 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn flow_monitor(ctx: TcContext) -> TcAction {
-    return TC_ACT_OK
+fn flow_monitor(ctx: *__sk_buff) -> int {
+    return 0  // TC_ACT_OK
 }
 
 // Userspace program coordination
@@ -665,7 +665,7 @@ fn main(args: Args) -> i32 {
 fn ingress_monitor(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
 
 @tc
-fn egress_monitor(ctx: TcContext) -> TcAction { return TC_ACT_OK }
+fn egress_monitor(ctx: *__sk_buff) -> int { return 0 }  // TC_ACT_OK
 
 @lsm("socket_connect")
 fn security_check(ctx: LsmContext) -> i32 { return 0 }
@@ -961,18 +961,18 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn traffic_shaper(ctx: TcContext) -> TcAction {
+fn traffic_shaper(ctx: *__sk_buff) -> int {
     var packet = ctx.packet()
     
     // Reuse the same helpers
     if (!validate_packet_size(packet.len)) {
-        return TC_ACT_SHOT
+        return 2  // TC_ACT_SHOT
     }
     
     var hash = calculate_hash(packet.src_ip, packet.dst_ip)
     update_packet_stats(packet.protocol, packet.len)
     
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 ```
 
@@ -1017,12 +1017,12 @@ fn ddos_protection(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn connection_tracker(ctx: TcContext) -> TcAction {
+fn connection_tracker(ctx: *__sk_buff) -> int {
     var tcp_info = extract_tcp_info(ctx)  // Reuse same helper
     if (tcp_info != null) {
         track_connection(tcp_info.src_port, tcp_info.dst_port)
     }
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 ```
 
@@ -1151,7 +1151,7 @@ fn high_level_filter(packet: *u8, len: u32) -> i32 {
 
 // eBPF usage
 @tc
-fn traffic_analyzer(ctx: TcContext) -> TcAction {
+fn traffic_analyzer(ctx: *__sk_buff) -> int {
     var packet = ctx.packet()
     
     // Can only call the public kfunc
@@ -1459,16 +1459,10 @@ enum xdp_action {
     XDP_REDIRECT = 4,
 }
 
-enum TcAction {
-    TC_ACT_UNSPEC = -1,
-    TC_ACT_OK = 0,
-    TC_ACT_SHOT = 2,
-    TC_ACT_PIPE = 3,
-    TC_ACT_STOLEN = 4,
-    TC_ACT_QUEUED = 5,
-    TC_ACT_REPEAT = 6,
-    TC_ACT_REDIRECT = 7,
-}
+// Note: TC programs now return int values directly instead of TcAction enum
+// Common TC return values:
+// 0 = TC_ACT_OK, 1 = TC_ACT_RECLASSIFY, 2 = TC_ACT_SHOT, 3 = TC_ACT_PIPE, 
+// 4 = TC_ACT_STOLEN, 5 = TC_ACT_QUEUED, 6 = TC_ACT_REPEAT, 7 = TC_ACT_REDIRECT
 ```
 
 ### 4.3 Type Aliases for Common Patterns
@@ -1920,7 +1914,7 @@ fn ingress_monitor(ctx: *xdp_md) -> xdp_action {
 
 // Program 2: Automatically has access to the same global maps
 @tc
-fn egress_monitor(ctx: TcContext) -> TcAction {
+fn egress_monitor(ctx: *__sk_buff) -> int {
     var flow_key = extract_flow_key(ctx)?
     
     // Same global map, no import needed - compound assignments work everywhere
@@ -1943,10 +1937,10 @@ fn egress_monitor(ctx: TcContext) -> TcAction {
             flow_key: flow_key,
             timestamp: bpf_ktime_get_ns(),
         })
-        return TC_ACT_SHOT
+        return 2  // TC_ACT_SHOT
     }
     
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 
 // Program 3: Security analyzer using the same global maps
@@ -2265,13 +2259,13 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn flow_monitor(ctx: TcContext) -> TcAction {
+fn flow_monitor(ctx: *__sk_buff) -> int {
     // Can call the same kernel-shared functions
     if (!validate_packet(ctx.packet())) {
-        return TC_ACT_SHOT
+        return 2  // TC_ACT_SHOT
     }
     
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 
 // Userspace function (no kernel qualifier, no attributes)
@@ -2362,7 +2356,7 @@ fn main_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn ingress_handler(ctx: TcContext) -> TcAction {
+fn ingress_handler(ctx: *__sk_buff) -> int {
     return security_check(ctx)       // ✅ Same type (@tc), return position  
 }
 ```
@@ -2954,8 +2948,8 @@ program network_monitor : xdp {
 }
 
 program flow_analyzer : tc {
-    fn main(ctx: TcContext) -> TcAction {
-        return TC_ACT_OK
+    fn main(ctx: *__sk_buff) -> int {
+        return 0  // TC_ACT_OK
     }
 }
 
@@ -3417,10 +3411,10 @@ fn simple_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc
-fn security_monitor(ctx: TcContext) -> TcAction {
+fn security_monitor(ctx: *__sk_buff) -> int {
     var packet = ctx.packet()
     if (packet == null) {
-        return TC_ACT_OK
+        return 0  // TC_ACT_OK
     }
     
     if (packet.is_tcp()) {
@@ -3429,18 +3423,18 @@ fn security_monitor(ctx: TcContext) -> TcAction {
         // Check simple blocked ports first
         if (is_port_blocked(tcp.src_port)) {
             log_blocked_port(tcp.src_port)
-            return TC_ACT_SHOT
+            return 2  // TC_ACT_SHOT
         }
         
         // Use the same kfunc for advanced policy checking
         var policy_result = advanced_port_check(tcp.src_port, packet.protocol(), packet.dst_ip())
         if (policy_result != 0) {
             log_blocked_port(tcp.src_port)
-            return TC_ACT_SHOT
+            return 2  // TC_ACT_SHOT
         }
     }
     
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 
 // Userspace coordination with explicit program lifecycle

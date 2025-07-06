@@ -312,7 +312,7 @@ let test_multiple_programs_single_main () =
         return 2
     }
     
-    @tc fn filter(ctx: TcContext) -> TcAction {
+    @tc fn filter(ctx: *__sk_buff) -> int {
         return 0
     }
     

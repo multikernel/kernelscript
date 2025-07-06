@@ -104,7 +104,7 @@ let whitespace = [' ' '\t']
 let newline = '\r' | '\n' | "\r\n"
 let letter = ['a'-'z' 'A'-'Z']
 let digit = ['0'-'9']
-let identifier = letter (letter | digit | '_')*
+let identifier = (letter | '_') (letter | digit | '_')*
 
 let decimal_literal = digit+
 let hex_literal = '0' ['x' 'X'] ['0'-'9' 'a'-'f' 'A'-'F']+

@@ -373,17 +373,15 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
               } in
               xdp_action_type :: xdp_md_type :: acc
           | Ast.Tc ->
-              (* Get TC action constants from context system *)
-              let tc_constants = Kernelscript_context.Context_codegen.get_context_action_constants "tc" in
-              let tc_action_type = {
-                Btf_parser.name = "tc_action";
-                kind = "enum";
-                size = Some 4;
-                members = Some (List.map (fun (name, value) -> 
-                  (name, string_of_int value)) tc_constants);
+              (* For TC programs, we only need __sk_buff struct - no action enum since return type is int *)
+              let sk_buff_type = {
+                Btf_parser.name = "__sk_buff";
+                kind = "struct";
+                size = Some 256;
+                members = Some (Kernelscript_context.Context_codegen.get_context_struct_fields "tc");
                 kernel_defined = true;
               } in
-              tc_action_type :: acc
+              sk_buff_type :: acc
           | _ -> acc
         ) [] program_types
     in

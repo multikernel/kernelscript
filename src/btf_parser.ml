@@ -29,8 +29,8 @@ let rec get_program_template prog_type btf_path =
     | "xdp" -> ("xdp_md", "xdp_action", [
         "xdp_md"; "xdp_action"
       ])
-    | "tc" -> ("__sk_buff", "tc_action", [
-        "__sk_buff"; "tc_action"
+    | "tc" -> ("__sk_buff", "int", [
+        "__sk_buff"
       ])
     | "kprobe" -> ("pt_regs", "i32", [
         "pt_regs"

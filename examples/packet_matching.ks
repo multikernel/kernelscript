@@ -95,10 +95,10 @@ fn get_dst_ip(ctx: *xdp_md) -> u32 {
 @helper fn is_admin_network(ip: u32) -> bool { return true }
 
 // TC-specific helper functions
-@helper fn get_ip_protocol_tc(ctx: TcContext) -> u32 { return 6 }
-@helper fn get_tcp_dest_port_tc(ctx: TcContext) -> u32 { return 80 }
-@helper fn get_udp_dest_port_tc(ctx: TcContext) -> u32 { return 53 }
-@helper fn set_qos_mark(ctx: TcContext, class: str<16>) -> void { }
+@helper fn get_ip_protocol_tc(ctx: *__sk_buff) -> u32 { return 6 }
+@helper fn get_tcp_dest_port_tc(ctx: *__sk_buff) -> u32 { return 80 }
+@helper fn get_udp_dest_port_tc(ctx: *__sk_buff) -> u32 { return 53 }
+@helper fn set_qos_mark(ctx: *__sk_buff, class: str<16>) -> void { }
 
 // Main packet processing functions using match constructs
 
@@ -262,7 +262,7 @@ fn packet_monitor(ctx: *xdp_md) -> xdp_action {
 // Quality of Service (QoS) packet marking
 // Demonstrates match for traffic prioritization
 @tc
-fn qos_packet_marker(ctx: TcContext) -> TcAction {
+fn qos_packet_marker(ctx: *__sk_buff) -> int {
     var protocol = get_ip_protocol_tc(ctx)
     
     // Set QoS markings based on traffic type
@@ -292,7 +292,7 @@ fn qos_packet_marker(ctx: TcContext) -> TcAction {
     // Apply QoS marking (implementation depends on system)
     set_qos_mark(ctx, qos_class)
     
-    return TC_ACT_OK
+    return 0  // TC_ACT_OK
 }
 
 // Firewall rule engine using match construct

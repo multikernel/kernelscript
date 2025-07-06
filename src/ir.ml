@@ -623,16 +623,20 @@ let rec ast_type_to_ir_type = function
   | Char -> IRChar
   | Void -> IRVoid
   | I8 -> IRI8  (* Use proper signed type *)
-  | I16 -> IRU16 (* For now, map to unsigned for eBPF compatibility *)
-  | I32 -> IRU32
-  | I64 -> IRU64
+  | I16 -> IRI16 (* Use proper signed type *)
+  | I32 -> IRI32 (* Use proper signed type *)
+  | I64 -> IRI64 (* Use proper signed type *)
   | Str size -> IRStr size
   | Array (t, size) -> 
       let bounds = make_bounds_info ~min_size:size ~max_size:size () in
       IRArray (ast_type_to_ir_type t, size, bounds)
+  | Pointer (Struct "__sk_buff") -> 
+      let bounds = make_bounds_info ~nullable:true () in
+      IRPointer (IRContext TcCtx, bounds)  (* Map *__sk_buff to pointer to TC context *)
   | Pointer t -> 
       let bounds = make_bounds_info ~nullable:true () in
       IRPointer (ast_type_to_ir_type t, bounds)
+  | Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
   | Struct name -> IRStruct (name, [], false) (* Fields filled by symbol table, default to user-defined *)
   | Enum name -> IREnum (name, [], false)     (* Values filled by symbol table, default to user-defined *)
   | Option t -> 
@@ -640,14 +644,12 @@ let rec ast_type_to_ir_type = function
       IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
   | Xdp_md -> IRContext XdpCtx
-  | TcContext -> IRContext TcCtx
   | KprobeContext -> IRContext KprobeCtx
   | UprobeContext -> IRContext UprobeCtx
   | TracepointContext -> IRContext TracepointCtx
   | LsmContext -> IRContext LsmCtx
   | CgroupSkbContext -> IRContext CgroupSkbCtx
   | Xdp_action -> IRAction Xdp_actionType
-  | TcAction -> IRAction TcActionType
   | UserType name -> IRStruct (name, [], false) (* Resolved by type checker *)
   | Function (_, _) -> 
       (* For function types, we represent them as function pointers (string names in practice) *)
