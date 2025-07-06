@@ -369,7 +369,7 @@ let collect_string_sizes_from_multi_program ir_multi_prog =
   ) [] ir_multi_prog.programs
 
 (** Collect enum definitions from IR types *)
-let collect_enum_definitions ir_multi_prog =
+let collect_enum_definitions ?symbol_table ir_multi_prog =
   let enum_map = Hashtbl.create 16 in
   
   let rec collect_from_type = function
@@ -388,7 +388,14 @@ let collect_enum_definitions ir_multi_prog =
   in
   
   let collect_from_value ir_val =
-    collect_from_type ir_val.val_type
+    collect_from_type ir_val.val_type;
+    (* Also collect from enum constants *)
+    (match ir_val.value_desc with
+     | IREnumConstant (enum_name, constant_name, value) ->
+         let current_values = try Hashtbl.find enum_map enum_name with Not_found -> [] in
+         let updated_values = (constant_name, value) :: (List.filter (fun (name, _) -> name <> constant_name) current_values) in
+         Hashtbl.replace enum_map enum_name updated_values
+     | _ -> ())
   in
   
   let collect_from_expr ir_expr =
@@ -443,6 +450,21 @@ let collect_enum_definitions ir_multi_prog =
     collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
+  (* Also collect enum definitions from symbol table *)
+  (match symbol_table with
+  | Some st ->
+      let global_symbols = Symbol_table.get_global_symbols st in
+      List.iter (fun symbol ->
+        match symbol.Symbol_table.kind with
+        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, _kernel_defined)) ->
+            let processed_values = List.map (fun (const_name, opt_value) ->
+              (const_name, Option.value ~default:0 opt_value)
+            ) enum_values in
+            Hashtbl.replace enum_map enum_name processed_values
+        | _ -> ()
+      ) global_symbols
+  | None -> ()); (* No symbol table provided *)
+  
   enum_map
 
 (** Generate enum definition *)
@@ -459,8 +481,8 @@ let generate_enum_definition ctx enum_name enum_values =
   emit_blank_line ctx
 
 (** Generate enum definitions *)
-let generate_enum_definitions ctx ir_multi_prog =
-  let enum_map = collect_enum_definitions ir_multi_prog in
+let generate_enum_definitions ?symbol_table ctx ir_multi_prog =
+  let enum_map = collect_enum_definitions ?symbol_table ir_multi_prog in
   if Hashtbl.length enum_map > 0 then (
     (* Filter out kernel-defined enums that are provided by kernel headers *)
     let user_defined_enums = Hashtbl.fold (fun enum_name enum_values acc ->
@@ -1070,6 +1092,9 @@ let generate_c_value ctx ir_val =
         | _ -> failwith ("Unsupported context type in IRContextField")
       in
       Kernelscript_context.Context_codegen.generate_context_field_access ctx_type_str ctx_var field
+  | IREnumConstant (_enum_name, constant_name, _value) ->
+      (* Generate enum constant name instead of numeric value *)
+      constant_name
 
 (** Generate string operations for eBPF *)
 
@@ -2320,7 +2345,7 @@ let generate_prog_array_map ctx prog_array_size =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
-    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[])
+    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -2407,7 +2432,7 @@ let compile_multi_to_c_with_tail_calls
   generate_string_typedefs ctx ir_multi_prog;
   
   (* Generate enum definitions *)
-  generate_enum_definitions ctx ir_multi_prog;
+  generate_enum_definitions ?symbol_table ctx ir_multi_prog;
   
   (* Generate declarations in original AST order to preserve source order *)
   generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
@@ -2510,10 +2535,10 @@ let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
 
-let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ir_multi_program =
+let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
-  let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-    ~type_aliases ~variable_type_aliases ~kfunc_declarations ir_multi_program in
+      let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
+        ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ir_multi_program in
   
   (* Print tail call analysis results *)
   Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 

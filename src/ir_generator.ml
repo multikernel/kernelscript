@@ -292,7 +292,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                 | Some symbol -> 
                     (match symbol.kind with
                      | Symbol_table.EnumConstant (enum_name, Some value) ->
-                         (* Enum constants are treated as constants *)
+                         (* Preserve enum constants as identifiers *)
                          let ir_type = match expr.expr_type with
                            | Some ast_type -> ast_type_to_ir_type ast_type
                            | None -> IRU32
@@ -307,7 +307,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                                 | "tc_action", _ -> IRAction TcActionType
                                 | _ -> ir_type)
                          in
-                         make_ir_value (IRLiteral (IntLit (value, None))) final_ir_type expr.expr_pos
+                         make_ir_value (IREnumConstant (enum_name, name, value)) final_ir_type expr.expr_pos
                      | Symbol_table.EnumConstant (_, None) ->
                          (* Enum constant without value - treat as variable *)
                          let reg = get_variable_register ctx name in
@@ -648,8 +648,8 @@ let rec lower_expression ctx (expr : Ast.expr) =
               (match Symbol_table.lookup_symbol ctx.symbol_table name with
                | Some symbol ->
                    (match symbol.kind with
-                    | Symbol_table.EnumConstant (_, Some value) ->
-                        let const_val = make_ir_value (IRLiteral (IntLit (value, None))) IRU32 arm.arm_pos in
+                    | Symbol_table.EnumConstant (enum_name, Some value) ->
+                        let const_val = make_ir_value (IREnumConstant (enum_name, name, value)) IRU32 arm.arm_pos in
                         make_ir_constant_pattern const_val
                     | _ ->
                         (* For now, treat unknown identifiers as default patterns *)

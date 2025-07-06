@@ -238,6 +238,168 @@ let test_enum_large_values () =
   
   check (list (pair string (option int))) "large values handled" expected result
 
+(** Test enum constant preservation in IR generation *)
+let test_enum_ir_preservation () =
+  let open Kernelscript.Ir in
+  let open Kernelscript.Ir_generator in
+  
+  (* Create a symbol table with enum constants *)
+  let symbol_table = create_symbol_table () in
+  let enum_values = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 1)] in
+  let enum_def = EnumDef ("IpProtocol", enum_values, false) in
+  add_type_def symbol_table enum_def dummy_pos;
+  
+  (* Create AST identifier expression for enum constant *)
+  let tcp_identifier = make_expr (Identifier "TCP") dummy_pos in
+  
+  (* Generate IR from AST *)
+  let ctx = create_context symbol_table in
+  let ir_value = lower_expression ctx tcp_identifier in
+  
+  (* Verify that the IR contains IREnumConstant, not IRLiteral *)
+  (match ir_value.value_desc with
+   | IREnumConstant (enum_name, constant_name, numeric_value) ->
+       check string "IR enum name" "IpProtocol" enum_name;
+       check string "IR constant name" "TCP" constant_name;
+       check int "IR constant value" 6 numeric_value
+   | IRLiteral _ -> check bool "should not be IRLiteral" false true
+   | _ -> check bool "wrong IR value type" false true)
+
+(** Test enum constant preservation in C code generation *)
+let test_enum_c_code_preservation () =
+  let open Kernelscript.Ebpf_c_codegen in
+  let open Kernelscript.Ir in
+  
+  (* Create IREnumConstant value *)
+  let enum_constant = make_ir_value (IREnumConstant ("IpProtocol", "TCP", 6)) IRU32 dummy_pos in
+  
+  (* Create a simple eBPF context *)
+  let ctx = create_c_context () in
+  
+  (* Generate C code *)
+  let c_code = generate_c_value ctx enum_constant in
+  
+  (* Verify that C code contains the constant name, not numeric value *)
+  check string "C code uses constant name" "TCP" c_code;
+  
+  (* Test that it doesn't generate numeric value *)
+  check bool "C code doesn't use numeric value" true (c_code <> "6")
+
+(** Test enum definition inclusion using symbol table *)
+let test_enum_definition_inclusion () =
+  (* Create a symbol table with enum definition *)
+  let symbol_table = create_symbol_table () in
+  let enum_values = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 1)] in
+  let enum_def = EnumDef ("IpProtocol", enum_values, false) in
+  add_type_def symbol_table enum_def dummy_pos;
+  
+  (* Test that the enum can be looked up from symbol table *)
+  let tcp_symbol = lookup_symbol symbol_table "TCP" in
+  check bool "TCP enum constant found in symbol table" true (tcp_symbol <> None);
+  
+  (* Verify enum constant has correct value *)
+  (match tcp_symbol with
+   | Some symbol ->
+       (match symbol.kind with
+        | EnumConstant (enum_name, Some value) ->
+            check string "enum name" "IpProtocol" enum_name;
+            check int "TCP value" 6 value
+        | _ -> check bool "wrong symbol kind" false true)
+   | None -> check bool "TCP symbol not found" false true)
+
+(** Test match expression with enum constants parsing *)
+let test_match_enum_constants () =
+  (* Create symbol table with enum *)
+  let symbol_table = create_symbol_table () in
+  let enum_values = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 1)] in
+  let enum_def = EnumDef ("IpProtocol", enum_values, false) in
+  add_type_def symbol_table enum_def dummy_pos;
+  
+  (* Test that enum constants can be looked up *)
+  let tcp_symbol = lookup_symbol symbol_table "TCP" in
+  check bool "TCP enum constant found" true (tcp_symbol <> None);
+  
+  (* Verify enum constant structure for match patterns *)
+  (match tcp_symbol with
+   | Some symbol ->
+       (match symbol.kind with
+        | EnumConstant (enum_name, Some value) ->
+            check string "match enum name" "IpProtocol" enum_name;
+            check string "match constant name" "TCP" "TCP";
+            check int "match constant value" 6 value
+        | _ -> check bool "wrong symbol kind for match" false true)
+   | None -> check bool "TCP symbol not found for match" false true)
+
+(** Test that enum constants are NOT converted to numeric literals *)
+let test_enum_not_numeric_literals () =
+  let open Kernelscript.Ir in
+  let open Kernelscript.Ir_generator in
+  
+  (* Create symbol table with enum *)
+  let symbol_table = create_symbol_table () in
+  let enum_values = [("TCP", Some 6); ("UDP", Some 17)] in
+  let enum_def = EnumDef ("IpProtocol", enum_values, false) in
+  add_type_def symbol_table enum_def dummy_pos;
+  
+  (* Create AST identifier for enum constant *)
+  let tcp_expr = make_expr (Identifier "TCP") dummy_pos in
+  
+  (* Generate IR *)
+  let ctx = create_context symbol_table in
+  let ir_value = lower_expression ctx tcp_expr in
+  
+  (* Verify it's NOT IRLiteral *)
+  (match ir_value.value_desc with
+   | IRLiteral _ -> check bool "should not be IRLiteral" false true
+   | IREnumConstant _ -> check bool "correctly preserved as IREnumConstant" true true
+   | _ -> check bool "unexpected IR value type" false true)
+
+(** Test complete enum preservation pipeline *)
+let test_enum_preservation_pipeline () =
+  let open Kernelscript.Ebpf_c_codegen in
+  let open Kernelscript.Ir in
+  
+  (* Create symbol table with enum *)
+  let symbol_table = create_symbol_table () in
+  let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in
+  let enum_def = EnumDef ("XdpAction", enum_values, false) in
+  add_type_def symbol_table enum_def dummy_pos;
+  
+  (* Create IR with enum constant *)
+  let enum_constant = make_ir_value (IREnumConstant ("XdpAction", "XDP_PASS", 2)) IRU32 dummy_pos in
+  
+  (* Create context for C generation *)
+  let ctx = create_c_context () in
+  
+  (* Test C code generation *)
+  let c_code = generate_c_value ctx enum_constant in
+  check string "C code preserves enum constant" "XDP_PASS" c_code;
+  
+  (* Test symbol table preservation *)
+  let pass_symbol = lookup_symbol symbol_table "XDP_PASS" in
+  check bool "XDP_PASS symbol found" true (pass_symbol <> None);
+  
+  let drop_symbol = lookup_symbol symbol_table "XDP_DROP" in  
+  check bool "XDP_DROP symbol found" true (drop_symbol <> None)
+
+(** Test userspace enum preservation *)
+let test_userspace_enum_preservation () =
+  let open Kernelscript.Userspace_codegen in
+  let open Kernelscript.Ir in
+  
+  (* Create IREnumConstant value *)
+  let enum_constant = make_ir_value (IREnumConstant ("Protocol", "HTTP", 80)) IRU32 dummy_pos in
+  
+  (* Create a simple userspace context *)
+  let ctx = create_userspace_context () in
+  
+  (* Generate userspace C code *)
+  let c_code = generate_c_value_from_ir ctx enum_constant in
+  
+  (* Verify that userspace code also preserves enum constant names *)
+  check string "userspace C code uses constant name" "HTTP" c_code;
+  check bool "userspace C code doesn't use numeric value" true (c_code <> "80")
+
 (** Main test suite *)
 let () =
   run "Enum Tests" [
@@ -258,5 +420,14 @@ let () =
     "edge_cases", [
       test_case "enum edge cases" `Quick test_enum_edge_cases;
       test_case "large enum values" `Quick test_enum_large_values;
+    ];
+    "enum_preservation_bug_fix", [
+      test_case "enum constants preserved in IR" `Quick test_enum_ir_preservation;
+      test_case "enum constants preserved in C code" `Quick test_enum_c_code_preservation;
+      test_case "enum definitions included in generated code" `Quick test_enum_definition_inclusion;
+      test_case "match expressions with enum constants" `Quick test_match_enum_constants;
+      test_case "enum constants not converted to numeric literals" `Quick test_enum_not_numeric_literals;
+      test_case "complete enum preservation pipeline" `Quick test_enum_preservation_pipeline;
+      test_case "userspace enum preservation" `Quick test_userspace_enum_preservation;
     ];
   ] 

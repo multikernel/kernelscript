@@ -533,7 +533,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate eBPF C code (with automatic tail call detection and kfunc declarations) *)
     let (ebpf_c_code, tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      ~type_aliases ~variable_type_aliases ~kfunc_declarations optimized_ir in
+      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table optimized_ir in
       
     (* Determine output directory *)
     let output_dir = match output_dir with
@@ -550,7 +550,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies optimized_ir ~output_dir input_file;
+      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~symbol_table optimized_ir ~output_dir input_file;
     
     (* Create output directory if it doesn't exist *)
     (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());

@@ -202,6 +202,7 @@ and ir_value_desc =
   | IRRegister of int
   | IRContextField of context_type * string
   | IRMapRef of string
+  | IREnumConstant of string * string * int  (* enum_name, constant_name, value *)
 
 (** IR expressions with simplified operations *)
 and ir_expr = {
@@ -723,6 +724,7 @@ let string_of_ir_value_desc = function
   | IRRegister reg -> Printf.sprintf "r%d" reg
   | IRContextField (_, field) -> Printf.sprintf "ctx.%s" field
   | IRMapRef name -> Printf.sprintf "&%s" name
+  | IREnumConstant (_enum_name, constant_name, _value) -> constant_name
 
 let string_of_ir_value value =
   Printf.sprintf "%s: %s" 
