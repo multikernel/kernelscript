@@ -1,10 +1,9 @@
-/**
- * Packet Matching Demo - KernelScript Match Construct
- * 
- * This example demonstrates the powerful match construct for packet processing,
- * which is a killer feature for eBPF programming. The match construct provides
- * clean, efficient, and readable packet classification.
- */
+// Packet Matching Demo - KernelScript Match Construct
+//
+// This example demonstrates the powerful match construct for packet processing,
+// which is a killer feature for eBPF programming. The match construct provides
+// clean, efficient, and readable packet classification.
+//
 
 // Protocol constants for packet classification
 enum IpProtocol {
@@ -35,13 +34,11 @@ enum WellKnownPorts {
     DNS = 53
 }
 
-/**
- * Basic packet classifier using match construct
- * This demonstrates the clean syntax for protocol-based decisions
- */
+// Basic packet classifier using match construct
+// This demonstrates the clean syntax for protocol-based decisions
 @xdp
 fn basic_packet_classifier(ctx: xdp_md) -> xdp_action {
-    var protocol = get_ip_protocol(ctx);
+    var protocol = get_ip_protocol(ctx)
     
     // Match construct provides clean packet classification
     return match (protocol) {
@@ -50,16 +47,14 @@ fn basic_packet_classifier(ctx: xdp_md) -> xdp_action {
         ICMP: XDP_DROP,         // Drop ICMP for security
         SCTP: XDP_PASS,         // Allow SCTP
         default: XDP_ABORTED    // Abort unknown protocols
-    };
+    }
 }
 
-/**
- * Advanced packet classifier with port-based filtering
- * Demonstrates nested decision making with match constructs
- */
+// Advanced packet classifier with port-based filtering
+// Demonstrates nested decision making with match constructs
 @xdp
 fn advanced_packet_classifier(ctx: xdp_md) -> xdp_action {
-    var protocol = get_ip_protocol(ctx);
+    var protocol = get_ip_protocol(ctx)
     
     return match (protocol) {
         TCP: {
@@ -87,10 +82,8 @@ fn advanced_packet_classifier(ctx: xdp_md) -> xdp_action {
     }
 }
 
-/**
- * DDoS protection using match construct
- * Shows how match simplifies complex security logic
- */
+// DDoS protection using match construct
+// Shows how match simplifies complex security logic
 @xdp
 fn ddos_protection(ctx: xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
@@ -128,13 +121,11 @@ fn ddos_protection(ctx: xdp_md) -> xdp_action {
         default: XDP_PASS
     }
     
-    return protocol_action;
+    return protocol_action
 }
 
-/**
- * Load balancer using match for backend selection
- * Demonstrates match for algorithmic packet distribution
- */
+// Load balancer using match for backend selection
+// Demonstrates match for algorithmic packet distribution
 @xdp
 fn load_balancer(ctx: xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
@@ -159,13 +150,11 @@ fn load_balancer(ctx: xdp_md) -> xdp_action {
         },
         
         default: XDP_PASS
-    };
+    }
 }
 
-/**
- * Packet logging and monitoring
- * Shows match for categorizing packets for observability
- */
+// Packet logging and monitoring
+// Shows match for categorizing packets for observability
 @xdp  
 fn packet_monitor(ctx: xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
@@ -202,10 +191,8 @@ fn packet_monitor(ctx: xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-/**
- * Quality of Service (QoS) packet marking
- * Demonstrates match for traffic prioritization
- */
+// Quality of Service (QoS) packet marking
+// Demonstrates match for traffic prioritization
 @tc
 fn qos_packet_marker(ctx: TcContext) -> TcAction {
     var protocol = get_ip_protocol_tc(ctx)
@@ -240,10 +227,8 @@ fn qos_packet_marker(ctx: TcContext) -> TcAction {
     return TC_ACT_OK
 }
 
-/**
- * Firewall rule engine using match construct
- * Shows complex security policy implementation
- */
+// Firewall rule engine using match construct
+// Shows complex security policy implementation
 @xdp
 fn firewall_engine(ctx: xdp_md) -> xdp_action {
     var src_ip = get_src_ip(ctx)
@@ -278,9 +263,9 @@ fn firewall_engine(ctx: xdp_md) -> xdp_action {
                     return match (flags) {
                         0x02: rate_limit_unknown_syn(src_ip),
                         default: XDP_PASS
-                    };
+                    }
                 }
-            };
+            }
         },
         
         UDP: {
@@ -290,7 +275,7 @@ fn firewall_engine(ctx: xdp_md) -> xdp_action {
                 123: XDP_PASS,          // Allow NTP
                 161: XDP_DROP,          // Block SNMP
                 default: XDP_PASS
-            };
+            }
         },
         
         ICMP: {
@@ -298,98 +283,94 @@ fn firewall_engine(ctx: xdp_md) -> xdp_action {
             return match (icmp_type) {
                 8: rate_limit_ping(src_ip),     // Rate limit ping
                 default: XDP_DROP               // Drop other ICMP
-            };
+            }
         },
         
         default: XDP_DROP  // Deny unknown protocols
-    };
+    }
 }
 
-/**
- * Helper functions (would be implemented separately)
- * These demonstrate the ecosystem around match-based packet processing
- */
+// Helper functions (would be implemented separately)
+// These demonstrate the ecosystem around match-based packet processing
 
 @helper
 fn get_ip_protocol(ctx: xdp_md) -> u32 {
     // Extract IP protocol field from packet
-    return 6; // Mock: return TCP
+    return 6 // Mock: return TCP
 }
 
 @helper  
 fn get_tcp_dest_port(ctx: xdp_md) -> u32 {
     // Extract TCP destination port
-    return 80; // Mock: return HTTP port
+    return 80 // Mock: return HTTP port
 }
 
 @helper
 fn get_udp_dest_port(ctx: xdp_md) -> u32 {
     // Extract UDP destination port  
-    return 53; // Mock: return DNS port
+    return 53 // Mock: return DNS port
 }
 
 @helper
 fn get_tcp_flags(ctx: xdp_md) -> u32 {
     // Extract TCP flags
-    return 0x02; // Mock: return SYN flag
+    return 0x02 // Mock: return SYN flag
 }
 
 @helper
 fn get_icmp_type(ctx: xdp_md) -> u32 {
     // Extract ICMP type
-    return 8; // Mock: return echo request
+    return 8 // Mock: return echo request
 }
 
 @helper
 fn get_src_ip(ctx: xdp_md) -> u32 {
     // Extract source IP address
-    return 0xc0a80101; // Mock: return 192.168.1.1
+    return 0xc0a80101 // Mock: return 192.168.1.1
 }
 
 @helper
 fn get_dst_ip(ctx: xdp_md) -> u32 {
     // Extract destination IP address  
-    return 0xc0a80102; // Mock: return 192.168.1.2
+    return 0xc0a80102 // Mock: return 192.168.1.2
 }
 
 // Rate limiting functions
-@helper fn rate_limit_syn(ip: u32) -> xdp_action { return XDP_PASS; }
-@helper fn rate_limit_dns(ip: u32) -> xdp_action { return XDP_PASS; }  
-@helper fn rate_limit_ping(ip: u32) -> xdp_action { return XDP_PASS; }
-@helper fn rate_limit_unknown_syn(ip: u32) -> xdp_action { return XDP_PASS; }
+@helper fn rate_limit_syn(ip: u32) -> xdp_action { return XDP_PASS }
+@helper fn rate_limit_dns(ip: u32) -> xdp_action { return XDP_PASS }  
+@helper fn rate_limit_ping(ip: u32) -> xdp_action { return XDP_PASS }
+@helper fn rate_limit_unknown_syn(ip: u32) -> xdp_action { return XDP_PASS }
 
 // Load balancing functions
-@helper fn distribute_http(ctx: xdp_md) -> xdp_action { return XDP_PASS; }
-@helper fn distribute_https(ctx: xdp_md) -> xdp_action { return XDP_PASS; }
-@helper fn distribute_dns(ctx: xdp_md) -> xdp_action { return XDP_PASS; }
+@helper fn distribute_http(ctx: xdp_md) -> xdp_action { return XDP_PASS }
+@helper fn distribute_https(ctx: xdp_md) -> xdp_action { return XDP_PASS }
+@helper fn distribute_dns(ctx: xdp_md) -> xdp_action { return XDP_PASS }
 
 // Security check functions  
-@helper fn is_blocked_ip(ip: u32) -> bool { return false; }
-@helper fn is_admin_network(ip: u32) -> bool { return true; }
+@helper fn is_blocked_ip(ip: u32) -> bool { return false }
+@helper fn is_admin_network(ip: u32) -> bool { return true }
 
 // TC-specific helper functions
-@helper fn get_ip_protocol_tc(ctx: TcContext) -> u32 { return 6; }
-@helper fn get_tcp_dest_port_tc(ctx: TcContext) -> u32 { return 80; }
-@helper fn get_udp_dest_port_tc(ctx: TcContext) -> u32 { return 53; }
+@helper fn get_ip_protocol_tc(ctx: TcContext) -> u32 { return 6 }
+@helper fn get_tcp_dest_port_tc(ctx: TcContext) -> u32 { return 80 }
+@helper fn get_udp_dest_port_tc(ctx: TcContext) -> u32 { return 53 }
 @helper fn set_qos_mark(ctx: TcContext, class: str<16>) -> void { }
 
-/**
- * Summary:
- * 
- * This example demonstrates why match constructs are a killer feature
- * for eBPF packet processing:
- * 
- * 1. **Readability**: Clean, structured code that's easy to understand
- * 2. **Performance**: Compiles to efficient if-else chains (eBPF) or switch statements (userspace)
- * 3. **Maintainability**: Easy to add new protocols and ports
- * 4. **Type Safety**: Ensures all cases return compatible types
- * 5. **Expressiveness**: Natural way to express packet classification logic
- * 
- * The match construct makes KernelScript ideal for:
- * - Firewalls and security appliances
- * - Load balancers and traffic distributors  
- * - DDoS protection systems
- * - Network monitoring and analytics
- * - Quality of Service (QoS) engines
- * - Protocol analyzers and packet classifiers
- */ 
+// Summary:
+// 
+// This example demonstrates why match constructs are a killer feature
+// for eBPF packet processing:
+// 
+// 1. **Readability**: Clean, structured code that's easy to understand
+// 2. **Performance**: Compiles to efficient if-else chains (eBPF) or switch statements (userspace)
+// 3. **Maintainability**: Easy to add new protocols and ports
+// 4. **Type Safety**: Ensures all cases return compatible types
+// 5. **Expressiveness**: Natural way to express packet classification logic
+// 
+// The match construct makes KernelScript ideal for:
+// - Firewalls and security appliances
+// - Load balancers and traffic distributors  
+// - DDoS protection systems
+// - Network monitoring and analytics
+// - Quality of Service (QoS) engines
+// - Protocol analyzers and packet classifiers 
