@@ -551,7 +551,9 @@ match_arms:
 
 match_arm:
   | match_pattern COLON expression
-    { make_match_arm $1 $3 (make_pos ()) }
+    { make_match_arm_expr $1 $3 (make_pos ()) }
+  | match_pattern COLON LBRACE statement_list RBRACE
+    { make_match_arm_block $1 $4 (make_pos ()) }
 
 match_pattern:
   | INT { make_constant_pattern (IntLit (fst $1, snd $1)) }

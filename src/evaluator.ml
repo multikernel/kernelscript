@@ -670,7 +670,18 @@ and eval_expression ctx expr =
              | ConstantPattern lit ->
                  let pattern_value = runtime_value_of_literal lit in
                  if runtime_values_equal matched_value pattern_value then
-                   eval_expression ctx arm.arm_expr
+                   (match arm.arm_body with
+                    | SingleExpr expr -> eval_expression ctx expr
+                    | Block stmts -> 
+                        let rec eval_stmts = function
+                          | [] -> IntValue 0 (* Default value if no return *)
+                          | stmt :: rest -> 
+                              (try
+                                 eval_statement ctx stmt;
+                                 eval_stmts rest
+                               with Return_value value -> value)
+                        in
+                        eval_stmts stmts)
                  else
                    find_matching_arm rest_arms
              | IdentifierPattern name ->
@@ -681,7 +692,18 @@ and eval_expression ctx expr =
                        | Some { kind = Symbol_table.EnumConstant (_, Some value); _ } ->
                            let pattern_value = EnumValue (name, value) in
                            if runtime_values_equal matched_value pattern_value then
-                             eval_expression ctx arm.arm_expr
+                             (match arm.arm_body with
+                              | SingleExpr expr -> eval_expression ctx expr
+                              | Block stmts -> 
+                                  let rec eval_stmts = function
+                                    | [] -> IntValue 0 (* Default value if no return *)
+                                    | stmt :: rest -> 
+                                        (try
+                                           eval_statement ctx stmt;
+                                           eval_stmts rest
+                                         with Return_value value -> value)
+                                  in
+                                  eval_stmts stmts)
                            else
                              find_matching_arm rest_arms
                        | _ ->
@@ -691,7 +713,18 @@ and eval_expression ctx expr =
                       find_matching_arm rest_arms)
              | DefaultPattern ->
                  (* Default pattern always matches *)
-                 eval_expression ctx arm.arm_expr)
+                 (match arm.arm_body with
+                  | SingleExpr expr -> eval_expression ctx expr
+                  | Block stmts -> 
+                      let rec eval_stmts = function
+                        | [] -> IntValue 0 (* Default value if no return *)
+                        | stmt :: rest -> 
+                            (try
+                               eval_statement ctx stmt;
+                               eval_stmts rest
+                             with Return_value value -> value)
+                      in
+                      eval_stmts stmts))
       in
       find_matching_arm arms
 

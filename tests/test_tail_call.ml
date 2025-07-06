@@ -183,9 +183,9 @@ let test_tail_call_match_expressions _ =
   let aborted_const = make_expr (Identifier "XDP_ABORTED") make_test_position in
   
   let match_arms = [
-    { arm_pattern = IdentifierPattern "TCP"; arm_expr = tcp_call; arm_pos = make_test_position };
-    { arm_pattern = IdentifierPattern "UDP"; arm_expr = udp_call; arm_pos = make_test_position };
-    { arm_pattern = DefaultPattern; arm_expr = aborted_const; arm_pos = make_test_position };
+            { arm_pattern = IdentifierPattern "TCP"; arm_body = SingleExpr tcp_call; arm_pos = make_test_position };
+        { arm_pattern = IdentifierPattern "UDP"; arm_body = SingleExpr udp_call; arm_pos = make_test_position };
+        { arm_pattern = DefaultPattern; arm_body = SingleExpr aborted_const; arm_pos = make_test_position };
   ] in
   
   let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
@@ -237,16 +237,16 @@ let test_nested_match_tail_calls _ =
   
   (* Inner match expression *)
   let inner_match_arms = [
-    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_expr = handler_a_call; arm_pos = make_test_position };
-    { arm_pattern = DefaultPattern; arm_expr = handler_b_call; arm_pos = make_test_position };
+            { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr handler_a_call; arm_pos = make_test_position };
+        { arm_pattern = DefaultPattern; arm_body = SingleExpr handler_b_call; arm_pos = make_test_position };
   ] in
   let inner_match = make_expr (Match (value_var, inner_match_arms)) make_test_position in
   
   (* Outer match expression *)
   let outer_match_arms = [
-    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_expr = inner_match; arm_pos = make_test_position };
-    { arm_pattern = ConstantPattern (IntLit (2, None)); arm_expr = handler_c_call; arm_pos = make_test_position };
-    { arm_pattern = DefaultPattern; arm_expr = xdp_tx_const; arm_pos = make_test_position };
+            { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr inner_match; arm_pos = make_test_position };
+        { arm_pattern = ConstantPattern (IntLit (2, None)); arm_body = SingleExpr handler_c_call; arm_pos = make_test_position };
+        { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_tx_const; arm_pos = make_test_position };
   ] in
   let outer_match = make_expr (Match (value_var, outer_match_arms)) make_test_position in
   
@@ -290,10 +290,10 @@ let test_match_with_mixed_tail_calls _ =
   let xdp_aborted_const = make_expr (Identifier "XDP_ABORTED") make_test_position in
   
   let match_arms = [
-    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_expr = tail_target_call1; arm_pos = make_test_position };
-    { arm_pattern = ConstantPattern (IntLit (2, None)); arm_expr = xdp_drop_const; arm_pos = make_test_position };
-    { arm_pattern = ConstantPattern (IntLit (3, None)); arm_expr = tail_target_call2; arm_pos = make_test_position };
-    { arm_pattern = DefaultPattern; arm_expr = xdp_aborted_const; arm_pos = make_test_position };
+            { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr tail_target_call1; arm_pos = make_test_position };
+        { arm_pattern = ConstantPattern (IntLit (2, None)); arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
+        { arm_pattern = ConstantPattern (IntLit (3, None)); arm_body = SingleExpr tail_target_call2; arm_pos = make_test_position };
+        { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_aborted_const; arm_pos = make_test_position };
   ] in
   
   let match_expr = make_expr (Match (value_var, match_arms)) make_test_position in

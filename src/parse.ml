@@ -62,12 +62,15 @@ let validate_ast ast =
     | StructLiteral (_, field_assignments) -> 
         List.for_all (fun (_, field_expr) -> validate_expr field_expr) field_assignments
     | TailCall (_, args) -> List.for_all validate_expr args
-    | Match (matched_expr, arms) ->
-        validate_expr matched_expr && 
-        List.for_all (fun arm -> validate_expr arm.arm_expr) arms
-  in
+        | Match (matched_expr, arms) ->
+        validate_expr matched_expr &&
+        List.for_all (fun arm -> 
+          match arm.arm_body with
+          | SingleExpr expr -> validate_expr expr
+          | Block stmts -> List.for_all validate_stmt stmts
+        ) arms
   
-  let rec validate_stmt stmt =
+  and validate_stmt stmt =
     match stmt.stmt_desc with
     | ExprStmt expr -> validate_expr expr
     | Assignment (_, expr) -> validate_expr expr

@@ -679,8 +679,10 @@ and process_expression table expr =
       process_expression table matched_expr;
       (* Process all arms *)
       List.iter (fun arm ->
-        (* Process the arm expression *)
-        process_expression table arm.arm_expr;
+        (* Process the arm body *)
+        (match arm.arm_body with
+         | SingleExpr expr -> process_expression table expr
+         | Block stmts -> List.iter (process_statement table) stmts);
         (* Validate the pattern if it's an identifier *)
         (match arm.arm_pattern with
          | IdentifierPattern name ->

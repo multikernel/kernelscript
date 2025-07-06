@@ -626,9 +626,12 @@ let rec lower_expression ctx (expr : Ast.expr) =
             (match arms with
              | [] -> IRU32 (* Default to U32 if no arms *)
              | first_arm :: _ -> 
-                 (match first_arm.arm_expr.expr_type with
-                  | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-                  | None -> IRU32))
+                 (match first_arm.arm_body with
+                  | SingleExpr expr ->
+                      (match expr.expr_type with
+                       | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+                       | None -> IRU32)
+                  | Block _ -> IRU32))
       in
       
       let result_reg = allocate_register ctx in
@@ -636,7 +639,15 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Lower each match arm *)
       let lowered_arms = List.map (fun arm ->
-        let arm_value = lower_expression ctx arm.arm_expr in
+        let arm_value = match arm.arm_body with
+          | SingleExpr expr -> lower_expression ctx expr
+          | Block stmts -> 
+              (* For block arms, we need to create a block and get the return value *)
+              List.iter (lower_statement ctx) stmts;
+              (* For now, we'll create a dummy value representing the block result *)
+              (* This is a simplification - in a real implementation, we'd track the return value *)
+              make_ir_value (IRLiteral (IntLit (0, None))) IRU32 arm.arm_pos
+        in
         
         (* Convert AST match pattern to IR match pattern *)
         let ir_pattern = match arm.arm_pattern with
@@ -671,7 +682,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       result_val
 
 (** Lower AST statements to IR instructions *)
-let rec lower_statement ctx stmt =
+and lower_statement ctx stmt =
   match stmt.stmt_desc with
   | Ast.ExprStmt expr ->
       let _ = lower_expression ctx expr in
@@ -889,10 +900,22 @@ let rec lower_statement ctx stmt =
              | Ast.Match (matched_expr, arms) ->
                  (* Check if any arm contains function calls - if so, generate IRMatchReturn *)
                  let has_function_calls = List.exists (fun arm ->
-                   match arm.arm_expr.expr_desc with
-                   | Ast.FunctionCall (_, _) -> true
-                   | Ast.TailCall (_, _) -> true
-                   | _ -> false
+                   match arm.arm_body with
+                   | SingleExpr expr ->
+                       (match expr.expr_desc with
+                        | Ast.FunctionCall (_, _) -> true
+                        | Ast.TailCall (_, _) -> true
+                        | _ -> false)
+                   | Block stmts ->
+                       (* Check if block contains function calls or tail calls *)
+                       List.exists (fun stmt ->
+                         match stmt.stmt_desc with
+                         | Ast.Return (Some return_expr) ->
+                             (match return_expr.expr_desc with
+                              | Ast.FunctionCall (_, _) -> true
+                              | Ast.TailCall (_, _) -> true
+                              | _ -> false)
+                         | _ -> false) stmts
                  ) arms in
                  
                  if has_function_calls then
@@ -918,19 +941,41 @@ let rec lower_statement ctx stmt =
                        | DefaultPattern -> IRDefaultPattern
                      in
                      
-                     let return_action = match arm.arm_expr.expr_desc with
-                       | Ast.FunctionCall (name, args) ->
-                           (* This will be converted to tail call by tail call analyzer *)
-                           let arg_vals = List.map (lower_expression ctx) args in
-                           IRReturnCall (name, arg_vals)
-                       | Ast.TailCall (name, args) ->
-                           (* Explicit tail call *)
-                           let arg_vals = List.map (lower_expression ctx) args in
-                           IRReturnTailCall (name, arg_vals, 0) (* Index will be set by tail call analyzer *)
-                       | _ ->
-                           (* Regular return value *)
-                           let ret_val = lower_expression ctx arm.arm_expr in
-                           IRReturnValue ret_val
+                     let return_action = match arm.arm_body with
+                       | SingleExpr expr ->
+                           (match expr.expr_desc with
+                            | Ast.FunctionCall (name, args) ->
+                                (* This will be converted to tail call by tail call analyzer *)
+                                let arg_vals = List.map (lower_expression ctx) args in
+                                IRReturnCall (name, arg_vals)
+                            | Ast.TailCall (name, args) ->
+                                (* Explicit tail call *)
+                                let arg_vals = List.map (lower_expression ctx) args in
+                                IRReturnTailCall (name, arg_vals, 0) (* Index will be set by tail call analyzer *)
+                            | _ ->
+                                (* Regular return value *)
+                                let ret_val = lower_expression ctx expr in
+                                IRReturnValue ret_val)
+                       | Block stmts ->
+                           (* For block arms, look for the return statement *)
+                           let rec find_return_action = function
+                             | [] -> failwith "Block arm must have a return statement"
+                             | stmt :: rest ->
+                                 (match stmt.stmt_desc with
+                                  | Ast.Return (Some return_expr) ->
+                                      (match return_expr.expr_desc with
+                                       | Ast.FunctionCall (name, args) ->
+                                           let arg_vals = List.map (lower_expression ctx) args in
+                                           IRReturnCall (name, arg_vals)
+                                       | Ast.TailCall (name, args) ->
+                                           let arg_vals = List.map (lower_expression ctx) args in
+                                           IRReturnTailCall (name, arg_vals, 0)
+                                       | _ ->
+                                           let ret_val = lower_expression ctx return_expr in
+                                           IRReturnValue ret_val)
+                                  | _ -> find_return_action rest)
+                           in
+                           find_return_action stmts
                      in
                      
                      { match_pattern = ir_pattern; return_action = return_action; arm_pos = arm.arm_pos }

@@ -54,11 +54,16 @@ and typed_expr_desc =
 (** Typed match arm *)
 and typed_match_arm = {
   tarm_pattern: match_pattern;
-  tarm_expr: typed_expr;
+  tarm_body: typed_match_arm_body;
   tarm_pos: position;
 }
 
-type typed_statement = {
+(** Typed match arm body *)
+and typed_match_arm_body = 
+  | TSingleExpr of typed_expr
+  | TBlock of typed_statement list
+
+and typed_statement = {
   tstmt_desc: typed_stmt_desc;
   tstmt_pos: position;
 }
@@ -932,8 +937,15 @@ and type_check_expression ctx expr =
       
       (* Type check all arms and ensure they have compatible types *)
       let typed_arms = List.map (fun arm ->
-        (* Type check the arm expression - pass through match return context *)
-        let typed_arm_expr = type_check_expression ctx arm.arm_expr in
+        (* Type check the arm body - can be either expression or statement block *)
+        let typed_arm_body = match arm.arm_body with
+          | SingleExpr expr ->
+              let typed_expr = type_check_expression ctx expr in
+              TSingleExpr typed_expr
+          | Block stmts ->
+              let typed_stmts = List.map (type_check_statement ctx) stmts in
+              TBlock typed_stmts
+        in
         
         (* Validate the pattern *)
         (match arm.arm_pattern with
@@ -959,21 +971,36 @@ and type_check_expression ctx expr =
         );
         
         (* Return typed arm *)
-        { tarm_pattern = arm.arm_pattern; tarm_expr = typed_arm_expr; tarm_pos = arm.arm_pos }
+        { tarm_pattern = arm.arm_pattern; tarm_body = typed_arm_body; tarm_pos = arm.arm_pos }
       ) arms in
       
       (* Determine the result type - all arms must have compatible types *)
       let result_type = match typed_arms with
         | [] -> type_error "Match expression must have at least one arm" expr.expr_pos
         | first_arm :: rest_arms ->
-            let first_type = first_arm.tarm_expr.texpr_type in
+            let first_type = match first_arm.tarm_body with
+              | TSingleExpr expr -> expr.texpr_type
+              | TBlock stmts -> 
+                  (* For block arms, we need to find the return type from the last statement *)
+                  match List.rev stmts with
+                  | { tstmt_desc = TReturn (Some return_expr); _ } :: _ -> return_expr.texpr_type
+                  | _ -> type_error "Block arms must end with a return statement" first_arm.tarm_pos
+            in
             List.iter (fun arm ->
-              match unify_types first_type arm.tarm_expr.texpr_type with
+              let arm_type = match arm.tarm_body with
+                | TSingleExpr expr -> expr.texpr_type
+                | TBlock stmts -> 
+                    (* For block arms, we need to find the return type from the last statement *)
+                    match List.rev stmts with
+                    | { tstmt_desc = TReturn (Some return_expr); _ } :: _ -> return_expr.texpr_type
+                    | _ -> type_error "Block arms must end with a return statement" arm.tarm_pos
+              in
+              match unify_types first_type arm_type with
               | Some _ -> () (* Compatible *)
               | None -> 
                   type_error ("All match arms must return compatible types. Expected " ^ 
                              string_of_bpf_type first_type ^ " but got " ^ 
-                             string_of_bpf_type arm.tarm_expr.texpr_type) arm.tarm_pos
+                             string_of_bpf_type arm_type) arm.tarm_pos
             ) rest_arms;
             first_type
       in
@@ -981,7 +1008,7 @@ and type_check_expression ctx expr =
       { texpr_desc = TMatch (typed_matched_expr, typed_arms); texpr_type = result_type; texpr_pos = expr.expr_pos }
 
 (** Type check statement *)
-let rec type_check_statement ctx stmt =
+and type_check_statement ctx stmt =
   match stmt.stmt_desc with
   | ExprStmt expr ->
       let typed_expr = type_check_expression ctx expr in
@@ -1688,8 +1715,11 @@ let rec typed_expr_to_expr texpr =
         (* Convert typed match expression back to untyped AST *)
         let matched_expr = typed_expr_to_expr typed_matched_expr in
         let arms = List.map (fun tarm ->
-          let arm_expr = typed_expr_to_expr tarm.tarm_expr in
-          { arm_pattern = tarm.tarm_pattern; arm_expr = arm_expr; arm_pos = tarm.tarm_pos }
+          let arm_body = match tarm.tarm_body with
+            | TSingleExpr expr -> SingleExpr (typed_expr_to_expr expr)
+            | TBlock stmts -> Block (List.map typed_stmt_to_stmt stmts)
+          in
+          { arm_pattern = tarm.tarm_pattern; arm_body = arm_body; arm_pos = tarm.tarm_pos }
         ) typed_arms in
         Match (matched_expr, arms)
   in
@@ -1708,7 +1738,7 @@ let rec typed_expr_to_expr texpr =
     type_checked = true; program_context = None; map_scope = None } in
   enhanced_expr
 
-let rec typed_stmt_to_stmt tstmt =
+and typed_stmt_to_stmt tstmt =
   let stmt_desc = match tstmt.tstmt_desc with
     | TExprStmt expr -> ExprStmt (typed_expr_to_expr expr)
     | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)

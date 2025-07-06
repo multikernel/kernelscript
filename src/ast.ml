@@ -151,15 +151,20 @@ and match_pattern =
   | IdentifierPattern of string (* CONST_VALUE, enum variants *)
   | DefaultPattern              (* default case *)
 
-(** Match arm: pattern : expression *)
+(** Match arm body - can be either a single expression or a block of statements *)
+and match_arm_body = 
+  | SingleExpr of expr
+  | Block of statement list
+
+(** Match arm: pattern : expression or block *)
 and match_arm = {
   arm_pattern: match_pattern;
-  arm_expr: expr;
+  arm_body: match_arm_body;
   arm_pos: position;
 }
 
 (** Statements with position tracking *)
-type statement = {
+and statement = {
   stmt_desc: stmt_desc;
   stmt_pos: position;
 }
@@ -395,11 +400,17 @@ let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) 
 }
 
 (** Utility functions for match expressions *)
-let make_match_arm pattern expr pos = {
+let make_match_arm pattern body pos = {
   arm_pattern = pattern;
-  arm_expr = expr;
+  arm_body = body;
   arm_pos = pos;
 }
+
+let make_match_arm_expr pattern expr pos = 
+  make_match_arm pattern (SingleExpr expr) pos
+
+let make_match_arm_block pattern stmts pos = 
+  make_match_arm pattern (Block stmts) pos
 
 let make_constant_pattern lit = ConstantPattern lit
 let make_identifier_pattern name = IdentifierPattern name
@@ -550,11 +561,17 @@ and string_of_match_pattern = function
   | DefaultPattern -> "default"
 
 and string_of_match_arm arm =
+  let body_str = match arm.arm_body with
+    | SingleExpr expr -> string_of_expr expr
+    | Block stmts -> 
+        let stmt_strs = List.map string_of_stmt stmts in
+        Printf.sprintf "{\n      %s\n    }" (String.concat "\n      " stmt_strs)
+  in
   Printf.sprintf "%s: %s" 
     (string_of_match_pattern arm.arm_pattern) 
-    (string_of_expr arm.arm_expr)
+    body_str
 
-let rec string_of_stmt stmt =
+and string_of_stmt stmt =
   match stmt.stmt_desc with
   | ExprStmt expr -> string_of_expr expr ^ ";"
   | Assignment (name, expr) -> 

@@ -78,12 +78,14 @@ let rec detect_tail_calls_in_expr expr attributed_functions =
         []
   | Match (_matched_expr, match_arms) ->
       (* Handle match expressions - analyze each arm's expression for tail calls *)
-      List.fold_left (fun acc arm ->
-        acc @ (detect_tail_calls_in_expr arm.arm_expr attributed_functions)
-      ) [] match_arms
+              List.fold_left (fun acc arm ->
+          match arm.arm_body with
+          | SingleExpr expr -> acc @ (detect_tail_calls_in_expr expr attributed_functions)
+          | Block stmts -> acc @ (List.fold_left (fun acc stmt -> acc @ (detect_tail_calls_in_stmt stmt attributed_functions)) [] stmts)
+        ) [] match_arms
   | _ -> []
 
-let detect_tail_calls_in_stmt stmt attributed_functions =
+and detect_tail_calls_in_stmt stmt attributed_functions =
   match stmt.stmt_desc with
   | Return (Some expr) ->
       detect_tail_calls_in_expr expr attributed_functions

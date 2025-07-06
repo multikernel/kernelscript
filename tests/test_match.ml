@@ -164,11 +164,13 @@ let test_nested_match () =
   | Match (_, arms) ->
       (* Check first arm has nested match *)
       let first_arm = List.hd arms in
-      check bool "first arm has nested match" true
-        (match first_arm.arm_expr.expr_desc with
-         | Match (_, nested_arms) ->
-             List.length nested_arms = 3
-         | _ -> false)
+              check bool "first arm has nested match" true
+         (match first_arm.arm_body with
+          | SingleExpr expr -> 
+              (match expr.expr_desc with
+               | Match (_, nested_arms) -> List.length nested_arms = 3
+               | _ -> false)
+          | Block _ -> false)
   | _ -> failwith "Expected match expression"
 
 (** Test match with string patterns *)
