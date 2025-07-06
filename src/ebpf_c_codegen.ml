@@ -131,6 +131,12 @@ type c_context = {
   mutable pinned_globals: string list;
   (* Flag to indicate if we're generating code for a return context *)
   mutable in_return_context: bool;
+  (* Optimization flags *)
+  mutable enable_temp_var_optimization: bool;
+  (* Register to meaningful name mapping for optimization *)
+  mutable register_name_hints: (int, string) Hashtbl.t;
+  (* Track which registers can be inlined *)
+  mutable inlinable_registers: (int, string) Hashtbl.t;
 }
 
 let create_c_context () = {
@@ -146,6 +152,9 @@ let create_c_context () = {
   variable_type_aliases = [];
   pinned_globals = [];
   in_return_context = false;
+  enable_temp_var_optimization = true;
+  register_name_hints = Hashtbl.create 32;
+  inlinable_registers = Hashtbl.create 32;
 }
 
 (** Helper functions for code generation *)
@@ -173,6 +182,44 @@ let fresh_var ctx prefix =
 let fresh_label ctx prefix =
   ctx.label_counter <- ctx.label_counter + 1;
   sprintf "%s_%d" prefix ctx.label_counter
+
+(** Optimization: Check if a register can be inlined *)
+let can_inline_register ctx reg =
+  ctx.enable_temp_var_optimization && Hashtbl.mem ctx.inlinable_registers reg
+
+(** Optimization: Get inlined expression for a register *)
+let get_inlined_expression ctx reg =
+  try
+    Some (Hashtbl.find ctx.inlinable_registers reg)
+  with Not_found -> None
+
+(** Optimization: Mark register as inlinable with expression *)
+let mark_register_inlinable ctx reg expr =
+  if ctx.enable_temp_var_optimization then
+    Hashtbl.replace ctx.inlinable_registers reg expr
+
+(** Optimization: Generate meaningful variable names *)
+let get_meaningful_var_name ctx reg ir_type =
+  if ctx.enable_temp_var_optimization then
+    match Hashtbl.find_opt ctx.register_name_hints reg with
+    | Some hint -> sprintf "%s_%d" hint reg
+    | None -> 
+        let type_hint = match ir_type with
+          | IRU32 -> "val"
+          | IRBool -> "cond"
+          | IRStr _ -> "str"
+          | IRPointer _ -> "ptr"
+          | IRAction _ -> "action"
+          | _ -> "var"
+        in
+        sprintf "%s_%d" type_hint reg
+  else
+    sprintf "tmp_%d" reg
+
+(** Add register name hint for better variable names *)
+let add_register_hint ctx reg hint =
+  if ctx.enable_temp_var_optimization then
+    Hashtbl.replace ctx.register_name_hints reg hint
 
 (** Type conversion from IR types to C types *)
 
@@ -1101,7 +1148,11 @@ let generate_c_value ctx ir_val =
         | _ -> name
       else
         name  (* Function parameters and regular variables use their names directly *)
-  | IRRegister reg -> sprintf "tmp_%d" reg  (* Registers are always temporary variables *)
+  | IRRegister reg -> 
+      (* Check if this register can be inlined *)
+      (match get_inlined_expression ctx reg with
+       | Some expr -> expr
+       | None -> get_meaningful_var_name ctx reg ir_val.val_type)
   | IRMapRef map_name -> sprintf "&%s" map_name
   | IRContextField (ctx_type, field) ->
       let ctx_var = "ctx" in (* Standard context parameter name *)
@@ -1352,43 +1403,82 @@ let generate_c_expression ctx ir_expr =
         (* Return empty string since control flow handles the return *)
         ""
       else
-        (* Generate regular if-else chain with temporary variable for eBPF *)
+        (* Optimization: Try to inline simple match expressions *)
         let matched_str = generate_c_value ctx matched_val in
-        let temp_var = fresh_var ctx "match_result" in
-        let result_type = ebpf_type_from_ir_type ir_expr.expr_type in
         
-        (* Generate temporary variable for the result *)
-        emit_line ctx (sprintf "%s %s;" result_type temp_var);
+        (* Check if we can inline this match expression - be more conservative *)
+        let can_inline = ctx.enable_temp_var_optimization && 
+                        List.length arms <= 2 && 
+                        List.for_all (fun arm ->
+                          match arm.ir_arm_value.value_desc with
+                          | IRLiteral _ | IREnumConstant _ -> true
+                          | _ -> false) arms &&
+                        List.for_all (fun arm ->
+                          match arm.ir_arm_pattern with
+                          | IRConstantPattern _ | IRDefaultPattern -> true) arms in
         
-        (* Generate if-else chain *)
-        let generate_match_arm is_first arm =
-          let arm_val_str = generate_c_value ctx arm.ir_arm_value in
-          match arm.ir_arm_pattern with
-          | IRConstantPattern const_val ->
-              let const_str = generate_c_value ctx const_val in
-              let keyword = if is_first then "if" else "else if" in
-              emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
-              increase_indent ctx;
-              emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
-              decrease_indent ctx;
-              emit_line ctx "}"
-          | IRDefaultPattern ->
-              emit_line ctx "else {";
-              increase_indent ctx;
-              emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
-              decrease_indent ctx;
-              emit_line ctx "}"
-        in
-        
-        (* Generate all arms *)
-        (match arms with
-         | [] -> () (* No arms - should not happen *)
-         | first_arm :: rest_arms ->
-             generate_match_arm true first_arm;
-             List.iter (generate_match_arm false) rest_arms);
-        
-        (* Return the temporary variable *)
-        temp_var
+        if can_inline then
+          (* Generate inline ternary expression for simple cases *)
+          let generate_inline_condition () =
+            let rec build_ternary = function
+              | [] -> "0" (* Should not happen *)
+              | [arm] ->
+                  (match arm.ir_arm_pattern with
+                   | IRDefaultPattern -> generate_c_value ctx arm.ir_arm_value
+                   | IRConstantPattern const_val ->
+                       let const_str = generate_c_value ctx const_val in
+                       let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+                       sprintf "(%s == %s) ? %s : 0" matched_str const_str arm_val_str)
+              | arm :: rest_arms ->
+                  (match arm.ir_arm_pattern with
+                   | IRConstantPattern const_val ->
+                       let const_str = generate_c_value ctx const_val in
+                       let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+                       let rest_expr = build_ternary rest_arms in
+                       sprintf "(%s == %s) ? %s : (%s)" matched_str const_str arm_val_str rest_expr
+                   | IRDefaultPattern ->
+                       generate_c_value ctx arm.ir_arm_value)
+            in
+            build_ternary arms
+          in
+          sprintf "(%s)" (generate_inline_condition ())
+        else
+          (* Generate regular if-else chain with temporary variable for complex cases *)
+          let temp_var = fresh_var ctx "match_result" in
+          let result_type = ebpf_type_from_ir_type ir_expr.expr_type in
+          
+          (* Generate temporary variable for the result *)
+          emit_line ctx (sprintf "%s %s;" result_type temp_var);
+          
+          (* Generate if-else chain *)
+          let generate_match_arm is_first arm =
+            let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+            match arm.ir_arm_pattern with
+            | IRConstantPattern const_val ->
+                let const_str = generate_c_value ctx const_val in
+                let keyword = if is_first then "if" else "else if" in
+                emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
+                increase_indent ctx;
+                emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+                decrease_indent ctx;
+                emit_line ctx "}"
+            | IRDefaultPattern ->
+                emit_line ctx "else {";
+                increase_indent ctx;
+                emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+                decrease_indent ctx;
+                emit_line ctx "}"
+          in
+          
+          (* Generate all arms *)
+          (match arms with
+           | [] -> () (* No arms - should not happen *)
+           | first_arm :: rest_arms ->
+               generate_match_arm true first_arm;
+               List.iter (generate_match_arm false) rest_arms);
+          
+          (* Return the temporary variable *)
+          temp_var
 
 
 
@@ -1521,6 +1611,21 @@ let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
 and generate_assignment ctx dest_val expr is_const =
   let assignment_prefix = if is_const then "const " else "" in
   
+  (* Optimization: Check if we can inline simple expressions *)
+  let can_inline_expr = ctx.enable_temp_var_optimization && 
+                       (match dest_val.value_desc with
+                        | IRRegister _ -> true
+                        | _ -> false) &&
+                       (match expr.expr_desc with
+                        | IRValue src_val -> 
+                            (match src_val.value_desc with
+                             | IRLiteral _ | IREnumConstant _ | IRVariable _ -> true
+                             | _ -> false)
+                        | IRBinOp (_, _, _) -> true
+                        | IRUnOp (_, _) -> true
+                        | IRCast (_, _) -> true
+                        | _ -> false) in
+  
   (* Check if this is a pinned global variable assignment *)
   (match dest_val.value_desc with
    | IRVariable name when List.mem name ctx.pinned_globals ->
@@ -1532,6 +1637,26 @@ and generate_assignment ctx dest_val expr is_const =
        emit_line ctx (sprintf "    update_pinned_globals(__pg);");
        emit_line ctx (sprintf "  }");
        emit_line ctx (sprintf "}")
+   | IRRegister reg when can_inline_expr ->
+       (* Optimization: Only inline very simple expressions to avoid correctness issues *)
+       let should_inline = match expr.expr_desc with
+         | IRValue src_val -> 
+             (match src_val.value_desc with
+              | IRLiteral _ | IREnumConstant _ -> true
+              | _ -> false)
+         | _ -> false
+       in
+       if should_inline then (
+         let expr_str = generate_c_expression ctx expr in
+         mark_register_inlinable ctx reg expr_str;
+         (* Don't emit assignment - expression will be inlined *)
+         ()
+       ) else (
+         (* Generate normal assignment for complex expressions *)
+         let dest_str = generate_c_value ctx dest_val in
+         let expr_str = generate_c_expression ctx expr in
+         emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+       )
    | _ ->
        (* Check if this is a string assignment *)
   (match dest_val.val_type, expr.expr_desc with
@@ -2244,8 +2369,9 @@ let collect_registers_in_function ir_func =
 (** Generate C function from IR function with type alias support *)
 
 let generate_c_function ctx ir_func =
-  (* Clear parameter register map for this function *)
-  (* param_register_map reset removed *)
+  (* Clear per-function state to avoid conflicts between functions *)
+  Hashtbl.clear ctx.register_name_hints;
+  Hashtbl.clear ctx.inlinable_registers;
   
   let return_type_str = match ir_func.return_type with
     | Some ret_type -> ebpf_type_from_ir_type ret_type
@@ -2279,20 +2405,40 @@ let generate_c_function ctx ir_func =
   
   (* Declare temporary variables for all registers *)
   let register_variable_map = collect_register_variable_mapping ir_func in
+  
+  (* Group registers by type to reduce declarations *)
+  let register_groups = Hashtbl.create 16 in
   List.iter (fun (reg, reg_type) ->
-    let c_type = match reg_type with
-      | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
-      | _ ->
-          (* Check if this register corresponds to a variable with a type alias *)
-          (match List.assoc_opt reg register_variable_map with
-           | Some var_name ->
-               (match List.assoc_opt var_name ctx.variable_type_aliases with
-                | Some alias_name -> alias_name
-                | None -> ebpf_type_from_ir_type reg_type)
-           | None -> ebpf_type_from_ir_type reg_type)
-    in
-    emit_line ctx (sprintf "%s tmp_%d;" c_type reg)
+    (* Skip declaration if register can be inlined *)
+    if not (can_inline_register ctx reg) then (
+      let c_type = match reg_type with
+        | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
+        | _ ->
+            (* Check if this register corresponds to a variable with a type alias *)
+            (match List.assoc_opt reg register_variable_map with
+             | Some var_name ->
+                 (* Add register hint for better variable names *)
+                 add_register_hint ctx reg var_name;
+                 (match List.assoc_opt var_name ctx.variable_type_aliases with
+                  | Some alias_name -> alias_name
+                  | None -> ebpf_type_from_ir_type reg_type)
+             | None -> ebpf_type_from_ir_type reg_type)
+      in
+      let var_name = get_meaningful_var_name ctx reg reg_type in
+      let existing_vars = match Hashtbl.find_opt register_groups c_type with
+        | Some vars -> vars
+        | None -> []
+      in
+      Hashtbl.replace register_groups c_type (var_name :: existing_vars)
+    )
   ) all_registers;
+  
+  (* Emit grouped variable declarations *)
+  Hashtbl.iter (fun c_type var_names ->
+    let sorted_vars = List.sort String.compare var_names in
+    let vars_str = String.concat ", " sorted_vars in
+    emit_line ctx (sprintf "%s %s;" c_type vars_str)
+  ) register_groups;
   if all_registers <> [] then emit_blank_line ctx;
   
   (* Generate basic blocks *)

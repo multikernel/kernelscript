@@ -569,7 +569,12 @@ struct PacketStats {
      check bool "no struct Counter declarations" false (contains_substr c_code "struct Counter tmp_");
      
      (* Verify Counter type alias is used in variable declarations *)
-     check bool "Counter used in variable declarations" true (contains_substr c_code "Counter tmp_");
+     let has_counter_var = 
+       contains_substr c_code "Counter var_" || 
+       contains_substr c_code "Counter tmp_" ||
+       contains_substr c_code "Counter cond_" ||
+       contains_substr c_code "Counter val_" in
+     check bool "Counter used in variable declarations" true has_counter_var;
     
     check bool "type alias field access test passed" true true
   with
