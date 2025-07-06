@@ -304,6 +304,11 @@
  (modules test_tail_call)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_match_fix_validation)
+ (modules test_match_fix_validation)
+ (libraries kernelscript ounit2))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -587,7 +592,8 @@
   test_tail_call.exe
   test_struct_ops.exe
   test_pointer_syntax.exe
-  test_match.exe)
+  test_match.exe
+  test_match_fix_validation.exe)
  (action
   (progn
    (run ./test_lexer.exe)
@@ -622,7 +628,8 @@
    (run ./test_tail_call.exe)
    (run ./test_struct_ops.exe)
    (run ./test_pointer_syntax.exe)
-   (run ./test_match.exe))))
+   (run ./test_match.exe)
+   (run ./test_match_fix_validation.exe))))
 
 (rule
  (alias ir-tests)
