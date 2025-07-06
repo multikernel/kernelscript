@@ -693,6 +693,7 @@ let rec c_type_from_ir_type = function
   | IRI64 -> "int64_t"
   | IRF32 -> "float"
   | IRF64 -> "double"
+  | IRVoid -> "void"
   | IRBool -> "bool"
   | IRChar -> "char"
   | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
@@ -744,6 +745,7 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
               | Ast.I64 -> "int64_t"
               | Ast.Bool -> "bool"
               | Ast.Char -> "char"
+              | Ast.Void -> "void"
               | _ -> "uint32_t" (* fallback *)
             in
             sprintf "typedef %s %s;" c_type alias_name

@@ -44,7 +44,7 @@ type type_def =
 (** BPF type system with extended type definitions *)
 and bpf_type =
   (* Primitive types *)
-  | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 | Bool | Char
+  | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 | Bool | Char | Void
   | Str of int  (* Fixed-size string str<N> *)
   (* Composite types *)
   | Array of bpf_type * int
@@ -461,6 +461,7 @@ let rec string_of_bpf_type = function
   | I64 -> "i64"
   | Bool -> "bool"
   | Char -> "char"
+  | Void -> "void"
   | Str size -> Printf.sprintf "str<%d>" size
   | Array (t, size) -> Printf.sprintf "[%s; %d]" (string_of_bpf_type t) size
   | Pointer t -> Printf.sprintf "*%s" (string_of_bpf_type t)

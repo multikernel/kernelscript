@@ -1802,7 +1802,7 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
 let rec ast_type_to_ir_type = function
   | Ast.U8 -> IRU8 | Ast.U16 -> IRU16 | Ast.U32 -> IRU32 | Ast.U64 -> IRU64
   | Ast.I8 -> IRI8 | Ast.I16 -> IRU16 | Ast.I32 -> IRU32 | Ast.I64 -> IRU64  (* Note: I16/I32/I64 map to unsigned in simple case *)
-  | Ast.Bool -> IRBool | Ast.Char -> IRChar
+  | Ast.Bool -> IRBool | Ast.Char -> IRChar | Ast.Void -> IRVoid
   | Ast.Str size -> IRStr size
   | Ast.Array (elem_type, size) -> IRArray (ast_type_to_ir_type elem_type, size, make_bounds_info ())
   | Ast.Pointer elem_type -> IRPointer (ast_type_to_ir_type elem_type, make_bounds_info ())

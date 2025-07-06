@@ -114,6 +114,7 @@ and ir_config_item = {
 and ir_type = 
   | IRU8 | IRU16 | IRU32 | IRU64 | IRBool | IRChar
   | IRI8 | IRI16 | IRI32 | IRI64 | IRF32 | IRF64 (* Add signed integers and floating point *)
+  | IRVoid (* Add explicit void type *)
   | IRStr of int (* Fixed-size string str<N> *)
   | IRPointer of ir_type * bounds_info
   | IRArray of ir_type * int * bounds_info
@@ -620,6 +621,7 @@ let rec ast_type_to_ir_type = function
   | U64 -> IRU64
   | Bool -> IRBool
   | Char -> IRChar
+  | Void -> IRVoid
   | I8 -> IRI8  (* Use proper signed type *)
   | I16 -> IRU16 (* For now, map to unsigned for eBPF compatibility *)
   | I32 -> IRU32
@@ -710,6 +712,7 @@ let rec string_of_ir_type = function
   | IRU64 -> "u64"
   | IRBool -> "bool"
   | IRChar -> "char"
+  | IRVoid -> "void"
   | IRI8 -> "i8"
   | IRI16 -> "i16"
   | IRI32 -> "i32"

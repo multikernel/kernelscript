@@ -187,6 +187,7 @@ let rec ebpf_type_from_ir_type = function
   | IRI64 -> "__s64"
   | IRF32 -> "__u32" (* Fixed point representation in kernel *)
   | IRF64 -> "__u64" (* Fixed point representation in kernel *)
+  | IRVoid -> "void"
   | IRBool -> "__u8"
   | IRChar -> "char"
   | IRStr size -> sprintf "str_%d_t" size
@@ -2552,7 +2553,7 @@ let compile_multi_to_c_with_tail_calls
     match ast_type with
     | Ast.U8 -> "__u8" | Ast.U16 -> "__u16" | Ast.U32 -> "__u32" | Ast.U64 -> "__u64"
     | Ast.I8 -> "__s8" | Ast.I16 -> "__s16" | Ast.I32 -> "__s32" | Ast.I64 -> "__s64"
-    | Ast.Bool -> "bool" | Ast.Char -> "char"
+    | Ast.Bool -> "bool" | Ast.Char -> "char" | Ast.Void -> "void"
     | Ast.Pointer inner_type -> sprintf "%s*" (ast_type_to_c_type inner_type)
     | _ -> "void"
   in

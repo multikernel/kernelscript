@@ -72,6 +72,7 @@
     | "i64" -> I64
     | "bool" -> BOOL
     | "char" -> CHAR
+    | "void" -> VOID
     | "str" -> STR
     | "if" -> IF
     | "else" -> ELSE

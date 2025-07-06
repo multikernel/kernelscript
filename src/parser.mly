@@ -15,7 +15,7 @@
 
 /* Keywords */
 %token FN MAP PIN TYPE STRUCT ENUM
-%token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR STR
+%token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR VOID STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
 %token IN DELETE TRY CATCH THROW DEFER MATCH DEFAULT
@@ -195,6 +195,7 @@ bpf_type:
   | I64 { I64 }
   | BOOL { Bool }
   | CHAR { Char }
+  | VOID { Void }
   | STR LT INT GT { Str (fst $3) }
   | IDENTIFIER { UserType $1 }
   | array_type { $1 }

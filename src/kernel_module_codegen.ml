@@ -45,6 +45,7 @@ let kernelscript_type_to_c_type = function
   | I64 -> "s64"
   | Bool -> "bool"
   | Char -> "char"
+  | Void -> "void"
   | Pointer U8 -> "u8 *"
   | Pointer U16 -> "u16 *"
   | Pointer U32 -> "u32 *"
@@ -54,8 +55,7 @@ let kernelscript_type_to_c_type = function
   | Pointer I32 -> "s32 *"
   | Pointer I64 -> "s64 *"
   | Pointer Char -> "char *"
-  | Pointer (UserType "void") -> "void *"
-  | UserType "void" -> "void"
+  | Pointer Void -> "void *"
   | _ -> "void *"  (* Fallback for complex types *)
 
 (** Generate function signature for regular kernel module functions *)
