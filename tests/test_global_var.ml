@@ -44,7 +44,7 @@ var inferred_string = "world"
 var inferred_bool = false
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -91,7 +91,7 @@ let test_global_var_type_inference () =
 %s
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} decl_text in
@@ -124,7 +124,7 @@ var char_lit = 'a'          // Should be char
 var null_lit = null         // Should be *u8
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -175,7 +175,7 @@ var global_string: str<256> = "test"
 var inferred_var = 100
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -212,7 +212,7 @@ var packet_count: u64 = 0
 var enable_debug: bool = true
 
 @xdp
-fn packet_counter(ctx: xdp_md) -> xdp_action {
+fn packet_counter(ctx: *xdp_md) -> xdp_action {
     packet_count = packet_count + 1
     if (enable_debug) {
         // Debug logic would go here
@@ -253,7 +253,7 @@ var global_flag: bool = true
 var inferred_var = 100
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -288,7 +288,7 @@ let test_error_missing_type_and_value () =
 var incomplete_var
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -308,7 +308,7 @@ var duplicate_var: u32 = 42
 var duplicate_var: u64 = 100
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -327,7 +327,7 @@ let test_error_type_mismatch () =
 var wrong_type: bool = 42
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -359,7 +359,7 @@ var current_time: u64
 var status_message: str<256>
 
 @xdp
-fn packet_processor(ctx: xdp_md) -> xdp_action {
+fn packet_processor(ctx: *xdp_md) -> xdp_action {
     packet_count = packet_count + 1
     total_bytes = total_bytes + 64  // Assume 64 byte packets
     
@@ -399,7 +399,7 @@ let test_array_literal_inference () =
 var simple_array = [1, 2, 3]
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -434,7 +434,7 @@ let test_string_size_inference () =
 %s
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} var_decls in
@@ -467,7 +467,7 @@ var uint32_var: u32 = 4294967295
 var uint64_var: u64 = 1844674407370955
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -503,7 +503,7 @@ var ptr_to_u32: *u32 = null
 var inferred_null_ptr = null
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -540,7 +540,7 @@ var zero_value: u32 = 0
 var max_u32: u32 = 4294967295
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -580,7 +580,7 @@ local var local_flag: bool = false
 local var local_inferred = 42
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -632,7 +632,7 @@ var shared_var: u32 = 100
 local var local_var: u32 = 200
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -672,7 +672,7 @@ local var local_counter: u32 = 0
 local var local_secret: u64 = 12345
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -722,7 +722,7 @@ local var local_uninitialized: u64
 local var local_inferred = 100
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
@@ -763,7 +763,7 @@ let test_local_keyword_invalid_usage () =
   (* Test 1: local keyword on function parameter - should fail *)
   let test_function_param = {|
 @xdp
-fn test_function(local var param: u32, ctx: xdp_md) -> xdp_action {
+fn test_function(local var param: u32, ctx: *xdp_md) -> xdp_action {
     return 2
 }
 |} in
@@ -771,7 +771,7 @@ fn test_function(local var param: u32, ctx: xdp_md) -> xdp_action {
   (* Test 2: local keyword on local variable inside function - should fail *)
   let test_local_variable = {|
 @xdp
-fn test_function(ctx: xdp_md) -> xdp_action {
+fn test_function(ctx: *xdp_md) -> xdp_action {
     local var local_var: u32 = 42
     return 2
 }
@@ -784,7 +784,7 @@ struct TestStruct {
 }
 
 @xdp
-fn test_function(ctx: xdp_md) -> xdp_action {
+fn test_function(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 |} in
@@ -818,7 +818,7 @@ local var local_counter: u32 = 200
 local var local_secret: u64 = 0xdeadbeef
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     shared_counter = shared_counter + 1
     local_counter = local_counter + 1
     return 2  // XDP_PASS
@@ -875,7 +875,7 @@ var negative_large: i64 = -9223372036854775
 var negative_small: i8 = -127
 
 @xdp
-fn test_program(ctx: xdp_md) -> xdp_action {
+fn test_program(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 |} in

@@ -12,6 +12,6 @@ fn update_point(p: *Point) -> u32 {
 }
 
 @xdp
-fn xdp_prog(ctx: xdp_md) -> xdp_action {
+fn xdp_prog(ctx: *xdp_md) -> xdp_action {
     return 2
 } 

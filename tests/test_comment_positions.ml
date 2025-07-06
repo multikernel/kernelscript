@@ -5,7 +5,7 @@ open Alcotest
 (** Test that comments at line 1, column 1 don't cause parse errors *)
 let test_comment_at_start () =
   let program_text = {|// This is a comment at line 1, column 1
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return XDP_PASS
 }|} in
   try
@@ -19,7 +19,7 @@ let test_comment_at_start () =
 (** Test that comments with whitespace before them work *)
 let test_comment_with_whitespace () =
   let program_text = {|   // Comment with whitespace before it
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return XDP_PASS
 }|} in
   try
@@ -60,7 +60,7 @@ let test_multiple_line_comments () =
   let program_text = {|// First comment
 // Second comment  
 // Third comment
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   // Comment inside function
   return XDP_PASS
 }|} in
@@ -74,7 +74,7 @@ let test_multiple_line_comments () =
 
 (** Test that inline comments work *)
 let test_inline_comments () =
-  let program_text = {|@xdp fn test(ctx: xdp_md) -> xdp_action { // Inline comment, Another inline comment
+  let program_text = {|@xdp fn test(ctx: *xdp_md) -> xdp_action { // Inline comment, Another inline comment
   return XDP_PASS // Final comment
 }|} in
   try
@@ -89,7 +89,7 @@ let test_inline_comments () =
 let test_error_position_multiline () =
   let program_text = {|// Comment line 1
 // Comment line 2
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   let x = if (missing_condition_error) {
     return XDP_PASS
   }

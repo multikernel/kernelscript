@@ -17,7 +17,7 @@ pin map<u32, Counter> packet_stats : HashMap(1024)
 
 // Kernel-shared functions accessible by all eBPF programs
 @helper
-fn safe_function(ctx: xdp_md) -> xdp_action {
+fn safe_function(ctx: *xdp_md) -> xdp_action {
   // Small local variables - safe stack usage
   var counter: u64 = 0
   var packet_size: u16 = 1500
@@ -35,7 +35,7 @@ fn safe_function(ctx: xdp_md) -> xdp_action {
 
 // Function demonstrating bounds checking
 @helper
-fn bounds_demo(ctx: xdp_md) -> xdp_action {
+fn bounds_demo(ctx: *xdp_md) -> xdp_action {
   var data_array: u32[10] = [0; 10]
   
   // Safe accesses
@@ -51,7 +51,7 @@ fn bounds_demo(ctx: xdp_md) -> xdp_action {
 
 // Function with moderate stack usage
 @helper
-fn moderate_stack_usage(ctx: xdp_md) -> xdp_action {
+fn moderate_stack_usage(ctx: *xdp_md) -> xdp_action {
   // Moderate buffer size - should be within eBPF limits
   var buffer: u8[256] = [0; 256]
   var info: PacketInfo = PacketInfo {
@@ -69,7 +69,7 @@ fn moderate_stack_usage(ctx: xdp_md) -> xdp_action {
 
 // Function that would trigger stack overflow warning
 @helper
-fn large_stack_usage(ctx: xdp_md) -> xdp_action {
+fn large_stack_usage(ctx: *xdp_md) -> xdp_action {
   // Large buffer - would exceed eBPF 512-byte stack limit
   // This would be flagged by the safety analyzer
   var large_buffer: u8[600] = [0; 600] // WARNING: Stack overflow
@@ -81,7 +81,7 @@ fn large_stack_usage(ctx: xdp_md) -> xdp_action {
 
 // Function demonstrating array size validation
 @helper
-fn array_validation_demo(ctx: xdp_md) -> xdp_action {
+fn array_validation_demo(ctx: *xdp_md) -> xdp_action {
   // Valid array sizes
   var valid_small: u32[10] = [0; 10]     // OK
   var valid_medium: u8[100] = [0; 100]   // OK
@@ -98,7 +98,7 @@ fn array_validation_demo(ctx: xdp_md) -> xdp_action {
 }
 
 // Program with various safety scenarios
-@xdp fn safety_demo(ctx: xdp_md) -> xdp_action {
+@xdp fn safety_demo(ctx: *xdp_md) -> xdp_action {
   // Stack usage: minimal for main function
   var result: xdp_action = XDP_PASS
   

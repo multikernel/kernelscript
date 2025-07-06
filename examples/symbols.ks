@@ -30,8 +30,8 @@ pub fn log_packet(info: PacketInfo) -> u32 {
     return info.size
 }
 
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-    var packet = ctx.packet()
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var packet = ctx->packet()
     var info = PacketInfo {
         size: packet.len(),
         protocol: packet.protocol(),
@@ -57,7 +57,7 @@ pub fn log_packet(info: PacketInfo) -> u32 {
 }
 
 @tc fn traffic_monitor(ctx: TcContext) -> TcAction {
-    var packet = ctx.packet()
+    var packet = ctx->packet()
     
     // Access global map (visible from all programs)
     global_stats[packet.protocol()] = global_stats[packet.protocol()] + 1

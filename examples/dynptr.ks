@@ -17,9 +17,9 @@ fn process_map_data(buffer_ptr: *DataBuffer) -> u32 {
 }
 
 @xdp  
-fn test(ctx: xdp_md) -> xdp_action {
+  fn test(ctx: *xdp_md) -> xdp_action {
     // Packet data access - should use bpf_dynptr_from_xdp
-    var packet_byte = *ctx.data
+    var packet_byte = *ctx->data
     
     // Map lookup - this gives us a pointer to map value
     var key = 1

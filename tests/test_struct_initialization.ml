@@ -42,8 +42,8 @@ struct PacketInfo {
     action: u32,
 }
 
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
-    var packet_size = ctx.data_end - ctx.data
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
     var info = PacketInfo {
         size: packet_size,
         action: 2,
@@ -86,8 +86,8 @@ struct ConfigData {
     flags: u32,
 }
 
-@xdp fn config_filter(ctx: xdp_md) -> xdp_action {
-    var packet_size = ctx.data_end - ctx.data
+@xdp fn config_filter(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
     var info = ConfigData {
         mode: packet_size,
         flags: 42,
@@ -125,8 +125,8 @@ struct VariableTest {
     action: u32,
 }
 
-@xdp fn variable_test(ctx: xdp_md) -> xdp_action {
-    var packet_size = ctx.data_end - ctx.data
+@xdp fn variable_test(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
     var info = VariableTest {
         size: packet_size,
         action: 3,
@@ -169,7 +169,7 @@ struct Payload {
     data_type: u16,
 }
 
-@xdp fn multi_struct(ctx: xdp_md) -> xdp_action {
+@xdp fn multi_struct(ctx: *xdp_md) -> xdp_action {
     var hdr = Header {
         version: 1,
         flags: 0,
@@ -217,8 +217,8 @@ struct FieldTest {
     action: u32,
 }
 
-@xdp fn field_test(ctx: xdp_md) -> xdp_action {
-    var packet_size = ctx.data_end - ctx.data
+@xdp fn field_test(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
     var info = FieldTest {
         size: packet_size,
         action: 4,
@@ -256,7 +256,7 @@ struct TestStruct {
     field2: u64,
 }
 
-@xdp fn test_ir(ctx: xdp_md) -> xdp_action {
+@xdp fn test_ir(ctx: *xdp_md) -> xdp_action {
     var test_obj = TestStruct {
         field1: 42,
         field2: 1000,
@@ -306,8 +306,8 @@ struct Parameter {
     action: u32,
 }
 
-@xdp fn param_test(ctx: xdp_md) -> xdp_action {
-    var packet_size = ctx.data_end - ctx.data
+@xdp fn param_test(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
     var info = Parameter {
         size: packet_size,
         action: 5,

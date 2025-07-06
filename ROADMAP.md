@@ -127,7 +127,7 @@ and stmt_desc =
 let test_simple_program () =
   let code = {|
     program test : xdp {
-      fn main(ctx: xdp_md) -> xdp_action {
+      fn main(ctx: *xdp_md) -> xdp_action {
         return XDP_PASS;
       }
     }
@@ -208,7 +208,7 @@ let test_type_inference () =
 
 let test_context_types () =
   let code = {|
-    fn main(ctx: xdp_md) -> xdp_action {
+    fn main(ctx: *xdp_md) -> xdp_action {
       let packet = ctx.packet();
       return XDP_PASS;
     }
@@ -230,7 +230,7 @@ let test_global_scoping () =
     map<u32, u64> global_counter : array(256)
     map<u32, LocalData> data_map : hash_map(100)
 
-    @xdp fn test(ctx: xdp_md) -> xdp_action {
+    @xdp fn test(ctx: *xdp_md) -> xdp_action {
         global_counter[0] = 1;
         data_map[1] = LocalData::new();
         return XDP_PASS;

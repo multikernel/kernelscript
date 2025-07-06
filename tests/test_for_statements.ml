@@ -7,7 +7,7 @@ open Kernelscript.Type_checker
 (** Test for loop with constant bounds *)
 let test_for_constant_bounds () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..5) {
     var x = i * 2
   }
@@ -24,7 +24,7 @@ let test_for_constant_bounds () =
 (** Test for loop with variable bounds *)
 let test_for_variable_bounds () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var start = 1
   var endval = 10
   for (i in start..endval) {
@@ -43,7 +43,7 @@ let test_for_variable_bounds () =
 (** Test for loop with empty body *)
 let test_for_empty_body () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 1..10) {
   }
   return 0
@@ -59,7 +59,7 @@ let test_for_empty_body () =
 (** Test for loop with single iteration (same bounds) *)
 let test_for_single_iteration () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 5..5) {
     var y = 42
   }
@@ -76,7 +76,7 @@ let test_for_single_iteration () =
 (** Test for loop with simple arithmetic *)
 let test_for_simple_arithmetic () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 1..3) {
     var temp = i * 2
   }
@@ -93,7 +93,7 @@ let test_for_simple_arithmetic () =
 (** Test for loop with break statement *)
 let test_for_with_break () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..10) {
     if (i == 5) {
       break
@@ -113,7 +113,7 @@ let test_for_with_break () =
 (** Test for loop with continue statement *)
 let test_for_with_continue () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..10) {
     if (i % 2 == 0) {
       continue
@@ -133,7 +133,7 @@ let test_for_with_continue () =
 (** Test for loop with complex expressions in bounds *)
 let test_for_complex_bounds () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var base = 5
   var multiplier = 2
   for (i in (base - 1)..(base + multiplier)) {
@@ -161,7 +161,7 @@ let test_for_different_integer_types () =
   
   List.iter (fun (type_name, _) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var start: %s = 1
   var end_val: %s = 5
   for (i in start..end_val) {
@@ -181,7 +181,7 @@ let test_for_different_integer_types () =
 (** Test for loop with large bounds *)
 let test_for_large_bounds () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..1000000) {
     var large = i
   }
@@ -198,7 +198,7 @@ let test_for_large_bounds () =
 (** Test for loop with reverse bounds (start > end) *)
 let test_for_reverse_bounds () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 10..5) {
     var never_executed = i
   }
@@ -215,7 +215,7 @@ let test_for_reverse_bounds () =
 (** Test for loop variable scoping *)
 let test_for_variable_scoping () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var i = 100
   for (i in 0..5) {
     var x = i * 2
@@ -234,7 +234,7 @@ let test_for_variable_scoping () =
 (** Test for loop in global functions *)
 let test_for_in_global_function () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -268,7 +268,7 @@ let test_for_error_cases () =
   
   List.iter (fun (code, desc) ->
     let full_program = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
   return 0
 }

@@ -33,7 +33,7 @@ fn process_packet(cfg: GlobalConfig) -> u32 {
   return 0
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -68,7 +68,7 @@ fn check_threshold(settings: LocalConfig) -> u32 {
   return 0
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -104,7 +104,7 @@ fn enforce_limits(limits: NetworkLimits) -> u32 {
   return 0 // Pass
 }
 
-@xdp fn monitor(ctx: xdp_md) -> xdp_action {
+@xdp fn monitor(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -124,7 +124,7 @@ fn main() -> i32 {
 (** Test 4: Userspace struct parameter field access *)
 let test_userspace_struct_parameter_field_access () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -178,7 +178,7 @@ fn compare_configs(cfg1: Config1, cfg2: Config2) -> u32 {
   return 0
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -222,7 +222,7 @@ fn validate_packet(limits: PacketLimits) -> u32 {
   return 0  // Valid
 }
 
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -257,7 +257,7 @@ fn process_settings(global: GlobalSettings, localSettings: LocalSettings) -> u32
   return g_limit + l_limit
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -292,8 +292,8 @@ fn should_drop(info: PacketInfo) -> u32 {
   return 0
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
-  var packet_size = ctx.data_end - ctx.data
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+      var packet_size = ctx->data_end - ctx->data
   return 2
 }
 
@@ -323,7 +323,7 @@ fn helper(cfg: SimpleConfig) -> u32 {
   return value
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -349,7 +349,7 @@ fn helper(cfg: UndefinedStruct) -> u32 {
   return cfg.value
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -392,7 +392,7 @@ fn update_stats(stats: LocalStats, cfg: GlobalConfig) -> u32 {
   return drops
 }
 
-@xdp fn monitor(ctx: xdp_md) -> xdp_action {
+@xdp fn monitor(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -433,7 +433,7 @@ let test_struct_field_assignment_type_checking () =
       value: u64
     }
     
-    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
+    @xdp fn test_program(ctx: *xdp_md) -> xdp_action {
       var test_data = TestStruct { count: 1, value: 100 }
       test_data.count = test_data.count + 1
       test_data.value = 200
@@ -460,7 +460,7 @@ let test_struct_field_assignment_ir_generation () =
       bytes: u64
     }
     
-    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
+    @xdp fn test_program(ctx: *xdp_md) -> xdp_action {
         var stats = Stats { packets: 1, bytes: 64 }
         stats.packets = stats.packets + 1
         return 2
@@ -486,7 +486,7 @@ let test_struct_field_assignment_c_generation () =
       bytes: u64
     }
     
-    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
+    @xdp fn test_program(ctx: *xdp_md) -> xdp_action {
       var stats = Stats { packets: 1, bytes: 64 }
       stats.packets = stats.packets + 1
       return 2
@@ -512,7 +512,7 @@ let test_struct_field_assignment_errors () =
       packets: u32
     }
     
-    @xdp fn test_program(ctx: xdp_md) -> xdp_action {
+    @xdp fn test_program(ctx: *xdp_md) -> xdp_action {
       var stats = Stats { packets: 1 }
       stats.nonexistent = 42
       return 2
@@ -538,7 +538,7 @@ struct PacketStats {
   bytes: u64
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var stats = PacketStats { count: 1, bytes: 100 }
   var count_val = stats.count
   return 2

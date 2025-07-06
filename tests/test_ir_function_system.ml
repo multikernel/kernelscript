@@ -127,7 +127,7 @@ fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = helper(10, 20)
   return 2
 }
@@ -148,7 +148,7 @@ fn valid_function(x: u32, y: u32) -> u32 {
   return x + y
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = valid_function(10, 20)
   return 2
 }
@@ -169,7 +169,7 @@ fn multiply(x: u32, y: u32) -> u32 {
   return x * y
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = multiply(10, 2)
   return 2
 }
@@ -190,7 +190,7 @@ fn helper() -> u32 {
   return 42
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = helper()
   return 2
 }
@@ -211,7 +211,7 @@ fn level1() -> u32 {
   return 10
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = level1()
   return 2
 }
@@ -232,7 +232,7 @@ fn simple_math(x: u32) -> u32 {
   return x * 2
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var const_val = 10
   var result = simple_math(const_val)
   return 2
@@ -259,7 +259,7 @@ fn multiply(x: u32, y: u32) -> u32 {
   return x * y
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var a = 10
   var b = 20
   var sum = add(a, b)

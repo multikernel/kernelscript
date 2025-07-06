@@ -33,7 +33,7 @@ fn calculate_hash(seed: u32) -> u32 {
       return seed * 31 + 42
     }
     
-    @xdp fn hash_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn hash_filter(ctx: *xdp_md) -> xdp_action {
       var hash = calculate_hash(123)
       return 2
     }
@@ -64,7 +64,7 @@ fn get_counter(index: u32) -> u64 {
       return 42
     }
     
-    @xdp fn xdp_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn xdp_filter(ctx: *xdp_md) -> xdp_action {
       increment_counter(0)
       return 2
     }
@@ -124,7 +124,7 @@ fn kernel_helper(x: u32) -> u32 {
       return x + 100
     }
     
-    @xdp fn test_prog(ctx: xdp_md) -> xdp_action {
+    @xdp fn test_prog(ctx: *xdp_md) -> xdp_action {
       var result = kernel_helper(42)  // This should work
       return 2
     }
@@ -167,7 +167,7 @@ fn kernel_helper(x: u32) -> u32 {
       return y - 50
     }
     
-    @xdp fn mixed_prog(ctx: xdp_md) -> xdp_action {
+    @xdp fn mixed_prog(ctx: *xdp_md) -> xdp_action {
       var result = kernel_helper(42)  // Should work
       return 2
     }
@@ -204,7 +204,7 @@ fn validate_packet(size: u32) -> bool {
       return size >= 64 && size <= 1500
     }
     
-    @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
       var packet_size: u32 = 100
       if (validate_packet(packet_size)) {
         return 2
@@ -246,7 +246,7 @@ fn analyze_packet(size: u32, protocol: u16, valid: bool) -> bool {
       return valid && size > 64
     }
     
-    @xdp fn analyzer(ctx: xdp_md) -> xdp_action {
+    @xdp fn analyzer(ctx: *xdp_md) -> xdp_action {
       if (analyze_packet(128, 0x0800, true)) {
         return 2
       }
@@ -281,7 +281,7 @@ fn advanced_validation(size: u32, protocol: u16) -> bool {
       return protocol == 0x0800 || protocol == 0x86DD
     }
     
-    @xdp fn validator(ctx: xdp_md) -> xdp_action {
+    @xdp fn validator(ctx: *xdp_md) -> xdp_action {
       if (advanced_validation(128, 0x0800)) {
         return 2
       }
@@ -312,7 +312,7 @@ fn advanced_validation(size: u32, protocol: u16) -> bool {
 (** Test 9: Error handling - undefined kernel function *)
 let test_undefined_kernel_function_error () =
   let source = {|
-    @xdp fn test(ctx: xdp_md) -> xdp_action {
+    @xdp fn test(ctx: *xdp_md) -> xdp_action {
       var result = undefined_kernel_func(42)
       return 2
     }
@@ -355,7 +355,7 @@ let test_userspace_function_calling_userspace () =
       return result
     }
     
-    @xdp fn test(ctx: xdp_md) -> xdp_action {
+    @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
     }
   |} in
@@ -396,7 +396,7 @@ fn safe_increment(index: u32) -> bool {
       return false
     }
     
-    @xdp fn counter_xdp(ctx: xdp_md) -> xdp_action {
+    @xdp fn counter_xdp(ctx: *xdp_md) -> xdp_action {
       if (safe_increment(0)) {
         return 2
       }
@@ -471,7 +471,7 @@ fn shared_logging(message: u32) {
       print("Log:", message)
     }
     
-    @xdp fn xdp_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn xdp_filter(ctx: *xdp_md) -> xdp_action {
       if (shared_validation(128)) {
         shared_logging(1)
         return 2
@@ -534,7 +534,7 @@ fn shared_logging(message: u32) {
 (** Test 13: Attributed functions cannot be called from userspace *)
 let test_attributed_function_userspace_restriction () =
   let source = {|
-    @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
       return 2
     }
     
@@ -568,7 +568,7 @@ let test_attributed_function_userspace_restriction () =
 (** Test 14: Attributed functions cannot be called from kernel functions *)
 let test_attributed_function_kernel_restriction () =
   let source = {|
-    @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
       return 2
     }
     
@@ -607,7 +607,7 @@ let test_attributed_function_kernel_restriction () =
 (** Test 15: Attributed functions cannot be called from other attributed functions *)
 let test_attributed_function_cross_call_restriction () =
   let source = {|
-    @xdp fn helper_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn helper_filter(ctx: *xdp_md) -> xdp_action {
       return 2
     }
     

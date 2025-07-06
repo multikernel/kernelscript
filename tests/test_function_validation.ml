@@ -6,7 +6,7 @@ open Kernelscript.Type_checker
 (** Test that @xdp fn main is rejected *)
 let test_attributed_main_function_rejection () =
   let program_text = {|
-@xdp fn main(ctx: xdp_md) -> xdp_action {
+@xdp fn main(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 |} in
@@ -61,7 +61,7 @@ let test_tc_attributed_main_rejection () =
 (** Test that proper eBPF function names are accepted *)
 let test_proper_ebpf_function_names () =
   let program_text = {|
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -81,7 +81,7 @@ fn main() -> i32 {
 (** Test that main function without attributes is accepted *)
 let test_userspace_main_function () =
   let program_text = {|
-@xdp fn monitor(ctx: xdp_md) -> xdp_action {
+@xdp fn monitor(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -101,7 +101,7 @@ fn main() -> i32 {
 (** Test mixed invalid cases *)
 let test_mixed_invalid_cases () =
   let program_text = {|
-@xdp fn main(ctx: xdp_md) -> xdp_action {
+@xdp fn main(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 

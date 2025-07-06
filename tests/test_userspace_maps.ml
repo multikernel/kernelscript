@@ -107,7 +107,7 @@ let test_global_map_accessibility () =
 map<u32, u64> global_counter : HashMap(1024)
 map<u32, u32> global_config : Array(256)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -161,7 +161,7 @@ let test_global_only_map_access () =
   let code = {|
 map<u32, u64> global_shared : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -197,7 +197,7 @@ let test_map_operation_generation () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -249,7 +249,7 @@ map<u32, u32> array_map : Array(256)
 map<u32, u64> lru_map : LruHash(512)
 map<u64, u32> percpu_map : PercpuHash(128)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -305,7 +305,7 @@ let test_global_function_code_structure () =
   let code = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -351,7 +351,7 @@ let test_global_function_error_handling () =
     ({|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -364,7 +364,7 @@ fn helper() -> i32 {
     ({|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> u32 {
+@xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
 }
 
@@ -401,7 +401,7 @@ let test_map_fd_generation () =
   let code = {|
 pin map<u32, u32> shared_counter : HashMap(1024)
 
-@xdp fn packet_counter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_counter(ctx: *xdp_md) -> xdp_action {
   shared_counter[1] = 100
   return XDP_PASS
 }

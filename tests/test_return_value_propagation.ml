@@ -43,7 +43,7 @@ let contains_pattern content pattern =
 (** Test 1: Basic return value propagation in main function *)
 let test_basic_return_value_propagation () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -71,7 +71,7 @@ fn main() -> i32 {
 (** Test 2: Multiple return statements in main function *)
 let test_multiple_return_statements () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -102,7 +102,7 @@ fn main() -> i32 {
 (** Test 3: Return statements in loops and conditionals *)
 let test_return_in_control_structures () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -133,7 +133,7 @@ fn main() -> i32 {
 (** Test 4: Non-main functions should still use direct returns *)
 let test_non_main_function_returns () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 
@@ -164,7 +164,7 @@ fn main() -> i32 {
 (** Test 5: No automatic cleanup section in explicit-only semantics *)
 let test_cleanup_always_reachable () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 

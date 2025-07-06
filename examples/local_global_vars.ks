@@ -13,7 +13,7 @@ local var internal_counter: u32 = 0
 local var secret_key: u64 = 0xdeadbeef
 
 @xdp
-fn packet_filter(ctx: xdp_md) -> xdp_action {
+fn packet_filter(ctx: *xdp_md) -> xdp_action {
     // Increment both shared and local counters
     packet_count = packet_count + 1
     internal_counter = internal_counter + 1

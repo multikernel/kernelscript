@@ -17,7 +17,7 @@ fn process_value(input: u32) -> u32 {
 
 // eBPF program that can call the kfunc but not the private function
 @xdp
-fn xdp_main(ctx: xdp_md) -> xdp_action {
+fn xdp_main(ctx: *xdp_md) -> xdp_action {
     var value: u32 = 42
     var result = process_value(value)  // Can call @kfunc
     // var valid = validate_input(value)  // ERROR: Cannot call @private directly

@@ -104,7 +104,7 @@ let test_parse_statements input expected =
 (** Test simple program parsing *)
 let test_simple_program () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 |} in
@@ -182,7 +182,7 @@ fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = helper(10, 20)
   return 2
 }
@@ -269,7 +269,7 @@ let test_bpf_type_parsing () =
 (** Test control flow parsing *)
 let test_control_flow_parsing () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   
   if (x > 5) {
@@ -340,7 +340,7 @@ fn process_packet(src_ip: u32) -> u64 {
   return count
 }
 
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x12345678
   var count = process_packet(src_ip)
   
@@ -387,7 +387,7 @@ fn process_packet(src_ip: u32) -> u64 {
 (** Test simple if statement without else *)
 let test_simple_if () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   if (x > 5) {
     return 1
@@ -413,7 +413,7 @@ let test_simple_if () =
 (** Test if-else statement *)
 let test_if_else () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   if (x > 15) {
     return 1
@@ -440,7 +440,7 @@ let test_if_else () =
 (** Test if-else if-else chain *)
 let test_if_else_if_else () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   if (x > 20) {
     return 1
@@ -475,7 +475,7 @@ let test_if_else_if_else () =
 (** Test nested if statements *)
 let test_nested_if () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   var y = 20
   if (x > 5) {
@@ -512,7 +512,7 @@ let test_nested_if () =
 (** Test if statements with multiple statements in branches *)
 let test_multiple_statements_in_branches () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   if (x > 5) {
     var y = x + 1
@@ -544,7 +544,7 @@ let test_multiple_statements_in_branches () =
 (** Test that SPEC-compliant syntax works correctly *)
 let test_spec_compliant_syntax () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 10
   var y = 20
   
@@ -609,7 +609,7 @@ let test_if_error_cases () =
 (** Test simple for loop *)
 let test_simple_for_loop () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..10) {
     return 1
   }
@@ -634,7 +634,7 @@ let test_simple_for_loop () =
 (** Test for loop with expressions *)
 let test_for_loop_with_expressions () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..5) {
     var x = i * 2
   }
@@ -659,7 +659,7 @@ let test_for_loop_with_expressions () =
 (** Test for iter syntax support *)
 let test_for_iter_syntax () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..3) {
     var v = i
     return v
@@ -685,7 +685,7 @@ let test_for_iter_syntax () =
 (** Test nested for loops *)
 let test_nested_for_loops () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..3) {
     for (j in 0..2) {
       return 1

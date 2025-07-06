@@ -671,7 +671,7 @@ fn add(a: u32, b: u32) -> u32 {
   return sum
 }
 
-@xdp fn func_test(ctx: xdp_md) -> xdp_action {
+@xdp fn func_test(ctx: *xdp_md) -> xdp_action {
   var result = add(10, 20)
   return 2
 }
@@ -701,7 +701,7 @@ fn add(a: u32, b: u32) -> u32 {
 (** Test variable resolution *)
 let test_variable_resolution () =
   let program_text = {|
-@xdp fn var_test(ctx: xdp_md) -> xdp_action {
+@xdp fn var_test(ctx: *xdp_md) -> xdp_action {
   var x: u32 = 42
   var y: u64 = x + 10
   if (x > 0) {
@@ -769,7 +769,7 @@ let test_map_symbol_handling () =
 map<u32, u64> counter : HashMap(1024)
 map<u16, bool> flags : Array(256)
 
-@xdp fn map_test(ctx: xdp_md) -> xdp_action {
+@xdp fn map_test(ctx: *xdp_md) -> xdp_action {
   counter[1] = 100
   flags[80] = true
   return 2
@@ -805,7 +805,7 @@ fn calculate(x: u32, y: u32) -> u64 {
   return result
 }
 
-@xdp fn type_test(ctx: xdp_md) -> xdp_action {
+@xdp fn type_test(ctx: *xdp_md) -> xdp_action {
   var value = calculate(100, 200)
   if (value > 250) {
     return 2
@@ -878,9 +878,9 @@ fn validate_packet(size: u32) -> bool {
   return size > 64 && size < 1500
 }
 
-@xdp fn comprehensive(ctx: xdp_md) -> xdp_action {
-  var data = ctx.data
-  var data_end = ctx.data_end
+@xdp fn comprehensive(ctx: *xdp_md) -> xdp_action {
+  var data = ctx->data
+  var data_end = ctx->data_end
   var packet_size = data_end - data
   
   if (!validate_packet(packet_size)) {

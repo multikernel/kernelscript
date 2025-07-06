@@ -41,7 +41,7 @@ let test_type_unification () =
 (** Test basic type inference *)
 let test_basic_type_inference () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 42
   var y = true
   var z = "hello"
@@ -65,7 +65,7 @@ let test_basic_type_inference () =
 (** Test variable type checking *)
 let test_variable_type_checking () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x: u32 = 42
   var y: bool = true
   var z = x + 10
@@ -95,7 +95,7 @@ let test_binary_operations () =
   
   List.iter (fun (stmt, should_succeed) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
   return 0
 }
@@ -116,7 +116,7 @@ fn helper(x: u32, y: u32) -> u32 {
   return x + y
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = helper(10, 20)
   return result
 }
@@ -131,7 +131,7 @@ fn helper(x: u32, y: u32) -> u32 {
 (** Test context types *)
 let test_context_types () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
 }
 |} in
@@ -145,8 +145,8 @@ let test_context_types () =
 (** Test struct field access *)
 let test_struct_field_access () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
-  var packet = ctx.data
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  var packet = ctx->data
   return 0
 }
 |} in
@@ -160,7 +160,7 @@ let test_struct_field_access () =
 (** Test statement type checking *)
 let test_statement_type_checking () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x: u32 = 42
   x = 50
   if (x > 0) {
@@ -185,7 +185,7 @@ fn calculate(a: u32, b: u32) -> u32 {
   return result
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = calculate(10, 20)
   return value
 }
@@ -200,7 +200,7 @@ fn calculate(a: u32, b: u32) -> u32 {
 (** Test built-in function type checking *)
 let test_builtin_function_type_checking () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     print("Hello from eBPF")
     print("Message with value: ", 42)
     print()
@@ -226,7 +226,7 @@ let test_variadic_function_arguments () =
   
   List.iter (fun (call, should_succeed, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     %s
     return 0
 }
@@ -242,7 +242,7 @@ let test_variadic_function_arguments () =
 (** Test built-in function return types *)
 let test_builtin_function_return_types () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var result: u32 = print("test message")
     return result
 }
@@ -262,7 +262,7 @@ fn my_function(x: u32) -> u32 {
   return x + 1
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var user_result = my_function(10)
   print("User function result: ", user_result)
   return user_result
@@ -308,7 +308,7 @@ let test_error_handling () =
   
   List.iter (fun (stmt, description) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
   return 2 // XDP_PASS
 }
@@ -329,7 +329,7 @@ fn is_tcp(protocol: u8) -> bool {
   return protocol == 6
 }
 
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
   var protocol: u8 = 6
   if (is_tcp(protocol)) {
     return 2  // 2 // XDP_PASS
@@ -360,7 +360,7 @@ let test_integer_type_promotion () =
   let program_text = {|
 map<u32, u64> counter : HashMap(1024)
 
-@xdp fn test_promotion(ctx: xdp_md) -> xdp_action {
+@xdp fn test_promotion(ctx: *xdp_md) -> xdp_action {
   // Test U32 literal assignment to U64 map value
   counter[1] = 100     // U32 literal should promote to U64
   counter[2] = 200     // U32 literal should promote to U64
@@ -423,7 +423,7 @@ fn process_packet(size: u32) -> bool {
   return size > 1500
 }
 
-@xdp fn comprehensive_test(ctx: xdp_md) -> xdp_action {
+@xdp fn comprehensive_test(ctx: *xdp_md) -> xdp_action {
   var packet_size: u32 = 1000
   var counter_val = increment_counter(packet_size)
   var is_large = process_packet(packet_size)
@@ -529,7 +529,7 @@ let test_arithmetic_promotion () =
   
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
   return 2 // XDP_PASS
 }
@@ -565,7 +565,7 @@ let test_comparison_promotion () =
   
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
   return 2 // XDP_PASS
 }
@@ -588,7 +588,7 @@ let test_map_operations_promotion () =
 type IpAddress = u32
 map<IpAddress, u64> counters : HashMap(1000)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
   counters[ip] = 100
   return 2 // XDP_PASS
@@ -600,7 +600,7 @@ map<IpAddress, u64> counters : HashMap(1000)
 type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value: u16 = 1500  // u16 should promote to u64 (Counter)
   stats[1] = value
   return 2 // XDP_PASS
@@ -613,7 +613,7 @@ type PacketSize = u16
 type Counter = u64
 map<u32, Counter> stats : HashMap(1000)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var size: PacketSize = 1500
   var current = stats[1]  // u64
   var new_value = current + size  // u64 + u16 -> u64
@@ -639,7 +639,7 @@ let test_type_promotion_edge_cases () =
   let edge_case_tests = [
     (* Nested arithmetic with multiple promotions *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var a: u8 = 10
   var b: u16 = 100
   var c: u32 = 1000
@@ -656,7 +656,7 @@ fn process(value: u64) -> u64 {
   return value * 2
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var small: u16 = 100
   var result = process(small)  // u16 -> u64 promotion in function call
   return 2 // XDP_PASS
@@ -665,7 +665,7 @@ fn process(value: u64) -> u64 {
     
     (* Complex expression with promotions *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var a: u8 = 5
   var b: u16 = 10
   var c: u32 = 20
@@ -677,7 +677,7 @@ fn process(value: u64) -> u64 {
     
     (* Assignment with promotion *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var big: u64 = 1000
   var small: u16 = 100
   big = big + small  // u64 = u64 + u16
@@ -702,7 +702,7 @@ let test_null_literal_typing () =
   let null_tests = [
     (* Basic null literal *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = null
   return 2 // XDP_PASS
 }
@@ -710,7 +710,7 @@ let test_null_literal_typing () =
     
     (* Null comparison with typed variable *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x: u32 = 42
   if (x == null) {
     return 1 // XDP_DROP
@@ -721,7 +721,7 @@ let test_null_literal_typing () =
     
     (* Null assignment in variable declaration *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var ptr = null
   return 2 // XDP_PASS
 }
@@ -765,7 +765,7 @@ let test_null_comparisons () =
   
   List.iter (fun (stmt, desc) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
   return 2 // XDP_PASS
 }
@@ -789,7 +789,7 @@ let test_map_null_semantics () =
     ({|
 map<u32, u64> test_map : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = test_map[42]
   if (value == null) {
     return 1 // XDP_DROP
@@ -802,7 +802,7 @@ map<u32, u64> test_map : HashMap(100)
     ({|
 map<u32, u32> counters : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var count = counters[1]
   if (count == null) {
     counters[1] = 1
@@ -818,7 +818,7 @@ map<u32, u32> counters : HashMap(100)
 map<u32, u64> flows : HashMap(100)
 map<u32, u32> packets : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var flow = flows[123]
   var packet_count = packets[123]
   
@@ -851,7 +851,7 @@ let test_null_vs_throw_pattern () =
     ({|
 map<u32, u64> cache : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var cached_value = cache[42]
   if (cached_value == null) {
     // Key doesn't exist - expected case
@@ -872,7 +872,7 @@ fn validate_input(value: u32) -> u32 {
   return value * 2
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = validate_input(500)
   return 2 // XDP_PASS
 }
@@ -891,7 +891,7 @@ fn lookup_value(key: u32) -> u32 {
   return value
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var result = lookup_value(42)
   return 2 // XDP_PASS
 }
@@ -916,7 +916,7 @@ let test_null_semantics () =
     ({|
 map<u32, u32> test_map : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = test_map[1]
   var result = 0
   if (value == null) {
@@ -933,7 +933,7 @@ map<u32, u32> test_map : HashMap(100)
 map<u32, u32> map1 : HashMap(100)
 map<u32, u32> map2 : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var val1 = map1[1]
   var val2 = map2[1]
   
@@ -947,7 +947,7 @@ map<u32, u32> map2 : HashMap(100)
     
     (* Basic null assignments *)
     ({|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = null
   if (x == null) {
     return 1 // XDP_DROP
@@ -1023,7 +1023,7 @@ let test_xdp_signature_validation () =
   
   (* Test that valid signature passes *)
   let valid_program = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2 // XDP_PASS
 }
 |} in
@@ -1044,11 +1044,11 @@ let test_kernel_function_calls_from_attributed () =
   (* Test the specific bug case: kernel function called from attributed function *)
   let program_text = {|
 @helper
-fn get_src_ip(ctx: xdp_md) -> IpAddress {
+fn get_src_ip(ctx: *xdp_md) -> IpAddress {
     return 0x08080808  // 8.8.8.8 as u32
 }
 
-@xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_analyzer(ctx: *xdp_md) -> xdp_action {
     var src_ip: IpAddress = get_src_ip(ctx)
     return 2 // XDP_PASS
 }
@@ -1066,22 +1066,22 @@ fn get_src_ip(ctx: xdp_md) -> IpAddress {
 let test_multiple_kernel_function_calls () =
   let program_text = {|
 @helper
-fn process_packet(ctx: xdp_md, flags: u32) -> u32 {
+fn process_packet(ctx: *xdp_md, flags: u32) -> u32 {
     return flags + 1
 }
 
 @helper
-fn get_packet_size(ctx: xdp_md) -> u32 {
+fn get_packet_size(ctx: *xdp_md) -> u32 {
     return 1500
 }
 
 @helper
-fn validate_headers(ctx: xdp_md, min_size: u32, max_size: u32) -> bool {
+fn validate_headers(ctx: *xdp_md, min_size: u32, max_size: u32) -> bool {
     var size = get_packet_size(ctx)
     return size >= min_size && size <= max_size
 }
 
-@xdp fn complex_handler(ctx: xdp_md) -> xdp_action {
+@xdp fn complex_handler(ctx: *xdp_md) -> xdp_action {
     var flags = process_packet(ctx, 0x01)
     var size = get_packet_size(ctx)
     var is_valid = validate_headers(ctx, 64, 1500)
@@ -1111,13 +1111,13 @@ fn helper_function(value: u32) -> u32 {
 }
 
 @helper
-fn main_kernel_function(ctx: xdp_md) -> u32 {
+fn main_kernel_function(ctx: *xdp_md) -> u32 {
     var base_value = 42
     var result = helper_function(base_value)
     return result
 }
 
-@xdp fn test_program(ctx: xdp_md) -> xdp_action {
+@xdp fn test_program(ctx: *xdp_md) -> xdp_action {
     var computed = main_kernel_function(ctx)
     return 2 // XDP_PASS
 }
@@ -1135,7 +1135,7 @@ fn main_kernel_function(ctx: xdp_md) -> u32 {
 let test_function_call_user_type_resolution () =
   let program_text = {|
 @helper
-fn extract_ip_from_context(ctx: xdp_md) -> IpAddress {
+fn extract_ip_from_context(ctx: *xdp_md) -> IpAddress {
     return 0x7f000001  // 127.0.0.1 as u32
 }
 
@@ -1144,7 +1144,7 @@ fn convert_ip_to_u32(addr: IpAddress) -> u32 {
     return addr
 }
 
-@xdp fn packet_processor(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_processor(ctx: *xdp_md) -> xdp_action {
     var ip_addr = extract_ip_from_context(ctx)
     var converted_value = convert_ip_to_u32(ip_addr)
     
@@ -1172,7 +1172,7 @@ let test_tail_call_cross_program_type_restriction _ =
       return 1  // TC_ACT_SHOT
     }
 
-    @xdp fn xdp_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn xdp_filter(ctx: *xdp_md) -> xdp_action {
       // INVALID: @xdp trying to tail call to @tc function
       return tc_drop_handler(ctx)
     }

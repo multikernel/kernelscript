@@ -16,7 +16,7 @@ let parse_and_check_break_continue program_text =
 (** Test basic break statement parsing *)
 let test_break_statement_parsing () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..10) {
     if (i == 5) {
       break
@@ -33,7 +33,7 @@ let test_break_statement_parsing () =
 (** Test basic continue statement parsing *)
 let test_continue_statement_parsing () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..10) {
     if (i == 5) {
       continue
@@ -50,7 +50,7 @@ let test_continue_statement_parsing () =
 (** Test break in while loop *)
 let test_break_in_while_loop () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var i = 0
   while (i < 10) {
     i = i + 1
@@ -69,7 +69,7 @@ let test_break_in_while_loop () =
 (** Test continue in while loop *)
 let test_continue_in_while_loop () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var i = 0
   while (i < 10) {
     i = i + 1
@@ -88,7 +88,7 @@ let test_continue_in_while_loop () =
 (** Test break in ForIter loop *)
 let test_break_in_for_iter () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var array = [1, 2, 3, 4, 5]
   for (i, val) in array.iter() {
     if (i == 3) {
@@ -106,7 +106,7 @@ let test_break_in_for_iter () =
 (** Test error case: break outside loop *)
 let test_break_outside_loop_error () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 5
   break
   return 2
@@ -121,7 +121,7 @@ let test_break_outside_loop_error () =
 (** Test error case: continue outside loop *)
 let test_continue_outside_loop_error () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 5
   continue
   return 2
@@ -136,7 +136,7 @@ let test_continue_outside_loop_error () =
 (** Test break and continue in nested conditional inside loop *)
 let test_break_continue_in_nested_conditional () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..20) {
     if (i < 5) {
       continue
@@ -157,7 +157,7 @@ let test_break_continue_in_nested_conditional () =
 (** Test multiple break/continue statements in same loop *)
 let test_multiple_break_continue_statements () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 0..100) {
     if (i < 10) {
       continue
@@ -180,7 +180,7 @@ let test_multiple_break_continue_statements () =
 (** Test evaluation of break statement (simple simulation) *)
 let test_break_evaluation () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   for (i in 1..3) {
     if (i == 2) {
       break

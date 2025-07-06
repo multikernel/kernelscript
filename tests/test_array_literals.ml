@@ -21,7 +21,7 @@ let test_array_literal_basic_types () =
   
   List.iter (fun (array_literal, description) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var arr = %s
     return 2
 }
@@ -46,7 +46,7 @@ let test_array_literal_type_consistency () =
   
   List.iter (fun (array_literal, description) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var arr = %s
     return 2
 }
@@ -71,7 +71,7 @@ let test_array_literal_type_inconsistency () =
   
   List.iter (fun (array_literal, description) ->
     let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var arr = %s
     return 2
 }
@@ -90,7 +90,7 @@ let test_array_literal_type_inconsistency () =
 (** Test 4: Empty Array Literals *)
 let test_empty_array_literals () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var empty_arr = []
     return 2
 }
@@ -112,7 +112,7 @@ config network {
     feature_flags: bool[2] = [true, false],
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 |} in
@@ -133,7 +133,7 @@ config test_config {
     flags: bool[2] = [true, false],
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 |} in
@@ -148,7 +148,7 @@ config test_config {
 (** Test 7: Nested Array Literals *)
 let test_nested_array_literals () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var nested = [[1, 2], [3, 4]]
     return 2
 }
@@ -165,7 +165,7 @@ let test_nested_array_literals () =
 let test_large_array_literals () =
   let large_array = String.concat ", " (List.init 100 string_of_int) in
   let program_text = Printf.sprintf {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var large_arr = [%s]
     return 2
 }
@@ -181,7 +181,7 @@ let test_large_array_literals () =
 (** Test 9: Array Literal IR Generation *)
 let test_array_literal_ir_generation () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var numbers = [1, 2, 3, 4]
     var flags = [true, false]
     return 2

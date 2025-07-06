@@ -44,7 +44,7 @@ map<u32, result PacketInfo u8> packet_cache : PercpuHash(128)
 map<Protocol, Counter> protocol_stats : PercpuArray(32)
 
 @helper
-fn extract_packet_info(ctx: xdp_md) -> option PacketInfo {
+fn extract_packet_info(ctx: *xdp_md) -> option PacketInfo {
   // This would contain actual packet parsing logic
   // For now, return a dummy PacketInfo
   var info: PacketInfo = PacketInfo {
@@ -92,7 +92,7 @@ fn update_stats(info: PacketInfo) {
 }
 
 // Program using all the new types
-@xdp fn packet_inspector(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_inspector(ctx: *xdp_md) -> xdp_action {
   // Extract packet information
   var packet_info = extract_packet_info(ctx)
   
@@ -105,7 +105,7 @@ fn update_stats(info: PacketInfo) {
       var action = get_filter_action(info)
       
       // Store in recent packets for userspace inspection
-      var packet_id = ctx.get_packet_id()
+      var packet_id = ctx->get_packet_id()
       recent_packets[packet_id] = info
       
       // Apply filtering action
@@ -114,7 +114,7 @@ fn update_stats(info: PacketInfo) {
         FILTER_ACTION_BLOCK -> return XDP_DROP,
         FILTER_ACTION_LOG -> {
           // Log packet and allow
-          ctx.log_packet(info)
+          ctx->log_packet(info)
           return XDP_PASS
         },
         FILTER_ACTION_REDIRECT -> return XDP_REDIRECT

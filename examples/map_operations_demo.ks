@@ -49,8 +49,8 @@ struct ArrayElement {
 }
 
 // Program 1: Reader-heavy workload demonstrating safe concurrent access
-@xdp fn traffic_monitor(ctx: xdp_md) -> xdp_action {
-    var key = ctx.ingress_ifindex()
+@xdp fn traffic_monitor(ctx: *xdp_md) -> xdp_action {
+    var key = ctx->ingress_ifindex()
     
     // Safe concurrent read access - multiple programs can read simultaneously
     var counter = global_counter[key]
@@ -83,7 +83,7 @@ struct ArrayElement {
 
 // Program 2: Writer workload demonstrating conflict detection
 @tc fn stats_updater(ctx: TcContext) -> TcAction {
-    var ifindex = ctx.ifindex()
+    var ifindex = ctx->ifindex()
     
     // Potential write conflict with other programs
     var stats = shared_stats[ifindex]
@@ -98,11 +98,11 @@ struct ArrayElement {
     
     // Update statistics - this creates a write operation
     stats.packet_count += 1
-    stats.byte_count += ctx.data_len()
+    stats.byte_count += ctx->data_len()
     stats.last_seen = bpf_ktime_get_ns()
     
     // Calculate error rate (simplified)
-    if (ctx.protocol() == 0) {
+    if (ctx->protocol() == 0) {
         stats.error_rate += 1
     }
     
@@ -125,7 +125,7 @@ struct ArrayElement {
 @tracepoint fn event_logger(ctx: TracepointContext) -> i32 {
     var event = Event {
         timestamp: bpf_ktime_get_ns(),
-        event_type: ctx.event_id(),
+        event_type: ctx->event_id(),
         data: [0; 32],  // Simplified data
     }
     

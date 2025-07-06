@@ -130,7 +130,7 @@ pin map<u32, u64> pinned_local : HashMap(512)
 // Combined attributes
 @flags(no_prealloc | rdonly) pin map<u32, u64> combined_map : HashMap(1024)
 
-@xdp fn test_syntax(ctx: xdp_md) -> xdp_action {
+@xdp fn test_syntax(ctx: *xdp_md) -> xdp_action {
   // Test all map types can be used
   simple_counter[42] = 100
   lookup_array[10] = 200
@@ -158,7 +158,7 @@ let test_new_syntax_type_checking () =
 map<u32, u64> blockless_map : HashMap(512)
 pin map<u32, u64> pinned_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   // Test type checking works with new syntax
   var key: u32 = 42
   var value1: u64 = blockless_map[key]
@@ -184,7 +184,7 @@ let test_new_syntax_ir_generation () =
 map<u32, u64> simple_map : HashMap(512)
 pin map<u32, u64> pinned_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   simple_map[42] = 100
   pinned_map[42] = 200
   
@@ -212,7 +212,7 @@ let test_new_syntax_c_generation () =
 map<u32, u64> blockless_counter : HashMap(512)
 pin map<u32, u64> pinned_stats : HashMap(1024)
 
-@xdp fn counter(ctx: xdp_md) -> xdp_action {
+@xdp fn counter(ctx: *xdp_md) -> xdp_action {
   var key = 42
   blockless_counter[key] = blockless_counter[key] + 1
   pinned_stats[key] = pinned_stats[key] + 1
@@ -287,7 +287,7 @@ let test_complete_map_program_parsing () =
   let program = {|
 map<u32, u64> packet_counts : HashMap(1024)
 
-@xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
+@xdp fn rate_limiter(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x08080808
   var current_count = packet_counts[src_ip]
   var new_count = current_count + 1
@@ -313,7 +313,7 @@ let test_map_type_checking () =
   let program = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
   test_map[key] = value + 1
@@ -334,7 +334,7 @@ let test_map_type_validation () =
     (* Valid: u32 key with u32 access *)
     ({|
 map<u32, u64> valid_map : HashMap(1024)
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key: u32 = 42
   var value = valid_map[key]
   return XDP_PASS
@@ -344,7 +344,7 @@ map<u32, u64> valid_map : HashMap(1024)
     (* Invalid: string key with u32 map *)
     ({|
 map<u32, u64> invalid_map : HashMap(1024)
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = "invalid"
   var value = invalid_map[key]
   return XDP_PASS
@@ -366,7 +366,7 @@ let test_map_identifier_resolution () =
   let program = {|
 map<u32, u64> global_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = global_map[42]
   return XDP_PASS
 }
@@ -384,7 +384,7 @@ let test_map_ir_generation () =
   let program = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
   test_map[key] = value + 1
@@ -408,7 +408,7 @@ let test_map_c_generation () =
   let program = {|
 map<u32, u64> packet_counter : HashMap(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x12345678
   var count = packet_counter[src_ip]
   packet_counter[src_ip] = count + 1
@@ -448,7 +448,7 @@ let test_different_map_types () =
     let program = Printf.sprintf {|
 map<u32, u64> test_map : %s(1024)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
   return XDP_PASS

@@ -127,7 +127,7 @@ let test_program_types_as_identifiers () =
 
 let test_complex_attributed_function () =
   let code = {|
-    @xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+    @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
       var x = 42
       return x
     }
@@ -135,7 +135,7 @@ let test_complex_attributed_function () =
   let tokens = Lexer.tokenize_string code in
   let expected = [
     Parser.AT; Parser.IDENTIFIER "xdp"; Parser.FN; Parser.IDENTIFIER "packet_filter"; 
-    Parser.LPAREN; Parser.IDENTIFIER "ctx"; Parser.COLON; Parser.IDENTIFIER "xdp_md"; Parser.RPAREN;
+    Parser.LPAREN; Parser.IDENTIFIER "ctx"; Parser.COLON; Parser.MULTIPLY; Parser.IDENTIFIER "xdp_md"; Parser.RPAREN;
     Parser.ARROW; Parser.IDENTIFIER "xdp_action"; Parser.LBRACE;
     Parser.VAR; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None);
     Parser.RETURN; Parser.IDENTIFIER "x";

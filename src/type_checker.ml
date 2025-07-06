@@ -175,6 +175,7 @@ let rec resolve_user_type ctx = function
          | StructDef (_, _, _) -> Struct name
          | EnumDef (_, _, _) -> Enum name
        with Not_found -> UserType name)
+  | Pointer inner_type -> Pointer (resolve_user_type ctx inner_type)
   | other_type -> other_type
 
 (** C-style integer promotion - promotes to the larger type *)
@@ -282,11 +283,7 @@ let get_builtin_function_signature name =
   | None ->
       (* Fallback to existing hardcoded built-ins for compatibility *)
       match name with
-      (* XDP context methods *)
-      | "ctx.packet" -> Some ([], Pointer U8)
-      | "ctx.data_end" -> Some ([], Pointer U8)
-      | "ctx.get_packet_id" -> Some ([], U32)
-      | "ctx.log_packet" -> Some ([Struct "PacketInfo"], U32)
+
       
       (* Map operations *)
       | name when String.contains name '.' ->
@@ -550,12 +547,7 @@ and type_check_field_access ctx obj field pos =
        with Not_found ->
          type_error ("Undefined struct: " ^ struct_name) pos)
   
-  | Xdp_md | TcContext | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext ->
-      (* Built-in context field access *)
-      (match field with
-       | "data" | "data_end" | "data_meta" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
-       | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" -> { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
-       | _ -> type_error ("Unknown context field: " ^ field) pos)
+
   
   | _ ->
       type_error "Cannot access field of non-struct type" pos)
@@ -2003,9 +1995,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
                | None -> None in
              
              if List.length params <> 1 ||
-                resolved_param_type <> Xdp_md ||
+                resolved_param_type <> Pointer Xdp_md ||
                 resolved_return_type <> Some Xdp_action then
-               type_error ("@xdp attributed function must have signature (ctx: xdp_md) -> xdp_action") attr_func.attr_pos
+               type_error ("@xdp attributed function must have signature (ctx: *xdp_md) -> xdp_action") attr_func.attr_pos
          | Some Tc ->
              let params = attr_func.attr_function.func_params in
              let resolved_param_type = if List.length params = 1 then 

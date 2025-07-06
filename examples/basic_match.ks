@@ -10,21 +10,21 @@ enum IpProtocol {
 
 // Helper functions for packet processing (declared first)
 @helper
-fn get_ip_protocol(ctx: xdp_md) -> u32 {
+fn get_ip_protocol(ctx: *xdp_md) -> u32 {
     // In a real implementation, this would extract the protocol field
     // from the IP header. For demo purposes, we return TCP.
     return 6 // IPPROTO_TCP
 }
 
 @helper  
-fn get_tcp_dest_port(ctx: xdp_md) -> u32 {
+fn get_tcp_dest_port(ctx: *xdp_md) -> u32 {
     // In a real implementation, this would extract the destination port
     // from the TCP header. For demo purposes, we return HTTP.
     return 80 // HTTP port
 }
 
 @helper
-fn get_udp_dest_port(ctx: xdp_md) -> u32 {
+fn get_udp_dest_port(ctx: *xdp_md) -> u32 {
     // In a real implementation, this would extract the destination port
     // from the UDP header. For demo purposes, we return DNS.
     return 53 // DNS port
@@ -32,7 +32,7 @@ fn get_udp_dest_port(ctx: xdp_md) -> u32 {
 
 // Specialized TCP port-based classifier (tail-callable)
 @xdp
-fn tcp_port_classifier(ctx: xdp_md) -> xdp_action {
+fn tcp_port_classifier(ctx: *xdp_md) -> xdp_action {
     var port = get_tcp_dest_port(ctx)
     
     return match (port) {
@@ -47,7 +47,7 @@ fn tcp_port_classifier(ctx: xdp_md) -> xdp_action {
 
 // Specialized UDP port-based classifier (tail-callable)
 @xdp  
-fn udp_port_classifier(ctx: xdp_md) -> xdp_action {
+fn udp_port_classifier(ctx: *xdp_md) -> xdp_action {
     var port = get_udp_dest_port(ctx)
     
     return match (port) {
@@ -61,7 +61,7 @@ fn udp_port_classifier(ctx: xdp_md) -> xdp_action {
 
 // Main packet classifier using match construct with tail call delegation
 @xdp
-fn packet_classifier(ctx: xdp_md) -> xdp_action {
+fn packet_classifier(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     
     // Match construct provides clean protocol-based delegation

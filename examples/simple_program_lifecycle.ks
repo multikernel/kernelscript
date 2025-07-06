@@ -1,4 +1,4 @@
-@xdp fn simple_xdp(ctx: xdp_md) -> xdp_action {
+@xdp fn simple_xdp(ctx: *xdp_md) -> xdp_action {
     print("Hello" + " world")
     return 2
 }

@@ -19,7 +19,7 @@ var temp_buffer: str<256> = "temporary"
 local var internal_counter: u32 = 42
 
 @xdp
-fn packet_filter(ctx: xdp_md) -> u32 {
+fn packet_filter(ctx: *xdp_md) -> u32 {
     session_count = session_count + 1
     if (debug_enabled) {
         print("Session count: %d", session_count)
@@ -90,7 +90,7 @@ pin var global_counter: u64 = 0
 pin var enable_logging: bool = true
 
 @xdp  
-fn test_program(ctx: xdp_md) -> u32 {
+fn test_program(ctx: *xdp_md) -> u32 {
     global_counter = global_counter + 1
     if (enable_logging) {
         print("Counter: %d", global_counter)
@@ -127,7 +127,7 @@ pin var shared_state: u32 = 42
 var regular_var: u32 = 10
 
 @xdp
-fn test_func(ctx: xdp_md) -> u32 {
+fn test_func(ctx: *xdp_md) -> u32 {
     shared_state = shared_state + regular_var
     return 0
 }

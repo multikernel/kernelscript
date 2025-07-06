@@ -43,7 +43,7 @@ let test_global_function_main_with_different_struct_name () =
   let program_text = {|
 map<u32, u64> server_stats : HashMap(32)
 
-@xdp fn server_monitor(ctx: xdp_md) -> xdp_action {
+@xdp fn server_monitor(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 
@@ -108,7 +108,7 @@ let test_global_function_main_with_minimal_struct_name () =
   let program_text = {|
 map<u32, u64> minimal_map : HashMap(8)
 
-@xdp fn minimal_prog(ctx: xdp_md) -> xdp_action {
+@xdp fn minimal_prog(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 
@@ -157,7 +157,7 @@ let test_global_function_main_validation_with_custom_struct () =
   let program_text = {|
 map<u32, u64> validation_map : HashMap(16)
 
-@xdp fn validation_prog(ctx: xdp_md) -> xdp_action {
+@xdp fn validation_prog(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 
@@ -189,7 +189,7 @@ fn main(custom_args: CustomArgs) -> i32 {
 (** Test 4: Verify argument parsing and assignment to IR variables works correctly *)
 let test_argument_parsing_assignment_bug_fix () =
   let program_text = {|
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
     return 2
 }
 

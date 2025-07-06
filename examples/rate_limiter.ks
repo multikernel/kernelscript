@@ -4,9 +4,9 @@ config network {
   limit : u32,
 }
 
-@xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
-  var packet_start = ctx.data
-  var packet_end = ctx.data_end
+@xdp fn rate_limiter(ctx: *xdp_md) -> xdp_action {
+  var packet_start = ctx->data
+  var packet_end = ctx->data_end
   var packet_size = packet_end - packet_start
   
   // Basic packet size validation

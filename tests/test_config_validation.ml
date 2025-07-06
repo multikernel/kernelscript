@@ -21,7 +21,7 @@ config network {
     protocol: u8 = 6,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var size: u32 = network.max_packet_size
     var logging: bool = network.enable_logging
     var timeout_val: u64 = network.timeout
@@ -44,7 +44,7 @@ config network {
     max_packet_size: u32 = 1500,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var size = nonexistent_config.max_packet_size
     return 2
 }
@@ -69,7 +69,7 @@ config network {
     enable_logging: bool = true,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var value = network.nonexistent_field
     return 2
 }
@@ -95,7 +95,7 @@ config network {
     timeout: u64 = 5000,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var size: u32 = network.max_packet_size  // Correct type
     var logging: bool = network.enable_logging  // Correct type
     var timeout_val: u64 = network.timeout  // Correct type
@@ -123,7 +123,7 @@ config security {
     enable_strict_mode: bool = false,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var size = network.max_packet_size
     var threat = security.threat_level
     return 2
@@ -146,7 +146,7 @@ config limits {
     enable_check: bool = true,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var packet_size: u32 = 800
     
     if (limits.enable_check && 
@@ -174,7 +174,7 @@ config network {
     allowed_ips: u32[2] = [0x7f000001, 0xc0a80001],
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var ports = network.blocked_ports
     var ips = network.allowed_ips
     return 2
@@ -196,7 +196,7 @@ config network {
     settings: u32 = 1,
 }
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
     var value = network.settings  // Valid
     return 2
 }
@@ -217,7 +217,7 @@ config network {
     enable_logging: bool = true,
 }
 
-@xdp fn config_test(ctx: xdp_md) -> xdp_action {
+@xdp fn config_test(ctx: *xdp_md) -> xdp_action {
     var size: u32 = 1500  // Simple test without config access for now
     return 2
 }

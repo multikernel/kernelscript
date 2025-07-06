@@ -38,12 +38,12 @@ fn get_cpu_id() -> u32 {
 }
 
 @helper
-fn get_src_ip(ctx: xdp_md) -> IpAddress {
+fn get_src_ip(ctx: *xdp_md) -> IpAddress {
   return 0x7f000001 // 127.0.0.1 for demo
 }
 
 @helper
-fn get_packet_len_xdp(ctx: xdp_md) -> PacketSize {
+fn get_packet_len_xdp(ctx: *xdp_md) -> PacketSize {
   return 64 // Demo packet size
 }
 
@@ -58,7 +58,7 @@ fn get_timestamp() -> u64 {
 }
 
 // XDP program demonstrating map usage
-@xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_analyzer(ctx: *xdp_md) -> xdp_action {
   // Get packet information
   var src_ip: IpAddress = get_src_ip(ctx)
   var packet_len: PacketSize = get_packet_len_xdp(ctx)

@@ -49,7 +49,7 @@ let test_complete_map_compilation () =
   let program = {|
 map<u32, u64> counter : HashMap(1024)
 
-@xdp fn rate_limiter(ctx: xdp_md) -> xdp_action {
+@xdp fn rate_limiter(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x08080808
   var current_count = counter[src_ip]
   counter[src_ip] = current_count + 1
@@ -92,7 +92,7 @@ map<u32, u64> global_counter : HashMap(1024)
 map<u16, u32> port_map : Array(65536)  
 map<u64, u32> session_map : HashMap(10000)
 
-@xdp fn multi_map(ctx: xdp_md) -> xdp_action {
+@xdp fn multi_map(ctx: *xdp_md) -> xdp_action {
   var ip = 0x08080808
   var port = 80
   var session = 0x123456789ABCDEF0
@@ -141,7 +141,7 @@ let test_invalid_map_operations () =
     {|
 map<u32, u64> test_map : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map["invalid_key"] = 1
   return 2
 }
@@ -150,14 +150,14 @@ map<u32, u64> test_map : HashMap(100)
     {|
 map<u32, u64> test_map : HashMap(100)
 
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[1] = "invalid_value"
   return 2
 }
 |};
     (* Undefined map *)
     {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   undefined_map[1] = 42
   return 2
 }
@@ -190,7 +190,7 @@ fn compute_key(base: u32) -> u32 {
   return base * 2 + 1
 }
 
-@xdp fn complex_ops(ctx: xdp_md) -> xdp_action {
+@xdp fn complex_ops(ctx: *xdp_md) -> xdp_action {
   var base_ip = 0x08080808
   var key = compute_key(base_ip)
   
@@ -242,7 +242,7 @@ let test_map_operations_in_conditionals () =
 map<u32, u64> packet_counts : HashMap(1024)
 map<u32, u32> blacklist : HashMap(256)
 
-@xdp fn conditional_maps(ctx: xdp_md) -> xdp_action {
+@xdp fn conditional_maps(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x08080808
   
   if (blacklist[src_ip] > 0) {
@@ -308,7 +308,7 @@ let test_memory_safety () =
   let program = {|
 map<u32, u64> test_map : HashMap(1024)
 
-@xdp fn memory_safe(ctx: xdp_md) -> xdp_action {
+@xdp fn memory_safe(ctx: *xdp_md) -> xdp_action {
   var key = 42
   var value = test_map[key]
   test_map[key] = value + 1
@@ -353,7 +353,7 @@ let test_different_context_types () =
     ("xdp", {|
 map<u32, u64> xdp_stats : HashMap(1024)
 
-@xdp fn xdp_test(ctx: xdp_md) -> xdp_action {
+@xdp fn xdp_test(ctx: *xdp_md) -> xdp_action {
   xdp_stats[1] = xdp_stats[2]
   return 2
 }

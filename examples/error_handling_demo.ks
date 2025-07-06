@@ -1,7 +1,7 @@
 // Minimal error handling demo
 map<u32, u64> counters : HashMap(1024)
 
-@xdp fn error_demo(ctx: xdp_md) -> i32 {
+@xdp fn error_demo(ctx: *xdp_md) -> i32 {
     var key = 42
     
     try {

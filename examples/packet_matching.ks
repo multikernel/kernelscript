@@ -38,43 +38,43 @@ enum WellKnownPorts {
 // These demonstrate the ecosystem around match-based packet processing
 
 @helper
-fn get_ip_protocol(ctx: xdp_md) -> u32 {
+fn get_ip_protocol(ctx: *xdp_md) -> u32 {
     // Extract IP protocol field from packet
     return 6 // Mock: return TCP
 }
 
 @helper  
-fn get_tcp_dest_port(ctx: xdp_md) -> u32 {
+fn get_tcp_dest_port(ctx: *xdp_md) -> u32 {
     // Extract TCP destination port
     return 80 // Mock: return HTTP port
 }
 
 @helper
-fn get_udp_dest_port(ctx: xdp_md) -> u32 {
+fn get_udp_dest_port(ctx: *xdp_md) -> u32 {
     // Extract UDP destination port  
     return 53 // Mock: return DNS port
 }
 
 @helper
-fn get_tcp_flags(ctx: xdp_md) -> u32 {
+fn get_tcp_flags(ctx: *xdp_md) -> u32 {
     // Extract TCP flags
     return 0x02 // Mock: return SYN flag
 }
 
 @helper
-fn get_icmp_type(ctx: xdp_md) -> u32 {
+fn get_icmp_type(ctx: *xdp_md) -> u32 {
     // Extract ICMP type
     return 8 // Mock: return echo request
 }
 
 @helper
-fn get_src_ip(ctx: xdp_md) -> u32 {
+fn get_src_ip(ctx: *xdp_md) -> u32 {
     // Extract source IP address
     return 0xc0a80101 // Mock: return 192.168.1.1
 }
 
 @helper
-fn get_dst_ip(ctx: xdp_md) -> u32 {
+fn get_dst_ip(ctx: *xdp_md) -> u32 {
     // Extract destination IP address  
     return 0xc0a80102 // Mock: return 192.168.1.2
 }
@@ -86,9 +86,9 @@ fn get_dst_ip(ctx: xdp_md) -> u32 {
 @helper fn rate_limit_unknown_syn(ip: u32) -> xdp_action { return XDP_PASS }
 
 // Load balancing functions
-@helper fn distribute_http(ctx: xdp_md) -> xdp_action { return XDP_PASS }
-@helper fn distribute_https(ctx: xdp_md) -> xdp_action { return XDP_PASS }
-@helper fn distribute_dns(ctx: xdp_md) -> xdp_action { return XDP_PASS }
+@helper fn distribute_http(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
+@helper fn distribute_https(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
+@helper fn distribute_dns(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
 
 // Security check functions  
 @helper fn is_blocked_ip(ip: u32) -> bool { return false }
@@ -105,7 +105,7 @@ fn get_dst_ip(ctx: xdp_md) -> u32 {
 // Basic packet classifier using match construct
 // This demonstrates the clean syntax for protocol-based decisions
 @xdp
-fn basic_packet_classifier(ctx: xdp_md) -> xdp_action {
+fn basic_packet_classifier(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     
     // Match construct provides clean packet classification
@@ -121,7 +121,7 @@ fn basic_packet_classifier(ctx: xdp_md) -> xdp_action {
 // Advanced packet classifier with port-based filtering
 // Demonstrates nested decision making with match constructs
 @xdp
-fn advanced_packet_classifier(ctx: xdp_md) -> xdp_action {
+fn advanced_packet_classifier(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     
     return match (protocol) {
@@ -153,7 +153,7 @@ fn advanced_packet_classifier(ctx: xdp_md) -> xdp_action {
 // DDoS protection using match construct
 // Shows how match simplifies complex security logic
 @xdp
-fn ddos_protection(ctx: xdp_md) -> xdp_action {
+fn ddos_protection(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     var src_ip = get_src_ip(ctx)
     
@@ -195,7 +195,7 @@ fn ddos_protection(ctx: xdp_md) -> xdp_action {
 // Load balancer using match for backend selection
 // Demonstrates match for algorithmic packet distribution
 @xdp
-fn load_balancer(ctx: xdp_md) -> xdp_action {
+fn load_balancer(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     
     // Only load balance specific protocols
@@ -224,7 +224,7 @@ fn load_balancer(ctx: xdp_md) -> xdp_action {
 // Packet logging and monitoring
 // Shows match for categorizing packets for observability
 @xdp  
-fn packet_monitor(ctx: xdp_md) -> xdp_action {
+fn packet_monitor(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     var src_ip = get_src_ip(ctx)
     var dst_ip = get_dst_ip(ctx)
@@ -298,7 +298,7 @@ fn qos_packet_marker(ctx: TcContext) -> TcAction {
 // Firewall rule engine using match construct
 // Shows complex security policy implementation
 @xdp
-fn firewall_engine(ctx: xdp_md) -> xdp_action {
+fn firewall_engine(ctx: *xdp_md) -> xdp_action {
     var src_ip = get_src_ip(ctx)
     var protocol = get_ip_protocol(ctx)
     

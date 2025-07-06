@@ -246,13 +246,13 @@ let rec ebpf_type_from_ir_type = function
   | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRContext XdpCtx -> "struct xdp_md*"
-  | IRContext TcCtx -> "struct __sk_buff*"
-  | IRContext KprobeCtx -> "struct pt_regs*"
-  | IRContext UprobeCtx -> "struct pt_regs*"
-  | IRContext TracepointCtx -> "void*"
-  | IRContext LsmCtx -> "void*"
-  | IRContext CgroupSkbCtx -> "struct __sk_buff*"
+  | IRContext XdpCtx -> "struct xdp_md"
+  | IRContext TcCtx -> "struct __sk_buff"
+  | IRContext KprobeCtx -> "struct pt_regs"
+  | IRContext UprobeCtx -> "struct pt_regs"
+  | IRContext TracepointCtx -> "void"
+  | IRContext LsmCtx -> "void"
+  | IRContext CgroupSkbCtx -> "struct __sk_buff"
   | IRAction Xdp_actionType -> "int"
   | IRAction TcActionType -> "int"
   | IRAction GenericActionType -> "int"
@@ -2392,6 +2392,9 @@ let generate_c_function ctx ir_func =
     | (_, IRContext XdpCtx) :: _ -> "SEC(\"xdp\")"
     | (_, IRContext TcCtx) :: _ -> "SEC(\"tc\")"
     | (_, IRContext KprobeCtx) :: _ -> "SEC(\"kprobe\")"
+    | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> "SEC(\"xdp\")"
+    | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
+    | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
     | _ -> "SEC(\"prog\")"
   else ""
   in

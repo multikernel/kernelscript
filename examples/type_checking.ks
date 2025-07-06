@@ -27,10 +27,10 @@ enum FilterDecision {
 pin map<IpAddress, u64> connection_stats : HashMap(1024)
 
 @helper
-fn extract_header(ctx: xdp_md) -> xdp_action {
-  // Type checker validates that ctx is xdp_context type
-  var data = ctx.data
-  var data_end = ctx.data_end
+fn extract_header(ctx: *xdp_md) -> xdp_action {
+  // Type checker validates context parameter access
+  var data = ctx->data
+  var data_end = ctx->data_end
   
   // Type checker ensures arithmetic operations are on numeric types
   var packet_len = data_end - data
@@ -96,7 +96,7 @@ fn make_decision(header: PacketHeader) -> FilterDecision {
   }
 }
 
-@xdp fn packet_analyzer(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_analyzer(ctx: *xdp_md) -> xdp_action {
   // Type checker validates context parameter and return type
   var packet_header = extract_header(ctx)
   

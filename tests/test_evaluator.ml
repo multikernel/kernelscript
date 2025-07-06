@@ -7,7 +7,7 @@ open Alcotest
 (** Test basic expression evaluation *)
 let test_basic_evaluation () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 5
   var y = 10
   var result = x + y
@@ -36,7 +36,7 @@ let make_test_expr expr_desc =
 (** Test enum constant evaluation using symbol table *)
 let test_enum_constant_evaluation () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return XDP_PASS
 }
 |} in
@@ -66,7 +66,7 @@ let test_enum_constant_evaluation () =
 (** Test different enum constants *)  
 let test_various_enum_constants () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   return XDP_DROP
 }
 |} in
@@ -99,7 +99,7 @@ let test_various_enum_constants () =
 
 let test_variable_evaluation () =
   let program_text = {|
-@xdp fn test(ctx: xdp_md) -> xdp_action {
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
   var x = 5
   return 2
 }

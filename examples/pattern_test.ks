@@ -5,9 +5,9 @@ struct PacketInfo {
     action: u32,
 }
 
-@xdp fn packet_filter(ctx: xdp_md) -> xdp_action {
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
   // Context access - tests IRContextAccess pattern
-  var packet_size = ctx.data_end - ctx.data
+  var packet_size = ctx->data_end - ctx->data
   
   // Struct literal initialization - tests IRStructLiteral pattern
   var info = PacketInfo {

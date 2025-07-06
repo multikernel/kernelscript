@@ -95,12 +95,12 @@ let test_match_with_enums () =
 let test_packet_matching () =
   let input = {|
     @helper
-    fn get_protocol(ctx: xdp_md) -> u32 {
+    fn get_protocol(ctx: *xdp_md) -> u32 {
       return 6
     }
     
     @xdp
-    fn packet_classifier(ctx: xdp_md) -> xdp_action {
+    fn packet_classifier(ctx: *xdp_md) -> xdp_action {
       var protocol = get_protocol(ctx)
       
       return match (protocol) {
@@ -259,22 +259,22 @@ let test_match_boolean_patterns () =
 let test_match_conditional_control_flow () =
   let source = {|
     @helper
-    fn get_protocol(ctx: xdp_md) -> u32 {
+    fn get_protocol(ctx: *xdp_md) -> u32 {
         return 6
     }
 
     @helper  
-    fn get_tcp_port(ctx: xdp_md) -> u32 {
+    fn get_tcp_port(ctx: *xdp_md) -> u32 {
         return 80
     }
 
     @helper
-    fn get_udp_port(ctx: xdp_md) -> u32 {
+    fn get_udp_port(ctx: *xdp_md) -> u32 {
         return 53
     }
 
     @xdp
-    fn packet_processor(ctx: xdp_md) -> xdp_action {
+    fn packet_processor(ctx: *xdp_md) -> xdp_action {
         var protocol = get_protocol(ctx)
         
         return match (protocol) {
@@ -345,7 +345,7 @@ let test_match_no_premature_execution () =
     }
 
     @xdp
-    fn test_match(ctx: xdp_md) -> xdp_action {
+    fn test_match(ctx: *xdp_md) -> xdp_action {
         var x = 1
         var result = match (x) {
             1: {
@@ -410,17 +410,17 @@ let test_match_no_premature_execution () =
 let test_nested_match_structures () =
   let source = {|
     @helper
-    fn get_protocol(ctx: xdp_md) -> u32 {
+    fn get_protocol(ctx: *xdp_md) -> u32 {
         return 6
     }
 
     @helper  
-    fn get_tcp_port(ctx: xdp_md) -> u32 {
+    fn get_tcp_port(ctx: *xdp_md) -> u32 {
         return 80
     }
 
     @xdp  
-    fn nested_match_test(ctx: xdp_md) -> xdp_action {
+    fn nested_match_test(ctx: *xdp_md) -> xdp_action {
         var protocol = get_protocol(ctx)
         var result = match (protocol) {
             6: {

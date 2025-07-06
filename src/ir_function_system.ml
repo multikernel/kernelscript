@@ -25,6 +25,7 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
       errors := "Main function must have exactly one parameter (context)" :: !errors;
     match ir_func.parameters with
     | [(_, IRContext _)] -> ()
+    | [(_, IRPointer (IRContext _, _))] -> ()
     | _ -> errors := "Main function parameter must be a context type" :: !errors;
     
     match ir_func.return_type with
