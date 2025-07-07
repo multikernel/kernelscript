@@ -1502,15 +1502,24 @@ let generate_map_load ctx map_val key_val dest_val load_type =
   | DirectLoad ->
       emit_line ctx (sprintf "%s = *%s;" dest_str map_str)
   | MapLookup ->
-      (* Handle key - create temp variable if it's a literal *)
-      let key_var = match key_val.value_desc with
-        | IRLiteral _ -> 
-            let temp_key = fresh_var ctx "key" in
-            let key_type = ebpf_type_from_ir_type key_val.val_type in
-            let key_str = generate_c_value ctx key_val in
-            emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-            temp_key
-        | _ -> generate_c_value ctx key_val
+      (* Handle key - create temp variable for any value that would require address taking *)
+      let key_str = generate_c_value ctx key_val in
+      let needs_temp_var = match key_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
+            let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
+            is_numeric_literal || is_hex_literal
+      in
+      
+      let key_var = if needs_temp_var then
+        let temp_key = fresh_var ctx "key" in
+        let key_type = ebpf_type_from_ir_type key_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+        temp_key
+      else
+        key_str
       in
       (* bpf_map_lookup_elem returns a pointer, so we need to dereference it *)
       emit_line ctx (sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);" map_str key_var);
@@ -1532,26 +1541,44 @@ let generate_map_store ctx map_val key_val value_val store_type =
       let value_str = generate_c_value ctx value_val in
       emit_line ctx (sprintf "*%s = %s;" map_str value_str)
   | MapUpdate ->
-      (* Handle key - create temp variable if it's a literal *)
-      let key_var = match key_val.value_desc with
-        | IRLiteral _ -> 
-            let temp_key = fresh_var ctx "key" in
-            let key_type = ebpf_type_from_ir_type key_val.val_type in
-            let key_str = generate_c_value ctx key_val in
-            emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-            temp_key
-        | _ -> generate_c_value ctx key_val
+      (* Handle key - create temp variable for any value that would require address taking *)
+      let key_str = generate_c_value ctx key_val in
+      let needs_temp_var = match key_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
+            let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
+            is_numeric_literal || is_hex_literal
       in
       
-      (* Handle value - create temp variable if it's a literal *)
-      let value_var = match value_val.value_desc with
-        | IRLiteral _ ->
-            let temp_value = fresh_var ctx "value" in
-            let value_type = ebpf_type_from_ir_type value_val.val_type in
-            let value_str = generate_c_value ctx value_val in
-            emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
-            temp_value
-        | _ -> generate_c_value ctx value_val
+      let key_var = if needs_temp_var then
+        let temp_key = fresh_var ctx "key" in
+        let key_type = ebpf_type_from_ir_type key_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+        temp_key
+      else
+        key_str
+      in
+      
+      (* Handle value - create temp variable for any value that would require address taking *)
+      let value_str = generate_c_value ctx value_val in
+      let needs_temp_var_value = match value_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string value_str); true with _ -> false in
+            let is_hex_literal = String.contains value_str 'x' || String.contains value_str 'X' in
+            is_numeric_literal || is_hex_literal
+      in
+      
+      let value_var = if needs_temp_var_value then
+        let temp_value = fresh_var ctx "value" in
+        let value_type = ebpf_type_from_ir_type value_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
+        temp_value
+      else
+        value_str
       in
       
       emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_var value_var)
@@ -1562,15 +1589,24 @@ let generate_map_store ctx map_val key_val value_val store_type =
 let generate_map_delete ctx map_val key_val =
   let map_str = generate_c_value ctx map_val in
   
-  (* Handle key - create temp variable if it's a literal *)
-  let key_var = match key_val.value_desc with
-    | IRLiteral _ -> 
-        let temp_key = fresh_var ctx "key" in
-        let key_type = ebpf_type_from_ir_type key_val.val_type in
-        let key_str = generate_c_value ctx key_val in
-        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-        temp_key
-    | _ -> generate_c_value ctx key_val
+  (* Handle key - create temp variable for any value that would require address taking *)
+  let key_str = generate_c_value ctx key_val in
+  let needs_temp_var = match key_val.value_desc with
+    | IRLiteral _ -> true
+    | _ -> 
+        (* Check if the generated C value looks like a literal that can't have its address taken *)
+        let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
+        let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
+        is_numeric_literal || is_hex_literal
+  in
+  
+  let key_var = if needs_temp_var then
+    let temp_key = fresh_var ctx "key" in
+    let key_type = ebpf_type_from_ir_type key_val.val_type in
+    emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+    temp_key
+  else
+    key_str
   in
   
   emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
@@ -2439,11 +2475,12 @@ let generate_c_function ctx ir_func =
     )
   ) all_registers;
   
-  (* Emit grouped variable declarations *)
+  (* Emit individual variable declarations - fixes pointer type issues *)
   Hashtbl.iter (fun c_type var_names ->
     let sorted_vars = List.sort String.compare var_names in
-    let vars_str = String.concat ", " sorted_vars in
-    emit_line ctx (sprintf "%s %s;" c_type vars_str)
+    List.iter (fun var_name ->
+      emit_line ctx (sprintf "%s %s;" c_type var_name)
+    ) sorted_vars
   ) register_groups;
   if all_registers <> [] then emit_blank_line ctx;
   

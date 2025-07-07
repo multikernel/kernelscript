@@ -588,6 +588,63 @@ let test_struct_definition_with_aliases () =
   check bool "struct doesn't use __u32 for source_ip field" false (contains_substr generated_struct "__u32 source_ip");
   ()
 
+(** Test hex literal addressing fix in map operations *)
+let test_hex_literal_addressing_fix () =
+  let ctx = create_c_context () in
+  
+  (* Test map operations with hex literals like 0x7F000001 (the specific bug case) *)
+  let map_val = make_ir_value (IRMapRef "packet_counts") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) test_pos in
+  
+  (* Create hex literal like the one in rate_limiter.ks that caused the bug *)
+  let hex_key = make_ir_value (IRLiteral (IntLit (2130706433, Some "0x7F000001"))) IRU32 test_pos in
+  let hex_value = make_ir_value (IRLiteral (IntLit (255, Some "0xFF"))) IRU64 test_pos in
+  
+  (* Test map store with hex literals *)
+  generate_map_store ctx map_val hex_key hex_value MapUpdate;
+  
+  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  
+  (* Verify that hex literals create temporary variables and don't try to take addresses directly *)
+  check bool "hex key temp variable created" true (contains_substr output "__u32 key_");
+  check bool "hex value temp variable created" true (contains_substr output "__u64 value_");
+  check bool "hex key literal preserved" true (contains_substr output "= 0x7F000001;");
+  check bool "hex value literal preserved" true (contains_substr output "= 0xFF;");
+  check bool "map update uses hex key temp variable" true (contains_substr output "bpf_map_update_elem(&packet_counts, &key_");
+  check bool "map update uses hex value temp variable" true (contains_substr output ", &value_");
+  
+  (* Critical: Verify the bug is fixed - no direct addressing of hex literals *)
+  check bool "no direct hex key addressing" false (contains_substr output "&0x7F000001");
+  check bool "no direct hex value addressing" false (contains_substr output "&0xFF");
+  
+  (* Test map load with hex literal *)
+  let ctx2 = create_c_context () in
+  let dest_val = make_ir_value (IRVariable "count") IRU64 test_pos in
+  
+  generate_map_load ctx2 map_val hex_key dest_val MapLookup;
+  
+  let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
+  
+  (* Verify hex literal handling in map lookup *)
+  check bool "lookup hex key temp variable created" true (contains_substr output2 "__u32 key_");
+  check bool "lookup hex key literal preserved" true (contains_substr output2 "= 0x7F000001;");
+  check bool "lookup uses hex key temp variable" true (contains_substr output2 "bpf_map_lookup_elem(&packet_counts, &key_");
+  check bool "lookup no direct hex key addressing" false (contains_substr output2 "&0x7F000001");
+  
+  (* Test map delete with hex literal *)
+  let ctx3 = create_c_context () in
+  
+  let delete_instr = make_ir_instruction (IRMapDelete (map_val, hex_key)) test_pos in
+  generate_c_instruction ctx3 delete_instr;
+  
+  let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
+  
+  (* Verify hex literal handling in map delete *)
+  check bool "delete hex key temp variable created" true (contains_substr output3 "__u32 key_");
+  check bool "delete hex key literal preserved" true (contains_substr output3 "= 0x7F000001;");
+  check bool "delete uses hex key temp variable" true (contains_substr output3 "bpf_map_delete_elem(&packet_counts, &key_");
+  check bool "delete no direct hex key addressing" false (contains_substr output3 "&0x7F000001");
+  ()
+
 (** Integration test: Verify complete fix works in generated C code *)
 let test_complete_type_alias_fix_integration () =
   (* Integration test verifying all three main bug fixes work together *)
@@ -667,6 +724,7 @@ let suite =
     ("Bounds checking", `Quick, test_bounds_checking);
     ("Map operations", `Quick, test_map_operations);
     ("Literal map operations", `Quick, test_literal_map_operations);
+    ("Hex literal addressing fix", `Quick, test_hex_literal_addressing_fix);
     ("Function generation", `Quick, test_function_generation);
     ("Builtin print calls", `Quick, test_builtin_print_calls);
     ("Control flow", `Quick, test_control_flow);
