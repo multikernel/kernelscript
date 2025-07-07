@@ -46,7 +46,7 @@ fn validate_packet(size: u32) -> bool {
 }
 
 fn main() -> i32 {
-    let prog = load(packet_filter)
+    var prog = load(packet_filter)
     attach(prog, "lo", 0)
     return 0
 }
