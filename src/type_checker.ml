@@ -685,7 +685,9 @@ and type_check_unary_op ctx op expr pos =
     
     | AddressOf ->
         (* Address-of operation creates a pointer to the operand type *)
-        Pointer typed_expr.texpr_type
+        (* Resolve user types to ensure proper unification *)
+        let resolved_type = resolve_user_type ctx typed_expr.texpr_type in
+        Pointer resolved_type
   in
   
   { texpr_desc = TUnaryOp (op, typed_expr); texpr_type = result_type; texpr_pos = pos }

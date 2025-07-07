@@ -243,6 +243,11 @@
  (libraries kernelscript alcotest str))
 
 (executable
+ (name test_address_of_user_types)
+ (modules test_address_of_user_types)
+ (libraries kernelscript alcotest test_utils))
+
+(executable
  (name test_kfunc_attribute)
  (modules test_kfunc_attribute)
  (libraries kernelscript alcotest str))
@@ -509,6 +514,10 @@
  (action (run ./test_pointer_syntax.exe)))
 
 (rule
+ (alias runtest_address_of_user_types)
+ (action (run ./test_address_of_user_types.exe)))
+
+(rule
  (alias runtest_match)
  (action (run ./test_match.exe)))
 
@@ -595,6 +604,7 @@
   test_tail_call.exe
   test_struct_ops.exe
   test_pointer_syntax.exe
+  test_address_of_user_types.exe
   test_match.exe)
  (action
   (progn
@@ -631,6 +641,7 @@
    (run ./test_tail_call.exe)
    (run ./test_struct_ops.exe)
    (run ./test_pointer_syntax.exe)
+   (run ./test_address_of_user_types.exe)
    (run ./test_match.exe))))
 
 (rule
