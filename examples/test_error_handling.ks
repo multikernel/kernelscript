@@ -1,3 +1,22 @@
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
 // Test catch/throw/defer functionality with integer-based error handling
 map<u32, u64> test_map : HashMap(1024)
 
@@ -52,14 +71,14 @@ fn cleanup_lock() {
         }
         
     } catch 1 {  // Invalid data
-        // Log and drop the packet due to invalid data
-        return 1  // XDP_DROP
+          // Log and drop the packet due to invalid data
+         return XDP_DROP
     } catch 2 {  // Overflow detected
-        // Handle overflow by dropping packet
-        return 1  // XDP_DROP
+          // Handle overflow by dropping packet
+         return XDP_DROP
     }
-    
-    return 2  // XDP_PASS
+      
+    return XDP_PASS
 }
 
 fn main() -> i32 {

@@ -1,3 +1,22 @@
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
 // Minimal Tail Call Demo
 // Shows both regular kernel function calls and actual eBPF tail calls
 
@@ -9,7 +28,7 @@ fn validate_packet(size: u32) -> bool {
 
 // ATTRIBUTED FUNCTION - for tail calls (same signature as main function)
 @xdp fn drop_handler(ctx: *xdp_md) -> xdp_action {
-    return 0  // XDP_DROP
+    return XDP_DROP
 }
 
 // MAIN eBPF PROGRAM - demonstrates both call types
@@ -23,7 +42,7 @@ fn validate_packet(size: u32) -> bool {
         return drop_handler(ctx)
     }
     
-    return 2  // XDP_PASS - direct return
+    return XDP_PASS  // direct return
 }
 
 fn main() -> i32 {

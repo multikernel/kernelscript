@@ -1,5 +1,34 @@
 // This example demonstrates the complete eBPF map type system
 
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
+// TC context struct (from BTF)
+struct __sk_buff {
+  data: u64,
+  data_end: u64,
+  len: u32,
+  ifindex: u32,
+  protocol: u32,
+  mark: u32,
+}
+
 // Type aliases for clarity
 type IpAddress = u32
 type Counter = u64
@@ -48,7 +77,7 @@ fn get_packet_len_xdp(ctx: *xdp_md) -> PacketSize {
 }
 
 @helper
-fn get_packet_len_tc(ctx: TcContext) -> u64 {
+fn get_packet_len_tc(ctx: *__sk_buff) -> u64 {
   return 128 // Demo packet size
 }
 

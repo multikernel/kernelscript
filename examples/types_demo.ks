@@ -1,5 +1,24 @@
 // This file demonstrates all the new type system features
 
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
 // Type alias for common types
 type IpAddress = u32
 type PacketSize = u16
@@ -105,7 +124,7 @@ fn update_stats(info: PacketInfo) {
       var action = get_filter_action(info)
       
       // Store in recent packets for userspace inspection
-      var packet_id = ctx->get_packet_id()
+      var packet_id = ctx->ingress_ifindex
       recent_packets[packet_id] = info
       
       // Apply filtering action

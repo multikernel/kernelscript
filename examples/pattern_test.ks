@@ -1,3 +1,22 @@
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
 // Pattern Test Example - tests struct initialization (IRStructLiteral pattern)
 
 struct PacketInfo {
@@ -17,10 +36,10 @@ struct PacketInfo {
   
   // Use the struct values
   if (info.size > 1500) {
-    return 1
+    return XDP_DROP
   }
   
-  return info.action
+  return XDP_PASS
 }
 
 fn main() -> i32 {

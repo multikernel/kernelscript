@@ -4,6 +4,81 @@
 //
 // NOTE: This file uses advanced language features not yet implemented in KernelScript.
 
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
+// TC context struct (from BTF)
+struct __sk_buff {
+  data: u64,
+  data_end: u64,
+  len: u32,
+  ifindex: u32,
+  protocol: u32,
+  mark: u32,
+}
+
+// TC action constants
+enum tc_action {
+  TC_ACT_UNSPEC = 255,
+  TC_ACT_OK = 0,
+  TC_ACT_RECLASSIFY = 1,
+  TC_ACT_SHOT = 2,
+  TC_ACT_PIPE = 3,
+  TC_ACT_STOLEN = 4,
+  TC_ACT_QUEUED = 5,
+  TC_ACT_REPEAT = 6,
+  TC_ACT_REDIRECT = 7,
+}
+
+// Tracepoint context struct (from BTF)
+struct trace_entry {
+  entry_type: u16,
+  flags: u8,
+  preempt_count: u8,
+  pid: i32,
+}
+
+// Kprobe context struct (from BTF)
+struct pt_regs {
+  r15: u64,
+  r14: u64,
+  r13: u64,
+  r12: u64,
+  rbp: u64,
+  rbx: u64,
+  r11: u64,
+  r10: u64,
+  r9: u64,
+  r8: u64,
+  rax: u64,
+  rcx: u64,
+  rdx: u64,
+  rsi: u64,
+  rdi: u64,
+  orig_rax: u64,
+  rip: u64,
+  cs: u64,
+  eflags: u64,
+  rsp: u64,
+  ss: u64,
+}
+
 // This example demonstrates comprehensive map operations with multi-program analysis
 // It shows various access patterns and concurrent access scenarios
 
@@ -50,7 +125,7 @@ struct ArrayElement {
 
 // Program 1: Reader-heavy workload demonstrating safe concurrent access
 @xdp fn traffic_monitor(ctx: *xdp_md) -> xdp_action {
-    var key = ctx->ingress_ifindex()
+    var key = ctx->ingress_ifindex
     
     // Safe concurrent read access - multiple programs can read simultaneously
     var counter = global_counter[key]
@@ -68,7 +143,7 @@ struct ArrayElement {
     var cpu_id = bpf_get_smp_processor_id()
     var data = percpu_data[cpu_id]
     if (data != null) {
-        data.local_counter += 1
+        data.local_counter = data.local_counter + 1
         percpu_data[cpu_id] = data
     } else {
         var new_data = PerCpuData {
@@ -82,8 +157,8 @@ struct ArrayElement {
 }
 
 // Program 2: Writer workload demonstrating conflict detection
-@tc fn stats_updater(ctx: TcContext) -> TcAction {
-    var ifindex = ctx->ifindex()
+@tc fn stats_updater(ctx: *__sk_buff) -> i32 {
+    var ifindex = ctx->ifindex
     
     // Potential write conflict with other programs
     var stats = shared_stats[ifindex]
@@ -97,13 +172,13 @@ struct ArrayElement {
     }
     
     // Update statistics - this creates a write operation
-    stats.packet_count += 1
-    stats.byte_count += ctx->data_len()
+    stats.packet_count = stats.packet_count + 1
+    stats.byte_count = stats.byte_count + ctx->len
     stats.last_seen = bpf_ktime_get_ns()
     
     // Calculate error rate (simplified)
-    if (ctx->protocol() == 0) {
-        stats.error_rate += 1
+    if (ctx->protocol == 0) {
+        stats.error_rate = stats.error_rate + 1
     }
     
     shared_stats[ifindex] = stats
@@ -113,7 +188,7 @@ struct ArrayElement {
         var batch_key = ifindex + i
         var entry = shared_stats[batch_key]
         if (entry != null) {
-            entry.packet_count += 1
+            entry.packet_count = entry.packet_count + 1
             shared_stats[batch_key] = entry
         }
     }
@@ -122,10 +197,10 @@ struct ArrayElement {
 }
 
 // Program 3: Event streaming demonstrating ring buffer usage
-@tracepoint fn event_logger(ctx: TracepointContext) -> i32 {
+@tracepoint fn event_logger(ctx: *trace_entry) -> i32 {
     var event = Event {
         timestamp: bpf_ktime_get_ns(),
-        event_type: ctx->event_id(),
+        event_type: ctx->entry_type,
         data: [0; 32],  // Simplified data
     }
     
@@ -142,7 +217,7 @@ struct ArrayElement {
 }
 
 // Program 4: Sequential access pattern demonstration
-@kprobe fn data_processor(ctx: KprobeContext) -> i32 {
+@kprobe fn data_processor(ctx: *pt_regs) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
         var element = sequential_data[i]

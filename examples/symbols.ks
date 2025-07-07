@@ -2,19 +2,54 @@
 // global scope management, map visibility rules,
 // and function/type name resolution.
 
+// XDP context struct (from BTF)
+struct xdp_md {
+  data: u64,
+  data_end: u64,
+  data_meta: u64,
+  ingress_ifindex: u32,
+  rx_queue_index: u32,
+  egress_ifindex: u32,
+}
+
+// XDP action enum (from BTF)
+enum xdp_action {
+  XDP_ABORTED = 0,
+  XDP_DROP = 1,
+  XDP_PASS = 2,
+  XDP_REDIRECT = 3,
+  XDP_TX = 4,
+}
+
+// TC context struct (from BTF)
+struct __sk_buff {
+  data: u64,
+  data_end: u64,
+  len: u32,
+  ifindex: u32,
+  protocol: u32,
+  mark: u32,
+}
+
+// TC action constants
+enum tc_action {
+  TC_ACT_UNSPEC = 255,
+  TC_ACT_OK = 0,
+  TC_ACT_RECLASSIFY = 1,
+  TC_ACT_SHOT = 2,
+  TC_ACT_PIPE = 3,
+  TC_ACT_STOLEN = 4,
+  TC_ACT_QUEUED = 5,
+  TC_ACT_REPEAT = 6,
+  TC_ACT_REDIRECT = 7,
+}
+
 // Global type definitions (visible everywhere)
 struct PacketInfo {
     size: u32,
     protocol: u16,
     src_ip: u32,
     dst_ip: u32,
-}
-
-enum xdp_action {
-    Pass = 0,
-    Drop = 1,
-    Aborted = 2,
-    Redirect = 3,
 }
 
 // Global maps (accessible from all programs)
@@ -31,12 +66,12 @@ pub fn log_packet(info: PacketInfo) -> u32 {
 }
 
 @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
-    var packet = ctx->packet()
+    var packet_size = ctx->data_end - ctx->data
     var info = PacketInfo {
-        size: packet.len(),
-        protocol: packet.protocol(),
-        src_ip: packet.src_ip(),
-        dst_ip: packet.dst_ip(),
+        size: packet_size,
+        protocol: 6,  // Demo value
+        src_ip: 0x7f000001,  // Demo IP
+        dst_ip: 0x7f000002,  // Demo IP
     }
     
     // Access global maps (visible from all programs)
@@ -56,21 +91,21 @@ pub fn log_packet(info: PacketInfo) -> u32 {
     }
 }
 
-@tc fn traffic_monitor(ctx: TcContext) -> TcAction {
-    var packet = ctx->packet()
+@tc fn traffic_monitor(ctx: *__sk_buff) -> i32 {
+    var packet_protocol = ctx->protocol
     
     // Access global map (visible from all programs)
-    global_stats[packet.protocol()] = global_stats[packet.protocol()] + 1
+    global_stats[packet_protocol] = global_stats[packet_protocol] + 1
     
     // Use global traffic data map
-    traffic_data[0] = packet.len()
+    traffic_data[0] = ctx->len
     
     // Can call global function
     var info = PacketInfo {
-        size: packet.len(),
-        protocol: packet.protocol(),
-        src_ip: packet.src_ip(),
-        dst_ip: packet.dst_ip(),
+        size: ctx->len,
+        protocol: packet_protocol,
+        src_ip: 0x7f000001,  // Demo IP
+        dst_ip: 0x7f000002,  // Demo IP
     }
     log_packet(info)
     
