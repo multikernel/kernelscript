@@ -853,7 +853,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     (* Check that local variables appear with __hidden attribute *)
     check_c_code_contains "#define __hidden" "__hidden macro defined";
     check_c_code_contains "__hidden __attribute__((aligned(8))) __u32 local_counter = 200;" "local variable with __hidden";
-    check_c_code_contains "__hidden __attribute__((aligned(8))) __u64 local_secret = 3735928559;" "local variable with hex literal (converted to decimal)";
+    check_c_code_contains "__hidden __attribute__((aligned(8))) __u64 local_secret = 0xdeadbeef;" "local variable with hex literal (preserved format)";
     
     (* Verify that the comment indicating global variables section exists *)
     check_c_code_contains "/* Global variables */" "global variables section comment";

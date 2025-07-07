@@ -1063,7 +1063,12 @@ let generate_global_variables ctx global_variables =
       (match global_var.global_var_init with
        | Some init_val ->
            let init_str = match init_val.value_desc with
-             | IRLiteral (Ast.IntLit (i, _)) -> string_of_int i
+             | IRLiteral (Ast.IntLit (i, original_opt)) -> 
+                 (* Use original format if available, otherwise use decimal *)
+                 (match original_opt with
+                  | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
+                  | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
+                  | _ -> string_of_int i)
              | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
              | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" s
              | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
