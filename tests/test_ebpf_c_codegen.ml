@@ -356,8 +356,8 @@ let test_string_literal_in_function_calls () =
   (* Should generate bpf_printk call *)
   check bool "generates bpf_printk" true (contains_substr output "bpf_printk");
   
-  (* Should have proper format string *)
-  check bool "has format string" true (contains_substr output "\"%s\"")
+  (* Should use the original format string directly, not "%s" *)
+  check bool "has format string" true (contains_substr output "str_lit_1.data")
 
 (** Test string literals in multi-argument function calls *)
 let test_string_literal_multi_arg_calls () =
@@ -376,7 +376,8 @@ let test_string_literal_multi_arg_calls () =
   (* Should use .data field for string argument *)
   check bool "multi-arg uses .data field" true (contains_substr output "str_lit_1.data");
   check bool "includes integer argument" true (contains_substr output "42");
-  check bool "has proper format specifiers" true (contains_substr output "\"%s%d\"")
+  (* Should use the original format string directly, not "%s%d" *)
+  check bool "has proper format specifiers" true (contains_substr output "str_lit_1.data")
 
 (** Test string type definition generation *)
 let test_string_typedef_generation () =

@@ -1750,21 +1750,17 @@ let rec generate_c_instruction ctx ir_instr =
             (* This is a built-in function - translate for eBPF context *)
             (match name with
              | "print" -> 
-                 (* Helper function to generate proper C arg based on IR type *)
-                 let generate_print_arg ir_val =
-                   let base_arg = generate_c_value ctx ir_val in
-                   match ir_val.val_type with
-                   | IRStr _ -> base_arg ^ ".data"  (* String types need .data field *)
-                   | _ -> base_arg  (* Other types use as-is *)
-                 in
                  (* Special handling for print: convert to bpf_printk format *)
                  (match args with
                   | [] -> (ebpf_impl, ["\"\""])
                   | [first_ir] -> 
-                      (* For string struct arguments, use .data field *)
-                      let first_arg = generate_print_arg first_ir in
-                      (ebpf_impl, [sprintf "\"%s\"" "%s"; first_arg])
+                      (* Single argument case - use as format string *)
+                      let first_arg = generate_c_value ctx first_ir in
+                      (match first_ir.val_type with
+                       | IRStr _ -> (ebpf_impl, [first_arg ^ ".data"])
+                       | _ -> (ebpf_impl, [first_arg]))
                   | first_ir :: rest_ir ->
+                     (* Multiple arguments: first is format string, rest are arguments *)
                      (* bpf_printk limits: format string + up to 3 args *)
                      let limited_rest = 
                        let rec take n lst =
@@ -1775,13 +1771,17 @@ let rec generate_c_instruction ctx ir_instr =
                        in
                        take (min 3 (List.length rest_ir)) rest_ir
                      in
-                     let format_specifiers = List.map (fun _ -> "%d") limited_rest in
-                     let format_str = sprintf "\"%s%s\"" "%s" (String.concat " " format_specifiers) in
-                     (* Generate first argument with proper type handling *)
-                     let first_arg = generate_print_arg first_ir in
+                     
+                     (* Use the first argument directly as the format string *)
+                     let format_str = generate_c_value ctx first_ir in
+                     let format_arg = match first_ir.val_type with
+                       | IRStr _ -> format_str ^ ".data"
+                       | _ -> format_str
+                     in
+                     
                      (* Generate remaining arguments *)
                      let rest_args = List.map (generate_c_value ctx) limited_rest in
-                     (ebpf_impl, format_str :: first_arg :: rest_args))
+                     (ebpf_impl, format_arg :: rest_args))
              | _ -> 
                  (* For other built-in functions, use standard conversion *)
                  let c_args = List.map (generate_c_value ctx) args in
