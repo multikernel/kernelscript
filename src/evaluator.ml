@@ -750,23 +750,46 @@ and eval_statement ctx stmt =
       let result = eval_binary_op left_value op right_value stmt.stmt_pos in
       Hashtbl.replace ctx.variables name result
   
-  | FieldAssignment (obj_expr, field, value_expr) ->
-      (* For evaluation purposes, treat config field assignment as no-op with debug output *)
+  | CompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
+      (* Handle map compound assignment: map[key] op= value *)
+      let map_name = match map_expr.expr_desc with
+        | Identifier name when Hashtbl.mem ctx.maps name -> name
+        | Identifier name -> eval_error ("Not a map: " ^ name) stmt.stmt_pos
+        | _ -> eval_error ("Map compound assignment requires a map identifier") stmt.stmt_pos
+      in
+      let key_val = eval_expression ctx key_expr in
+      let value_val = eval_expression ctx value_expr in
+      
+      let map_store = 
+        try Hashtbl.find ctx.map_storage map_name
+        with Not_found -> eval_error ("Map not found: " ^ map_name) stmt.stmt_pos
+      in
+      
+      let key_str = string_of_runtime_value key_val in
+      let current_val = 
+        try Hashtbl.find map_store key_str
+        with Not_found -> IntValue 0 (* Default to 0 for new keys *)
+      in
+      let result = eval_binary_op current_val op value_val stmt.stmt_pos in
+      Hashtbl.replace map_store key_str result
+  
+  | FieldAssignment (obj_expr, _field, value_expr) ->
+      (* For evaluation purposes, treat config field assignment as no-op *)
       let _ = eval_expression ctx obj_expr in
-      let field_value = eval_expression ctx value_expr in
+      let _ = eval_expression ctx value_expr in
       (match obj_expr.expr_desc with
-       | Identifier config_name ->
-           Printf.printf "[CONFIG ASSIGN]: %s.%s = %s\n" 
-             config_name field (string_of_runtime_value field_value)
+       | Identifier _config_name ->
+           (* Config field assignment handled during evaluation *)
+           ()
        | _ -> eval_error ("Field assignment only supported for config objects") stmt.stmt_pos)
   
-  | ArrowAssignment (obj_expr, field, value_expr) ->
+  | ArrowAssignment (obj_expr, _field, value_expr) ->
       (* Arrow assignment (pointer->field = value) - for evaluator, treat same as field assignment *)
-      let value = eval_expression ctx value_expr in
+      let _ = eval_expression ctx value_expr in
       (match obj_expr.expr_desc with
-       | Identifier name ->
-           Printf.printf "[ARROW ASSIGN]: %s->%s = %s\n" 
-             name field (string_of_runtime_value value)
+       | Identifier _name ->
+           (* Arrow assignment handled during evaluation *)
+           ()
        | _ -> eval_error ("Arrow assignment only supported for simple identifiers") stmt.stmt_pos)
   
   | IndexAssignment (map_expr, key_expr, value_expr) ->
@@ -785,9 +808,7 @@ and eval_statement ctx stmt =
       in
       
       let key_str = string_of_runtime_value key_val in
-      Hashtbl.replace map_store key_str value_val;
-      Printf.printf "[MAP ASSIGN]: %s[%s] = %s\n" 
-        map_name key_str (string_of_runtime_value value_val)
+      Hashtbl.replace map_store key_str value_val
   
   | Declaration (name, _, expr) ->
       let value = eval_expression ctx expr in
@@ -899,10 +920,7 @@ and eval_statement ctx stmt =
       let key_str = string_of_runtime_value key_result in
       let existed = Hashtbl.mem map_store key_str in
       if existed then
-        Hashtbl.remove map_store key_str;
-      
-      Printf.printf "[MAP DELETE]: %s[%s] (existed: %b)\n" 
-        map_name key_str existed
+        Hashtbl.remove map_store key_str
   
   | Break ->
       raise Break_loop
@@ -918,13 +936,12 @@ and eval_statement ctx stmt =
       (* For evaluator, evaluate the expression and print the error code *)
       let error_value = eval_expression ctx expr in
       let error_code = int_of_runtime_value error_value stmt.stmt_pos in
-      Printf.printf "[THROW]: Error code %d\n" error_code;
       eval_error ("Unhandled error: " ^ string_of_int error_code) stmt.stmt_pos
       
   | Defer expr ->
       (* For evaluator, just evaluate the expression immediately *)
       let _ = eval_expression ctx expr in
-      Printf.printf "[DEFER]: Deferred expression executed\n"
+      ()
 
 (** Evaluate a complete program *)
 let eval_program ctx prog =

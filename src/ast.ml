@@ -173,6 +173,7 @@ and stmt_desc =
   | ExprStmt of expr
   | Assignment of string * expr
   | CompoundAssignment of string * binary_op * expr  (* var op= expr *)
+  | CompoundIndexAssignment of expr * expr * binary_op * expr  (* map[key] op= expr *)
   | FieldAssignment of expr * string * expr  (* object.field = value *)
   | ArrowAssignment of expr * string * expr  (* pointer->field = value *)
   | IndexAssignment of expr * expr * expr  (* map[key] = value *)
@@ -577,6 +578,8 @@ and string_of_stmt stmt =
       Printf.sprintf "%s = %s;" name (string_of_expr expr)
   | CompoundAssignment (name, op, expr) ->
       Printf.sprintf "%s %s= %s;" name (string_of_binary_op op) (string_of_expr expr)
+  | CompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
+      Printf.sprintf "%s[%s] %s= %s;" (string_of_expr map_expr) (string_of_expr key_expr) (string_of_binary_op op) (string_of_expr value_expr)
   | FieldAssignment (obj_expr, field, value_expr) ->
       Printf.sprintf "%s.%s = %s;" (string_of_expr obj_expr) field (string_of_expr value_expr)
   | ArrowAssignment (obj_expr, field, value_expr) ->

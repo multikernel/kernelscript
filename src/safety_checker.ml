@@ -194,6 +194,10 @@ let analyze_statement_bounds stmt =
         errors := check_array_bounds expr @ !errors
     | CompoundAssignment (_, _, expr) ->
         errors := check_array_bounds expr @ !errors
+    | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+        errors := check_array_bounds map_expr @ !errors;
+        errors := check_array_bounds key_expr @ !errors;
+        errors := check_array_bounds value_expr @ !errors
     | FieldAssignment (obj_expr, _, value_expr) ->
         errors := check_array_bounds obj_expr @ !errors;
         errors := check_array_bounds value_expr @ !errors

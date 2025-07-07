@@ -493,6 +493,10 @@ and process_statement table stmt =
       process_expression table expr
   | CompoundAssignment (_name, _, expr) ->
       process_expression table expr
+  | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+      process_expression table map_expr;
+      process_expression table key_expr;
+      process_expression table value_expr
   | FieldAssignment (obj_expr, _field, value_expr) ->
       process_expression table obj_expr;
       process_expression table value_expr

@@ -36,16 +36,12 @@ config network {
   // For simplicity, assume IPv4 and extract source IP
   // In reality, we'd need to parse Ethernet header first
   var src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
-  
-  // Look up current packet count for this IP
-  var current_count = packet_counts[src_ip]
-  var new_count = current_count + 1
-  
+    
   // Update the count
-  packet_counts[src_ip] = new_count
+  packet_counts[src_ip] += 1
   
   // Rate limiting: drop if too many packets
-  if (new_count > network.limit) {
+  if (packet_counts[src_ip] > network.limit) {
     return XDP_DROP
   }
   

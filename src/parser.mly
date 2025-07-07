@@ -82,6 +82,7 @@
 %type <Ast.statement> const_declaration
 %type <Ast.statement> assignment_or_expression_statement
 %type <Ast.statement> compound_assignment_statement
+%type <Ast.statement> compound_index_assignment_statement
 %type <Ast.statement> field_assignment_statement
 %type <Ast.statement> arrow_assignment_statement
 %type <Ast.statement> index_assignment_statement
@@ -226,6 +227,7 @@ statement:
   | const_declaration { $1 }
   | assignment_or_expression_statement { $1 }
   | compound_assignment_statement { $1 }
+  | compound_index_assignment_statement { $1 }
   | field_assignment_statement { $1 }
   | arrow_assignment_statement { $1 }
   | index_assignment_statement { $1 }
@@ -280,6 +282,18 @@ arrow_assignment_statement:
 index_assignment_statement:
   | expression LBRACKET expression RBRACKET ASSIGN expression
     { make_stmt (IndexAssignment ($1, $3, $6)) (make_pos ()) }
+
+compound_index_assignment_statement:
+  | expression LBRACKET expression RBRACKET PLUS_ASSIGN expression
+    { make_stmt (CompoundIndexAssignment ($1, $3, Add, $6)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET MINUS_ASSIGN expression
+    { make_stmt (CompoundIndexAssignment ($1, $3, Sub, $6)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET MULTIPLY_ASSIGN expression
+    { make_stmt (CompoundIndexAssignment ($1, $3, Mul, $6)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DIVIDE_ASSIGN expression
+    { make_stmt (CompoundIndexAssignment ($1, $3, Div, $6)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET MODULO_ASSIGN expression
+    { make_stmt (CompoundIndexAssignment ($1, $3, Mod, $6)) (make_pos ()) }
 
 return_statement:
   | RETURN { make_stmt (Return None) (make_pos ()) }

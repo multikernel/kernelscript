@@ -181,6 +181,10 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         analyze_expr_for_maps prog_name expr
     | CompoundAssignment (_, _, expr) ->
         analyze_expr_for_maps prog_name expr
+    | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+        analyze_expr_for_maps prog_name map_expr;
+        analyze_expr_for_maps prog_name key_expr;
+        analyze_expr_for_maps prog_name value_expr
     | FieldAssignment (obj_expr, _, value_expr) ->
         analyze_expr_for_maps prog_name obj_expr;
         analyze_expr_for_maps prog_name value_expr

@@ -828,6 +828,38 @@ and lower_statement ctx stmt =
         let instr = make_ir_instruction (IRAssign (target_val, bin_expr)) stmt.stmt_pos in
         emit_instruction ctx instr
       
+  | Ast.CompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
+      let key_val = lower_expression ctx key_expr in
+      let value_val = lower_expression ctx value_expr in
+      
+      (match map_expr.expr_desc with
+       | Ast.Identifier map_name ->
+           (* Handle map compound assignment *)
+           let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
+           (* Generate: map[key] = map[key] op value *)
+           (* First, load the current value *)
+           let current_val_reg = allocate_register ctx in
+           let current_val = make_ir_value (IRRegister current_val_reg) value_val.val_type stmt.stmt_pos in
+           let load_instr = make_ir_instruction (IRMapLoad (map_val, key_val, current_val, MapLookup)) stmt.stmt_pos in
+           emit_instruction ctx load_instr;
+           
+           (* Then, perform the operation *)
+           let ir_op = lower_binary_op op in
+           let bin_expr = make_ir_expr (IRBinOp (current_val, ir_op, value_val)) value_val.val_type stmt.stmt_pos in
+           
+           (* Create a temporary register for the result *)
+           let result_reg = allocate_register ctx in
+           let result_val = make_ir_value (IRRegister result_reg) value_val.val_type stmt.stmt_pos in
+           let assign_instr = make_ir_instruction (IRAssign (result_val, bin_expr)) stmt.stmt_pos in
+           emit_instruction ctx assign_instr;
+           
+           (* Finally, store the result back *)
+           let store_instr = make_ir_instruction (IRMapStore (map_val, key_val, result_val, MapUpdate)) stmt.stmt_pos in
+           emit_instruction ctx store_instr
+       | _ ->
+           (* For non-map expressions, currently not supported - could be extended for arrays *)
+           failwith "Compound index assignment is currently only supported for maps")
+      
   | Ast.IndexAssignment (map_expr, key_expr, value_expr) ->
       let map_val = lower_expression ctx map_expr in
       let key_val = lower_expression ctx key_expr in

@@ -54,6 +54,11 @@
  (libraries kernelscript alcotest test_utils))
 
 (executable
+ (name test_compound_index_assignment)
+ (modules test_compound_index_assignment)
+ (libraries kernelscript alcotest test_utils str))
+
+(executable
  (name test_dynptr_bridge)
  (modules test_dynptr_bridge)
  (libraries kernelscript alcotest))
@@ -582,6 +587,7 @@
   test_const_variables.exe
   test_global_var.exe
   test_evaluator.exe
+  test_compound_index_assignment.exe
   test_dynptr_bridge.exe
   test_safety_checker.exe
   test_program_ref.exe
@@ -617,6 +623,7 @@
    (run ./test_const_variables.exe)
    (run ./test_global_var.exe)
    (run ./test_evaluator.exe)
+   (run ./test_compound_index_assignment.exe)
    (run ./test_dynptr_bridge.exe)
    (run ./test_safety_checker.exe)
    (run ./test_program_ref.exe)

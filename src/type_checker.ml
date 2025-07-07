@@ -72,6 +72,7 @@ and typed_stmt_desc =
   | TExprStmt of typed_expr
   | TAssignment of string * typed_expr
   | TCompoundAssignment of string * binary_op * typed_expr  (* var op= expr *)
+  | TCompoundIndexAssignment of typed_expr * typed_expr * binary_op * typed_expr  (* map[key] op= expr *)
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TArrowAssignment of typed_expr * string * typed_expr  (* pointer, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
@@ -1177,6 +1178,69 @@ and type_check_statement ctx stmt =
                 { tstmt_desc = TIndexAssignment (typed_map, typed_key, typed_value); tstmt_pos = stmt.stmt_pos }
             | _ -> type_error ("Index assignment can only be used on maps or arrays") stmt.stmt_pos))
   
+  | CompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
+      let typed_key = type_check_expression ctx key_expr in
+      let typed_value = type_check_expression ctx value_expr in
+      
+      (* Check if this is map compound assignment *)
+      (match map_expr.expr_desc with
+       | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
+           (* This is map compound assignment *)
+           let map_decl = Hashtbl.find ctx.maps map_name in
+           (* Check key type compatibility *)
+           let resolved_key_type = resolve_user_type ctx map_decl.key_type in
+           let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
+           (match unify_types resolved_key_type resolved_typed_key_type with
+            | Some _ -> ()
+            | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
+           (* Check value type compatibility and operator validity *)
+           let resolved_value_type = resolve_user_type ctx map_decl.value_type in
+           let resolved_typed_value_type = resolve_user_type ctx typed_value.texpr_type in
+           (match unify_types resolved_value_type resolved_typed_value_type with
+            | Some _ -> ()
+            | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
+           (* Check if operator is valid for the value type *)
+           (match op, resolved_value_type with
+            | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
+                (* Create a synthetic map type for the result *)
+                let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
+                { tstmt_desc = TCompoundIndexAssignment (typed_map, typed_key, op, typed_value); tstmt_pos = stmt.stmt_pos }
+            | _, _ ->
+                type_error ("Operator " ^ string_of_binary_op op ^ 
+                           " not supported for type " ^ string_of_bpf_type resolved_value_type) stmt.stmt_pos)
+       | _ ->
+           (* Regular compound index assignment (arrays, etc.) *)
+           let typed_map = type_check_expression ctx map_expr in
+           (match typed_map.texpr_type with
+            | Map (key_type, value_type, _) ->
+                (* This shouldn't happen anymore, but handle it for safety *)
+                (match unify_types key_type typed_key.texpr_type with
+                 | Some _ -> ()
+                 | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
+                (match unify_types value_type typed_value.texpr_type with
+                 | Some _ -> ()
+                 | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
+                (* Check if operator is valid for the value type *)
+                (match op, value_type with
+                 | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
+                     { tstmt_desc = TCompoundIndexAssignment (typed_map, typed_key, op, typed_value); tstmt_pos = stmt.stmt_pos }
+                 | _, _ ->
+                     type_error ("Operator " ^ string_of_binary_op op ^ 
+                                " not supported for type " ^ string_of_bpf_type value_type) stmt.stmt_pos)
+            | Array (element_type, _) ->
+                (* Array element compound assignment *)
+                (match unify_types element_type typed_value.texpr_type with
+                 | Some _ -> ()
+                 | None -> type_error ("Array element type mismatch") stmt.stmt_pos);
+                (* Check if operator is valid for the element type *)
+                (match op, element_type with
+                 | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
+                     { tstmt_desc = TCompoundIndexAssignment (typed_map, typed_key, op, typed_value); tstmt_pos = stmt.stmt_pos }
+                 | _, _ ->
+                     type_error ("Operator " ^ string_of_binary_op op ^ 
+                                " not supported for type " ^ string_of_bpf_type element_type) stmt.stmt_pos)
+            | _ -> type_error ("Compound index assignment can only be used on maps or arrays") stmt.stmt_pos))
+  
   | Declaration (name, type_opt, expr) ->
       let typed_expr = type_check_expression ctx expr in
       
@@ -1718,6 +1782,8 @@ and typed_stmt_to_stmt tstmt =
     | TExprStmt expr -> ExprStmt (typed_expr_to_expr expr)
     | TAssignment (name, expr) -> Assignment (name, typed_expr_to_expr expr)
     | TCompoundAssignment (name, op, expr) -> CompoundAssignment (name, op, typed_expr_to_expr expr)
+    | TCompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
+        CompoundIndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, op, typed_expr_to_expr value_expr)
     | TFieldAssignment (obj_expr, field, value_expr) ->
         FieldAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TArrowAssignment (obj_expr, field, value_expr) ->
@@ -2105,6 +2171,15 @@ and populate_multi_program_context ast multi_prog_analysis =
         enhance_expr prog_type expr
     | CompoundAssignment (_, _, expr) ->
         enhance_expr prog_type expr
+    | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+        (* This is a compound write operation *)
+        enhance_expr prog_type map_expr;
+        enhance_expr prog_type key_expr;
+        enhance_expr prog_type value_expr;
+        (* Update the map expression to indicate write access *)
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
     | FieldAssignment (obj_expr, _, value_expr) ->
         enhance_expr prog_type obj_expr;
         enhance_expr prog_type value_expr
@@ -2194,6 +2269,10 @@ and populate_multi_program_context ast multi_prog_analysis =
           enhance_userspace_expr expr
       | CompoundAssignment (_, _, expr) ->
           enhance_userspace_expr expr
+      | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+          enhance_userspace_expr map_expr;
+          enhance_userspace_expr key_expr;
+          enhance_userspace_expr value_expr
       | FieldAssignment (obj_expr, _, value_expr) ->
           enhance_userspace_expr obj_expr;
           enhance_userspace_expr value_expr

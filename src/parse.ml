@@ -75,6 +75,8 @@ let validate_ast ast =
     | ExprStmt expr -> validate_expr expr
     | Assignment (_, expr) -> validate_expr expr
     | CompoundAssignment (_, _, expr) -> validate_expr expr
+    | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+        validate_expr map_expr && validate_expr key_expr && validate_expr value_expr
     | FieldAssignment (obj_expr, _, value_expr) ->
         validate_expr obj_expr && validate_expr value_expr
     | ArrowAssignment (obj_expr, _, value_expr) ->
