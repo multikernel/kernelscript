@@ -157,8 +157,8 @@ map<IpAddress, PacketStats> ip_stats : HashMap(1000)
   let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases ir in
   
   (* Check that type aliases generate typedef statements *)
-  check bool "typedef Counter generated" true (contains_substr c_code "typedef uint64_t Counter;");
-  check bool "typedef IpAddress generated" true (contains_substr c_code "typedef uint32_t IpAddress;");
+  check bool "typedef Counter generated" true (contains_substr c_code "typedef __u64 Counter;");
+  check bool "typedef IpAddress generated" true (contains_substr c_code "typedef __u32 IpAddress;");
   
   (* Check that map definitions use type aliases correctly (without "struct" prefix) *)
   check bool "map uses Counter without struct" true (contains_substr c_code "__type(value, Counter);");

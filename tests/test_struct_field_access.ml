@@ -560,7 +560,7 @@ struct PacketStats {
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases ir in
     
          (* Verify that type aliases generate typedef statements *)
-     check bool "typedef Counter generated" true (contains_substr c_code "typedef uint64_t Counter");
+     check bool "typedef Counter generated" true (contains_substr c_code "typedef __u64 Counter");
      
      (* Check that struct fields use the alias name correctly *)
      check bool "struct uses Counter type for count field" true (contains_substr c_code "Counter count");

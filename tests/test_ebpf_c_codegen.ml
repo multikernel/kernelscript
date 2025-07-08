@@ -466,8 +466,8 @@ let test_no_empty_struct_generation () =
   check bool "no empty struct definitions" false (contains_substr c_code "struct Counter {};");
   
   (* Type aliases should be generated as typedefs *)
-  check bool "Counter typedef generated" true (contains_substr c_code "typedef uint64_t Counter");
-  check bool "IpAddress typedef generated" true (contains_substr c_code "typedef uint32_t IpAddress");
+  check bool "Counter typedef generated" true (contains_substr c_code "typedef __u64 Counter");
+  check bool "IpAddress typedef generated" true (contains_substr c_code "typedef __u32 IpAddress");
   ()
 
 (** Test that type aliases are generated before structs in C output *)
@@ -521,7 +521,7 @@ let test_type_alias_struct_ordering () =
   check bool "has type alias section header" true (contains_substr c_code "/* Type alias definitions */");
   
   (* Core fix verification: Type aliases are generated correctly *)
-  check bool "Counter typedef" true (contains_substr c_code "typedef uint64_t Counter");
+  check bool "Counter typedef" true (contains_substr c_code "typedef __u64 Counter");
   
   (* Note: Struct section may not exist if no structs are defined (correct behavior) *)
   (* The bug fix ensures proper ordering when structs ARE present, which is tested elsewhere *)
@@ -709,9 +709,9 @@ let test_complete_type_alias_fix_integration () =
   (* Note: This integration test focuses on verifying the type alias generation without requiring structs *)
   
   (* Verify all type aliases are properly generated *)
-  check bool "IpAddress typedef" true (contains_substr c_code "typedef uint32_t IpAddress");
-  check bool "Counter typedef" true (contains_substr c_code "typedef uint64_t Counter");
-  check bool "PacketSize typedef" true (contains_substr c_code "typedef uint16_t PacketSize");
+  check bool "IpAddress typedef" true (contains_substr c_code "typedef __u32 IpAddress");
+  check bool "Counter typedef" true (contains_substr c_code "typedef __u64 Counter");
+  check bool "PacketSize typedef" true (contains_substr c_code "typedef __u16 PacketSize");
   ()
 
 (** Test suite definition *)

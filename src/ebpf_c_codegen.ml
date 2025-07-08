@@ -809,27 +809,31 @@ let generate_ast_type_alias_definitions ctx type_aliases =
       match underlying_type with
         | Ast.Array (element_type, size) ->
             let element_c_type = match element_type with
-              | Ast.U8 -> "uint8_t"
-              | Ast.U16 -> "uint16_t"
-              | Ast.U32 -> "uint32_t"
-              | Ast.U64 -> "uint64_t"
-              | _ -> "uint8_t"
+              | Ast.U8 -> "__u8"
+              | Ast.U16 -> "__u16"
+              | Ast.U32 -> "__u32"
+              | Ast.U64 -> "__u64"
+              | Ast.I8 -> "__s8"
+              | Ast.I16 -> "__s16"
+              | Ast.I32 -> "__s32"
+              | Ast.I64 -> "__s64"
+              | _ -> "__u8"
             in
             (* Array typedef syntax: typedef element_type alias_name[size]; *)
             emit_line ctx (sprintf "typedef %s %s[%d];" element_c_type alias_name size)
         | _ ->
             let c_type = match underlying_type with
-              | Ast.U8 -> "uint8_t"
-              | Ast.U16 -> "uint16_t"
-              | Ast.U32 -> "uint32_t"
-              | Ast.U64 -> "uint64_t"
-              | Ast.I8 -> "int8_t"
-              | Ast.I16 -> "int16_t"
-              | Ast.I32 -> "int32_t"
-              | Ast.I64 -> "int64_t"
-              | Ast.Bool -> "bool"
+              | Ast.U8 -> "__u8"
+              | Ast.U16 -> "__u16"
+              | Ast.U32 -> "__u32"
+              | Ast.U64 -> "__u64"
+              | Ast.I8 -> "__s8"
+              | Ast.I16 -> "__s16"
+              | Ast.I32 -> "__s32"
+              | Ast.I64 -> "__s64"
+              | Ast.Bool -> "__u8"  (* eBPF uses __u8 for bool *)
               | Ast.Char -> "char"
-              | _ -> "uint32_t" (* fallback *)
+              | _ -> "__u32" (* fallback *)
             in
             emit_line ctx (sprintf "typedef %s %s;" c_type alias_name)
     ) type_aliases;

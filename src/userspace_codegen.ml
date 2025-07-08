@@ -250,7 +250,7 @@ type userspace_context = {
   (* Track register to variable name mapping for better C code *)
   register_vars: (int, string) Hashtbl.t;
   (* Track variable declarations needed *)
-  var_declarations: (string, string) Hashtbl.t; (* var_name -> c_type *)
+  var_declarations: (string, ir_type) Hashtbl.t; (* var_name -> ir_type *)
   (* Track function usage for optimization *)
   function_usage: function_usage;
   (* Global variables for skeleton access *)
@@ -713,6 +713,7 @@ let rec c_type_from_ir_type = function
   | IRContext _ -> "void*" (* context pointers *)
   | IRAction _ -> "int" (* action return values *)
   | IRFunctionPointer (param_types, return_type) -> 
+      (* For function pointers, we need special handling - this is used for type aliases *)
       let return_type_str = c_type_from_ir_type return_type in
       let param_types_str = List.map c_type_from_ir_type param_types in
       let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
@@ -791,15 +792,10 @@ let get_register_var_name ctx reg_id ir_type =
   | Some var_name -> var_name
   | None ->
       let var_name = sprintf "var_%d" reg_id in
-      (* Handle string types specially for variable declarations *)
-      let c_type = match ir_type with
-        | IRStr size -> sprintf "char[%d]" size
-        | _ -> c_type_from_ir_type ir_type
-      in
       Hashtbl.add ctx.register_vars reg_id var_name;
-      (* Only add variable declaration if it doesn't already exist *)
+      (* Store the IR type directly *)
       if not (Hashtbl.mem ctx.var_declarations var_name) then
-        Hashtbl.add ctx.var_declarations var_name c_type;
+        Hashtbl.add ctx.var_declarations var_name ir_type;
       var_name
 
 (** Generate C value from IR value *)
@@ -1462,18 +1458,25 @@ let generate_c_struct_from_ir ir_struct =
      ) ir_struct.struct_fields)
   in
   sprintf "struct %s {\n    %s;\n};" ir_struct.struct_name fields_str
-
+  
+(** Generate proper C declaration for any IR type with variable name *)
+let generate_c_declaration ir_type var_name =
+  match ir_type with
+  | IRFunctionPointer (param_types, return_type) ->
+      let return_type_str = c_type_from_ir_type return_type in
+      let param_types_str = List.map c_type_from_ir_type param_types in
+      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+      sprintf "%s (*%s)(%s)" return_type_str var_name params_str
+  | IRStr size -> sprintf "char %s[%d]" var_name size
+  | IRArray (element_type, size, _) ->
+      let element_type_str = c_type_from_ir_type element_type in
+      sprintf "%s %s[%d]" element_type_str var_name size
+    | _ -> sprintf "%s %s" (c_type_from_ir_type ir_type) var_name
+ 
 (** Generate variable declarations for a function *)
 let generate_variable_declarations ctx =
-  let declarations = Hashtbl.fold (fun var_name c_type acc ->
-    (* Handle array declarations properly *)
-    if String.contains c_type '[' && String.contains c_type ']' then
-      let parts = String.split_on_char '[' c_type in
-      let base_type = List.hd parts in
-      let array_part = "[" ^ String.concat "[" (List.tl parts) in
-      sprintf "%s %s%s;" base_type var_name array_part :: acc
-    else
-      sprintf "%s %s;" c_type var_name :: acc
+  let declarations = Hashtbl.fold (fun var_name ir_type acc ->
+    (generate_c_declaration ir_type var_name ^ ";") :: acc
   ) ctx.var_declarations [] in
   if declarations = [] then ""
   else "    " ^ String.concat "\n    " (List.rev declarations) ^ "\n"
@@ -1525,10 +1528,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
 let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
-       (* Handle string types specially for function parameters *)
-       match ir_type with
-       | IRStr size -> sprintf "char %s[%d]" name size
-       | _ -> sprintf "%s %s" (c_type_from_ir_type ir_type) name
+       generate_c_declaration ir_type name
      ) ir_func.parameters)
   in
   
