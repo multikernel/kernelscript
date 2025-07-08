@@ -4,6 +4,11 @@
  (libraries kernelscript))
 
 (executable
+ (name test_btf_binary_parser)
+ (modules test_btf_binary_parser)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_lexer)
  (modules test_lexer)
  (libraries kernelscript alcotest test_utils))
@@ -571,6 +576,7 @@
 (rule
  (alias core-tests)
  (deps
+  test_btf_binary_parser.exe
   test_lexer.exe
   test_ast.exe
   test_parser.exe
@@ -608,6 +614,7 @@
   test_match.exe)
  (action
   (progn
+   (run ./test_btf_binary_parser.exe)
    (run ./test_lexer.exe)
    (run ./test_ast.exe)
    (run ./test_parser.exe)

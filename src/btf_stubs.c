@@ -260,6 +260,40 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
                 default: CAMLreturn(caml_copy_string("u32"));
             }
             break;
+        case BTF_KIND_ARRAY: {
+            /* Arrays have additional btf_array data after btf_type */
+            const void *array_data = t + 1;
+            const struct {
+                __u32 type;
+                __u32 index_type;
+                __u32 nelems;
+            } *array_info = (const void *)array_data;
+            
+            /* Get element type string */
+            const struct btf_type *elem_type = btf__type_by_id(btf, array_info->type);
+            char result_buf[64];
+            
+            if (elem_type) {
+                int elem_kind = btf_kind(elem_type);
+                const char *elem_type_str = "u8"; /* default */
+                
+                if (elem_kind == BTF_KIND_INT) {
+                    switch (elem_type->size) {
+                        case 1: elem_type_str = "u8"; break;
+                        case 2: elem_type_str = "u16"; break;
+                        case 4: elem_type_str = "u32"; break;
+                        case 8: elem_type_str = "u64"; break;
+                        default: elem_type_str = "u32"; break;
+                    }
+                }
+                
+                snprintf(result_buf, sizeof(result_buf), "%s[%u]", elem_type_str, array_info->nelems);
+            } else {
+                snprintf(result_buf, sizeof(result_buf), "u8[%u]", array_info->nelems);
+            }
+            
+            CAMLreturn(caml_copy_string(result_buf));
+        }
         case BTF_KIND_STRUCT:
         case BTF_KIND_UNION:
         case BTF_KIND_ENUM: {
@@ -267,11 +301,62 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             if (name && strlen(name) > 0) {
                 CAMLreturn(caml_copy_string(name));
             }
-            break;
+            /* For anonymous structs/unions */
+            CAMLreturn(caml_copy_string(kind == BTF_KIND_STRUCT ? "struct" : 
+                                      kind == BTF_KIND_UNION ? "union" : "enum"));
+        }
+        case BTF_KIND_ENUM64: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                CAMLreturn(caml_copy_string(name));
+            }
+            CAMLreturn(caml_copy_string("enum64"));
+        }
+        case BTF_KIND_FWD: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                CAMLreturn(caml_copy_string(name));
+            }
+            CAMLreturn(caml_copy_string("fwd"));
         }
         case BTF_KIND_FUNC_PROTO:
             CAMLreturn(caml_copy_string("fn_ptr"));
+        case BTF_KIND_FUNC: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                CAMLreturn(caml_copy_string(name));
+            }
+            CAMLreturn(caml_copy_string("func"));
+        }
+        case BTF_KIND_VAR: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                CAMLreturn(caml_copy_string(name));
+            }
+            CAMLreturn(caml_copy_string("var"));
+        }
+        case BTF_KIND_DATASEC: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                CAMLreturn(caml_copy_string(name));
+            }
+            CAMLreturn(caml_copy_string("datasec"));
+        }
+        case BTF_KIND_FLOAT:
+            switch (t->size) {
+                case 4: CAMLreturn(caml_copy_string("f32"));
+                case 8: CAMLreturn(caml_copy_string("f64"));
+                default: CAMLreturn(caml_copy_string("float"));
+            }
             break;
+        case BTF_KIND_DECL_TAG:
+        case BTF_KIND_TYPE_TAG: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                CAMLreturn(caml_copy_string(name));
+            }
+            CAMLreturn(caml_copy_string("tag"));
+        }
     }
     
     CAMLreturn(caml_copy_string("unknown"));
