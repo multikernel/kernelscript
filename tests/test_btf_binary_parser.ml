@@ -2,6 +2,17 @@ open Alcotest
 open Kernelscript.Btf_binary_parser
 open Printf
 
+(** Helper function to check if a string contains a substring *)
+let contains_substring str substr =
+  let len = String.length substr in
+  let str_len = String.length str in
+  let rec search i =
+    if i > str_len - len then false
+    else if String.sub str i len = substr then true
+    else search (i + 1)
+  in
+  search 0
+
 (** Mock BTF test scenarios *)
 module MockBTF = struct
   (* Simulate different BTF type scenarios that we fixed *)
@@ -360,6 +371,72 @@ let test_sk_buff_regression_prevention () =
   
   test_regression ()
 
+(** Test that tcp_congestion_ops functions are parsed with detailed prototypes *)
+let test_tcp_congestion_ops_function_prototypes () =
+  (* Test that tcp_congestion_ops functions are parsed with detailed prototypes *)
+  let btf_path = "/sys/kernel/btf/vmlinux" in
+  if Sys.file_exists btf_path then (
+    let btf_types = parse_btf_file btf_path ["tcp_congestion_ops"] in
+    let tcp_congestion_ops_type = List.find (fun t -> t.name = "tcp_congestion_ops") btf_types in
+    
+    match tcp_congestion_ops_type.members with
+    | Some members ->
+        (* Check that ssthresh function has proper signature *)
+        let ssthresh_field = List.find (fun (name, _) -> name = "ssthresh") members in
+        let (_, ssthresh_type) = ssthresh_field in
+        check bool "ssthresh should have function signature with parameters and return type"
+          (String.contains ssthresh_type '(' && String.contains ssthresh_type ')' && String.contains ssthresh_type '>') true;
+        
+        (* Check that cong_avoid function has multiple parameters *)
+        let cong_avoid_field = List.find (fun (name, _) -> name = "cong_avoid") members in
+        let (_, cong_avoid_type) = cong_avoid_field in
+        let param_count = List.length (String.split_on_char ',' cong_avoid_type) in
+        check bool "cong_avoid should have multiple parameters" (param_count >= 2) true;
+        
+        (* Check that function types contain proper return types *)
+        let init_field = List.find (fun (name, _) -> name = "init") members in
+        let (_, init_type) = init_field in
+        check bool "init function should have void return type" (contains_substring init_type "void") true;
+        
+        printf "✅ Function prototypes extracted successfully:\n";
+        List.iter (fun (name, type_str) ->
+          if String.contains type_str '(' then
+            printf "  - %s: %s\n" name type_str
+        ) members
+    | None ->
+        failwith "tcp_congestion_ops should have members"
+  ) else (
+    printf "⚠️ BTF file not available, skipping function prototype tests\n"
+  )
+
+(** Test that function prototypes are properly formatted *)
+let test_function_prototype_parsing () =
+  (* Test that function prototypes are properly formatted *)
+  let btf_path = "/sys/kernel/btf/vmlinux" in
+  if Sys.file_exists btf_path then (
+    let btf_types = parse_btf_file btf_path ["tcp_congestion_ops"] in
+    let tcp_congestion_ops_type = List.find (fun t -> t.name = "tcp_congestion_ops") btf_types in
+    
+    match tcp_congestion_ops_type.members with
+    | Some members ->
+        (* Verify function signatures have proper format: fn(params) -> return_type *)
+        let function_members = List.filter (fun (_, type_str) -> String.contains type_str '(') members in
+        List.iter (fun (name, type_str) ->
+          check bool (sprintf "Function %s should start with 'fn('" name)
+            (String.length type_str >= 3 && String.sub type_str 0 3 = "fn(") true;
+          check bool (sprintf "Function %s should contain '->'" name)
+            (String.contains type_str '>') true;
+          check bool (sprintf "Function %s should have closing parenthesis" name)
+            (String.contains type_str ')') true;
+        ) function_members;
+        
+        printf "✅ All function prototypes have correct format\n"
+    | None ->
+        failwith "tcp_congestion_ops should have members"
+  ) else (
+    printf "⚠️ BTF file not available, skipping function prototype parsing tests\n"
+  )
+
 (** Test suite for BTF binary parser improvements *)
 let btf_parser_suite =
   [
@@ -368,6 +445,8 @@ let btf_parser_suite =
     ("__sk_buff field resolution", `Quick, test_sk_buff_field_resolution);
     ("Mock BTF resolution", `Quick, test_mock_btf_resolution);
     ("No unknown regression", `Quick, test_no_unknown_regression);
+    ("tcp_congestion_ops function prototypes", `Quick, test_tcp_congestion_ops_function_prototypes);
+    ("Function prototype parsing", `Quick, test_function_prototype_parsing);
   ]
 
 (** Test suite for __sk_buff BTF parsing *)

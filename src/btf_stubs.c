@@ -206,6 +206,104 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
     CAMLreturn(result);
 }
 
+/* Helper function to resolve a single type to string */
+static char* resolve_type_to_string(struct btf *btf, int type_id) {
+    if (type_id == 0) return strdup("void");
+    
+    const struct btf_type *t = btf__type_by_id(btf, type_id);
+    if (!t) return strdup("unknown");
+    
+    int kind = btf_kind(t);
+    
+    /* Follow type chains */
+    while (kind == BTF_KIND_PTR || kind == BTF_KIND_TYPEDEF || 
+           kind == BTF_KIND_VOLATILE || kind == BTF_KIND_CONST || 
+           kind == BTF_KIND_RESTRICT) {
+        
+        if (kind == BTF_KIND_PTR) {
+            const struct btf_type *target = btf__type_by_id(btf, t->type);
+            if (target && btf_kind(target) == BTF_KIND_INT && target->size == 1) {
+                return strdup("str");
+            }
+            return strdup("*u8");
+        }
+        
+        t = btf__type_by_id(btf, t->type);
+        if (!t) break;
+        kind = btf_kind(t);
+    }
+    
+    switch (kind) {
+        case BTF_KIND_INT:
+            switch (t->size) {
+                case 1: return strdup("u8");
+                case 2: return strdup("u16");
+                case 4: return strdup("u32");
+                case 8: return strdup("u64");
+                default: return strdup("u32");
+            }
+        case BTF_KIND_STRUCT:
+        case BTF_KIND_UNION:
+        case BTF_KIND_ENUM: {
+            const char *name = btf__name_by_offset(btf, t->name_off);
+            if (name && strlen(name) > 0) {
+                return strdup(name);
+            }
+            return strdup(kind == BTF_KIND_STRUCT ? "struct" : 
+                         kind == BTF_KIND_UNION ? "union" : "enum");
+        }
+        default:
+            return strdup("unknown");
+    }
+}
+
+/* Helper function to format function prototype */
+static char* format_function_prototype(struct btf *btf, const struct btf_type *func_proto) {
+    char result[1024];
+    int ret_type_id = func_proto->type;
+    int param_count = btf_vlen(func_proto);
+    
+    /* Get return type */
+    char *ret_type = resolve_type_to_string(btf, ret_type_id);
+    
+    /* Start building the function signature */
+    snprintf(result, sizeof(result), "fn(");
+    
+    /* Add parameters */
+    if (param_count > 0) {
+        const struct btf_param *params = (const struct btf_param *)(func_proto + 1);
+        
+        for (int i = 0; i < param_count; i++) {
+            const struct btf_param *param = &params[i];
+            
+            /* Get parameter name */
+            const char *param_name = btf__name_by_offset(btf, param->name_off);
+            if (!param_name || strlen(param_name) == 0) {
+                param_name = "arg";
+            }
+            
+            /* Get parameter type */
+            char *param_type = resolve_type_to_string(btf, param->type);
+            
+            /* Add parameter to result */
+            char param_str[256];
+            snprintf(param_str, sizeof(param_str), "%s%s: %s", 
+                    (i > 0 ? ", " : ""), param_name, param_type);
+            strncat(result, param_str, sizeof(result) - strlen(result) - 1);
+            
+            free(param_type);
+        }
+    }
+    
+    /* Close parameters and add return type */
+    char closing[256];
+    snprintf(closing, sizeof(closing), ") -> %s", ret_type);
+    strncat(result, closing, sizeof(result) - strlen(result) - 1);
+    
+    free(ret_type);
+    return strdup(result);
+}
+
 /* Resolve type to string representation */
 value btf_resolve_type_stub(value btf_handle, value type_id) {
     CAMLparam2(btf_handle, type_id);
@@ -233,7 +331,10 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             /* Check if this points to a function prototype */
             const struct btf_type *target = btf__type_by_id(btf, t->type);
             if (target && btf_kind(target) == BTF_KIND_FUNC_PROTO) {
-                CAMLreturn(caml_copy_string("fn_ptr"));
+                char *func_sig = format_function_prototype(btf, target);
+                value result = caml_copy_string(func_sig);
+                free(func_sig);
+                CAMLreturn(result);
             }
             /* Check if this points to char (string) */
             if (target && btf_kind(target) == BTF_KIND_INT && target->size == 1) {
@@ -319,8 +420,12 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             }
             CAMLreturn(caml_copy_string("fwd"));
         }
-        case BTF_KIND_FUNC_PROTO:
-            CAMLreturn(caml_copy_string("fn_ptr"));
+        case BTF_KIND_FUNC_PROTO: {
+            char *func_sig = format_function_prototype(btf, t);
+            value result = caml_copy_string(func_sig);
+            free(func_sig);
+            CAMLreturn(result);
+        }
         case BTF_KIND_FUNC: {
             const char *name = btf__name_by_offset(btf, t->name_off);
             if (name && strlen(name) > 0) {
