@@ -362,10 +362,9 @@ let rec lower_expression ctx (expr : Ast.expr) =
       (* Determine call type based on callee expression *)
       (match callee_expr.expr_desc with
        | Ast.Identifier name ->
-           (* Regular function call *)
-           (* Special handling for register() builtin function *)
+           (* Check if this is a variable holding a function pointer or a direct function call *)
            if name = "register" then
-             (* Generate struct_ops registration instruction *)
+             (* Special handling for register() builtin function *)
              if List.length arg_vals = 1 then
                let struct_val = List.hd arg_vals in
                let result_reg = allocate_register ctx in
@@ -375,8 +374,23 @@ let rec lower_expression ctx (expr : Ast.expr) =
                result_val
              else
                failwith "register() takes exactly one argument"
+           else if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+             (* This is a variable holding a function pointer - use FunctionPointerCall *)
+             let callee_val = lower_expression ctx callee_expr in
+             let result_reg = allocate_register ctx in
+             let result_type = match expr.expr_type with
+               | Some ast_type -> ast_type_to_ir_type ast_type
+               | None -> IRU32
+             in
+             let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+             let instr = make_ir_instruction
+               (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
+               expr.expr_pos
+             in
+             emit_instruction ctx instr;
+             result_val
            else
-             (* Regular function call *)
+             (* This is a direct function call *)
              let result_reg = allocate_register ctx in
              let result_type = match expr.expr_type with
                | Some ast_type -> ast_type_to_ir_type ast_type
