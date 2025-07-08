@@ -202,7 +202,7 @@ let integer_promotion t1 t2 =
   
   (* Mixed signed/unsigned promotions - like C allows *)
   | I8, U32 | I16, U32 | I32, U32 -> Some I32   (* U32 literals can be assigned to signed types if they fit *)
-  | U32, I8 | U32, I16 -> Some I32   (* U32 can be assigned to signed types if they fit *)
+  | U32, I8 | U32, I16 | U32, I32 -> Some I32   (* U32 can be assigned to signed types if they fit *)
   | I64, U32 | U32, I64 -> Some I64   (* U32 can always fit in I64 *)
   | I64, U64 | U64, I64 -> Some I64   (* U64 literals to I64 (may truncate but allowed in C-style) *)
   | I8, U8 | U8, I8 -> Some I8   (* Small integer promotions *)
@@ -224,6 +224,8 @@ let rec unify_types t1 t2 =
   | t1, t2 when (match t1, t2 with 
                   | (U8|U16|U32|U64), (U8|U16|U32|U64) -> true
                   | (I8|I16|I32|I64), (I8|I16|I32|I64) -> true
+                  | (U8|U16|U32|U64), (I8|I16|I32|I64) -> true  (* Mixed unsigned/signed *)
+                  | (I8|I16|I32|I64), (U8|U16|U32|U64) -> true  (* Mixed signed/unsigned *)
                   | _ -> false) ->
       integer_promotion t1 t2
   

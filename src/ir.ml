@@ -125,6 +125,7 @@ and ir_type =
   | IRAction of action_type
   | IRTypeAlias of string * ir_type (* Simple type aliases *)
   | IRStructOps of string * ir_struct_ops_def (* Future: struct_ops support *)
+  | IRFunctionPointer of ir_type list * ir_type (* Function pointer: (param_types, return_type) *)
 
 and context_type = 
   | XdpCtx | TcCtx | KprobeCtx | UprobeCtx | TracepointCtx | LsmCtx | CgroupSkbCtx
@@ -204,6 +205,7 @@ and ir_value_desc =
   | IRContextField of context_type * string
   | IRMapRef of string
   | IREnumConstant of string * string * int  (* enum_name, constant_name, value *)
+  | IRFunctionRef of string  (* Function reference by name *)
 
 (** IR expressions with simplified operations *)
 and ir_expr = {
@@ -264,10 +266,14 @@ and ir_instruction = {
   instr_pos: ir_position;
 }
 
+and ir_call_target = 
+  | DirectCall of string        (* Direct function call by name *)
+  | FunctionPointerCall of ir_value  (* Function pointer call *)
+
 and ir_instr_desc =
   | IRAssign of ir_value * ir_expr
   | IRConstAssign of ir_value * ir_expr (* Dedicated const assignment instruction *)
-  | IRCall of string * ir_value list * ir_value option
+  | IRCall of ir_call_target * ir_value list * ir_value option
   | IRTailCall of string * ir_value list * int  (* function_name, args, prog_array_index *)
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
@@ -651,9 +657,11 @@ let rec ast_type_to_ir_type = function
   | CgroupSkbContext -> IRContext CgroupSkbCtx
   | Xdp_action -> IRAction Xdp_actionType
   | UserType name -> IRStruct (name, [], false) (* Resolved by type checker *)
-  | Function (_, _) -> 
-      (* For function types, we represent them as function pointers (string names in practice) *)
-      IRStr 64  (* Function names as strings, max 64 chars *)
+  | Function (param_types, return_type) -> 
+      (* Function types are represented as proper function pointers *)
+      let ir_param_types = List.map ast_type_to_ir_type param_types in
+      let ir_return_type = ast_type_to_ir_type return_type in
+      IRFunctionPointer (ir_param_types, ir_return_type)
   | Map (_, _, _) -> failwith "Map types handled separately"
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
   | ProgramHandle -> IRI32 (* Program handles are represented as file descriptors (i32) in IR to support error codes *)
@@ -736,6 +744,10 @@ let rec string_of_ir_type = function
   | IRAction action -> Printf.sprintf "action %s" (match action with
     | Xdp_actionType -> "xdp" | TcActionType -> "tc"
     | GenericActionType -> "generic")
+  | IRFunctionPointer (param_types, return_type) ->
+      let param_strs = List.map string_of_ir_type param_types in
+      let return_str = string_of_ir_type return_type in
+      Printf.sprintf "fn(%s) -> %s" (String.concat ", " param_strs) return_str
 
 let string_of_ir_value_desc = function
   | IRLiteral lit -> string_of_literal lit
@@ -744,6 +756,7 @@ let string_of_ir_value_desc = function
   | IRContextField (_, field) -> Printf.sprintf "ctx.%s" field
   | IRMapRef name -> Printf.sprintf "&%s" name
   | IREnumConstant (_enum_name, constant_name, _value) -> constant_name
+  | IRFunctionRef function_name -> Printf.sprintf "fn:%s" function_name
 
 let string_of_ir_value value =
   Printf.sprintf "%s: %s" 
@@ -796,13 +809,17 @@ let rec string_of_ir_instruction instr =
       Printf.sprintf "%s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
   | IRConstAssign (dest, expr) ->
       Printf.sprintf "const %s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
-  | IRCall (name, args, ret_opt) ->
+  | IRCall (target, args, ret_opt) ->
       let args_str = String.concat ", " (List.map string_of_ir_value args) in
       let ret_str = match ret_opt with
         | Some ret_val -> string_of_ir_value ret_val ^ " = "
         | None -> ""
       in
-      Printf.sprintf "%s%s(%s)" ret_str name args_str
+      let target_str = match target with
+        | DirectCall name -> name
+        | FunctionPointerCall func_ptr -> "(*" ^ string_of_ir_value func_ptr ^ ")"
+      in
+      Printf.sprintf "%s%s(%s)" ret_str target_str args_str
   | IRTailCall (name, args, index) ->
       let args_str = String.concat ", " (List.map string_of_ir_value args) in
       Printf.sprintf "bpf_tail_call(ctx, &prog_array, %d) /* %s(%s) */" index name args_str

@@ -311,14 +311,14 @@ let test_match_conditional_control_flow () =
           (* Verify that function calls are only in appropriate branches *)
           let has_tcp_call_in_then = List.exists (fun then_instr ->
             match then_instr.instr_desc with
-            | IRCall ("get_tcp_port", _, _) -> true
+            | IRCall (DirectCall "get_tcp_port", _, _) -> true
             | _ -> false
           ) then_body in
           
           let has_udp_call_in_else = match else_body with
             | Some else_instrs -> List.exists (fun else_instr ->
                 match else_instr.instr_desc with
-                | IRCall ("get_udp_port", _, _) -> true
+                | IRCall (DirectCall "get_udp_port", _, _) -> true
                 | _ -> false
               ) else_instrs
             | None -> false
@@ -375,8 +375,8 @@ let test_match_no_premature_execution () =
   (* Count total function calls - should be inside conditional branches only *)
   let function_call_count = List.fold_left (fun acc instr ->
     match instr.instr_desc with
-    | IRCall ("expensive_operation_1", _, _) -> acc + 1
-    | IRCall ("expensive_operation_2", _, _) -> acc + 1  
+    | IRCall (DirectCall "expensive_operation_1", _, _) -> acc + 1
+    | IRCall (DirectCall "expensive_operation_2", _, _) -> acc + 1  
     | _ -> acc
   ) 0 all_instructions in
   
@@ -389,13 +389,13 @@ let test_match_no_premature_execution () =
     | IRIf (_, then_body, else_body) ->
         let then_calls = List.fold_left (fun acc2 then_instr ->
           match then_instr.instr_desc with
-          | IRCall ("expensive_operation_1", _, _) | IRCall ("expensive_operation_2", _, _) -> acc2 + 1
+          | IRCall (DirectCall "expensive_operation_1", _, _) | IRCall (DirectCall "expensive_operation_2", _, _) -> acc2 + 1
           | _ -> acc2
         ) 0 then_body in
         let else_calls = match else_body with
           | Some else_instrs -> List.fold_left (fun acc3 else_instr ->
               match else_instr.instr_desc with
-              | IRCall ("expensive_operation_1", _, _) | IRCall ("expensive_operation_2", _, _) -> acc3 + 1
+              | IRCall (DirectCall "expensive_operation_1", _, _) | IRCall (DirectCall "expensive_operation_2", _, _) -> acc3 + 1
               | _ -> acc3
             ) 0 else_instrs
           | None -> 0

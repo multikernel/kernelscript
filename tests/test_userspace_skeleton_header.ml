@@ -12,7 +12,7 @@ let contains_substr str substr =
 let test_skeleton_header_inclusion () =
   (* Test that skeleton header is included when load() is used *)
   let test_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" } in
-  let load_call = make_ir_instruction (IRCall ("load", [make_ir_value (IRLiteral (StringLit "test_prog")) (IRStr 10) test_pos], Some (make_ir_value (IRVariable "prog") IRI32 test_pos))) test_pos in
+  let load_call = make_ir_instruction (IRCall (DirectCall "load", [make_ir_value (IRLiteral (StringLit "test_prog")) (IRStr 10) test_pos], Some (make_ir_value (IRVariable "prog") IRI32 test_pos))) test_pos in
   let entry_block = make_ir_basic_block "entry" [load_call] 0 in
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
@@ -29,7 +29,7 @@ let test_skeleton_header_inclusion () =
 let test_skeleton_header_inclusion_attach () =
   (* Test that skeleton header is included when attach() is used *)
   let test_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" } in
-  let attach_call = make_ir_instruction (IRCall ("attach", [make_ir_value (IRLiteral (IntLit (1, None))) IRI32 test_pos; make_ir_value (IRLiteral (StringLit "lo")) (IRStr 10) test_pos; make_ir_value (IRLiteral (IntLit (0, None))) IRI32 test_pos], None)) test_pos in
+  let attach_call = make_ir_instruction (IRCall (DirectCall "attach", [make_ir_value (IRLiteral (IntLit (1, None))) IRI32 test_pos; make_ir_value (IRLiteral (StringLit "lo")) (IRStr 10) test_pos; make_ir_value (IRLiteral (IntLit (0, None))) IRI32 test_pos], None)) test_pos in
   let entry_block = make_ir_basic_block "entry" [attach_call] 0 in
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
@@ -46,7 +46,7 @@ let test_skeleton_header_inclusion_attach () =
 let test_skeleton_header_not_included_without_bpf_functions () =
   (* Test that skeleton header is not included when no BPF functions are used *)
   let test_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" } in
-  let printf_call = make_ir_instruction (IRCall ("printf", [make_ir_value (IRLiteral (StringLit "Hello World")) (IRStr 20) test_pos], None)) test_pos in
+  let printf_call = make_ir_instruction (IRCall (DirectCall "printf", [make_ir_value (IRLiteral (StringLit "Hello World")) (IRStr 20) test_pos], None)) test_pos in
   let entry_block = make_ir_basic_block "entry" [printf_call] 0 in
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
@@ -72,7 +72,7 @@ let test_skeleton_header_included_with_global_variables () =
     is_pinned = false;
   } in
   
-  let printf_call = make_ir_instruction (IRCall ("printf", [make_ir_value (IRLiteral (StringLit "Hello World")) (IRStr 20) test_pos], None)) test_pos in
+  let printf_call = make_ir_instruction (IRCall (DirectCall "printf", [make_ir_value (IRLiteral (StringLit "Hello World")) (IRStr 20) test_pos], None)) test_pos in
   let entry_block = make_ir_basic_block "entry" [printf_call] 0 in
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   

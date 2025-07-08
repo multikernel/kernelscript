@@ -403,7 +403,8 @@ let test_type_unification_enhanced () =
   check bool "U8 promotes to U64" true (can_unify U8 U64);
   (* Test that incompatible types still don't unify *)
   check bool "U32 does not unify with Bool" false (can_unify U32 Bool);
-  check bool "I32 does not unify with U32" false (can_unify I32 U32)
+  (* I32 and U32 should now unify due to permissive integer literal behavior *)
+  check bool "I32 unifies with U32" true (can_unify I32 U32)
 
 (** Test comprehensive type checking *)
 let test_comprehensive_type_checking () =
@@ -500,8 +501,6 @@ let test_comprehensive_integer_promotion () =
   
   (* Test that incompatible types still don't unify *)
   let incompatible_tests = [
-    (U32, I32, "U32 does not unify with I32");
-    (U64, I64, "U64 does not unify with I64");
     (U8, Bool, "U8 does not unify with Bool");
     (I16, Str 32, "I16 does not unify with Str");
     (U32, Pointer U32, "U32 does not unify with Pointer U32");
@@ -509,7 +508,19 @@ let test_comprehensive_integer_promotion () =
   
   List.iter (fun (t1, t2, desc) ->
     check bool desc false (can_unify t1 t2)
-  ) incompatible_tests
+  ) incompatible_tests;
+  
+  (* Test that compatible integer types do unify (permissive behavior) *)
+  let compatible_tests = [
+    (U32, I32, "U32 unifies with I32");
+    (U64, I64, "U64 unifies with I64");
+    (I32, U32, "I32 unifies with U32");
+    (I64, U64, "I64 unifies with U64");
+  ] in
+  
+  List.iter (fun (t1, t2, desc) ->
+    check bool desc true (can_unify t1 t2)
+  ) compatible_tests
 
 (** Test arithmetic operations with integer promotion *)
 let test_arithmetic_promotion () =

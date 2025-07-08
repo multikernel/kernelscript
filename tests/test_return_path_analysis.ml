@@ -75,12 +75,12 @@ let test_missing_return_branch () =
   let condition = make_simple_ir_value (IRVariable "condition") IRBool in
   
   (* Entry block: if (x > 10) goto then_block else goto else_block *)
-  let check_gt = make_simple_instruction (IRCall ("greater_than", [var_x; const_10], Some condition)) in
+  let check_gt = make_simple_instruction (IRCall (DirectCall "greater_than", [var_x; const_10], Some condition)) in
   let branch_instr = make_simple_instruction (IRCondJump (condition, "then_block", "else_block")) in
   let entry_block = { (make_simple_basic_block "entry" [check_gt; branch_instr]) with successors = ["then_block"; "else_block"] } in
   
   (* Then block: no return statement (missing return) *)
-  let assign_instr = make_simple_instruction (IRCall ("some_operation", [], None)) in
+  let assign_instr = make_simple_instruction (IRCall (DirectCall "some_operation", [], None)) in
   let then_block = make_simple_basic_block "then_block" [assign_instr] in
   
   (* Else block: return 1 *)
@@ -110,7 +110,7 @@ let test_missing_return_branch () =
 
 (** Test function with no return statements *)
 let test_no_return () =
-  let assign_instr = make_simple_instruction (IRCall ("some_operation", [], None)) in
+  let assign_instr = make_simple_instruction (IRCall (DirectCall "some_operation", [], None)) in
   let entry_block = make_simple_basic_block "entry" [assign_instr] in
   
   let test_function = {
@@ -145,7 +145,7 @@ let test_multiple_exit_blocks_all_return () =
   let condition2 = make_simple_ir_value (IRVariable "condition2") IRBool in
   
   (* Entry: if (x < 5) goto path1 else goto check2 *)
-  let check_lt = make_simple_instruction (IRCall ("less_than", [var_x; const_5], Some condition1)) in
+  let check_lt = make_simple_instruction (IRCall (DirectCall "less_than", [var_x; const_5], Some condition1)) in
   let branch1 = make_simple_instruction (IRCondJump (condition1, "path1", "check2")) in
   let entry_block = { (make_simple_basic_block "entry" [check_lt; branch1]) with successors = ["path1"; "check2"] } in
   
@@ -154,7 +154,7 @@ let test_multiple_exit_blocks_all_return () =
   let path1_block = make_simple_basic_block "path1" [return1] in
   
   (* Check2: if (x > 10) goto path2 else goto path3 *)
-  let check_gt = make_simple_instruction (IRCall ("greater_than", [var_x; const_10], Some condition2)) in
+  let check_gt = make_simple_instruction (IRCall (DirectCall "greater_than", [var_x; const_10], Some condition2)) in
   let branch2 = make_simple_instruction (IRCondJump (condition2, "path2", "path3")) in
   let check2_block = { (make_simple_basic_block "check2" [check_gt; branch2]) with successors = ["path2"; "path3"] } in
   

@@ -268,10 +268,12 @@ let rec lower_expression ctx (expr : Ast.expr) =
       else
         (* Check if this is a function reference *)
         (match expr.expr_type with
-         | Some (Function (_, _)) ->
-             (* Function references should be converted to string literals containing the function name *)
-             let str_type = IRStr (String.length name + 1) in
-             make_ir_value (IRLiteral (StringLit name)) str_type expr.expr_pos
+         | Some (Function (param_types, return_type)) ->
+             (* Function references should be converted to function references *)
+             let ir_param_types = List.map ast_type_to_ir_type param_types in
+             let ir_return_type = ast_type_to_ir_type return_type in
+             let func_type = IRFunctionPointer (ir_param_types, ir_return_type) in
+             make_ir_value (IRFunctionRef name) func_type expr.expr_pos
          | Some (ProgramRef _) ->
              (* Program references should be converted to string literals containing the program name *)
              make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
@@ -382,7 +384,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
              in
              let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
              let instr = make_ir_instruction
-               (IRCall (name, arg_vals, Some result_val))
+               (IRCall (DirectCall name, arg_vals, Some result_val))
                expr.expr_pos
              in
              emit_instruction ctx instr;
@@ -398,9 +400,21 @@ let rec lower_expression ctx (expr : Ast.expr) =
            else
              failwith ("Unknown method call: " ^ obj_name ^ "." ^ method_name)
        | _ ->
-           (* Function pointer call - not yet implemented *)
-           let _func_val = lower_expression ctx callee_expr in
-           failwith "Function pointer calls not yet implemented in IR generation")
+           (* Function pointer call - use FunctionPointerCall target *)
+           let callee_val = lower_expression ctx callee_expr in
+           let arg_vals = List.map (lower_expression ctx) args in
+           let result_reg = allocate_register ctx in
+           let result_type = match expr.expr_type with
+             | Some ast_type -> ast_type_to_ir_type ast_type
+             | None -> IRU32
+           in
+           let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+           let instr = make_ir_instruction
+             (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
+             expr.expr_pos
+           in
+           emit_instruction ctx instr;
+           result_val)
         
   | Ast.ArrayAccess (array_expr, index_expr) ->
       (* Check if this is map access first, before calling lower_expression on array *)

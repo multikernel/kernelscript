@@ -68,8 +68,10 @@ let rec extract_function_calls_from_ir_instrs instrs =
   
   List.iter (fun instr ->
     match instr.instr_desc with
-    | IRCall (func_name, _, _) ->
-        calls := func_name :: !calls
+    | IRCall (target, _, _) ->
+        (match target with
+         | DirectCall func_name -> calls := func_name :: !calls
+         | FunctionPointerCall _ -> ())
     | IRIf (_, then_body, else_body) ->
         calls := (extract_function_calls_from_ir_instrs then_body) @ !calls;
         (match else_body with
@@ -282,11 +284,14 @@ let fresh_temp_var ctx prefix =
 (** Track function usage based on instruction *)
 let track_function_usage ctx instr =
   match instr.instr_desc with
-  | IRCall (func_name, _, _) ->
-      (match func_name with
-       | "load" -> ctx.function_usage.uses_load <- true
-      | "attach" -> ctx.function_usage.uses_attach <- true
-       | _ -> ())
+  | IRCall (target, _, _) ->
+      (match target with
+       | DirectCall func_name ->
+           (match func_name with
+            | "load" -> ctx.function_usage.uses_load <- true
+            | "attach" -> ctx.function_usage.uses_attach <- true
+            | _ -> ())
+       | FunctionPointerCall _ -> ())
   | IRMapLoad (map_val, _, _, _) 
   | IRMapStore (map_val, _, _, _) 
   | IRMapDelete (map_val, _) ->
@@ -707,6 +712,11 @@ let rec c_type_from_ir_type = function
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
   | IRContext _ -> "void*" (* context pointers *)
   | IRAction _ -> "int" (* action return values *)
+  | IRFunctionPointer (param_types, return_type) -> 
+      let return_type_str = c_type_from_ir_type return_type in
+      let param_types_str = List.map c_type_from_ir_type param_types in
+      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
 
 (** Generate type alias definitions for userspace *)
 let generate_type_alias_definitions_userspace type_aliases =
@@ -841,6 +851,9 @@ let generate_c_value_from_ir ctx ir_value =
   | IREnumConstant (_enum_name, constant_name, _value) ->
       (* Generate enum constant name instead of numeric value *)
       constant_name
+  | IRFunctionRef function_name ->
+      (* Generate function reference (just the function name) *)
+      function_name
 
 (** Generate C expression from IR expression *)
 let generate_c_expression_from_ir ctx ir_expr =
@@ -1128,12 +1141,15 @@ let rec generate_c_instruction_from_ir ctx instruction =
       (* Const assignment with const keyword *)
       generate_variable_assignment ctx dest src true
       
-  | IRCall (name, args, ret_opt) ->
+  | IRCall (target, args, ret_opt) ->
       (* Track function usage for optimization *)
       track_function_usage ctx instruction;
       
-      (* Check if this is a built-in function that needs context-specific translation *)
-      let (actual_name, translated_args) = match Stdlib.get_userspace_implementation name with
+      (* Handle different call targets *)
+      let (actual_name, translated_args) = match target with
+        | DirectCall name ->
+            (* Check if this is a built-in function that needs context-specific translation *)
+            (match Stdlib.get_userspace_implementation name with
         | Some userspace_impl ->
             (* This is a built-in function - translate for userspace context *)
             let c_args = List.map (generate_c_value_from_ir ctx) args in
@@ -1195,7 +1211,12 @@ let rec generate_c_instruction_from_ir ctx instruction =
         | None ->
             (* Regular function call *)
             let c_args = List.map (generate_c_value_from_ir ctx) args in
-            (name, c_args)
+            (name, c_args))
+        | FunctionPointerCall func_ptr ->
+            (* Function pointer call - generate the function pointer directly *)
+            let func_ptr_str = generate_c_value_from_ir ctx func_ptr in
+            let c_args = List.map (generate_c_value_from_ir ctx) args in
+            (func_ptr_str, c_args)
       in
       let args_str = String.concat ", " translated_args in
       let basic_call = (match ret_opt with
@@ -1203,7 +1224,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
        | None -> sprintf "%s(%s);" actual_name args_str) in
       
       (* Add error checking for load in main function *)
-      if ctx.is_main && name = "load" then
+      if ctx.is_main && (match target with DirectCall "load" -> true | _ -> false) then
         match ret_opt with
         | Some result ->
             let result_var = generate_c_value_from_ir ctx result in

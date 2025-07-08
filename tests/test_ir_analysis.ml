@@ -178,9 +178,9 @@ let _test_cfg_construction _ =
   let const_0 = make_simple_ir_value (IRLiteral (IntLit (0, None))) IRU32 in
   
   (* Entry: x = 42; if (x > 5) goto then_block else goto else_block *)
-  let assign_x = make_simple_instruction (IRCall ("assign_x", [const_42], Some var_x)) in
+  let assign_x = make_simple_instruction (IRCall (DirectCall "assign_x", [const_42], Some var_x)) in
   let condition = make_simple_ir_value (IRVariable "condition") IRBool in
-  let check_gt = make_simple_instruction (IRCall ("greater_than", [var_x; const_5], Some condition)) in
+  let check_gt = make_simple_instruction (IRCall (DirectCall "greater_than", [var_x; const_5], Some condition)) in
      let branch_instr = make_simple_instruction (IRCondJump (condition, "then_block", "else_block")) in
    
    let entry_block = make_simple_basic_block "entry" [assign_x; check_gt; branch_instr] in
@@ -223,9 +223,9 @@ let _test_function_with_return _ =
   
   (* Entry: x = input; if (x > 10) goto high_path else goto low_path *)
   let input_param = make_simple_ir_value (IRVariable "input") IRU32 in
-  let assign_x = make_simple_instruction (IRCall ("assign_x", [input_param], Some var_x)) in
+  let assign_x = make_simple_instruction (IRCall (DirectCall "assign_x", [input_param], Some var_x)) in
   let condition = make_simple_ir_value (IRVariable "condition") IRBool in
-  let check_gt = make_simple_instruction (IRCall ("greater_than", [var_x; const_10], Some condition)) in
+  let check_gt = make_simple_instruction (IRCall (DirectCall "greater_than", [var_x; const_10], Some condition)) in
      let branch_instr = make_simple_instruction (IRCondJump (condition, "high_path", "low_path")) in
    
    let entry_block = make_simple_basic_block "entry" [assign_x; check_gt; branch_instr] in
@@ -300,8 +300,8 @@ let _test_complete_statement_processing _ =
   let const_10 = make_simple_ir_value (IRLiteral (IntLit (10, None))) IRU32 in
   
   (* Sequence of statements: a = 5; b = a + 10; return; *)
-  let assign_a = make_simple_instruction (IRCall ("assign_a", [const_5], Some var_a)) in
-  let assign_b = make_simple_instruction (IRCall ("add_assign", [var_a; const_10], Some var_b)) in
+  let assign_a = make_simple_instruction (IRCall (DirectCall "assign_a", [const_5], Some var_a)) in
+  let assign_b = make_simple_instruction (IRCall (DirectCall "add_assign", [var_a; const_10], Some var_b)) in
   let return_instr = make_simple_instruction (IRReturn None) in
   
   let entry_block = make_simple_basic_block "entry" [assign_a; assign_b; return_instr] in
@@ -337,8 +337,8 @@ let _test_analyze_ir_function _ =
   let const_2 = make_simple_ir_value (IRLiteral (IntLit (2, None))) IRU32 in
   
   (* Operations: temp = 100; result = temp / 2; return result; *)
-  let assign_temp = make_simple_instruction (IRCall ("assign_temp", [const_100], Some var_temp)) in
-  let assign_result = make_simple_instruction (IRCall ("divide", [var_temp; const_2], Some var_result)) in
+  let assign_temp = make_simple_instruction (IRCall (DirectCall "assign_temp", [const_100], Some var_temp)) in
+  let assign_result = make_simple_instruction (IRCall (DirectCall "divide", [var_temp; const_2], Some var_result)) in
   let return_result = make_simple_instruction (IRReturn (Some var_result)) in
   
   let analysis_block = make_simple_basic_block "analysis" [assign_temp; assign_result; return_result] in
@@ -379,12 +379,12 @@ let _test_analysis_report_generation _ =
   let const_5 = make_simple_ir_value (IRLiteral (IntLit (5, None))) IRU32 in
   
   (* Function with loop and return paths for report generation *)
-  let init_count = make_simple_instruction (IRCall ("assign_count", [const_0], Some var_count)) in
+  let init_count = make_simple_instruction (IRCall (DirectCall "assign_count", [const_0], Some var_count)) in
   let condition = make_simple_ir_value (IRVariable "condition") IRBool in
-  let check_lt = make_simple_instruction (IRCall ("less_than", [var_count; const_5], Some condition)) in
+  let check_lt = make_simple_instruction (IRCall (DirectCall "less_than", [var_count; const_5], Some condition)) in
   let branch_instr = make_simple_instruction (IRCondJump (condition, "loop_body", "exit")) in
   let const_1 = make_simple_ir_value (IRLiteral (IntLit (1, None))) IRU32 in
-  let update_count = make_simple_instruction (IRCall ("increment", [var_count; const_1], Some var_count)) in
+  let update_count = make_simple_instruction (IRCall (DirectCall "increment", [var_count; const_1], Some var_count)) in
   let return_instr = make_simple_instruction (IRReturn (Some var_count)) in
   
   let init_block = make_simple_basic_block "init" [init_count; check_lt; branch_instr] in
@@ -506,8 +506,8 @@ let test_data_flow_analysis () =
     let const_1 = make_simple_ir_value (IRLiteral (IntLit (1, None))) IRU32 in
     
     (* Simplified: x = 42; y = x + 1; return y; using placeholder calls *)
-    let assign_x = make_simple_instruction (IRCall ("assign_x", [const_42], Some var_x)) in
-    let assign_y = make_simple_instruction (IRCall ("add_assign", [var_x; const_1], Some var_y)) in
+    let assign_x = make_simple_instruction (IRCall (DirectCall "assign_x", [const_42], Some var_x)) in
+    let assign_y = make_simple_instruction (IRCall (DirectCall "add_assign", [var_x; const_1], Some var_y)) in
     let return_y = make_simple_instruction (IRReturn (Some var_y)) in
     
     let data_flow_block = make_simple_basic_block "data_flow" [assign_x; assign_y; return_y] in
@@ -547,10 +547,10 @@ let test_variable_liveness_analysis () =
     let const_20 = make_simple_ir_value (IRLiteral (IntLit (20, None))) IRU32 in
     
         (* a = 10; b = 20; return a + b; using simplified calls *)
-    let assign_a = make_simple_instruction (IRCall ("assign_a", [const_10], Some var_a)) in
-    let assign_b = make_simple_instruction (IRCall ("assign_b", [const_20], Some var_b)) in
+    let assign_a = make_simple_instruction (IRCall (DirectCall "assign_a", [const_10], Some var_a)) in
+    let assign_b = make_simple_instruction (IRCall (DirectCall "assign_b", [const_20], Some var_b)) in
     let sum_result = make_simple_ir_value (IRVariable "sum_result") IRU32 in
-    let add_call = make_simple_instruction (IRCall ("add", [var_a; var_b], Some sum_result)) in
+    let add_call = make_simple_instruction (IRCall (DirectCall "add", [var_a; var_b], Some sum_result)) in
     let return_sum = make_simple_instruction (IRReturn (Some sum_result)) in
     
     let liveness_block = make_simple_basic_block "liveness" [assign_a; assign_b; add_call; return_sum] in
@@ -587,11 +587,11 @@ let test_loop_analysis () =
     let const_1 = make_simple_ir_value (IRLiteral (IntLit (1, None))) IRU32 in
     
     (* for (i = 0; i < 10; i++) { ... } using simplified calls *)
-    let init_i = make_simple_instruction (IRCall ("assign_i", [const_0], Some var_i)) in
+    let init_i = make_simple_instruction (IRCall (DirectCall "assign_i", [const_0], Some var_i)) in
     let loop_condition = make_simple_ir_value (IRVariable "loop_cond") IRBool in
-    let check_cond = make_simple_instruction (IRCall ("less_than", [var_i; const_10], Some loop_condition)) in
+    let check_cond = make_simple_instruction (IRCall (DirectCall "less_than", [var_i; const_10], Some loop_condition)) in
     let loop_cond_instr = make_simple_instruction (IRCondJump (loop_condition, "loop_body", "loop_exit")) in
-    let increment_i = make_simple_instruction (IRCall ("increment", [var_i; const_1], Some var_i)) in
+    let increment_i = make_simple_instruction (IRCall (DirectCall "increment", [var_i; const_1], Some var_i)) in
     let jump_back = make_simple_instruction (IRJump "loop_header") in
     let return_instr = make_simple_instruction (IRReturn None) in
     
@@ -631,8 +631,8 @@ let test_function_call_analysis () =
     (* Create a test IR function that calls other functions *)
     let update_result = make_simple_ir_value (IRVariable "update_result") IRU64 in
     let process_result = make_simple_ir_value (IRVariable "process_result") IRU32 in
-    let update_call = make_simple_instruction (IRCall ("update_stats", [], Some update_result)) in
-    let process_call = make_simple_instruction (IRCall ("process_packet", [], Some process_result)) in
+    let update_call = make_simple_instruction (IRCall (DirectCall "update_stats", [], Some update_result)) in
+    let process_call = make_simple_instruction (IRCall (DirectCall "process_packet", [], Some process_result)) in
     let return_instr = make_simple_instruction (IRReturn (Some (make_simple_ir_value (IRLiteral (IntLit (0, None))) IRU32))) in
     
     let call_block = make_simple_basic_block "calls" [update_call; process_call; return_instr] in
@@ -681,7 +681,7 @@ let test_memory_access_analysis () =
     
     let bounds_instr = { (make_simple_instruction (IRBoundsCheck (data_ptr, 0, 1500))) 
                         with bounds_checks = [bounds_check] } in
-    let mem_access = make_simple_instruction (IRCall ("load_u32", [data_ptr], Some (make_simple_ir_value (IRVariable "loaded_value") IRU32))) in
+    let mem_access = make_simple_instruction (IRCall (DirectCall "load_u32", [data_ptr], Some (make_simple_ir_value (IRVariable "loaded_value") IRU32))) in
     let return_instr = make_simple_instruction (IRReturn (Some (make_simple_ir_value (IRLiteral (IntLit (2, None))) IRU32))) in
     
     let memory_block = make_simple_basic_block "memory_ops" [bounds_instr; mem_access; return_instr] in
@@ -718,10 +718,10 @@ let test_optimization_opportunities () =
     let var_y = make_simple_ir_value (IRVariable "y") IRU32 in
     
     (* Constant folding opportunity: x = 5 + 10; *)
-    let assign_x = make_simple_instruction (IRCall ("add_constants", [const_5; const_10], Some var_x)) in
+    let assign_x = make_simple_instruction (IRCall (DirectCall "add_constants", [const_5; const_10], Some var_x)) in
     
     (* Copy propagation opportunity: y = x; return y; *)
-    let assign_y = make_simple_instruction (IRCall ("copy", [var_x], Some var_y)) in
+    let assign_y = make_simple_instruction (IRCall (DirectCall "copy", [var_x], Some var_y)) in
     let return_y = make_simple_instruction (IRReturn (Some var_y)) in
     
     let optimization_block = make_simple_basic_block "opt_ops" [assign_x; assign_y; return_y] in
@@ -762,7 +762,7 @@ let test_safety_violations_detection () =
     let _unchecked_offset = make_simple_ir_value (IRLiteral (IntLit (100, None))) IRU32 in
     
     (* Potential bounds violation: accessing data without bounds check *)
-    let unsafe_access = make_simple_instruction (IRCall ("unsafe_load", [data_ptr], Some (make_simple_ir_value (IRVariable "unsafe_value") IRU32))) in
+    let unsafe_access = make_simple_instruction (IRCall (DirectCall "unsafe_load", [data_ptr], Some (make_simple_ir_value (IRVariable "unsafe_value") IRU32))) in
     let return_instr = make_simple_instruction (IRReturn (Some (make_simple_ir_value (IRLiteral (IntLit (1, None))) IRU32))) in
     
     let unsafe_block = make_simple_basic_block "unsafe_ops" [unsafe_access; return_instr] in
@@ -804,12 +804,12 @@ let test_complexity_analysis () =
     (* Nested loops: for(i=0; i<n; i++) for(j=0; j<n; j++) {...} *)
     let outer_cond = make_simple_ir_value (IRVariable "outer_cond") IRBool in
     let inner_cond = make_simple_ir_value (IRVariable "inner_cond") IRBool in
-    let check_outer = make_simple_instruction (IRCall ("less_than", [var_i; const_n], Some outer_cond)) in
-    let check_inner = make_simple_instruction (IRCall ("less_than", [var_j; const_n], Some inner_cond)) in
+    let check_outer = make_simple_instruction (IRCall (DirectCall "less_than", [var_i; const_n], Some outer_cond)) in
+    let check_inner = make_simple_instruction (IRCall (DirectCall "less_than", [var_j; const_n], Some inner_cond)) in
     let outer_header = make_simple_basic_block "outer_header" [check_outer; make_simple_instruction (IRCondJump (outer_cond, "inner_init", "exit"))] in
     let inner_header = make_simple_basic_block "inner_header" [check_inner; make_simple_instruction (IRCondJump (inner_cond, "inner_body", "outer_increment"))] in
     let inner_body = make_simple_basic_block "inner_body" [
-      make_simple_instruction (IRCall ("increment_j", [var_j; const_1], Some var_j));
+      make_simple_instruction (IRCall (DirectCall "increment_j", [var_j; const_1], Some var_j));
       make_simple_instruction (IRJump "inner_header")
     ] in
     let return_block = make_simple_basic_block "exit" [make_simple_instruction (IRReturn None)] in
@@ -858,27 +858,27 @@ let test_comprehensive_ir_analysis () =
                         with bounds_checks = [bounds_check] } in
     
     (* Memory access after bounds check *)
-    let mem_load = make_simple_instruction (IRCall ("load_u32", [data_ptr], Some (make_simple_ir_value (IRVariable "loaded_value") IRU32))) in
+    let mem_load = make_simple_instruction (IRCall (DirectCall "load_u32", [data_ptr], Some (make_simple_ir_value (IRVariable "loaded_value") IRU32))) in
     
     (* Function calls to helper functions *)
     let update_result = make_simple_ir_value (IRVariable "update_result") IRU64 in
     let process_result = make_simple_ir_value (IRVariable "process_result") IRU32 in
-    let update_call = make_simple_instruction (IRCall ("update_stats", [counter], Some update_result)) in
-    let process_call = make_simple_instruction (IRCall ("process_packet", [data_ptr], Some process_result)) in
+    let update_call = make_simple_instruction (IRCall (DirectCall "update_stats", [counter], Some update_result)) in
+    let process_call = make_simple_instruction (IRCall (DirectCall "process_packet", [data_ptr], Some process_result)) in
     
     (* Loop with condition and increment *)
     let loop_condition = make_simple_ir_value (IRVariable "loop_condition") IRBool in
-    let check_loop = make_simple_instruction (IRCall ("less_than", [counter; const_10], Some loop_condition)) in
+    let check_loop = make_simple_instruction (IRCall (DirectCall "less_than", [counter; const_10], Some loop_condition)) in
     let loop_cond_instr = make_simple_instruction (IRCondJump (loop_condition, "loop_body", "exit")) in
-    let update_counter = make_simple_instruction (IRCall ("increment_counter", [counter; const_1], Some counter)) in
+    let update_counter = make_simple_instruction (IRCall (DirectCall "increment_counter", [counter; const_1], Some counter)) in
     
     (* Complex return expression *)
     let result_value = make_simple_ir_value (IRVariable "result") IRU32 in
-    let calc_result = make_simple_instruction (IRCall ("add", [counter; const_1], Some result_value)) in
+    let calc_result = make_simple_instruction (IRCall (DirectCall "add", [counter; const_1], Some result_value)) in
     let return_instr = make_simple_instruction (IRReturn (Some result_value)) in
     
     let init_block = make_simple_basic_block "init" [
-      make_simple_instruction (IRCall ("assign_counter", [const_0], Some counter));
+      make_simple_instruction (IRCall (DirectCall "assign_counter", [const_0], Some counter));
       bounds_instr;
       mem_load;
       make_simple_instruction (IRJump "loop_header")

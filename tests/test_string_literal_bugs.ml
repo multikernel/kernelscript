@@ -57,7 +57,7 @@ let test_bpf_printk_data_field_bug () =
   
   (* Test print function with string literal - this was generating wrong code *)
   let debug_msg_val = make_ir_value (IRLiteral (StringLit "Debug message")) (IRStr 13) test_pos in
-  let print_instr = make_ir_instruction (IRCall ("print", [debug_msg_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [debug_msg_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
@@ -87,7 +87,7 @@ let test_multi_arg_printk_data_field_bug () =
   (* Test multi-argument print call *)
   let format_val = make_ir_value (IRLiteral (StringLit "Count: %d")) (IRStr 9) test_pos in
   let count_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
-  let print_instr = make_ir_instruction (IRCall ("print", [format_val; count_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [format_val; count_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
@@ -114,7 +114,7 @@ let test_combined_bugs_integration () =
   
   (* Use the exact string that was failing: "Hello world" *)
   let hello_world_val = make_ir_value (IRLiteral (StringLit "Hello world")) (IRStr 11) test_pos in
-  let print_instr = make_ir_instruction (IRCall ("print", [hello_world_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [hello_world_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
@@ -223,7 +223,7 @@ let test_function_call_string_arg_bug () =
   let concat_expr = make_ir_expr (IRBinOp (left_str, IRAdd, right_str)) (IRStr 11) test_pos in
   let result_var = make_ir_value (IRRegister 1) (IRStr 11) test_pos in
   let assign_instr = make_ir_instruction (IRAssign (result_var, concat_expr)) test_pos in
-  let print_call = make_ir_instruction (IRCall ("print", [result_var], Some (make_ir_value (IRRegister 2) IRU32 test_pos))) test_pos in
+  let print_call = make_ir_instruction (IRCall (DirectCall "print", [result_var], Some (make_ir_value (IRRegister 2) IRU32 test_pos))) test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; print_call; return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
@@ -304,7 +304,7 @@ let test_edge_cases_for_bugs () =
   (* Test single character *)
   let ctx2 = create_c_context () in
   let single_char_val = make_ir_value (IRLiteral (StringLit "x")) (IRStr 1) test_pos in
-  let print_instr = make_ir_instruction (IRCall ("print", [single_char_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [single_char_val], None)) test_pos in
   generate_c_instruction ctx2 print_instr;
   let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
   
@@ -316,7 +316,7 @@ let test_edge_cases_for_bugs () =
   (* Test empty string *)
   let ctx3 = create_c_context () in
   let empty_val = make_ir_value (IRLiteral (StringLit "")) (IRStr 1) test_pos in
-  let print_instr = make_ir_instruction (IRCall ("print", [empty_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [empty_val], None)) test_pos in
   generate_c_instruction ctx3 print_instr;
   let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
   

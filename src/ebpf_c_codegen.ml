@@ -256,6 +256,11 @@ let rec ebpf_type_from_ir_type = function
   | IRAction Xdp_actionType -> "int"
   | IRAction TcActionType -> "int"
   | IRAction GenericActionType -> "int"
+  | IRFunctionPointer (param_types, return_type) -> 
+      let return_type_str = ebpf_type_from_ir_type return_type in
+      let param_types_str = List.map ebpf_type_from_ir_type param_types in
+      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
 
 (** Map type conversion *)
 
@@ -1172,6 +1177,9 @@ let generate_c_value ctx ir_val =
   | IREnumConstant (_enum_name, constant_name, _value) ->
       (* Generate enum constant name instead of numeric value *)
       constant_name
+  | IRFunctionRef function_name ->
+      (* Generate function reference (just the function name) *)
+      function_name
 
 (** Generate string operations for eBPF *)
 
@@ -1743,9 +1751,12 @@ let rec generate_c_instruction ctx ir_instr =
       (* Const assignment with const keyword *)
       generate_assignment ctx dest_val expr true
       
-  | IRCall (name, args, ret_opt) ->
-      (* Check if this is a built-in function that needs context-specific translation *)
-      let (actual_name, translated_args) = match Stdlib.get_ebpf_implementation name with
+  | IRCall (target, args, ret_opt) ->
+      (* Handle different call targets *)
+      let (actual_name, translated_args) = match target with
+        | DirectCall name ->
+            (* Check if this is a built-in function that needs context-specific translation *)
+            (match Stdlib.get_ebpf_implementation name with
         | Some ebpf_impl ->
             (* This is a built-in function - translate for eBPF context *)
             (match name with
@@ -1789,7 +1800,12 @@ let rec generate_c_instruction ctx ir_instr =
         | None ->
             (* Regular function call *)
             let c_args = List.map (generate_c_value ctx) args in
-            (name, c_args)
+            (name, c_args))
+        | FunctionPointerCall func_ptr ->
+            (* Function pointer call - generate the function pointer directly *)
+            let func_ptr_str = generate_c_value ctx func_ptr in
+            let c_args = List.map (generate_c_value ctx) args in
+            (func_ptr_str, c_args)
       in
       let args_str = String.concat ", " translated_args in
       (match ret_opt with

@@ -226,7 +226,7 @@ let test_builtin_print_calls () =
   
   (* Test print function call - should use stdlib mechanism *)
   let string_val = make_ir_value (IRLiteral (StringLit "Hello eBPF")) (IRStr 10) test_pos in
-  let print_instr = make_ir_instruction (IRCall ("print", [string_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
@@ -344,7 +344,7 @@ let test_string_literal_in_function_calls () =
   let string_val = make_ir_value (IRLiteral (StringLit "Debug message")) (IRStr 13) test_pos in
   
   (* Test print function call that should use bpf_printk *)
-  let print_instr = make_ir_instruction (IRCall ("print", [string_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
@@ -368,7 +368,7 @@ let test_string_literal_multi_arg_calls () =
   let int_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   
   (* Test print function call with multiple arguments *)
-  let print_instr = make_ir_instruction (IRCall ("print", [string_val; int_val], None)) test_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val; int_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
