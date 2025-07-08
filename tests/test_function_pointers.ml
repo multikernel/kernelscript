@@ -260,6 +260,101 @@ fn setup_network() -> i32 {
       let msg = Printexc.to_string e in
       fail ("Complex function pointer type checking failed: " ^ msg)
 
+(** Test function pointer call IR generation - This test catches the bug where function pointer calls were incorrectly treated as direct function calls *)
+let test_function_pointer_call_ir_generation () =
+  let input = {|
+type BinaryOp = fn(i32, i32) -> i32
+
+fn add_numbers(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+fn multiply_numbers(a: i32, b: i32) -> i32 {
+    return a * b
+}
+
+@xdp fn dummy_program(ctx: *xdp_md) -> xdp_action {
+    return 2
+}
+
+fn main() -> i32 {
+    // Function pointer variable assignments
+    var add_op: BinaryOp = add_numbers
+    var mul_op: BinaryOp = multiply_numbers
+    
+    // Function pointer calls (this was the bug - these were treated as DirectCall instead of FunctionPointerCall)
+    var sum = add_op(10, 20)
+    var product = mul_op(5, 6)
+    
+    return sum + product
+}
+|} in
+  
+  try
+    let ast = parse_string input in
+    let symbol_table = build_symbol_table ast in
+    let (typed_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir_multi_prog = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "dummy_program" in
+    
+    (* For userspace functions, we need to access the userspace_program *)
+    let userspace_program = match ir_multi_prog.Kernelscript.Ir.userspace_program with
+      | Some prog -> prog
+      | None -> failwith "No userspace program found"
+    in
+    let main_func = List.find (fun func -> func.Kernelscript.Ir.func_name = "main") userspace_program.Kernelscript.Ir.userspace_functions in
+    
+    (* Collect all IRCall instructions *)
+    let all_instructions = List.flatten (List.map (fun block -> block.Kernelscript.Ir.instructions) main_func.Kernelscript.Ir.basic_blocks) in
+    let call_instructions = List.filter_map (fun instr ->
+      match instr.Kernelscript.Ir.instr_desc with
+      | Kernelscript.Ir.IRCall (call_target, args, result) -> Some (call_target, args, result)
+      | _ -> None
+    ) all_instructions in
+    
+    (* Check that we have the expected number of calls *)
+    check int "Should have function calls" 2 (List.length call_instructions);
+    
+    (* Check that function pointer calls use FunctionPointerCall, not DirectCall *)
+    let function_pointer_calls = List.filter (fun (call_target, _args, _result) ->
+      match call_target with
+      | Kernelscript.Ir.FunctionPointerCall _ -> true
+      | _ -> false
+    ) call_instructions in
+    
+    let direct_calls = List.filter (fun (call_target, _args, _result) ->
+      match call_target with
+      | Kernelscript.Ir.DirectCall _ -> true
+      | _ -> false
+    ) call_instructions in
+    
+    (* This is the key test - function pointer calls should generate FunctionPointerCall *)
+    check int "Function pointer calls should use FunctionPointerCall" 2 (List.length function_pointer_calls);
+    check int "Should have no DirectCall for function pointer variables" 0 (List.length direct_calls);
+    
+    (* Verify the C code generation produces correct output (no undefined references) *)
+    let c_code = Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir userspace_program [] ir_multi_prog "dummy_program" in
+    
+    (* Check that the C code contains proper function pointer assignments *)
+    check bool "C code should contain function pointer assignment" true (String.contains c_code '=' && String.contains c_code 'a');
+    
+    (* Check that the C code does NOT contain calls to undefined function pointer variable names *)
+    let has_bad_add_op_call = try ignore (Str.search_forward (Str.regexp "add_op(") c_code 0); true with Not_found -> false in
+    let has_bad_mul_op_call = try ignore (Str.search_forward (Str.regexp "mul_op(") c_code 0); true with Not_found -> false in
+    
+    check bool "C code should not call add_op as function" false has_bad_add_op_call;
+    check bool "C code should not call mul_op as function" false has_bad_mul_op_call;
+    
+    (* Check that the C code contains proper function pointer calls (var_X(...)) *)
+    let has_function_pointer_calls = try ignore (Str.search_forward (Str.regexp "var_[0-9]+(") c_code 0); true with Not_found -> false in
+    check bool "C code should contain function pointer calls" true has_function_pointer_calls;
+    
+    check bool "Test passed - function pointer calls generate correct IR" true true
+
+  with
+  | exn -> 
+      let msg = Printexc.to_string exn in
+      fail ("Function pointer call IR generation test failed: " ^ msg)
+
 (** Test suite for function pointer support *)
 let tests = [
   ("function_pointer_struct_parsing", `Quick, test_function_pointer_struct_parsing);
@@ -271,6 +366,7 @@ let tests = [
   ("non_function_pointer_call_error", `Quick, test_non_function_pointer_call_error);
   ("function_pointer_argument_count_error", `Quick, test_function_pointer_argument_count_error);
   ("complex_struct_function_pointers", `Quick, test_complex_struct_function_pointers);
+  ("function_pointer_call_ir_generation", `Quick, test_function_pointer_call_ir_generation);
 ]
 
 let () = run "Function Pointer Tests" [("main", tests)] 
