@@ -47,7 +47,7 @@ let test_expressions () =
 (** Test statements *)
 let test_statements () =
   let expr = make_expr (Literal (IntLit (42, None))) test_position in
-  let decl_stmt = make_stmt (Declaration ("x", Some U32, expr)) test_position in
+  let decl_stmt = make_stmt (Declaration ("x", Some U32, Some expr)) test_position in
   let return_stmt = make_stmt (Return (Some expr)) test_position in
   
   check bool "declaration statement" true (match decl_stmt.stmt_desc with Declaration ("x", Some U32, _) -> true | _ -> false);

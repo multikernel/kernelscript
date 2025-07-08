@@ -97,8 +97,10 @@ let test_defer_parsing () =
         (match first_stmt.stmt_desc with
          | Defer cleanup_expr ->
              (match cleanup_expr.expr_desc with
-              | FunctionCall (name, _) ->
-                  check string "defer function name" "cleanup_function" name
+              | Call (callee_expr, _) ->
+                  (match callee_expr.expr_desc with
+                   | Identifier name -> check string "defer function name" "cleanup_function" name
+                   | _ -> fail "Expected identifier in function call")
               | _ -> fail "Expected function call in defer")
          | _ -> fail "Expected Defer statement")
     | _ -> fail "Expected attributed function declaration"

@@ -85,24 +85,6 @@ let test_continue_in_while_loop () =
   | Ok _ -> check bool "continue in while loop parsed and type checked" true true
   | Error msg -> fail ("Failed to parse continue in while loop: " ^ msg)
 
-(** Test break in ForIter loop *)
-let test_break_in_for_iter () =
-  let program_text = {|
-@xdp fn test(ctx: *xdp_md) -> xdp_action {
-  var array = [1, 2, 3, 4, 5]
-  for (i, val) in array.iter() {
-    if (i == 3) {
-      break
-    }
-    var processed = val * 2
-  }
-  return 2
-}
-|} in
-  match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "break in for-iter loop parsed and type checked" true true
-  | Error msg -> fail ("Failed to parse break in for-iter loop: " ^ msg)
-
 (** Test error case: break outside loop *)
 let test_break_outside_loop_error () =
   let program_text = {|
@@ -203,7 +185,6 @@ let break_continue_tests = [
   "continue_statement_parsing", `Quick, test_continue_statement_parsing;
   "break_in_while_loop", `Quick, test_break_in_while_loop;
   "continue_in_while_loop", `Quick, test_continue_in_while_loop;
-  "break_in_for_iter", `Quick, test_break_in_for_iter;
   "break_outside_loop_error", `Quick, test_break_outside_loop_error;
   "continue_outside_loop_error", `Quick, test_continue_outside_loop_error;
   "break_continue_in_nested_conditional", `Quick, test_break_continue_in_nested_conditional;

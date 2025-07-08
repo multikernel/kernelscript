@@ -466,14 +466,16 @@ and process_declaration table = function
 
 and process_statement table stmt =
   match stmt.stmt_desc with
-  | Declaration (name, type_opt, expr) ->
+  | Declaration (name, type_opt, expr_opt) ->
       (* Infer type from expression if not provided *)
       let var_type = match type_opt with
         | Some t -> t
         | None -> U32  (* TODO: implement expression type inference *)
       in
       add_variable table name var_type stmt.stmt_pos;
-      process_expression table expr
+      (match expr_opt with
+       | Some expr -> process_expression table expr
+       | None -> ())
       
   | ConstDeclaration (name, type_opt, expr) ->
       (* Const declarations handled similarly but with const symbol kind *)
@@ -592,18 +594,25 @@ and process_expression table expr =
        | None ->
            symbol_error ("Undefined symbol: " ^ name) expr.expr_pos)
            
-  | FunctionCall (name, args) ->
-      (* Validate function exists - check built-ins first, then user-defined *)
-      (match Stdlib.is_builtin_function name with
-       | true -> 
-           (* This is a built-in function - it's always valid *)
-           ()
-       | false ->
-           (* Check for user-defined function *)
-           (match lookup_symbol table name with
-            | Some { kind = Function _; _ } -> ()
-            | Some _ -> symbol_error (name ^ " is not a function") expr.expr_pos
-            | None -> symbol_error ("Undefined function: " ^ name) expr.expr_pos));
+  | Call (callee_expr, args) ->
+      (* Unified call handling - process the callee expression and arguments *)
+      (match callee_expr.expr_desc with
+       | Identifier name ->
+           (* Check if it's a built-in function, user-defined function, or function pointer variable *)
+           (match Stdlib.is_builtin_function name with
+            | true -> 
+                (* This is a built-in function - it's always valid *)
+                ()
+            | false ->
+                (* Check for user-defined function or function pointer variable *)
+                (match lookup_symbol table name with
+                 | Some { kind = Function _; _ } -> ()
+                 | Some { kind = Variable _; _ } -> ()  (* Could be a function pointer - let type checker validate *)
+                 | Some _ -> symbol_error (name ^ " is not a function or function pointer") expr.expr_pos
+                 | None -> symbol_error ("Undefined function: " ^ name) expr.expr_pos))
+       | _ ->
+           (* Complex expression call (function pointer) - just process the expression *)
+           process_expression table callee_expr);
       List.iter (process_expression table) args
       
   | TailCall (name, args) ->

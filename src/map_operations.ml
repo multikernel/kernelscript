@@ -221,12 +221,12 @@ let analyze_access_pattern map_name expressions =
          | Literal (IntLit (idx, _)) -> 
              sequential_accesses := idx :: !sequential_accesses
          | _ -> incr random_accesses)
-    | FunctionCall (name, _) when String.contains name '.' ->
-        let parts = String.split_on_char '.' name in
-        (match parts with
-         | [mn; _] when mn = map_name -> incr access_count
-         | _ -> ())
-    | FunctionCall (_, args) -> List.iter analyze_expr args
+    | Call (callee_expr, args) ->
+        (* Check if this is a method call on the map (e.g., map.get()) *)
+        (match callee_expr.expr_desc with
+         | FieldAccess ({expr_desc = Identifier mn; _}, _) when mn = map_name -> incr access_count
+         | _ -> ());
+        List.iter analyze_expr args
     | BinaryOp (left, _, right) -> analyze_expr left; analyze_expr right
     | UnaryOp (_, e) -> analyze_expr e
     | _ -> ()

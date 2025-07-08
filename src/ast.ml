@@ -135,7 +135,7 @@ and expr_desc =
   | Literal of literal
   | Identifier of string
   | ConfigAccess of string * string  (* config_name, field_name *)
-  | FunctionCall of string * expr list
+  | Call of expr * expr list  (* Unified call: callee_expression * arguments *)
   | TailCall of string * expr list  (* function_name, arguments - for explicit tail calls *)
   | ArrayAccess of expr * expr
   | FieldAccess of expr * string
@@ -177,7 +177,7 @@ and stmt_desc =
   | FieldAssignment of expr * string * expr  (* object.field = value *)
   | ArrowAssignment of expr * string * expr  (* pointer->field = value *)
   | IndexAssignment of expr * expr * expr  (* map[key] = value *)
-  | Declaration of string * bpf_type option * expr
+  | Declaration of string * bpf_type option * expr option
   | ConstDeclaration of string * bpf_type option * expr  (* const name : type = value *)
   | Return of expr option
   | If of expr * statement list * statement list option
@@ -529,8 +529,8 @@ let rec string_of_expr expr =
   | Identifier name -> name
   | ConfigAccess (config_name, field_name) ->
       Printf.sprintf "%s.%s" config_name field_name
-  | FunctionCall (name, args) ->
-      Printf.sprintf "%s(%s)" name 
+  | Call (callee_expr, args) ->
+      Printf.sprintf "%s(%s)" (string_of_expr callee_expr)
         (String.concat ", " (List.map string_of_expr args))
   | TailCall (name, args) ->
       Printf.sprintf "%s(%s)" name 
@@ -586,12 +586,16 @@ and string_of_stmt stmt =
       Printf.sprintf "%s->%s = %s;" (string_of_expr obj_expr) field (string_of_expr value_expr)
   | IndexAssignment (map_expr, key_expr, value_expr) ->
       Printf.sprintf "%s[%s] = %s;" (string_of_expr map_expr) (string_of_expr key_expr) (string_of_expr value_expr)
-  | Declaration (name, typ_opt, expr) ->
+  | Declaration (name, typ_opt, expr_opt) ->
       let typ_str = match typ_opt with
         | Some t -> ": " ^ string_of_bpf_type t
         | None -> ""
       in
-      Printf.sprintf "var %s%s = %s;" name typ_str (string_of_expr expr)
+      let init_str = match expr_opt with
+        | Some expr -> " = " ^ string_of_expr expr
+        | None -> ""
+      in
+      Printf.sprintf "var %s%s%s;" name typ_str init_str
   | ConstDeclaration (name, typ_opt, expr) ->
       let typ_str = match typ_opt with
         | Some t -> ": " ^ string_of_bpf_type t

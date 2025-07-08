@@ -86,7 +86,7 @@ let test_program_lowering () =
 
 let test_context_access_lowering () =
   let ctx_access = make_expr 
-    (FunctionCall ("ctx.packet", [])) 
+    (Call (make_expr (FieldAccess (make_expr (Identifier "ctx") (make_test_position ()), "packet")) (make_test_position ()), [])) 
     (make_test_position ()) in
   let ctx_access = { ctx_access with expr_type = Some (Pointer U8) } in
   
@@ -156,7 +156,7 @@ let test_bounds_check_insertion () =
 
 let test_stack_usage_tracking () =
   let buffer_decl = make_stmt 
-    (Declaration ("buffer", Some (Array (U8, 100)), make_expr (Literal (IntLit (0, None))) (make_test_position ()))) 
+    (Declaration ("buffer", Some (Array (U8, 100)), Some (make_expr (Literal (IntLit (0, None))) (make_test_position ())))) 
     (make_test_position ()) in
   
   let test_func = make_function 

@@ -38,7 +38,7 @@ let make_binop left op right = {
 }
 
 let make_call name args = {
-  expr_desc = FunctionCall (name, args);
+  expr_desc = Call (make_id name, args);
   expr_type = None;
   expr_pos = dummy_loc;
   type_checked = false;
@@ -59,7 +59,7 @@ let make_array elements = {
 }
 
 let make_decl name expr = {
-  stmt_desc = Declaration (name, None, expr);
+  stmt_desc = Declaration (name, None, Some expr);
   stmt_pos = dummy_loc;
 }
 

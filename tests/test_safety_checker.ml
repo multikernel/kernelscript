@@ -36,7 +36,7 @@ let test_null_pointer_access () =
 let test_bounds_checking () =
   let pos = make_position 1 1 "test.ks" in
   let array_type = Array (U32, 10) in
-  let array_decl = make_stmt (Declaration ("arr", Some array_type, make_expr (Literal (IntLit (0, None))) pos)) pos in
+  let array_decl = make_stmt (Declaration ("arr", Some array_type, Some (make_expr (Literal (IntLit (0, None))) pos))) pos in
   let out_of_bounds = make_expr (ArrayAccess (make_expr (Identifier "arr") pos, make_expr (Literal (IntLit (15, None))) pos)) pos in
   let access_stmt = make_stmt (ExprStmt out_of_bounds) pos in
   let func = make_test_function "main" [] [array_decl; access_stmt] in
@@ -87,7 +87,7 @@ let test_infinite_loop_detection () =
 let test_stack_overflow_prevention () =
   let pos = make_position 1 1 "test.ks" in
   let large_array = Array (U32, 10000) in
-  let large_decl = make_stmt (Declaration ("large_arr", Some large_array, make_expr (Literal (IntLit (0, None))) pos)) pos in
+  let large_decl = make_stmt (Declaration ("large_arr", Some large_array, Some (make_expr (Literal (IntLit (0, None))) pos))) pos in
   let func = make_test_function "main" [] [large_decl] in
   let program = make_test_program "test" [func] in
   
@@ -97,7 +97,7 @@ let test_stack_overflow_prevention () =
 (** Test map access safety *)
 let test_map_access_safety () =
   let pos = make_position 1 1 "test.ks" in
-  let map_lookup = make_expr (FunctionCall ("map_lookup", [make_expr (Literal (IntLit (42, None))) pos])) pos in
+  let map_lookup = make_expr (Call (make_expr (Identifier "map_lookup") pos, [make_expr (Literal (IntLit (42, None))) pos])) pos in
   let stmt = make_stmt (ExprStmt map_lookup) pos in
   let func = make_test_function "main" [] [stmt] in
   let program = make_test_program "test" [func] in
@@ -131,7 +131,7 @@ let test_division_by_zero () =
 (** Test memory access patterns *)
 let test_memory_access_patterns () =
   let pos = make_position 1 1 "test.ks" in
-  let ptr_decl = make_stmt (Declaration ("ptr", Some (Pointer U32), make_expr (Literal (IntLit (0, None))) pos)) pos in
+  let ptr_decl = make_stmt (Declaration ("ptr", Some (Pointer U32), Some (make_expr (Literal (IntLit (0, None))) pos))) pos in
   let ptr_access = make_expr (FieldAccess (make_expr (Identifier "ptr") pos, "value")) pos in
   let stmt = make_stmt (ExprStmt ptr_access) pos in
   let func = make_test_function "main" [] [ptr_decl; stmt] in
@@ -146,7 +146,7 @@ let test_comprehensive_safety_analysis () =
   let complex_expr = make_expr (BinaryOp (
     make_expr (ArrayAccess (make_expr (Identifier "arr") pos, make_expr (Literal (IntLit (5, None))) pos)) pos,
     Add,
-    make_expr (FunctionCall ("unsafe_func", [])) pos
+    make_expr (Call (make_expr (Identifier "unsafe_func") pos, [])) pos
   )) pos in
   let stmt = make_stmt (ExprStmt complex_expr) pos in
   let func = make_test_function "main" [] [stmt] in

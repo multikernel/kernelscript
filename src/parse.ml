@@ -53,7 +53,7 @@ let validate_ast ast =
     match expr.expr_desc with
     | Literal _ | Identifier _ -> true
     | ConfigAccess (_, _) -> true  (* Config access is always valid syntactically *)
-    | FunctionCall (_, args) -> List.for_all validate_expr args
+    | Call (callee_expr, args) -> validate_expr callee_expr && List.for_all validate_expr args
     | ArrayAccess (arr, idx) -> validate_expr arr && validate_expr idx
     | FieldAccess (obj, _) -> validate_expr obj
     | ArrowAccess (obj, _) -> validate_expr obj
@@ -83,7 +83,10 @@ let validate_ast ast =
         validate_expr obj_expr && validate_expr value_expr
     | IndexAssignment (map_expr, key_expr, value_expr) ->
         validate_expr map_expr && validate_expr key_expr && validate_expr value_expr
-    | Declaration (_, _, expr) -> validate_expr expr
+    | Declaration (_, _, expr_opt) -> 
+        (match expr_opt with
+         | Some expr -> validate_expr expr
+         | None -> true)
     | ConstDeclaration (_, _, expr) -> validate_expr expr
     | Return None -> true
     | Return (Some expr) -> validate_expr expr

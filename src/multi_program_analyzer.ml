@@ -161,7 +161,7 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
     | ArrayAccess (map_expr, key_expr) ->
         analyze_expr_for_maps prog_name map_expr;
         analyze_expr_for_maps prog_name key_expr
-    | FunctionCall (_, args) ->
+    | Call (_, args) ->
         List.iter (analyze_expr_for_maps prog_name) args
     | BinaryOp (left, _, right) ->
         analyze_expr_for_maps prog_name left;
@@ -195,8 +195,10 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         analyze_expr_for_maps prog_name map_expr;
         analyze_expr_for_maps prog_name key_expr;
         analyze_expr_for_maps prog_name value_expr
-    | Declaration (_, _, expr) ->
-        analyze_expr_for_maps prog_name expr
+    | Declaration (_, _, expr_opt) ->
+        (match expr_opt with
+         | Some expr -> analyze_expr_for_maps prog_name expr
+         | None -> ())
     | ConstDeclaration (_, _, expr) ->
         analyze_expr_for_maps prog_name expr
     | Return (Some expr) ->

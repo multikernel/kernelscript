@@ -162,7 +162,7 @@ let check_array_bounds expr =
              (* Direct packet data field access without bounds check *)
              PointerOutOfBounds ("packet_field_" ^ field) :: errors
          | _ -> check_expr ptr_expr errors)
-    | FunctionCall (_, args) ->
+    | Call (_, args) ->
         List.fold_left (fun acc arg -> check_expr arg acc) errors args
     | BinaryOp (left, _, right) ->
         check_expr right (check_expr left errors)
@@ -187,9 +187,11 @@ let analyze_statement_bounds stmt =
   
   let rec check_stmt s =
     match s.stmt_desc with
-    | Declaration (name, Some typ, expr) ->
+    | Declaration (name, Some typ, expr_opt) ->
         errors := check_array_declaration name typ @ !errors;
-        errors := check_array_bounds expr @ !errors
+        (match expr_opt with
+         | Some expr -> errors := check_array_bounds expr @ !errors
+         | None -> ())
     | ExprStmt expr | Assignment (_, expr) ->
         errors := check_array_bounds expr @ !errors
     | CompoundAssignment (_, _, expr) ->
@@ -243,7 +245,7 @@ let check_pointer_safety expr =
                     (valid_ptrs, (ptr_name, "Potential null dereference") :: invalid_ptrs)
               | _ -> (valid_ptrs, invalid_ptrs))
          | _ -> check_expr ptr_expr valid_ptrs invalid_ptrs)
-    | FunctionCall (_, args) ->
+    | Call (_, args) ->
         List.fold_left (fun (v, i) arg ->
           check_expr arg v i
         ) (valid_ptrs, invalid_ptrs) args
@@ -284,31 +286,31 @@ let analyze_map_access map_name operation _expr_ctx =
 (** Check map operations in expressions *)
 let rec check_map_operations expr =
   match expr.expr_desc with
-  | FunctionCall (name, _args) when String.contains name '.' ->
-      (* Map method call *)
-      let parts = String.split_on_char '.' name in
-      (match parts with
-       | [map_name; op_name] ->
-           let operation = match op_name with
-             | "lookup" -> MapLookup
-             | "update" -> MapUpdate
-             | "insert" -> MapInsert
-             | "delete" -> MapDelete
-             | _ -> MapLookup (* Default *)
-           in
-           analyze_map_access map_name operation expr
-       | _ -> ([], [], []))
+  | Call (callee_expr, args) ->
+      (* Check if this is a map method call (e.g., map.lookup()) *)
+      (let (v_from_method, i_from_method, w_from_method) = match callee_expr.expr_desc with
+        | FieldAccess ({expr_desc = Identifier map_name; _}, op_name) ->
+            let operation = match op_name with
+              | "lookup" -> MapLookup
+              | "update" -> MapUpdate
+              | "insert" -> MapInsert
+              | "delete" -> MapDelete
+              | _ -> MapLookup (* Default *)
+            in
+            analyze_map_access map_name operation expr
+        | _ -> ([], [], [])
+      in
+      (* Also check arguments *)
+      List.fold_left (fun (v_acc, i_acc, w_acc) arg ->
+        let (v, i, w) = check_map_operations arg in
+        (v_acc @ v, i_acc @ i, w_acc @ w)
+      ) (v_from_method, i_from_method, w_from_method) args)
   | ArrayAccess (arr_expr, _) ->
       (* Array-style map access *)
       (match arr_expr.expr_desc with
        | Identifier map_name ->
            analyze_map_access map_name MapLookup expr
        | _ -> ([], [], []))
-  | FunctionCall (_, args) ->
-      List.fold_left (fun (v_acc, i_acc, w_acc) arg ->
-        let (v, i, w) = check_map_operations arg in
-        (v_acc @ v, i_acc @ i, w_acc @ w)
-      ) ([], [], []) args
   | BinaryOp (left, _, right) ->
       let (v1, i1, w1) = check_map_operations left in
       let (v2, i2, w2) = check_map_operations right in

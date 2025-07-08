@@ -25,7 +25,33 @@ type builtin_function = {
   ebpf_impl: string;      (* eBPF C implementation *)
   userspace_impl: string; (* Userspace C implementation *)
   kernel_impl: string;    (* Kernel module C implementation *)
+  (* Optional custom validation function *)
+  validate: (bpf_type list -> declaration list -> position -> bool * string option) option;
 }
+
+(** Validation function for register() - checks struct_ops attribute *)
+let validate_register_function arg_types ast_context _pos =
+  if List.length arg_types <> 1 then
+    (false, Some "register() takes exactly one argument")
+  else
+    let arg_type = List.hd arg_types in
+    match arg_type with
+    | Struct struct_name | UserType struct_name -> 
+        (* Check if this struct has @struct_ops attribute by looking in AST declarations *)
+        let has_struct_ops_attr = List.exists (function
+          | StructDecl struct_def when struct_def.struct_name = struct_name ->
+              List.exists (function
+                | AttributeWithArg ("struct_ops", _) -> true
+                | _ -> false
+              ) struct_def.struct_attributes
+          | _ -> false
+        ) ast_context in
+        if has_struct_ops_attr then
+          (true, None)
+        else
+          (false, Some ("register() can only be used with struct_ops structs (structs with @struct_ops attribute). '" ^ struct_name ^ "' is not a struct_ops."))
+    | _ -> 
+        (false, Some "register() requires a struct_ops struct argument")
 
 (** Standard library built-in functions *)
 let builtin_functions = [
@@ -38,6 +64,7 @@ let builtin_functions = [
     ebpf_impl = "bpf_printk";
     userspace_impl = "printf";
     kernel_impl = "printk";
+    validate = None;
   };
   {
     name = "load";
@@ -48,6 +75,7 @@ let builtin_functions = [
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_load";
     kernel_impl = "";
+    validate = None;
   };
   {
     name = "attach";
@@ -58,16 +86,18 @@ let builtin_functions = [
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_attach";
     kernel_impl = "";
+    validate = None;
   };
   {
     name = "register";
-    param_types = [UserType "struct_ops"]; (* Accept any struct_ops instance *)
+    param_types = []; (* Custom validation handles type checking *)
     return_type = U32; (* Returns 0 on success *)
     description = "Register a struct_ops instance with the kernel";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_map__attach_struct_ops";
     kernel_impl = "";
+    validate = Some validate_register_function;
   };
 ]
 
@@ -105,6 +135,15 @@ let get_kernel_implementation name =
   match get_builtin_function name with
   | Some func -> Some func.kernel_impl
   | None -> None
+
+(** Validate builtin function call with custom validation if available *)
+let validate_builtin_call name arg_types ast_context pos =
+  match get_builtin_function name with
+  | Some func ->
+      (match func.validate with
+       | Some validate_fn -> validate_fn arg_types ast_context pos
+       | None -> (true, None)) (* No custom validation - accept *)
+  | None -> (false, Some ("Unknown builtin function: " ^ name))
 
 (** Format arguments for function call based on context *)
 let format_function_args context_type args =

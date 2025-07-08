@@ -278,7 +278,7 @@ let test_delete_statement_complex_expressions () =
   let map_expr = make_expr (Identifier "complex_map") pos in
   
   (* Test delete with function call as key *)
-  let func_call_key = make_expr (FunctionCall ("get_key", [])) pos in
+  let func_call_key = make_expr (Call (make_expr (Identifier "get_key") pos, [])) pos in
   let delete_with_func = make_stmt (Delete (map_expr, func_call_key)) pos in
   check bool "delete with function call key" true (match delete_with_func.stmt_desc with Delete (_, _) -> true | _ -> false);
   

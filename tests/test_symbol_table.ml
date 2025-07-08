@@ -210,9 +210,10 @@ let test_builtin_function_recognition () =
   
   (* Create an expression with a built-in function call *)
   let print_expr = {
-    expr_desc = FunctionCall ("print", [
-      { expr_desc = Literal (StringLit "Hello"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }
-    ]);
+    expr_desc = Call (
+      { expr_desc = Identifier "print"; expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None },
+      [{ expr_desc = Literal (StringLit "Hello"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }]
+    );
     expr_pos = dummy_pos;
     expr_type = None;
     type_checked = false;
@@ -233,7 +234,10 @@ let test_builtin_function_recognition () =
   
   (* Test that non-existent functions still raise errors *)
   let invalid_expr = {
-    expr_desc = FunctionCall ("non_existent_function", []);
+    expr_desc = Call (
+      { expr_desc = Identifier "non_existent_function"; expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None },
+      []
+    );
     expr_pos = dummy_pos;
     expr_type = None;
     type_checked = false;
@@ -259,9 +263,10 @@ let test_builtin_function_contexts () =
   
   (* Test built-in function call within program context *)
   let print_expr = {
-    expr_desc = FunctionCall ("print", [
-      { expr_desc = Literal (StringLit "eBPF message"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }
-    ]);
+    expr_desc = Call (
+      { expr_desc = Identifier "print"; expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None },
+      [{ expr_desc = Literal (StringLit "eBPF message"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }]
+    );
     expr_pos = dummy_pos;
     expr_type = None;
     type_checked = false;
@@ -291,9 +296,10 @@ let test_multiple_builtin_functions () =
   
   List.iter (fun (func_name, test_desc) ->
     let func_expr = {
-      expr_desc = FunctionCall (func_name, [
-        { expr_desc = Literal (StringLit "test"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }
-      ]);
+      expr_desc = Call (
+        { expr_desc = Identifier func_name; expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None },
+        [{ expr_desc = Literal (StringLit "test"); expr_pos = dummy_pos; expr_type = None; type_checked = false; program_context = None; map_scope = None }]
+      );
       expr_pos = dummy_pos;
       expr_type = None;
       type_checked = false;

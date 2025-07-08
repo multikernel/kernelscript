@@ -76,6 +76,9 @@
 %type <string * Ast.bpf_type> parameter
 %type <Ast.bpf_type> bpf_type
 %type <Ast.bpf_type> array_type
+%type <Ast.bpf_type> function_type
+%type <Ast.bpf_type list> function_parameter_list
+%type <Ast.bpf_type> function_parameter
 %type <Ast.statement list> statement_list
 %type <Ast.statement> statement
 %type <Ast.statement> variable_declaration
@@ -102,7 +105,6 @@
 %type <Ast.expr> expression
 %type <Ast.expr> primary_expression
 %type <Ast.expr> function_call
-%type <Ast.expr> field_access
 %type <Ast.expr> array_access
 %type <Ast.expr> struct_literal
 %type <Ast.expr> match_expression
@@ -200,6 +202,7 @@ bpf_type:
   | STR LT INT GT { Str (fst $3) }
   | IDENTIFIER { UserType $1 }
   | array_type { $1 }
+  | function_type { $1 }
   | MULTIPLY bpf_type { Pointer $2 }
   | map_type LT bpf_type COMMA bpf_type GT { Map ($3, $5, $1) }
 
@@ -217,6 +220,20 @@ array_type:
 | CHAR LBRACKET INT RBRACKET { Array (Char, fst $3) }
 | IDENTIFIER LBRACKET INT RBRACKET { Array (UserType $1, fst $3) }
 
+/* Function types: fn(param: type, ...) -> return_type */
+function_type:
+  | FN LPAREN function_parameter_list RPAREN ARROW bpf_type
+    { Function ($3, $6) }
+
+function_parameter_list:
+  | /* empty */ { [] }
+  | function_parameter { [$1] }
+  | function_parameter COMMA function_parameter_list { $1 :: $3 }
+
+function_parameter:
+  | IDENTIFIER COLON bpf_type { $3 }  /* Named parameter: name: type */
+  | bpf_type { $1 }                   /* Anonymous parameter: type */
+
 /* Statements */
 statement_list:
   | /* empty */ { [] }
@@ -225,12 +242,12 @@ statement_list:
 statement:
   | variable_declaration { $1 }
   | const_declaration { $1 }
-  | assignment_or_expression_statement { $1 }
-  | compound_assignment_statement { $1 }
-  | compound_index_assignment_statement { $1 }
   | field_assignment_statement { $1 }
   | arrow_assignment_statement { $1 }
   | index_assignment_statement { $1 }
+  | compound_assignment_statement { $1 }
+  | compound_index_assignment_statement { $1 }
+  | assignment_or_expression_statement { $1 }
   | return_statement { $1 }
   | if_statement { $1 }
   | while_statement { $1 }
@@ -244,9 +261,11 @@ statement:
 
 variable_declaration:
   | VAR IDENTIFIER ASSIGN expression
-    { make_stmt (Declaration ($2, None, $4)) (make_pos ()) }
+    { make_stmt (Declaration ($2, None, Some $4)) (make_pos ()) }
   | VAR IDENTIFIER COLON bpf_type ASSIGN expression
-    { make_stmt (Declaration ($2, Some $4, $6)) (make_pos ()) }
+    { make_stmt (Declaration ($2, Some $4, Some $6)) (make_pos ()) }
+  | VAR IDENTIFIER COLON bpf_type
+    { make_stmt (Declaration ($2, Some $4, None)) (make_pos ()) }
 
 const_declaration:
   | CONST IDENTIFIER ASSIGN expression
@@ -272,11 +291,11 @@ compound_assignment_statement:
     { make_stmt (CompoundAssignment ($1, Mod, $3)) (make_pos ()) }
 
 field_assignment_statement:
-  | expression DOT IDENTIFIER ASSIGN expression
+  | primary_expression DOT IDENTIFIER ASSIGN expression
     { make_stmt (FieldAssignment ($1, $3, $5)) (make_pos ()) }
 
 arrow_assignment_statement:
-  | expression ARROW IDENTIFIER ASSIGN expression
+  | primary_expression ARROW IDENTIFIER ASSIGN expression
     { make_stmt (ArrowAssignment ($1, $3, $5)) (make_pos ()) }
 
 index_assignment_statement:
@@ -315,10 +334,6 @@ for_statement:
   | FOR LPAREN IDENTIFIER IN range_expression RPAREN LBRACE statement_list RBRACE
     { let (start_expr, end_expr) = $5 in
       make_stmt (For ($3, start_expr, end_expr, $8)) (make_pos ()) }
-  | FOR LPAREN IDENTIFIER COMMA IDENTIFIER RPAREN IN expression DOT IDENTIFIER LPAREN RPAREN LBRACE statement_list RBRACE
-    { match $10 with
-      | "iter" -> make_stmt (ForIter ($3, $5, $8, $14)) (make_pos ())
-      | method_name -> failwith ("Unknown iterator method: " ^ method_name) }
 
 delete_statement:
   | DELETE expression LBRACKET expression RBRACKET
@@ -360,7 +375,6 @@ defer_statement:
 expression:
   | primary_expression { $1 }
   | function_call { $1 }
-  | field_access { $1 }
   | array_access { $1 }
   | struct_literal { $1 }
   | match_expression { $1 }
@@ -388,20 +402,16 @@ primary_expression:
   | literal { make_expr (Literal $1) (make_pos ()) }
   | IDENTIFIER { make_expr (Identifier $1) (make_pos ()) }
   | LPAREN expression RPAREN { $2 }
+  | primary_expression DOT IDENTIFIER { make_expr (FieldAccess ($1, $3)) (make_pos ()) }
+  | primary_expression ARROW IDENTIFIER { make_expr (ArrowAccess ($1, $3)) (make_pos ()) }
 
 function_call:
   | IDENTIFIER LPAREN argument_list RPAREN
-    { make_expr (FunctionCall ($1, $3)) (make_pos ()) }
+    { make_expr (Call (make_expr (Identifier $1) (make_pos ()), $3)) (make_pos ()) }
+  | primary_expression LPAREN argument_list RPAREN
+    { make_expr (Call ($1, $3)) (make_pos ()) }
 
-field_access:
-  | expression DOT IDENTIFIER { 
-      (* Parse all identifier.field as FieldAccess - let type checker determine if it's a config *)
-      make_expr (FieldAccess ($1, $3)) (make_pos ())
-    }
-  | expression ARROW IDENTIFIER {
-      (* Arrow access for pointer->field *)
-      make_expr (ArrowAccess ($1, $3)) (make_pos ())
-    }
+
 
 array_access:
   | expression LBRACKET expression RBRACKET { make_expr (ArrayAccess ($1, $3)) (make_pos ()) }

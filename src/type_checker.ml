@@ -41,7 +41,7 @@ and typed_expr_desc =
   | TLiteral of literal
   | TIdentifier of string
   | TConfigAccess of string * string  (* config_name, field_name *)
-  | TFunctionCall of string * typed_expr list
+  | TCall of typed_expr * typed_expr list  (* Unified call: callee_expression * arguments *)
   | TTailCall of string * typed_expr list  (* Tail call detected in return position *)
   | TArrayAccess of typed_expr * typed_expr
   | TFieldAccess of typed_expr * string
@@ -76,7 +76,7 @@ and typed_stmt_desc =
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TArrowAssignment of typed_expr * string * typed_expr  (* pointer, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
-  | TDeclaration of string * bpf_type * typed_expr
+  | TDeclaration of string * bpf_type * typed_expr option
   | TConstDeclaration of string * bpf_type * typed_expr
   | TReturn of typed_expr option
   | TIf of typed_expr * typed_statement list * typed_statement list option
@@ -177,6 +177,11 @@ let rec resolve_user_type ctx = function
          | EnumDef (_, _, _) -> Enum name
        with Not_found -> UserType name)
   | Pointer inner_type -> Pointer (resolve_user_type ctx inner_type)
+  | Function (param_types, return_type) -> 
+      (* Resolve parameter types and return type *)
+      let resolved_params = List.map (resolve_user_type ctx) param_types in
+      let resolved_return = resolve_user_type ctx return_type in
+      Function (resolved_params, resolved_return)
   | other_type -> other_type
 
 (** C-style integer promotion - promotes to the larger type *)
@@ -404,45 +409,179 @@ let type_check_identifier ctx name pos =
 (** Detect and validate tail calls in return statements *)
 let detect_tail_call_in_return_expr ctx expr =
   match expr.expr_desc with
-  | FunctionCall (name, args) ->
-      (* Check if target is an attributed function *)
-      if Hashtbl.mem ctx.attributed_function_map name then
-        let target_func = Hashtbl.find ctx.attributed_function_map name in
-        (match ctx.current_program_type with
-         | Some current_type ->
-             let target_type = Tail_call_analyzer.extract_program_type target_func.attr_list in
-             (match target_type with
-              | Some tt when Tail_call_analyzer.compatible_program_types current_type tt ->
-                  (* Valid tail call - check signature compatibility *)
-                  let current_func_name = match ctx.current_function with
-                    | Some name -> name
-                    | None -> "unknown"
-                  in
-                  if Hashtbl.mem ctx.attributed_function_map current_func_name then
-                    let current_func = Hashtbl.find ctx.attributed_function_map current_func_name in
-                    if Tail_call_analyzer.compatible_signatures
-                        current_func.attr_function.func_params
-                        current_func.attr_function.func_return_type
-                        target_func.attr_function.func_params
-                        target_func.attr_function.func_return_type then
-                      Some (name, args) (* Valid tail call *)
-                    else
-                      type_error ("Tail call to '" ^ name ^ "' has incompatible signature") expr.expr_pos
-                  else
-                    None (* Not in attributed function context *)
-              | Some _tt ->
-                  type_error ("Tail call to '" ^ name ^ "' has incompatible program type") expr.expr_pos
+  | Call (callee_expr, args) ->
+      (* Check if this is a simple function call that could be a tail call *)
+      (match callee_expr.expr_desc with
+       | Identifier name ->
+           (* Check if target is an attributed function *)
+           if Hashtbl.mem ctx.attributed_function_map name then
+             let target_func = Hashtbl.find ctx.attributed_function_map name in
+             (match ctx.current_program_type with
+              | Some current_type ->
+                  let target_type = Tail_call_analyzer.extract_program_type target_func.attr_list in
+                  (match target_type with
+                   | Some tt when Tail_call_analyzer.compatible_program_types current_type tt ->
+                       (* Valid tail call - check signature compatibility *)
+                       let current_func_name = match ctx.current_function with
+                         | Some name -> name
+                         | None -> "unknown"
+                       in
+                       if Hashtbl.mem ctx.attributed_function_map current_func_name then
+                         let current_func = Hashtbl.find ctx.attributed_function_map current_func_name in
+                         if Tail_call_analyzer.compatible_signatures
+                             current_func.attr_function.func_params
+                             current_func.attr_function.func_return_type
+                             target_func.attr_function.func_params
+                             target_func.attr_function.func_return_type then
+                           Some (name, args) (* Valid tail call *)
+                         else
+                           type_error ("Tail call to '" ^ name ^ "' has incompatible signature") expr.expr_pos
+                       else
+                         None (* Not in attributed function context *)
+                   | Some _tt ->
+                       type_error ("Tail call to '" ^ name ^ "' has incompatible program type") expr.expr_pos
+                   | None ->
+                       type_error ("Tail call target '" ^ name ^ "' has invalid program type") expr.expr_pos)
               | None ->
-                  type_error ("Tail call target '" ^ name ^ "' has invalid program type") expr.expr_pos)
-         | None ->
-             None (* Not in attributed function context - regular call *))
-      else
-        None (* Not an attributed function - regular call *)
+                  None (* Not in attributed function context - regular call *))
+           else
+             None (* Not an attributed function - regular call *)
+       | _ ->
+           None (* Function pointer call - cannot be tail call *))
   | Match (_matched_expr, _match_arms) ->
       (* Match expressions should preserve their structure even if they contain tail calls *)
       (* Individual function calls within arms will be converted to tail calls during type checking *)
       None  (* Don't collapse match expressions to single tail calls *)
   | _ -> None (* Not a function call *)
+
+(** Helper to create typed identifier *)
+let make_typed_identifier name pos =
+  { texpr_desc = TIdentifier name; texpr_type = U32; texpr_pos = pos }
+
+(** Type check a builtin function call *)
+let type_check_builtin_call _ctx name typed_args arg_types pos =
+  match Stdlib.get_builtin_function_signature name with
+  | Some (expected_params, return_type) ->
+      (match Stdlib.get_builtin_function name with
+       | Some builtin_func when builtin_func.is_variadic ->
+           (* Variadic function - accept any number of arguments *)
+           Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+         | Some _ ->
+             (* Check if this function has custom validation *)
+             let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types _ctx.ast_context pos in
+             if not validation_ok then
+               (match validation_error with
+                | Some error_msg -> type_error error_msg pos
+                | None -> type_error ("Validation failed for function: " ^ name) pos)
+                           else
+                (* Regular builtin function validation passed - check argument count and types *)
+                (* Skip standard type checking if param_types is empty (custom validation handles it) *)
+                if List.length expected_params = 0 then
+                  (* Custom validation handled type checking *)
+                  Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+                else if List.length expected_params = List.length arg_types then
+                  let unified = List.map2 unify_types expected_params arg_types in
+                  if List.for_all (function Some _ -> true | None -> false) unified then
+                    Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+                  else
+                    type_error ("Type mismatch in function call: " ^ name) pos
+                else
+                  type_error ("Wrong number of arguments for function: " ^ name) pos
+       | None -> type_error ("Unknown builtin function: " ^ name) pos)
+  | None -> None
+
+(** Type check a user function call *)
+let type_check_user_function_call ctx name typed_args arg_types pos =
+  try
+    let (expected_params, return_type) = Hashtbl.find ctx.functions name in
+    
+    (* Check attributed function call restrictions *)
+    if Hashtbl.mem ctx.attributed_functions name && not ctx.in_match_return_context then
+      type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") pos;
+    
+    (* Check @helper function call restrictions *)
+    if Hashtbl.mem ctx.helper_functions name then (
+      let in_ebpf_program = ctx.current_program_type <> None in
+      let in_helper_function = match ctx.current_function with
+        | Some current_func_name -> Hashtbl.mem ctx.helper_functions current_func_name
+        | None -> false
+      in
+      if not in_ebpf_program && not in_helper_function then
+        type_error ("Helper function '" ^ name ^ "' can only be called from eBPF programs or other helper functions, not from userspace code") pos
+    );
+    
+    (* Check kernel/userspace function call restrictions *)
+    (try
+      let target_scope = Hashtbl.find ctx.function_scopes name in
+      if target_scope = Ast.Kernel then
+        let in_ebpf_program = ctx.current_program_type <> None in
+        let current_scope = match ctx.current_function with
+          | Some current_func_name ->
+              (try 
+                 Some (Hashtbl.find ctx.function_scopes current_func_name)
+               with Not_found -> 
+                 Some Ast.Userspace)
+          | None -> 
+              Some Ast.Userspace
+        in
+        (match current_scope, in_ebpf_program with
+         | Some Ast.Userspace, false ->
+             type_error ("Kernel function '" ^ name ^ "' cannot be called from userspace code") pos
+         | _ -> ())
+    with Not_found -> ());
+    
+    (* Check argument types *)
+    if List.length expected_params = List.length arg_types then
+      let unified = List.map2 unify_types expected_params arg_types in
+      if List.for_all (function Some _ -> true | None -> false) unified then
+        Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+      else
+        type_error ("Type mismatch in function call: " ^ name) pos
+    else
+      type_error ("Wrong number of arguments for function: " ^ name) pos
+  with Not_found -> None
+
+(** Type check a function pointer call (for variables with function type) *)
+let type_check_function_pointer_variable ctx name typed_args arg_types pos =
+  try
+    let var_symbol = Hashtbl.find ctx.variables name in
+    let resolved_var_type = resolve_user_type ctx var_symbol in
+    (match resolved_var_type with
+     | Function (param_types, return_type) ->
+         (* This is a function pointer call *)
+         if List.length param_types = List.length arg_types then
+           let unified = List.map2 unify_types param_types arg_types in
+           if List.for_all (function Some _ -> true | None -> false) unified then
+             Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+           else
+             type_error ("Type mismatch in function pointer call: expected " ^ 
+                        String.concat ", " (List.map string_of_bpf_type param_types) ^ 
+                        " but got " ^ 
+                        String.concat ", " (List.map string_of_bpf_type arg_types)) pos
+         else
+           type_error ("Wrong number of arguments for function pointer call: expected " ^ 
+                      string_of_int (List.length param_types) ^ 
+                      " but got " ^ 
+                      string_of_int (List.length arg_types)) pos
+     | _ ->
+         type_error ("'" ^ name ^ "' is not a function or function pointer") pos)
+  with Not_found -> None
+
+(** Type check a function pointer call (for complex expressions) *)
+let type_check_function_pointer_call ctx typed_callee typed_args arg_types pos =
+  let resolved_func_type = resolve_user_type ctx typed_callee.texpr_type in
+  match resolved_func_type with
+  | Function (param_types, return_type) ->
+      if List.length param_types = List.length arg_types then
+        let unified = List.map2 unify_types param_types arg_types in
+        if List.for_all (function Some _ -> true | None -> false) unified then
+          { texpr_desc = TCall (typed_callee, typed_args); texpr_type = return_type; texpr_pos = pos }
+        else
+          type_error ("Type mismatch in function pointer call") pos
+      else
+        type_error ("Wrong number of arguments for function pointer call") pos
+  | _ ->
+      type_error ("Cannot call non-function expression") pos
 
 (** Type check array access *)
 let rec type_check_array_access ctx arr idx pos =
@@ -769,114 +908,30 @@ and type_check_expression ctx expr =
           type_error (Printf.sprintf "Config '%s' has no field '%s'" config_name field_name) expr.expr_pos)
       with Not_found ->
         type_error (Printf.sprintf "Undefined config: '%s'" config_name) expr.expr_pos)
-  | FunctionCall (name, args) ->
+  | Call (callee_expr, args) ->
       (* Type check arguments first *)
       let typed_args = List.map (type_check_expression ctx) args in
       let arg_types = List.map (fun e -> e.texpr_type) typed_args in
       
-      (* Check if it's a built-in function *)
-      (match Stdlib.get_builtin_function_signature name with
-       | Some (expected_params, return_type) ->
-           (* Check if this is a variadic function (indicated by empty parameter list) *)
-           (match Stdlib.get_builtin_function name with
-            | Some builtin_func when builtin_func.is_variadic ->
-                (* Variadic function - accept any number of arguments *)
-                { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = expr.expr_pos }
-            | Some _ when name = "register" ->
-                (* Special handling for register() - only accept struct_ops types *)
-                if List.length typed_args = 1 then
-                  let arg_type = (List.hd typed_args).texpr_type in
-                  (match arg_type with
-                   | Struct struct_name | UserType struct_name -> 
-                       (* Check if this struct has @struct_ops attribute by looking in AST declarations *)
-                       let has_struct_ops_attr = List.exists (function
-                         | Ast.StructDecl struct_def when struct_def.struct_name = struct_name ->
-                             List.exists (function
-                               | Ast.AttributeWithArg ("struct_ops", _) -> true
-                               | _ -> false
-                             ) struct_def.struct_attributes
-                         | _ -> false
-                       ) ctx.ast_context in
-                       if has_struct_ops_attr then
-                         { texpr_desc = TFunctionCall (name, typed_args); texpr_type = U32; texpr_pos = expr.expr_pos }
-                       else
-                         type_error ("register() can only be used with struct_ops structs (structs with @struct_ops attribute). '" ^ struct_name ^ "' is not a struct_ops.") expr.expr_pos
-                   | _ -> 
-                       type_error "register() requires a struct_ops struct argument" expr.expr_pos)
-                else
-                  type_error "register() takes exactly one argument" expr.expr_pos
-            | _ ->
-                (* Regular built-in function - check argument count and types *)
-                if List.length expected_params = List.length arg_types then
-                  let unified = List.map2 unify_types expected_params arg_types in
-                  if List.for_all (function Some _ -> true | None -> false) unified then
-                    { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = expr.expr_pos }
-                  else
-                    type_error ("Type mismatch in function call: " ^ name) expr.expr_pos
-                else
-                  type_error ("Wrong number of arguments for function: " ^ name) expr.expr_pos)
-       | None ->
-           (* Check user-defined functions *)
-           try
-             let (expected_params, return_type) = Hashtbl.find ctx.functions name in
-             
-             (* Check attributed function call restrictions - attributed functions cannot be called directly, but kfuncs are allowed *)
-             (* Exception: allow attributed function calls in match expressions that are in return position *)
-             if Hashtbl.mem ctx.attributed_functions name && not ctx.in_match_return_context then
-               type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos;
-             
-             (* Check @helper function call restrictions *)
-             if Hashtbl.mem ctx.helper_functions name then (
-               (* @helper functions can only be called from eBPF programs or other @helper functions *)
-               let in_ebpf_program = ctx.current_program_type <> None in
-               let in_helper_function = match ctx.current_function with
-                 | Some current_func_name -> Hashtbl.mem ctx.helper_functions current_func_name
-                 | None -> false
-               in
-               if not in_ebpf_program && not in_helper_function then
-                 type_error ("Helper function '" ^ name ^ "' can only be called from eBPF programs or other helper functions, not from userspace code") expr.expr_pos
-             );
-             
-             (* Check kernel/userspace function call restrictions *)
-             (try
-               let target_scope = Hashtbl.find ctx.function_scopes name in
-               (* Only restrict if target is a kernel function *)
-               if target_scope = Ast.Kernel then
-                 (* Check if we're in a context where kernel function calls are allowed *)
-                 let in_ebpf_program = ctx.current_program_type <> None in
-                 let current_scope = match ctx.current_function with
-                   | Some current_func_name ->
-                       (try 
-                          Some (Hashtbl.find ctx.function_scopes current_func_name)
-                        with Not_found -> 
-                          (* If current function scope not found, treat as userspace *)
-                          Some Ast.Userspace)
-                   | None -> 
-                       (* If no current function, we're in global scope (userspace) *)
-                       Some Ast.Userspace
-                 in
-                 (* Kernel functions can be called from:
-                    1. eBPF programs (current_program_type is Some _)
-                    2. Other kernel functions (current_scope is Kernel)
-                    But NOT from userspace functions or main() *)
-                 (match current_scope, in_ebpf_program with
-                  | Some Ast.Userspace, false ->
-                      type_error ("Kernel function '" ^ name ^ "' cannot be called from userspace code") expr.expr_pos
-                  | _ -> ())
-             with Not_found -> 
-               (* Target function scope not found, which shouldn't happen for defined functions *)
-               ());
-             
-             if List.length expected_params = List.length arg_types then
-               let unified = List.map2 unify_types expected_params arg_types in
-               if List.for_all (function Some _ -> true | None -> false) unified then
-                 { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = expr.expr_pos }
-               else
-                 type_error ("Type mismatch in function call: " ^ name) expr.expr_pos
-             else
-               type_error ("Wrong number of arguments for function: " ^ name) expr.expr_pos
-           with Not_found ->
-             type_error ("Undefined function: " ^ name) expr.expr_pos)
+      (* Try different call types in order of priority *)
+      (match callee_expr.expr_desc with
+       | Identifier name ->
+
+           (* Try builtin -> user function -> function pointer variable *)
+           (match type_check_builtin_call ctx name typed_args arg_types expr.expr_pos with
+            | Some result -> result
+            | None ->
+                (match type_check_user_function_call ctx name typed_args arg_types expr.expr_pos with
+                 | Some result -> result
+                 | None ->
+                     (match type_check_function_pointer_variable ctx name typed_args arg_types expr.expr_pos with
+                      | Some result -> result
+                      | None -> type_error ("Undefined function: " ^ name) expr.expr_pos)))
+       | _ ->
+           (* Complex expression - must be function pointer, type check the callee *)
+           let typed_callee = type_check_expression ctx callee_expr in
+           type_check_function_pointer_call ctx typed_callee typed_args arg_types expr.expr_pos)
+
   | ArrayAccess (arr, idx) -> type_check_array_access ctx arr idx expr.expr_pos
   | FieldAccess (obj, field) -> type_check_field_access ctx obj field expr.expr_pos
   | ArrowAccess (obj, field) -> 
@@ -902,7 +957,8 @@ and type_check_expression ctx expr =
         if List.length expected_params = List.length arg_types then
           let unified = List.map2 unify_types expected_params arg_types in
           if List.for_all (function Some _ -> true | None -> false) unified then
-            { texpr_desc = TFunctionCall (name, typed_args); texpr_type = return_type; texpr_pos = expr.expr_pos }
+            let typed_name = { texpr_desc = TIdentifier name; texpr_type = Function (expected_params, return_type); texpr_pos = expr.expr_pos } in
+            { texpr_desc = TCall (typed_name, typed_args); texpr_type = return_type; texpr_pos = expr.expr_pos }
           else
             type_error ("Type mismatch in tail call: " ^ name) expr.expr_pos
         else
@@ -1243,12 +1299,13 @@ and type_check_statement ctx stmt =
                                 " not supported for type " ^ string_of_bpf_type element_type) stmt.stmt_pos)
             | _ -> type_error ("Compound index assignment can only be used on maps or arrays") stmt.stmt_pos))
   
-  | Declaration (name, type_opt, expr) ->
-      let typed_expr = type_check_expression ctx expr in
+  | Declaration (name, type_opt, expr_opt) ->
+      let typed_expr_opt = Option.map (type_check_expression ctx) expr_opt in
       
       (* Check if trying to assign a map to a variable *)
-      (match typed_expr.texpr_type with
-       | Map (_, _, _) -> type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
+      (match typed_expr_opt with
+       | Some typed_expr when (match typed_expr.texpr_type with Map (_, _, _) -> true | _ -> false) ->
+           type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
        | _ -> ());
       
       let var_type = match type_opt with
@@ -1256,14 +1313,20 @@ and type_check_statement ctx stmt =
             let resolved_declared_type = resolve_user_type ctx declared_type in
             (* For variable declarations, we should enforce the declared type *)
             (* and check if the expression type can be assigned to it *)
-            if can_assign resolved_declared_type typed_expr.texpr_type then
-              resolved_declared_type  (* Use the declared type, not the unified type *)
-            else
-              type_error ("Type mismatch in declaration") stmt.stmt_pos
-        | None -> typed_expr.texpr_type
+            (match typed_expr_opt with
+             | Some typed_expr ->
+                 if can_assign resolved_declared_type typed_expr.texpr_type then
+                   resolved_declared_type  (* Use the declared type, not the unified type *)
+                 else
+                   type_error ("Type mismatch in declaration") stmt.stmt_pos
+             | None -> resolved_declared_type) (* No initializer, just use declared type *)
+        | None -> 
+            (match typed_expr_opt with
+             | Some typed_expr -> typed_expr.texpr_type
+             | None -> type_error ("Variable declaration must have either a type annotation or an initializer") stmt.stmt_pos)
       in
       Hashtbl.replace ctx.variables name var_type;
-      { tstmt_desc = TDeclaration (name, var_type, typed_expr); tstmt_pos = stmt.stmt_pos }
+      { tstmt_desc = TDeclaration (name, var_type, typed_expr_opt); tstmt_pos = stmt.stmt_pos }
   
   | ConstDeclaration (name, type_opt, expr) ->
       let typed_expr = type_check_expression ctx expr in
@@ -1337,9 +1400,14 @@ and type_check_statement ctx stmt =
                   (* Regular return expression - type check normally *)
                   (* But first check if it's an attributed function being called directly *)
                   (match expr.expr_desc with
-                   | FunctionCall (name, _) when Hashtbl.mem ctx.attributed_functions name && not ctx.in_match_return_context ->
-                       (* This check already excludes kfuncs since they're not in attributed_functions *)
-                       type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos
+                   | Call (callee_expr, _) ->
+                       (* Check if this is a direct call to an attributed function *)
+                       (match callee_expr.expr_desc with
+                        | Identifier name when Hashtbl.mem ctx.attributed_functions name && not ctx.in_match_return_context ->
+                            (* This check already excludes kfuncs since they're not in attributed_functions *)
+                            type_error ("Attributed function '" ^ name ^ "' cannot be called directly. Use return " ^ name ^ "(...) for tail calls.") expr.expr_pos
+                        | _ ->
+                            Some (type_check_expression ctx expr))
                    | Match (_, _) ->
                        (* For match expressions in return position, set the flag and type check normally *)
                        let ctx_with_match_return = { ctx with in_match_return_context = true } in
@@ -1740,7 +1808,7 @@ let rec typed_expr_to_expr texpr =
     | TLiteral lit -> Literal lit
     | TIdentifier name -> Identifier name
     | TConfigAccess (config_name, field_name) -> ConfigAccess (config_name, field_name)
-    | TFunctionCall (name, args) -> FunctionCall (name, List.map typed_expr_to_expr args)
+    | TCall (callee, args) -> Call (typed_expr_to_expr callee, List.map typed_expr_to_expr args)
     | TTailCall (name, args) -> TailCall (name, List.map typed_expr_to_expr args)
     | TArrayAccess (arr, idx) -> ArrayAccess (typed_expr_to_expr arr, typed_expr_to_expr idx)
     | TFieldAccess (obj, field) -> FieldAccess (typed_expr_to_expr obj, field)
@@ -1792,7 +1860,7 @@ and typed_stmt_to_stmt tstmt =
         ArrowAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TIndexAssignment (map_expr, key_expr, value_expr) -> 
         IndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, typed_expr_to_expr value_expr)
-    | TDeclaration (name, typ, expr) -> Declaration (name, Some typ, typed_expr_to_expr expr)
+    | TDeclaration (name, typ, expr_opt) -> Declaration (name, Some typ, Option.map typed_expr_to_expr expr_opt)
   | TConstDeclaration (name, typ, expr) -> ConstDeclaration (name, Some typ, typed_expr_to_expr expr)
     | TReturn expr_opt -> Return (Option.map typed_expr_to_expr expr_opt)
     | TIf (cond, then_stmts, else_opt) -> 
@@ -2150,7 +2218,7 @@ and populate_multi_program_context ast multi_prog_analysis =
     
     (* Recursively enhance sub-expressions *)
     (match expr.expr_desc with
-     | FunctionCall (_, args) ->
+     | Call (_, args) ->
          List.iter (enhance_expr prog_type) args
      | ArrayAccess (arr_expr, idx_expr) ->
          enhance_expr prog_type arr_expr;
@@ -2197,8 +2265,10 @@ and populate_multi_program_context ast multi_prog_analysis =
         (match map_expr.program_context with
          | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
          | None -> ())
-    | Declaration (_, _, expr) ->
-        enhance_expr prog_type expr
+    | Declaration (_, _, expr_opt) ->
+        (match expr_opt with
+         | Some expr -> enhance_expr prog_type expr
+         | None -> ())
     | ConstDeclaration (_, _, expr) ->
         enhance_expr prog_type expr
     | Return (Some expr) ->
@@ -2248,7 +2318,7 @@ and populate_multi_program_context ast multi_prog_analysis =
       
       (* Recursively enhance sub-expressions *)
       (match expr.expr_desc with
-       | FunctionCall (_, args) ->
+       | Call (_, args) ->
            List.iter enhance_userspace_expr args
        | ArrayAccess (arr_expr, idx_expr) ->
            enhance_userspace_expr arr_expr;
@@ -2285,8 +2355,10 @@ and populate_multi_program_context ast multi_prog_analysis =
           enhance_userspace_expr map_expr;
           enhance_userspace_expr key_expr;
           enhance_userspace_expr value_expr
-      | Declaration (_, _, expr) ->
-          enhance_userspace_expr expr
+      | Declaration (_, _, expr_opt) ->
+          (match expr_opt with
+           | Some expr -> enhance_userspace_expr expr
+           | None -> ())
       | ConstDeclaration (_, _, expr) ->
           enhance_userspace_expr expr
       | Return (Some expr) ->

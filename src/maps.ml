@@ -288,7 +288,7 @@ let ast_to_maps_declaration ast_map =
 (** Analyze access patterns in an expression *)
 let analyze_expr_access_pattern expr =
   match expr.expr_desc with
-  | FunctionCall (_, _) | ArrayAccess (_, _) | _ -> ReadWrite
+  | Call (_, _) | ArrayAccess (_, _) | _ -> ReadWrite
 
 (** Check if a map is compatible with a program type *)
 let is_map_compatible_with_program map_type prog_type =

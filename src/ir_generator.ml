@@ -354,60 +354,53 @@ let rec lower_expression ctx (expr : Ast.expr) =
       (* Tail calls are handled specifically in return statements *)
       failwith ("Tail call to " ^ name ^ " should only appear in return statements")
       
-  | Ast.FunctionCall (name, args) ->
+  | Ast.Call (callee_expr, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
       
-      (* Special handling for register() builtin function *)
-      if name = "register" then
-        (* Generate struct_ops registration instruction *)
-        if List.length arg_vals = 1 then
-          let struct_val = List.hd arg_vals in
-          let result_reg = allocate_register ctx in
-          let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
-          let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr.expr_pos in
-          emit_instruction ctx instr;
-          result_val
-        else
-          failwith "register() takes exactly one argument"
-      (* Check for built-in context methods *)
-      else if String.contains name '.' then
-        let parts = String.split_on_char '.' name in
-        match parts with
-        | ["ctx"; method_name] ->
-            expand_context_method ctx method_name arg_vals expr.expr_pos
-        | [map_name; operation] when Hashtbl.mem ctx.maps map_name ->
-            let key_val = List.hd arg_vals in
-            let value_val_opt = if List.length arg_vals > 1 then Some (List.nth arg_vals 1) else None in
-            expand_map_operation ctx map_name operation key_val value_val_opt expr.expr_pos
-        | _ ->
-            (* Regular function call *)
-            let result_reg = allocate_register ctx in
-            let result_type = match expr.expr_type with
-              | Some ast_type -> ast_type_to_ir_type ast_type
-              | None -> IRU32 (* Default return type *)
-            in
-            let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
-            let instr = make_ir_instruction
-              (IRCall (name, arg_vals, Some result_val))
-              ~verifier_hints:[HelperCall name]
-              expr.expr_pos
-            in
-            emit_instruction ctx instr;
-            result_val
-      else
-        (* Regular function call *)
-        let result_reg = allocate_register ctx in
-        let result_type = match expr.expr_type with
-          | Some ast_type -> ast_type_to_ir_type ast_type
-          | None -> IRU32
-        in
-        let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
-        let instr = make_ir_instruction
-          (IRCall (name, arg_vals, Some result_val))
-          expr.expr_pos
-        in
-        emit_instruction ctx instr;
-        result_val
+      (* Determine call type based on callee expression *)
+      (match callee_expr.expr_desc with
+       | Ast.Identifier name ->
+           (* Regular function call *)
+           (* Special handling for register() builtin function *)
+           if name = "register" then
+             (* Generate struct_ops registration instruction *)
+             if List.length arg_vals = 1 then
+               let struct_val = List.hd arg_vals in
+               let result_reg = allocate_register ctx in
+               let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
+               let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr.expr_pos in
+               emit_instruction ctx instr;
+               result_val
+             else
+               failwith "register() takes exactly one argument"
+           else
+             (* Regular function call *)
+             let result_reg = allocate_register ctx in
+             let result_type = match expr.expr_type with
+               | Some ast_type -> ast_type_to_ir_type ast_type
+               | None -> IRU32
+             in
+             let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+             let instr = make_ir_instruction
+               (IRCall (name, arg_vals, Some result_val))
+               expr.expr_pos
+             in
+             emit_instruction ctx instr;
+             result_val
+       | Ast.FieldAccess ({expr_desc = Ast.Identifier obj_name; _}, method_name) ->
+           (* Method call (e.g., ctx.method() or map.operation()) *)
+           if obj_name = "ctx" then
+             expand_context_method ctx method_name arg_vals expr.expr_pos
+           else if Hashtbl.mem ctx.maps obj_name then
+             let key_val = List.hd arg_vals in
+             let value_val_opt = if List.length arg_vals > 1 then Some (List.nth arg_vals 1) else None in
+             expand_map_operation ctx obj_name method_name key_val value_val_opt expr.expr_pos
+           else
+             failwith ("Unknown method call: " ^ obj_name ^ "." ^ method_name)
+       | _ ->
+           (* Function pointer call - not yet implemented *)
+           let _func_val = lower_expression ctx callee_expr in
+           failwith "Function pointer calls not yet implemented in IR generation")
         
   | Ast.ArrayAccess (array_expr, index_expr) ->
       (* Check if this is map access first, before calling lower_expression on array *)
@@ -894,8 +887,17 @@ and lower_statement ctx stmt =
       in
       emit_instruction ctx instr
       
-  | Ast.Declaration (name, typ_opt, expr) ->
-      let value = lower_expression ctx expr in
+  | Ast.Declaration (name, typ_opt, expr_opt) ->
+      let value = match expr_opt with
+        | Some expr -> lower_expression ctx expr
+        | None -> 
+            (* Uninitialized variable - create default value *)
+            let default_type = match typ_opt with
+              | Some ast_type -> ast_type_to_ir_type ast_type
+              | None -> IRU32 (* Default to u32 *)
+            in
+            make_ir_value (IRLiteral (IntLit (0, None))) default_type (make_position 0 0 "")
+      in
       let reg = get_variable_register ctx name in
       let target_type = match typ_opt with
         | Some ast_type -> 
@@ -997,7 +999,7 @@ and lower_statement ctx stmt =
                    match arm.arm_body with
                    | SingleExpr expr ->
                        (match expr.expr_desc with
-                        | Ast.FunctionCall (_, _) -> true
+                        | Ast.Call (_, _) -> true
                         | Ast.TailCall (_, _) -> true
                         | _ -> false)
                    | Block stmts ->
@@ -1006,7 +1008,7 @@ and lower_statement ctx stmt =
                          match stmt.stmt_desc with
                          | Ast.Return (Some return_expr) ->
                              (match return_expr.expr_desc with
-                              | Ast.FunctionCall (_, _) -> true
+                              | Ast.Call (_, _) -> true
                               | Ast.TailCall (_, _) -> true
                               | _ -> false)
                          | _ -> false) stmts
@@ -1038,10 +1040,17 @@ and lower_statement ctx stmt =
                      let return_action = match arm.arm_body with
                        | SingleExpr expr ->
                            (match expr.expr_desc with
-                            | Ast.FunctionCall (name, args) ->
-                                (* This will be converted to tail call by tail call analyzer *)
-                                let arg_vals = List.map (lower_expression ctx) args in
-                                IRReturnCall (name, arg_vals)
+                            | Ast.Call (callee_expr, args) ->
+                                (* Check if this is a simple function call that could be a tail call *)
+                                (match callee_expr.expr_desc with
+                                 | Ast.Identifier name ->
+                                     (* This will be converted to tail call by tail call analyzer *)
+                                     let arg_vals = List.map (lower_expression ctx) args in
+                                     IRReturnCall (name, arg_vals)
+                                 | _ ->
+                                     (* Function pointer call - treat as regular return *)
+                                     let ret_val = lower_expression ctx expr in
+                                     IRReturnValue ret_val)
                             | Ast.TailCall (name, args) ->
                                 (* Explicit tail call *)
                                 let arg_vals = List.map (lower_expression ctx) args in
@@ -1058,9 +1067,16 @@ and lower_statement ctx stmt =
                                  (match stmt.stmt_desc with
                                   | Ast.Return (Some return_expr) ->
                                       (match return_expr.expr_desc with
-                                       | Ast.FunctionCall (name, args) ->
-                                           let arg_vals = List.map (lower_expression ctx) args in
-                                           IRReturnCall (name, arg_vals)
+                                       | Ast.Call (callee_expr, args) ->
+                                           (* Check if this is a simple function call that could be a tail call *)
+                                           (match callee_expr.expr_desc with
+                                            | Ast.Identifier name ->
+                                                let arg_vals = List.map (lower_expression ctx) args in
+                                                IRReturnCall (name, arg_vals)
+                                            | _ ->
+                                                (* Function pointer call - treat as regular return *)
+                                                let ret_val = lower_expression ctx return_expr in
+                                                IRReturnValue ret_val)
                                        | Ast.TailCall (name, args) ->
                                            let arg_vals = List.map (lower_expression ctx) args in
                                            IRReturnTailCall (name, arg_vals, 0)
@@ -1092,37 +1108,43 @@ and lower_statement ctx stmt =
                  in
                  emit_instruction ctx instr;
                  None  (* Tail calls don't return to caller *)
-             | Ast.FunctionCall (name, args) ->
-                 (* Check if this should be a tail call *)
-                 let should_be_tail_call = 
-                   (* Check if we're in an attributed function context *)
-                   match ctx.current_function with
-                   | Some _current_func_name ->
-                       (* Check if target function is an attributed function *)
-                       let target_is_attributed = 
-                         try
-                           let _ = Symbol_table.lookup_function ctx.symbol_table name in
-                           (* Simple heuristic: if function name appears in context, it might be attributed *)
-                           true  (* This will be refined by actual tail call analysis *)
-                         with _ -> false
-                       in
-                       target_is_attributed
-                   | None -> false
-                 in
-                 
-                 if should_be_tail_call then
-                   (* Generate tail call instruction *)
-                   let arg_vals = List.map (lower_expression ctx) args in
-                   let tail_call_index = 0 in  (* This will be set by tail call analyzer *)
-                   let instr = make_ir_instruction
-                     (IRTailCall (name, arg_vals, tail_call_index))
-                     stmt.stmt_pos
-                   in
-                   emit_instruction ctx instr;
-                   None  (* Tail calls don't return to caller *)
-                 else
-                   (* Regular function call in return position *)
-                   Some (lower_expression ctx expr)
+             | Ast.Call (callee_expr, args) ->
+                 (* Check if this is a simple function call that could be a tail call *)
+                 (match callee_expr.expr_desc with
+                  | Ast.Identifier name ->
+                      (* Check if this should be a tail call *)
+                      let should_be_tail_call = 
+                        (* Check if we're in an attributed function context *)
+                        match ctx.current_function with
+                        | Some _current_func_name ->
+                            (* Check if target function is an attributed function *)
+                            let target_is_attributed = 
+                              try
+                                let _ = Symbol_table.lookup_function ctx.symbol_table name in
+                                (* Simple heuristic: if function name appears in context, it might be attributed *)
+                                true  (* This will be refined by actual tail call analysis *)
+                              with _ -> false
+                            in
+                            target_is_attributed
+                        | None -> false
+                      in
+                      
+                      if should_be_tail_call then
+                        (* Generate tail call instruction *)
+                        let arg_vals = List.map (lower_expression ctx) args in
+                        let tail_call_index = 0 in  (* This will be set by tail call analyzer *)
+                        let instr = make_ir_instruction
+                          (IRTailCall (name, arg_vals, tail_call_index))
+                          stmt.stmt_pos
+                        in
+                        emit_instruction ctx instr;
+                        None  (* Tail calls don't return to caller *)
+                      else
+                        (* Regular function call in return position *)
+                        Some (lower_expression ctx expr)
+                  | _ ->
+                      (* Function pointer call or other complex expression - treat as regular call *)
+                      Some (lower_expression ctx expr))
              | _ -> 
                  (* Regular return expression *)
                  Some (lower_expression ctx expr))

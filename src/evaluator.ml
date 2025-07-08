@@ -609,7 +609,15 @@ and eval_expression ctx expr =
            (* This should never happen since symbol_table is now mandatory *)
            eval_error ("Internal error: no symbol table available") expr.expr_pos)
   
-  | FunctionCall (name, args) -> eval_function_call ctx name args expr.expr_pos
+  | Call (callee_expr, args) ->
+      (* Handle both regular function calls and function pointer calls *)
+      (match callee_expr.expr_desc with
+       | Identifier name ->
+           (* Regular function call *)
+           eval_function_call ctx name args expr.expr_pos
+       | _ ->
+           (* Function pointer call - not supported in evaluation context *)
+           eval_error "Function pointer calls cannot be evaluated in userspace context" expr.expr_pos)
   
   | TailCall (name, _args) ->
       (* Tail calls are not supported in evaluation context - they only exist in eBPF *)
@@ -810,11 +818,19 @@ and eval_statement ctx stmt =
       let key_str = string_of_runtime_value key_val in
       Hashtbl.replace map_store key_str value_val
   
-  | Declaration (name, _, expr) ->
-      let value = eval_expression ctx expr in
-      Hashtbl.add ctx.variables name value;
-      let _ = allocate_variable_address ctx name value in
-      ()
+  | Declaration (name, _, expr_opt) ->
+      (match expr_opt with
+       | Some expr ->
+           let value = eval_expression ctx expr in
+           Hashtbl.add ctx.variables name value;
+           let _ = allocate_variable_address ctx name value in
+           ()
+       | None ->
+           (* Uninitialized variable - assign default value *)
+           let default_value = IntValue 0 in
+           Hashtbl.add ctx.variables name default_value;
+           let _ = allocate_variable_address ctx name default_value in
+           ())
   
   | ConstDeclaration (name, _, expr) ->
       let value = eval_expression ctx expr in

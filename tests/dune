@@ -200,6 +200,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_function_pointers)
+ (modules test_function_pointers)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_string_type)
  (modules test_string_type)
  (libraries kernelscript alcotest))
@@ -499,6 +504,10 @@
  (action (run ./test_type_alias.exe)))
 
 (rule
+ (alias runtest_function_pointers)
+ (action (run ./test_function_pointers.exe)))
+
+(rule
  (alias runtest_const_variables)
  (action (run ./test_const_variables.exe)))
 
@@ -602,6 +611,7 @@
   test_const_variables.exe
   test_global_var.exe
   test_evaluator.exe
+  test_function_pointers.exe
   test_compound_index_assignment.exe
   test_dynptr_bridge.exe
   test_safety_checker.exe
@@ -640,6 +650,7 @@
    (run ./test_const_variables.exe)
    (run ./test_global_var.exe)
    (run ./test_evaluator.exe)
+   (run ./test_function_pointers.exe)
    (run ./test_compound_index_assignment.exe)
    (run ./test_dynptr_bridge.exe)
    (run ./test_safety_checker.exe)

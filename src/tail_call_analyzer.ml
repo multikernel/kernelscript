@@ -64,12 +64,17 @@ let compatible_signatures caller_params caller_return target_params target_retur
 (** Detect tail calls in a return statement *)
 let rec detect_tail_calls_in_expr expr attributed_functions =
   match expr.expr_desc with
-  | FunctionCall (name, _args) ->
-      (* Check if this function is an attributed function *)
-      if List.exists (fun attr_func -> attr_func.attr_function.func_name = name) attributed_functions then
-        [name]
-      else
-        []
+  | Call (callee_expr, _args) ->
+      (* Check if this is a function call to an attributed function *)
+      (match callee_expr.expr_desc with
+       | Identifier name ->
+           if List.exists (fun attr_func -> attr_func.attr_function.func_name = name) attributed_functions then
+             [name]
+           else
+             []
+       | _ ->
+           (* Function pointer calls are not tail call targets *)
+           [])
   | TailCall (name, _args) ->
       (* This is an explicit tail call - already validated by type checker *)
       if List.exists (fun attr_func -> attr_func.attr_function.func_name = name) attributed_functions then

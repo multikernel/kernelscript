@@ -63,10 +63,13 @@ let collect_constants_from_statements statements =
     | [] -> acc
     | stmt :: rest ->
         (match stmt.stmt_desc with
-         | Declaration (name, _, expr) ->
+         | Declaration (name, _, expr_opt) ->
              (* Try to evaluate the initializer expression *)
-             (match evaluate_constant_expr_with_env acc expr with
-              | Some value -> collect_constants ((name, value) :: acc) rest
+             (match expr_opt with
+              | Some expr ->
+                  (match evaluate_constant_expr_with_env acc expr with
+                   | Some value -> collect_constants ((name, value) :: acc) rest
+                   | None -> collect_constants acc rest)
               | None -> collect_constants acc rest)
          | Assignment (name, expr) ->
              (* Handle variable reassignment *)
