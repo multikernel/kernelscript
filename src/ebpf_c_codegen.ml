@@ -660,10 +660,10 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     | IRMapDelete (map_val, key_val) ->
         collect_from_value map_val; collect_from_value key_val
     | IRReturn (Some ret_val) -> collect_from_value ret_val
-    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
-        collect_from_value cond_val;
-        List.iter collect_from_instr then_instrs;
-        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+          | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+          collect_from_value cond_val;
+          List.iter collect_from_instr then_instrs;
+          (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
     | IRIfElseChain (conditions_and_bodies, final_else) ->
         List.iter (fun (cond_val, then_instrs) ->
           collect_from_value cond_val;
@@ -2807,7 +2807,7 @@ let generate_prog_array_map ctx prog_array_size =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
-    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table
+    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None)
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -2910,6 +2910,15 @@ let compile_multi_to_c_with_tail_calls
   if ir_multi_prog.global_configs <> [] then
     List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
   
+  (* Generate ProgArray map BEFORE functions that use it *)
+  let prog_array_size = match tail_call_analysis with
+    | Some analysis -> analysis.Tail_call_analyzer.prog_array_size
+    | None -> 0
+  in
+  
+  if prog_array_size > 0 then
+    generate_prog_array_map ctx prog_array_size;
+  
   (* Generate kernel functions once - they are shared across all programs *)
   List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
 
@@ -2921,37 +2930,6 @@ let compile_multi_to_c_with_tail_calls
   (* Generate struct_ops definitions and instances after functions are defined *)
   generate_struct_ops ctx ir_multi_prog;
   
-  (* Check if the generated code contains bpf_tail_call and extract target information *)
-  let generated_code = String.concat "\n" (List.rev ctx.output_lines) in
-  let has_tail_calls = try 
-    let _ = Str.search_forward (Str.regexp "bpf_tail_call") generated_code 0 in true 
-  with Not_found -> false in
-  
-  (* Extract tail call targets from comments in generated code *)
-  let tail_call_targets = if has_tail_calls then
-    let lines = String.split_on_char '\n' generated_code in
-    List.fold_left (fun acc line ->
-      (* Look for comments like "/* Tail call to drop_handler (index 0) */" *)
-      if String.contains line '/' && String.contains line '*' then
-        let comment_regex = Str.regexp {|/\* Tail call to \([a-zA-Z_][a-zA-Z0-9_]*\) (index \([0-9]+\)) \*/|} in
-        try
-          let _ = Str.search_forward comment_regex line 0 in
-          let target_name = Str.matched_group 1 line in
-          let index = int_of_string (Str.matched_group 2 line) in
-          (target_name, index) :: acc
-        with Not_found -> acc
-      else acc
-    ) [] lines
-  else [] in
-  
-  (* Generate ProgArray if tail calls detected in the generated code *)
-  let max_index = if List.length tail_call_targets > 0 then
-    List.fold_left (fun max_idx (_, idx) -> max max_idx idx) 0 tail_call_targets + 1
-  else if has_tail_calls then 1 else 0 in
-  
-  if max_index > 0 then
-    generate_prog_array_map ctx max_index;
-  
   (* Generate global variables *)
   generate_global_variables ctx ir_multi_prog.global_variables;
   
@@ -2961,43 +2939,41 @@ let compile_multi_to_c_with_tail_calls
   (* Add license (required for eBPF) *)
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
   
-  (* Create tail call analysis result with extracted targets *)
-  let index_mapping = Hashtbl.create 16 in
-  List.iter (fun (target_name, index) ->
-    Hashtbl.add index_mapping target_name index
-  ) tail_call_targets;
+  (* Create or use provided tail call analysis result *)
+  let final_tail_call_analysis = match tail_call_analysis with
+    | Some analysis -> analysis
+    | None -> {
+        Tail_call_analyzer.dependencies = [];
+        prog_array_size = 0;
+        index_mapping = Hashtbl.create 0;
+        errors = [];
+      }
+  in
   
-  let tail_call_analysis = {
-    Tail_call_analyzer.dependencies = [];
-    prog_array_size = max_index;
-    index_mapping = index_mapping;
-    errors = [];
-  } in
-  
-  (String.concat "\n" (List.rev ctx.output_lines), tail_call_analysis)
+  (String.concat "\n" (List.rev ctx.output_lines), final_tail_call_analysis)
 
 (** Multi-program compilation entry point with automatic tail call handling *)
 
-let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(tail_call_analysis=None) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
-  let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-    ~type_aliases ~variable_type_aliases ir_multi_program in
+  let (c_code, final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
+    ~type_aliases ~variable_type_aliases ~tail_call_analysis ir_multi_program in
   
   (* Print tail call analysis results *)
   Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
-    (List.length tail_call_analysis.dependencies) tail_call_analysis.prog_array_size;
+    (List.length final_tail_call_analysis.dependencies) final_tail_call_analysis.prog_array_size;
   
   c_code
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
 
-let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ir_multi_program =
+let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
-      let (c_code, tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-        ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ir_multi_program in
+      let (c_code, final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
+        ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ir_multi_program in
   
   (* Print tail call analysis results *)
   Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
-    (List.length tail_call_analysis.dependencies) tail_call_analysis.prog_array_size;
+    (List.length final_tail_call_analysis.dependencies) final_tail_call_analysis.prog_array_size;
   
-  (c_code, tail_call_analysis)
+  (c_code, final_tail_call_analysis)

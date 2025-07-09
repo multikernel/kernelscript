@@ -548,7 +548,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate eBPF C code (with updated IR and kfunc declarations) *)
     let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table updated_optimized_ir in
+      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table ~tail_call_analysis:(Some tail_call_analysis) updated_optimized_ir in
       
     (* Determine output directory *)
     let output_dir = match output_dir with
