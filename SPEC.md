@@ -670,8 +670,7 @@ fn egress_monitor(ctx: *__sk_buff) -> int { return 0 }  // TC_ACT_OK
 @lsm("socket_connect")
 fn security_check(ctx: LsmContext) -> i32 { return 0 }
 
-// Struct_ops example using attributed struct approach
-@struct_ops("tcp_congestion_ops")
+// Struct_ops example using impl block approach
 struct tcp_congestion_ops {
     init: fn(sk: *TcpSock) -> void,
     cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void,
@@ -680,20 +679,23 @@ struct tcp_congestion_ops {
     name: string,
 }
 
-var my_bbr = tcp_congestion_ops {
-    init: fn(sk: *TcpSock) -> void {
+@struct_ops("tcp_congestion_ops")
+impl my_bbr {
+    fn init(sk: *TcpSock) -> void {
         // Initialize BBR state
-    },
-    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void {
+    }
+    
+    fn cong_avoid(sk: *TcpSock, ack: u32, acked: u32) -> void {
         // BBR congestion avoidance
-    },
-    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
+    }
+    
+    fn cong_control(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
         // BBR control logic
-    },
-    set_state: fn(sk: *TcpSock, new_state: u32) -> void {
+    }
+    
+    fn set_state(sk: *TcpSock, new_state: u32) -> void {
         // State transitions
-    },
-    name: "my_bbr",
+    }
 }
 
 ### 3.6 Custom Kernel Functions (kfunc)
@@ -1237,52 +1239,114 @@ fn optimized_packet_check(packet: *u8, len: u32) -> bool {
 
 ### 3.9 Struct_ops and Kernel Module Function Pointers
 
-KernelScript supports both eBPF struct_ops and kernel module function pointer registration through attributed structs.
+KernelScript supports eBPF struct_ops through clean impl block syntax that allows implementing kernel interfaces using eBPF programs.
 
-#### 3.9.1 eBPF Struct_ops
+#### 3.9.1 eBPF Struct_ops with Impl Blocks
 
-eBPF struct_ops allow implementing kernel interfaces using eBPF programs:
+eBPF struct_ops allow implementing kernel interfaces using eBPF programs. KernelScript uses impl blocks for a clean, intuitive syntax:
 
 ```kernelscript
-// Define the struct_ops type
-@struct_ops("tcp_congestion_ops")
+// Define the struct_ops type (extracted from BTF)
 struct tcp_congestion_ops {
-    init: fn(sk: *TcpSock) -> void,
-    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void,
-    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void,
-    set_state: fn(sk: *TcpSock, new_state: u32) -> void,
-    name: string,
+    ssthresh: fn(arg: *u8) -> u32,
+    cong_avoid: fn(arg: *u8, arg: u32, arg: u32) -> void,
+    set_state: fn(arg: *u8, arg: u8) -> void,
+    cwnd_event: fn(arg: *u8, arg: u32) -> void,
+    in_ack_event: fn(arg: *u8, arg: u32) -> void,
+    pkts_acked: fn(arg: *u8, arg: *u8) -> void,
+    min_tso_segs: fn(arg: *u8) -> u32,
+    cong_control: fn(arg: *u8, arg: u32, arg: u32, arg: *u8) -> void,
+    undo_cwnd: fn(arg: *u8) -> u32,
+    sndbuf_expand: fn(arg: *u8) -> u32,
+    get_info: fn(arg: *u8, arg: u32, arg: *u8, arg: *u8) -> u64,
+    name: u8[16],
+    owner: *u8,
 }
 
 // Initialize shared state before registration
 map<u32, BbrState> connection_state : HashMap(1024)
 
-// Create an instance with function implementations
-var my_bbr = tcp_congestion_ops {
-    init: fn(sk: *TcpSock) -> void {
-        // eBPF constraints: limited stack, restricted helpers
-        var state = BbrState::new()
-        connection_state[sk.id] = state
-    },
-    cong_avoid: fn(sk: *TcpSock, ack: u32, acked: u32) -> void {
+// Implement struct_ops using impl block syntax
+@struct_ops("tcp_congestion_ops")
+impl my_bbr_congestion_control {
+    // Function implementations are directly defined in the impl block
+    // These automatically become eBPF functions with SEC("struct_ops/function_name")
+    
+    fn ssthresh(sk: *u8) -> u32 {
+        return 16
+    }
+
+    fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {
         // eBPF congestion avoidance logic
         var state = connection_state[sk.id]
         // ... BBR logic with eBPF constraints
-    },
-    cong_control: fn(sk: *TcpSock, ack: u32, flag: u32, bytes_acked: u32) -> void {
-        // eBPF control logic
-    },
-    set_state: fn(sk: *TcpSock, new_state: u32) -> void {
+    }
+
+    fn set_state(sk: *u8, new_state: u8) -> void {
         // eBPF state transition logic
-    },
-    name: "my_bbr",
+        // In a real implementation, this would handle TCP state transitions
+    }
+
+    fn cwnd_event(sk: *u8, ev: u32) -> void {
+        // eBPF congestion window event handler
+        // Handle events like slow start, recovery, etc.
+    }
+
+    fn cong_control(sk: *u8, ack: u32, flag: u32, bytes_acked: *u8) -> void {
+        // eBPF control logic
+        var state = connection_state[sk.id]
+        // ... Advanced BBR control logic
+    }
+
+    // Optional function implementations can be omitted
+    // These would be null in the generated struct_ops map
 }
 
-// Register the eBPF struct_ops
-register(my_bbr)
+// Register the impl block directly
+register(my_bbr_congestion_control)
 ```
 
-#### 3.9.2 Registration Function
+#### 3.9.2 Simplified Struct_ops Example
+
+```kernelscript
+// Minimal struct_ops implementation
+@struct_ops("tcp_congestion_ops")
+impl minimal_congestion_control {
+    fn ssthresh(sk: *u8) -> u32 {
+        return 16
+    }
+
+    fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {
+        // Minimal TCP congestion avoidance implementation
+    }
+
+    fn set_state(sk: *u8, new_state: u8) -> void {
+        // Minimal state change handler
+    }
+
+    fn cwnd_event(sk: *u8, ev: u32) -> void {
+        // Minimal congestion window event handler
+    }
+
+    // Optional functions can be omitted - they will be null in the struct_ops map
+}
+
+// Userspace registration
+fn main() -> i32 {
+    // Register the impl block directly - much cleaner than struct initialization
+    var result = register(minimal_congestion_control)
+    
+    if (result == 0) {
+        print("Congestion control algorithm registered successfully")
+    } else {
+        print("Failed to register congestion control algorithm")
+    }
+    
+    return result
+}
+```
+
+#### 3.9.3 Registration Function
 
 The `register()` function is type-aware and generates the appropriate registration code:
 
@@ -1290,9 +1354,10 @@ The `register()` function is type-aware and generates the appropriate registrati
 fn register<T>(ops: T) -> Result<Link, Error>
 ```
 
-- For `@struct_ops`: Generates libbpf registration using `bpf_map__attach_struct_ops()`
+- For `@struct_ops` impl blocks: Generates libbpf registration using `bpf_map__attach_struct_ops()`
 - Returns a `Link` handle for later unregistration
-- The compiler determines the registration method based on the struct attribute
+- The compiler determines the registration method based on the impl block attribute
+- Impl blocks provide a cleaner syntax compared to struct initialization
 
 // Multi-program userspace coordination
 fn main() -> i32 {
@@ -1306,7 +1371,7 @@ fn main() -> i32 {
     attach(ingress_handle, "eth0", 0)
     attach(egress_handle, "eth0", 1)  // Egress direction
     
-    // Register struct_ops
+    // Register struct_ops using impl block
     register(my_bbr)
     
     print("Multi-program monitoring system with BBR congestion control active")
@@ -1337,6 +1402,9 @@ str<N>                 // Fixed-size string with capacity N characters (N can be
 
 // Pointer types - unified syntax for all contexts
 *T                     // Pointer to type T (e.g., *u8, *PacketHeader, *[u8])
+
+// Function pointer types
+fn(param_types) -> return_type  // Function pointer type (e.g., fn(i32, i32) -> i32)
 
 // Program function reference types (for explicit program lifecycle control)
 FunctionRef            // Reference to an eBPF program function for loading/attachment
@@ -1465,7 +1533,107 @@ enum xdp_action {
 // 4 = TC_ACT_STOLEN, 5 = TC_ACT_QUEUED, 6 = TC_ACT_REPEAT, 7 = TC_ACT_REDIRECT
 ```
 
-### 4.3 Type Aliases for Common Patterns
+### 4.3 Function Pointers
+
+KernelScript supports function pointers that allow storing and calling functions through variables. Function pointers work in both eBPF and userspace contexts.
+
+#### 4.3.1 Function Pointer Types and Declaration
+
+```kernelscript
+// Function pointer type declaration
+type BinaryOp = fn(i32, i32) -> i32
+type UnaryOp = fn(u32) -> u32
+type VoidCallback = fn() -> void
+type ErrorHandler = fn(error_code: i32) -> bool
+
+// Function pointer variable declaration
+var operation: BinaryOp
+var callback: VoidCallback
+var handler: ErrorHandler
+
+// Functions that can be assigned to function pointers
+fn add_numbers(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+fn multiply_numbers(a: i32, b: i32) -> i32 {
+    return a * b
+}
+
+fn subtract_numbers(a: i32, b: i32) -> i32 {
+    return a - b
+}
+
+// Assign functions to function pointers
+operation = add_numbers
+var mul_op: BinaryOp = multiply_numbers
+var sub_op: BinaryOp = subtract_numbers
+```
+
+#### 4.3.2 Function Pointer Usage
+
+```kernelscript
+// Higher-order function with function pointer parameter
+fn process_with_callback(x: i32, y: i32, callback: fn(i32, i32) -> i32) -> i32 {
+    return callback(x, y)
+}
+
+fn main() -> i32 {
+    // Assign functions to function pointers
+    var add_op: BinaryOp = add_numbers
+    var mul_op: BinaryOp = multiply_numbers
+    
+    // Call functions through function pointers
+    var sum = add_op(10, 20)            // Result: 30
+    var product = mul_op(5, 6)          // Result: 30
+    
+    // Pass function pointers as arguments
+    var callback_result = process_with_callback(4, 7, add_numbers)      // Result: 11
+    var callback_result2 = process_with_callback(4, 7, multiply_numbers) // Result: 28
+    
+    return 0
+}
+```
+
+#### 4.3.3 Function Pointers in eBPF Context
+
+```kernelscript
+// Function pointer usage in eBPF programs
+@helper
+fn validate_packet(size: u32) -> bool {
+    return size >= 64 && size <= 1500
+}
+
+@helper
+fn log_packet(size: u32) -> bool {
+    print("Packet size: %d", size)
+    return true
+}
+
+type PacketValidator = fn(u32) -> bool
+
+@xdp
+fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var packet = ctx.packet()
+    if (packet == null) {
+        return XDP_PASS
+    }
+    
+    // Function pointer assignment in eBPF
+    var validator: PacketValidator = validate_packet
+    var logger: PacketValidator = log_packet
+    
+    // Call through function pointer
+    if (!validator(packet.len)) {
+        logger(packet.len)
+        return XDP_DROP
+    }
+    
+    return XDP_PASS
+}
+```
+
+### 4.4 Type Aliases for Common Patterns
 ```kernelscript
 // Simple type aliases without complex constraints
 type IpAddress = u32
@@ -1486,9 +1654,15 @@ type FilePath = str<256>       // File path string
 type LogMessage = str<128>     // Log message string
 type ShortString = str<32>     // Short general-purpose string
 type MediumString = str<128>   // Medium general-purpose string
+
+// Function pointer type aliases
+type BinaryOp = fn(i32, i32) -> i32     // Binary arithmetic operation
+type UnaryOp = fn(u32) -> u32           // Unary operation
+type PacketValidator = fn(u32) -> bool   // Packet validation function
+type ErrorHandler = fn(error_code: i32) -> bool  // Error handling callback
 ```
 
-### 4.4 String Operations
+### 4.5 String Operations
 KernelScript supports fixed-size strings with `str<N>` syntax, where N can be any positive integer (e.g., `str<1>`, `str<10>`, `str<42>`, `str<1000>`). The following operations are supported:
 
 ```kernelscript
@@ -1562,11 +1736,11 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 4.5 Pointer Operations and Memory Access
+### 4.6 Pointer Operations and Memory Access
 
 KernelScript uses a unified pointer syntax `*T` for all pointer types, with the compiler transparently handling different pointer semantics based on context. This provides simplicity while maintaining safety and performance.
 
-#### 4.5.1 Pointer Declaration and Basic Operations
+#### 4.6.1 Pointer Declaration and Basic Operations
 
 ```kernelscript
 // Pointer declaration - unified syntax for all contexts
@@ -1587,7 +1761,7 @@ if (data_ptr != null) {
 }
 ```
 
-#### 4.5.2 Struct Field Access Through Pointers
+#### 4.6.2 Struct Field Access Through Pointers
 
 ```kernelscript
 struct PacketHeader {
@@ -1629,7 +1803,7 @@ fn explicit_dereference_style(header_ptr: *PacketHeader) {
 }
 ```
 
-#### 4.5.3 Array Access Through Pointers
+#### 4.6.3 Array Access Through Pointers
 
 ```kernelscript
 struct DataBuffer {
@@ -1660,7 +1834,7 @@ fn process_buffer(buf_ptr: *DataBuffer) {
 }
 ```
 
-#### 4.5.4 Pointer Arithmetic
+#### 4.6.4 Pointer Arithmetic
 
 ```kernelscript
 @helper
@@ -1680,7 +1854,7 @@ fn pointer_arithmetic_examples(base_ptr: *u8, len: u32) {
 }
 ```
 
-#### 4.5.5 Context-Aware Pointer Semantics
+#### 4.6.5 Context-Aware Pointer Semantics
 
 ```kernelscript
 // eBPF Context - Automatic bounds checking and dynptr integration
@@ -1733,7 +1907,7 @@ fn userspace_pointer_usage() -> i32 {
 }
 ```
 
-#### 4.5.6 Function Parameters with Pointers
+#### 4.6.6 Function Parameters with Pointers
 
 ```kernelscript
 // Explicit parameter semantics - no transparent conversion
@@ -1763,7 +1937,7 @@ fn ebpf_function_parameters() {
 }
 ```
 
-#### 4.5.7 Map Integration with Pointers
+#### 4.6.7 Map Integration with Pointers
 
 ```kernelscript
 map<FlowKey, FlowData> flow_map : HashMap(1024)
@@ -1785,7 +1959,7 @@ fn map_pointer_operations(flow_key: FlowKey) {
 }
 ```
 
-#### 4.5.8 Safety Rules and Compiler Enforcement
+#### 4.6.8 Safety Rules and Compiler Enforcement
 
 ```kernelscript
 // Automatic null checking enforcement
@@ -2484,7 +2658,7 @@ var result = match (security_level) {
     MEDIUM: if (packet.is_encrypted()) { XDP_PASS } else { XDP_DROP },
     LOW: XDP_PASS,
     default: XDP_ABORTED
-};
+}
 
 // Nested match expressions
 var final_action = match (packet.protocol()) {
@@ -3203,7 +3377,7 @@ fn kernel_side_processing(ctx: *xdp_md) -> xdp_action {
 // Userspace cannot directly access kernel pointers
 fn userspace_processing() -> i32 {
     // ❌ Cannot access kernel context pointers directly
-    // let packet_data = some_kernel_context.data()  // Compilation error
+    // var packet_data = some_kernel_context.data()  // Compilation error
     
     // ✅ Access through shared maps
     var shared_buffer = shared_map.lookup(0)
@@ -3308,7 +3482,7 @@ mod program {
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
     pub fn attach(handle: ProgramHandle, target: string, flags: u32) -> u32
     
-    // Register struct_ops or kernel module function pointers
+    // Register struct_ops impl blocks
     pub fn register<T>(ops: T) -> Result<Link, Error>
 }
 ```
@@ -3752,7 +3926,7 @@ fn print_summary_stats() {
 kernelscript_file = { global_declaration } 
 
 global_declaration = config_declaration | map_declaration | type_declaration | 
-                    function_declaration | struct_declaration | 
+                    function_declaration | struct_declaration | impl_declaration |
                     global_variable_declaration | bindings_declaration | import_declaration 
 
 (* Map declarations - global scope *)
@@ -3813,7 +3987,11 @@ type_alias = type_annotation
 
 (* Function declarations *)
 function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" 
-                       [ "->" type_annotation ] "{" statement_list "}" 
+                       [ "->" type_annotation ] "{" statement_list "}"
+
+impl_declaration = [ attribute_list ] "impl" identifier "{" impl_body "}"
+impl_body = { impl_function }
+impl_function = "fn" identifier "(" parameter_list ")" [ "->" type_annotation ] "{" statement_list "}" 
 
 visibility = "pub" | "priv" 
 parameter_list = [ parameter { "," parameter } ] 
@@ -3906,13 +4084,14 @@ type_annotation = primitive_type | compound_type | identifier
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
                  "bool" | "char" | "void" | "ProgramRef" | string_type 
 
-compound_type = array_type | pointer_type | result_type 
+compound_type = array_type | pointer_type | result_type | function_type 
 
 string_type = "str" "<" integer_literal ">" 
 
 array_type = "[" type_annotation "" integer_literal "]" 
 pointer_type = "*" type_annotation 
 result_type = "Result_" type_annotation "_" type_annotation 
+function_type = "fn" "(" [ type_annotation { "," type_annotation } ] ")" [ "->" type_annotation ] 
 
 (* Literals *)
 literal = integer_literal | string_literal | char_literal | boolean_literal | 
