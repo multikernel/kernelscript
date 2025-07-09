@@ -419,6 +419,37 @@ let test_symbol_table_struct_ops () =
         | _ -> fail "Expected StructDef in symbol table")  
    | None -> fail "struct_ops should be in symbol table")
 
+(** Test that unknown struct_ops names are rejected *)
+let test_unknown_struct_ops_name () =
+  let program = {|
+    @struct_ops("completely_made_up_struct_ops")
+    impl UnknownImpl {
+        fn some_func() -> u32 {
+            return 42
+        }
+        
+        name: "unknown_impl",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(UnknownImpl)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  
+  (* Type checking should fail for unknown struct_ops *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast in
+    fail "Unknown struct_ops name should fail type checking"
+  with
+  | Type_checker.Type_error (msg, _) ->
+      check bool "Error message mentions unknown struct_ops" true
+        (try ignore (Str.search_forward (Str.regexp "Unknown struct_ops\\|unknown.*struct_ops\\|Invalid struct_ops") msg 0); true with Not_found -> false)
+  | _ -> fail "Expected Type_error for unknown struct_ops name"
+
 (** BTF Integration Tests *)
 
 (** Test struct_ops registry functionality *)
@@ -543,6 +574,7 @@ let tests = [
   "register() with non-struct", `Quick, test_register_with_non_struct;
   "nested struct_ops", `Quick, test_nested_struct_ops;
   "symbol table struct_ops", `Quick, test_symbol_table_struct_ops;
+  "unknown struct_ops name", `Quick, test_unknown_struct_ops_name;
   (* BTF Integration Tests *)
   "struct_ops registry", `Quick, test_struct_ops_registry;
   "struct_ops usage examples", `Quick, test_struct_ops_usage_examples;

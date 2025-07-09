@@ -38,18 +38,31 @@ let validate_register_function arg_types ast_context _pos =
     match arg_type with
     | Struct struct_name | UserType struct_name -> 
         (* Check if this is an impl block with @struct_ops attribute *)
-        let has_impl_block_attr = List.exists (function
+        let impl_block_info = List.fold_left (fun acc decl ->
+          match decl with
           | ImplBlock impl_block when impl_block.impl_name = struct_name ->
-              List.exists (function
-                | AttributeWithArg ("struct_ops", _) -> true
-                | _ -> false
-              ) impl_block.impl_attributes
-          | _ -> false
-        ) ast_context in
-        if has_impl_block_attr then
-          (true, None)
-        else
-          (false, Some ("register() can only be used with impl block instances (with @struct_ops attribute). '" ^ struct_name ^ "' is not an impl block."))
+              (* Extract the struct_ops name from the attribute *)
+              let struct_ops_name = List.fold_left (fun acc_name attr ->
+                match attr with
+                | AttributeWithArg ("struct_ops", name) -> Some name
+                | _ -> acc_name
+              ) None impl_block.impl_attributes in
+              Some (true, struct_ops_name)
+          | _ -> acc
+        ) None ast_context in
+        
+        (match impl_block_info with
+         | Some (true, Some struct_ops_name) ->
+             (* Validate that the struct_ops name is known *)
+             if Struct_ops_registry.is_known_struct_ops struct_ops_name then
+               (true, None)
+             else
+               (false, Some ("Unknown struct_ops type: '" ^ struct_ops_name ^ "'. Known types: " ^ 
+                           String.concat ", " (Struct_ops_registry.get_all_known_struct_ops ())))
+         | Some (true, None) ->
+             (false, Some ("Malformed @struct_ops attribute - missing struct_ops name"))
+         | Some (false, _) | None ->
+             (false, Some ("register() can only be used with impl block instances (with @struct_ops attribute). '" ^ struct_name ^ "' is not an impl block.")))
     | _ -> 
         (false, Some "register() requires an impl block argument")
 
