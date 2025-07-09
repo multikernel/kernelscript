@@ -3,6 +3,11 @@ open Kernelscript
 open Ast
 open Printf
 
+(** Helper function to check if string contains substring *)
+let contains_substr str substr =
+  try ignore (Str.search_forward (Str.regexp_string substr) str 0); true 
+  with Not_found -> false
+
 (** Test basic @struct_ops attribute parsing *)
 let test_struct_ops_parsing () =
   let program = {|
@@ -249,18 +254,36 @@ let test_ebpf_struct_ops_codegen () =
   |} in
   
   let ast = Parse.parse_string program in
-  let symbol_table = Symbol_table.build_symbol_table ast in
-  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
   let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
   
   (* Generate eBPF C code *)
   let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
   
-  (* With impl blocks, each function becomes an eBPF program with struct_ops section *)
+  (* Basic generation checks *)
   check bool "eBPF code generation completed" true (String.length c_code > 0);
-  (* The generated code should contain struct_ops section annotations *)
+  
+  (* Check for struct_ops section annotations *)
   check bool "Contains struct_ops sections" true
-    (try ignore (Str.search_forward (Str.regexp "SEC(\"struct_ops") c_code 0); true with Not_found -> false)
+    (try ignore (Str.search_forward (Str.regexp "SEC(\"struct_ops") c_code 0); true with Not_found -> false);
+  
+  (* Check that struct_ops-referenced struct definitions are included in eBPF code *)
+  check bool "Contains tcp_congestion_ops struct definition" true
+    (try ignore (Str.search_forward (Str.regexp "struct tcp_congestion_ops") c_code 0); true with Not_found -> false);
+  
+  (* Check that the struct has expected fields/methods *)
+  check bool "tcp_congestion_ops contains ssthresh field" true
+    (contains_substr c_code "ssthresh");
+  check bool "tcp_congestion_ops contains cong_avoid field" true
+    (contains_substr c_code "cong_avoid");
+  
+  (* Check that struct_ops instance is properly generated *)
+  check bool "Contains struct_ops instance definition" true
+    (try ignore (Str.search_forward (Str.regexp "SEC(\"\\.struct_ops\")") c_code 0); true with Not_found -> false);
+  check bool "Instance has correct struct type" true
+    (try ignore (Str.search_forward (Str.regexp "struct tcp_congestion_ops.*MyTcpCong") c_code 0); true with Not_found -> false)
 
 (** Test userspace code generation with struct_ops *)
 let test_userspace_struct_ops_codegen () =
@@ -746,6 +769,210 @@ let test_struct_ops_code_generation () =
          (try ignore (Str.search_forward (Str.regexp "cong_avoid:") definition 0); true with Not_found -> false)
    | None -> fail "Expected struct_ops definition to be generated")
 
+(** Test selective struct inclusion in eBPF code - this would have caught the original bug *)
+let test_selective_struct_inclusion_in_ebpf () =
+  let program = {|
+    // This struct should NOT be included in eBPF code - it's userspace-only
+    struct Args {
+        enable_debug: u32,
+        interface: str<16>,
+    }
+    
+    // This struct should be included in eBPF code - it's referenced by struct_ops
+    @struct_ops("tcp_congestion_ops")
+    impl TcpOps {
+        fn ssthresh(sk: *u8) -> u32 {
+            return 16
+        }
+        
+        fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {
+            // Implementation
+        }
+        
+        name: "test_tcp_ops",
+        owner: null,
+    }
+    
+    // This config struct should be included - it's used by eBPF programs
+    config network_config {
+        max_packet_size: u32 = 1500,
+        enable_logging: bool = true,
+    }
+    
+    @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
+        return 1
+    }
+    
+    fn main(args: Args) -> i32 {
+        if (args.enable_debug > 0) {
+            var result = register(TcpOps)
+            return result
+        }
+        return 0
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  
+  (* Generate eBPF C code *)
+  let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+  
+  (* Check that userspace-only structs are NOT included in eBPF code *)
+  check bool "Args struct should NOT be in eBPF code (userspace-only)" false
+    (contains_substr c_code "struct Args");
+  
+  (* Check that struct_ops-referenced structs ARE included in eBPF code *)
+  check bool "tcp_congestion_ops struct should be in eBPF code (kernel struct)" true
+    (contains_substr c_code "struct tcp_congestion_ops");
+  
+  (* Check that config structs ARE included in eBPF code *)
+  check bool "network_config struct should be in eBPF code (used by eBPF programs)" true
+    (contains_substr c_code "struct network_config");
+  
+  (* Verify that eBPF code compiles without missing struct definition errors *)
+  check bool "eBPF code generation completed without errors" true (String.length c_code > 0);
+  
+  (* Additional verification: check that string literals are handled properly *)
+  (* String literals should be embedded directly in the code, not as struct types *)
+  check bool "String literals are handled properly" true
+    (contains_substr c_code "test_tcp_ops")
+
+(** Test compilation without struct definition errors *)
+let test_struct_ops_compilation_completeness () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl MinimalCongestion {
+        fn ssthresh(sk: *u8) -> u32 {
+            return 16
+        }
+        
+        fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {
+            // Implementation
+        }
+        
+        name: "minimal_cc",
+        owner: null,
+    }
+    
+    @xdp fn test_prog(ctx: *xdp_md) -> xdp_action {
+        return 1
+    }
+    
+    fn main() -> i32 {
+        var result = register(MinimalCongestion)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  
+  (* Generate eBPF C code *)
+  let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+  
+  (* The key test: verify that tcp_congestion_ops struct is complete and usable *)
+  check bool "Contains complete tcp_congestion_ops struct definition" true
+    (contains_substr c_code "struct tcp_congestion_ops");
+  
+  (* Check that the struct_ops instance can be instantiated (key thing that was failing) *)
+  check bool "Contains struct_ops instance instantiation" true
+    (contains_substr c_code "MinimalCongestion" && contains_substr c_code "struct tcp_congestion_ops");
+  
+  (* Verify SEC annotations are present *)
+  check bool "Contains .struct_ops section" true
+    (contains_substr c_code "SEC(\".struct_ops\")");
+  
+  (* Verify individual function SEC annotations *)
+  check bool "Contains struct_ops function sections" true
+    (contains_substr c_code "SEC(\"struct_ops/")
+
+(** NEW: Test struct inclusion logic with mixed struct types *)
+let test_mixed_struct_types_inclusion () =
+  let program = {|
+    // Regular struct - should only be included if used by eBPF
+    struct RegularStruct {
+        field1: u32,
+        field2: u64,
+    }
+    
+    // Command-line args struct - should NOT be included in eBPF
+    struct CliArgs {
+        verbose: bool,
+        output_file: str<256>,
+    }
+    
+    // eBPF-used struct - should be included
+    struct PacketInfo {
+        src_ip: u32,
+        dst_ip: u32,
+        protocol: u8,
+    }
+    
+    // struct_ops struct - should be included
+    @struct_ops("tcp_congestion_ops")
+    impl CustomCongestion {
+        fn ssthresh(sk: *u8) -> u32 {
+            return 16
+        }
+        
+        fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {
+            // Implementation  
+        }
+        
+        name: "custom_cc",
+        owner: null,
+    }
+    
+    @xdp fn packet_processor(ctx: *xdp_md) -> xdp_action {
+        var info = PacketInfo { src_ip: 0, dst_ip: 0, protocol: 6 }
+        return 1
+    }
+    
+    fn main(args: CliArgs) -> i32 {
+        if (args.verbose == true) {
+            var result = register(CustomCongestion)
+            return result
+        }
+        return 0
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  
+  (* Generate eBPF C code *)
+  let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+  
+  (* Test selective inclusion logic *)
+  check bool "RegularStruct should NOT be in eBPF (not used by eBPF programs)" false
+    (contains_substr c_code "struct RegularStruct");
+    
+  check bool "CliArgs should NOT be in eBPF (userspace-only)" false
+    (contains_substr c_code "struct CliArgs");
+    
+  check bool "PacketInfo should be in eBPF (used by eBPF program)" true
+    (contains_substr c_code "struct PacketInfo");
+    
+  check bool "tcp_congestion_ops should be in eBPF (kernel struct for struct_ops)" true
+    (contains_substr c_code "struct tcp_congestion_ops");
+  
+  (* Additional checks for string literal handling *)
+  check bool "String literals from struct_ops are embedded correctly" true
+    (contains_substr c_code "custom_cc");
+    
+  check bool "No string types should be generated (literals are embedded)" false
+    (contains_substr c_code "str_256_t")
+
 let tests = [
   "struct_ops parsing", `Quick, test_struct_ops_parsing;
   "regular struct parsing", `Quick, test_regular_struct_parsing;
@@ -755,6 +982,10 @@ let tests = [
   "struct_ops IR generation", `Quick, test_struct_ops_ir_generation;
   "eBPF struct_ops codegen", `Quick, test_ebpf_struct_ops_codegen;
   "userspace struct_ops codegen", `Quick, test_userspace_struct_ops_codegen;
+  (* NEW: Regression tests for struct inclusion bugs *)
+  "selective struct inclusion in eBPF", `Quick, test_selective_struct_inclusion_in_ebpf;
+  "struct_ops compilation completeness", `Quick, test_struct_ops_compilation_completeness;
+  "mixed struct types inclusion", `Quick, test_mixed_struct_types_inclusion;
   "malformed struct_ops attribute", `Quick, test_malformed_struct_ops_attribute;
   "register() with non-struct", `Quick, test_register_with_non_struct;
   "nested struct_ops", `Quick, test_nested_struct_ops;

@@ -698,14 +698,40 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   (* Also collect from kernel functions *)
   List.iter collect_from_function ir_multi_prog.kernel_functions;
   
-  (* NOTE: We used to blindly include all userspace structs here, but this was incorrect.
-     Only structs that are actually used by eBPF programs should be included.
-     The existing logic already collects structs from:
-     1. eBPF programs and their functions
-     2. Global maps  
-     3. Kernel functions
-     This is sufficient to capture all structs needed by eBPF programs.
-     Userspace-only structs (like command-line argument structs) should not be included. *)
+  (* Collect struct names referenced by struct_ops attributes *)
+  let collect_struct_ops_referenced_structs () =
+    let struct_ops_structs = ref [] in
+    
+    (* Check struct_ops declarations for referenced kernel structs *)
+    List.iter (fun struct_ops_decl ->
+      if not (List.mem_assoc struct_ops_decl.ir_kernel_struct_name !struct_defs) then
+        struct_ops_structs := struct_ops_decl.ir_kernel_struct_name :: !struct_ops_structs
+    ) ir_multi_prog.struct_ops_declarations;
+    
+    (* Check struct_ops instances for referenced kernel structs *)
+    List.iter (fun struct_ops_inst ->
+      if not (List.mem_assoc struct_ops_inst.ir_instance_type !struct_defs) then
+        struct_ops_structs := struct_ops_inst.ir_instance_type :: !struct_ops_structs
+    ) ir_multi_prog.struct_ops_instances;
+    
+    !struct_ops_structs
+  in
+  
+  (* Collect userspace structs that are referenced by struct_ops *)
+  let struct_ops_referenced_structs = collect_struct_ops_referenced_structs () in
+  (match ir_multi_prog.userspace_program with
+   | Some userspace_prog ->
+       List.iter (fun struct_def ->
+         let struct_name = struct_def.struct_name in
+         (* Include struct if it's referenced by struct_ops declarations/instances *)
+         let is_struct_ops_referenced = List.mem struct_name struct_ops_referenced_structs in
+         if is_struct_ops_referenced then (
+           let struct_fields = struct_def.struct_fields in
+           if not (List.mem_assoc struct_name !struct_defs) then
+             struct_defs := (struct_name, struct_fields) :: !struct_defs
+         )
+       ) userspace_prog.userspace_structs
+   | None -> ());
   
   List.rev !struct_defs
 
