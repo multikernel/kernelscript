@@ -44,6 +44,12 @@ let get_struct_ops_info name =
 let get_all_known_struct_ops () =
   List.map (fun info -> info.name) known_struct_ops
 
+(** Get expected function signatures for a struct_ops type (deprecated - use struct definition in AST) *)
+let get_struct_ops_signatures _name =
+  (* Signatures are validated against the struct definition in the AST *)
+  (* For tests, predefined structs are available in test_utils.ml *)
+  None
+
 (** Struct_ops field definition for code generation *)
 type struct_ops_field = {
   field_name: string;

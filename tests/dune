@@ -250,7 +250,7 @@
 (executable
  (name test_struct_ops)
  (modules test_struct_ops)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest str test_utils))
 
 (executable
  (name test_pointer_syntax)

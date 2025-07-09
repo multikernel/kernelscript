@@ -25,6 +25,9 @@ val get_struct_ops_info : string -> struct_ops_info option
 (** Get all known struct_ops names *)
 val get_all_known_struct_ops : unit -> string list
 
+(** Get expected function signatures for a struct_ops type (deprecated - use struct definition in AST) *)
+val get_struct_ops_signatures : string -> (string * (string * string) list * string) list option
+
 (** Generate KernelScript struct_ops definition from BTF info *)
 val generate_struct_ops_definition : Btf_binary_parser.btf_type_info -> string option
 

@@ -2073,6 +2073,112 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
         Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
         Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
     | ImplBlock impl_block ->
+        (* Validate struct_ops function signatures against the struct definition in the AST *)
+        let struct_ops_name = List.fold_left (fun acc attr ->
+          match attr with
+          | AttributeWithArg ("struct_ops", name) -> Some name
+          | _ -> acc
+        ) None impl_block.impl_attributes in
+        
+        (* If this is a struct_ops impl block, validate function signatures *)
+        (match struct_ops_name with
+         | Some ops_name ->
+             (* Find the corresponding struct definition in the AST *)
+             let struct_def_opt = List.find_opt (function
+               | StructDecl struct_def when struct_def.struct_name = ops_name -> true
+               | _ -> false
+             ) ctx.ast_context in
+             
+             (match struct_def_opt with
+              | Some (StructDecl struct_def) ->
+                  (* Validate each function in the impl block against the struct definition *)
+                  List.iter (function
+                    | ImplFunction func ->
+                        (* Find the corresponding field in the struct definition *)
+                        (match List.find_opt (fun (field_name, _) -> field_name = func.func_name) struct_def.struct_fields with
+                         | Some (_, field_type) ->
+                             (* Extract function signature from the field type *)
+                             (match field_type with
+                              | Function (param_types, return_type) ->
+                                  (* Validate parameter count and types *)
+                                  let actual_param_types = List.map (fun (_, param_type) -> 
+                                    resolve_user_type ctx param_type
+                                  ) func.func_params in
+                                  
+                                  if List.length actual_param_types <> List.length param_types then
+                                    type_error 
+                                      ("Function '" ^ func.func_name ^ "' parameter count mismatch. Expected " ^
+                                       string_of_int (List.length param_types) ^ " parameters but got " ^
+                                       string_of_int (List.length actual_param_types)) 
+                                      func.func_pos
+                                  else
+                                    (* Check each parameter type *)
+                                    List.iter2 (fun actual expected ->
+                                      let resolved_expected = resolve_user_type ctx expected in
+                                      if actual <> resolved_expected then
+                                        type_error 
+                                          ("Function '" ^ func.func_name ^ "' parameter type mismatch. Expected " ^
+                                           Ast.string_of_bpf_type resolved_expected ^ " but got " ^ Ast.string_of_bpf_type actual) 
+                                          func.func_pos
+                                    ) actual_param_types param_types;
+                                  
+                                  (* Validate return type *)
+                                  let actual_return = match func.func_return_type with
+                                    | Some ret_type -> resolve_user_type ctx ret_type
+                                    | None -> U32  (* Default return type *)
+                                  in
+                                  let expected_return = resolve_user_type ctx return_type in
+                                  if actual_return <> expected_return then
+                                    type_error 
+                                      ("Function '" ^ func.func_name ^ "' return type mismatch. Expected " ^
+                                       Ast.string_of_bpf_type expected_return ^ " but got " ^ Ast.string_of_bpf_type actual_return) 
+                                      func.func_pos
+                              | _ ->
+                                  (* Field is not a function - this might be a static field *)
+                                  ())
+                         | None ->
+                             (* Function not found in struct definition - this might be an optional function *)
+                             (* For now, we'll allow extra functions *)
+                             ())
+                    | ImplStaticField (field_name, _) -> 
+                        (* Validate static fields against struct definition *)
+                        (match List.find_opt (fun (fname, _) -> fname = field_name) struct_def.struct_fields with
+                         | Some (_, _field_type) -> 
+                             (* Static field exists in struct - good *)
+                             ()
+                         | None ->
+                             (* Static field not found in struct definition *)
+                             type_error 
+                               ("Static field '" ^ field_name ^ "' not found in struct_ops '" ^ ops_name ^ "'") 
+                               impl_block.impl_pos)
+                  ) impl_block.impl_items;
+                  
+                  (* Check for missing required functions *)
+                  let struct_function_fields = List.filter (fun (_field_name, field_type) ->
+                    match field_type with
+                    | Function (_, _) -> true
+                    | _ -> false
+                  ) struct_def.struct_fields in
+                  
+                  let impl_function_names = List.filter_map (function
+                    | ImplFunction func -> Some func.func_name
+                    | ImplStaticField (_, _) -> None
+                  ) impl_block.impl_items in
+                  
+                  List.iter (fun (field_name, _) ->
+                    if not (List.mem field_name impl_function_names) then
+                      (* Check if this is a required function (for now, all function fields are considered required) *)
+                      type_error 
+                        ("Missing required function '" ^ field_name ^ "' in struct_ops '" ^ ops_name ^ "' implementation") 
+                        impl_block.impl_pos
+                  ) struct_function_fields
+              | _ ->
+                  (* Struct definition not found - this could mean it's a kernel-defined struct_ops *)
+                  (* without a local definition, which is valid *)
+                  ())
+         | None -> ()  (* Not a struct_ops impl block *)
+        );
+        
         (* Register impl block functions in context *)
         List.iter (function
           | ImplFunction func ->

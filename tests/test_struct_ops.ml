@@ -450,6 +450,200 @@ let test_unknown_struct_ops_name () =
         (try ignore (Str.search_forward (Str.regexp "Unknown struct_ops\\|unknown.*struct_ops\\|Invalid struct_ops") msg 0); true with Not_found -> false)
   | _ -> fail "Expected Type_error for unknown struct_ops name"
 
+(** Test function prototype mismatches in struct_ops implementations *)
+let test_struct_ops_wrong_return_type () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl BadTcpCong {
+        fn ssthresh(sk: *u8) -> void {  // WRONG: should return u32
+            // Implementation
+        }
+        
+        name: "bad_tcp_cong",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(BadTcpCong)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should fail for wrong return type *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    fail "Wrong return type should fail validation"
+  with
+  | Type_checker.Type_error (msg, _) ->
+      check bool "Error message mentions return type mismatch" true
+        (try ignore (Str.search_forward (Str.regexp "return.*type\\|signature.*mismatch") msg 0); true with Not_found -> false)
+  | _ -> fail "Expected Type_error for wrong return type"
+
+let test_struct_ops_missing_parameters () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl BadTcpCong {
+        fn cong_avoid(sk: *u8) -> void {  // WRONG: missing ack and acked parameters
+            // Implementation
+        }
+        
+        name: "bad_tcp_cong",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(BadTcpCong)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should fail for missing parameters *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    fail "Missing parameters should fail validation"
+  with
+  | Type_checker.Type_error (msg, _) ->
+      check bool "Error message mentions parameter mismatch" true
+        (try ignore (Str.search_forward (Str.regexp "parameter.*mismatch\\|signature.*mismatch") msg 0); true with Not_found -> false)
+  | _ -> fail "Expected Type_error for missing parameters"
+
+let test_struct_ops_extra_parameters () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl BadTcpCong {
+        fn ssthresh(sk: *u8, extra: u32) -> u32 {  // WRONG: extra parameter
+            return 16
+        }
+        
+        name: "bad_tcp_cong",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(BadTcpCong)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should fail for extra parameters *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    fail "Extra parameters should fail validation"
+  with
+  | Type_checker.Type_error (msg, _) ->
+      check bool "Error message mentions parameter mismatch" true
+        (try ignore (Str.search_forward (Str.regexp "parameter.*count\\|signature.*mismatch") msg 0); true with Not_found -> false)
+  | _ -> fail "Expected Type_error for extra parameters"
+
+let test_struct_ops_wrong_parameter_type () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl BadTcpCong {
+        fn cong_avoid(sk: u32, ack: u32, acked: u32) -> void {  // WRONG: sk should be *u8, not u32
+            // Implementation
+        }
+        
+        name: "bad_tcp_cong",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(BadTcpCong)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should fail for wrong parameter type *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    fail "Wrong parameter type should fail validation"
+  with
+  | Type_checker.Type_error (msg, _) ->
+      check bool "Error message mentions parameter type mismatch" true
+        (try ignore (Str.search_forward (Str.regexp "parameter.*type\\|signature.*mismatch") msg 0); true with Not_found -> false)
+  | _ -> fail "Expected Type_error for wrong parameter type"
+
+let test_struct_ops_missing_required_function () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl IncompleteTcpCong {
+        // Missing required functions like ssthresh, cong_avoid, etc.
+        
+        name: "incomplete_tcp_cong",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(IncompleteTcpCong)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should fail for missing required functions *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    fail "Missing required functions should fail validation"
+  with
+  | Type_checker.Type_error (msg, _) ->
+      check bool "Error message mentions missing functions" true
+        (try ignore (Str.search_forward (Str.regexp "missing.*function\\|required.*function") msg 0); true with Not_found -> false)
+  | _ -> fail "Expected Type_error for missing required functions"
+
+let test_struct_ops_correct_signatures () =
+  let program = {|
+    @struct_ops("tcp_congestion_ops")
+    impl CorrectTcpCong {
+        fn ssthresh(sk: *u8) -> u32 {  // Correct signature
+            return 16
+        }
+        
+        fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {  // Correct signature
+            // Implementation
+        }
+        
+        fn slow_start(sk: *u8) -> void {  // Correct signature
+            // Implementation
+        }
+        
+        fn cong_control(sk: *u8, ack: u32, flag: u32) -> void {  // Correct signature
+            // Implementation
+        }
+        
+        name: "correct_tcp_cong",
+        owner: null,
+    }
+    
+    fn main() -> i32 {
+        var result = register(CorrectTcpCong)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should succeed for correct signatures *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    check bool "Correct signatures should pass validation" true true
+  with
+  | _ -> fail "Type checking should succeed for correct signatures"
+
 (** BTF Integration Tests *)
 
 (** Test struct_ops registry functionality *)
@@ -575,6 +769,13 @@ let tests = [
   "nested struct_ops", `Quick, test_nested_struct_ops;
   "symbol table struct_ops", `Quick, test_symbol_table_struct_ops;
   "unknown struct_ops name", `Quick, test_unknown_struct_ops_name;
+  (* Function Prototype Validation Tests *)
+  "struct_ops wrong return type", `Quick, test_struct_ops_wrong_return_type;
+  "struct_ops missing parameters", `Quick, test_struct_ops_missing_parameters;
+  "struct_ops extra parameters", `Quick, test_struct_ops_extra_parameters;
+  "struct_ops wrong parameter type", `Quick, test_struct_ops_wrong_parameter_type;
+  "struct_ops missing required function", `Quick, test_struct_ops_missing_required_function;
+  "struct_ops correct signatures", `Quick, test_struct_ops_correct_signatures;
   (* BTF Integration Tests *)
   "struct_ops registry", `Quick, test_struct_ops_registry;
   "struct_ops usage examples", `Quick, test_struct_ops_usage_examples;
