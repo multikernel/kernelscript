@@ -220,6 +220,10 @@ let rec unify_types t1 t2 =
   | Str size1, Str size2 when size1 <= size2 -> Some (Str size2)
   | Str size1, Str size2 when size2 <= size1 -> Some (Str size1)
   
+  (* String to u8 array conversion - string literals can be assigned to u8 arrays *)
+  | Str str_size, Array (U8, array_size) when str_size <= array_size -> Some (Array (U8, array_size))
+  | Array (U8, array_size), Str str_size when str_size <= array_size -> Some (Array (U8, array_size))
+  
   (* Integer type promotions using C-style rules *)
   | t1, t2 when (match t1, t2 with 
                   | (U8|U16|U32|U64), (U8|U16|U32|U64) -> true
@@ -240,6 +244,10 @@ let rec unify_types t1 t2 =
       (match unify_types t1 t2 with
        | Some unified -> Some (Pointer unified)
        | None -> None)
+  
+  (* Special case: null pointer (Pointer U32) can unify with any function type *)
+  | Pointer U32, Function (params, ret) -> Some (Function (params, ret))
+  | Function (params, ret), Pointer U32 -> Some (Function (params, ret))
   
   (* Result types *)
   | Result (ok1, err1), Result (ok2, err2) ->

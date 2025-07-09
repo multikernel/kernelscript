@@ -68,6 +68,11 @@
  (modules test_dynptr_bridge)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_string_to_array_unification)
+ (modules test_string_to_array_unification)
+ (libraries kernelscript alcotest test_utils))
+
 
 
 (executable
