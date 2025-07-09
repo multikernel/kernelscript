@@ -14,7 +14,7 @@
 %token NULL
 
 /* Keywords */
-%token FN MAP PIN TYPE STRUCT ENUM
+%token FN MAP PIN TYPE STRUCT ENUM IMPL
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR VOID STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
@@ -118,6 +118,9 @@
 %type <(string * Ast.expr) list> struct_literal_fields
 %type <string * Ast.expr> struct_literal_field
 %type <Ast.global_variable_declaration> global_variable_declaration
+%type <Ast.impl_block> impl_block_declaration
+%type <Ast.impl_block_item list> impl_block_items
+%type <Ast.impl_block_item> impl_block_item
 
 /* Start symbol */
 %start program
@@ -141,6 +144,7 @@ declaration:
   | enum_declaration { TypeDef $1 }
   | type_alias_declaration { TypeDef $1 }
   | global_variable_declaration { GlobalVarDecl $1 }
+  | impl_block_declaration { ImplBlock $1 }
 
 /* Config declaration: config name { config_fields } */
 config_declaration:
@@ -587,5 +591,18 @@ match_pattern:
   | BOOL_LIT { make_constant_pattern (BoolLit $1) }
   | IDENTIFIER { make_identifier_pattern $1 }
   | DEFAULT { make_default_pattern () }
+
+/* Impl block declaration: @struct_ops("name") impl name { items } */
+impl_block_declaration:
+  | attribute_list IMPL IDENTIFIER LBRACE impl_block_items RBRACE
+    { make_impl_block $3 $1 $5 (make_pos ()) }
+
+impl_block_items:
+  | /* empty */ { [] }
+  | impl_block_item impl_block_items { $1 :: $2 }
+
+impl_block_item:
+  | function_declaration { ImplFunction $1 }
+  | IDENTIFIER COLON expression COMMA { ImplStaticField ($1, $3) }
 
 %% 

@@ -17,6 +17,7 @@ module Program_type = struct
     | Uprobe -> Format.fprintf fmt "Uprobe"
     | Lsm -> Format.fprintf fmt "Lsm"
     | CgroupSkb -> Format.fprintf fmt "CgroupSkb"
+    | StructOps -> Format.fprintf fmt "StructOps"
 end
 
 (** Helper functions for creating test AST nodes *)

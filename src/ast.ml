@@ -19,7 +19,7 @@ type attribute =
 
 (** Program types supported by KernelScript *)
 type program_type = 
-  | Xdp | Tc | Kprobe | Uprobe | Tracepoint | Lsm | CgroupSkb
+  | Xdp | Tc | Kprobe | Uprobe | Tracepoint | Lsm | CgroupSkb | StructOps
 
 (** Map types for eBPF maps *)
 type map_type =
@@ -267,6 +267,18 @@ type global_variable_declaration = {
   is_pinned: bool; (* true if declared with 'pin' keyword *)
 }
 
+(** Impl block for struct_ops - Option 1 from proposal *)
+type impl_block_item =
+  | ImplFunction of function_def  (* Functions become eBPF functions with SEC("struct_ops/...") *)
+  | ImplStaticField of string * expr  (* Static data fields like name: "minimal_cc" *)
+
+type impl_block = {
+  impl_name: string;  (* The struct_ops name like "tcp_congestion_ops" *)
+  impl_attributes: attribute list;  (* @struct_ops("tcp_congestion_ops") *)
+  impl_items: impl_block_item list;  (* Functions and static fields *)
+  impl_pos: position;
+}
+
 (** Top-level declarations *)
 type declaration =
   | AttributedFunction of attributed_function
@@ -276,6 +288,7 @@ type declaration =
   | ConfigDecl of config_declaration
   | StructDecl of struct_def
   | GlobalVarDecl of global_variable_declaration
+  | ImplBlock of impl_block
 
 (** Complete AST *)
 type ast = declaration list
@@ -400,6 +413,13 @@ let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) 
   is_pinned;
 }
 
+let make_impl_block name attributes items pos = {
+  impl_name = name;
+  impl_attributes = attributes;
+  impl_items = items;
+  impl_pos = pos;
+}
+
 (** Utility functions for match expressions *)
 let make_match_arm pattern body pos = {
   arm_pattern = pattern;
@@ -433,6 +453,7 @@ let string_of_program_type = function
   | Tracepoint -> "tracepoint"
   | Lsm -> "lsm"
   | CgroupSkb -> "cgroup_skb"
+  | StructOps -> "struct_ops"
 
 let string_of_map_type = function
   | HashMap -> "hash_map"
@@ -722,6 +743,13 @@ let string_of_declaration = function
         | Some expr -> " = " ^ string_of_expr expr
       in
       Printf.sprintf "%s%svar %s%s%s;" pin_str local_str decl.global_var_name type_str init_str
+  | ImplBlock impl_block ->
+      let attrs_str = String.concat " " (List.map string_of_attribute impl_block.impl_attributes) in
+      let items_str = String.concat "\n    " (List.map (function
+        | ImplFunction func -> string_of_function func
+        | ImplStaticField (name, expr) -> Printf.sprintf "%s: %s," name (string_of_expr expr)
+      ) impl_block.impl_items) in
+      Printf.sprintf "%s impl %s {\n    %s\n}" attrs_str impl_block.impl_name items_str
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

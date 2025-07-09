@@ -366,7 +366,28 @@ let rec lower_expression ctx (expr : Ast.expr) =
            if name = "register" then
              (* Special handling for register() builtin function *)
              if List.length arg_vals = 1 then
-               let struct_val = List.hd arg_vals in
+               let struct_arg = List.hd args in
+               (* Handle impl block references specially *)
+               let struct_val = match struct_arg.expr_desc with
+                 | Ast.Identifier impl_name ->
+                     (* Check if this is an impl block name in the symbol table *)
+                     (match Symbol_table.lookup_symbol ctx.symbol_table impl_name with
+                      | Some symbol -> 
+                          (match symbol.kind with
+                           | Symbol_table.TypeDef _ ->
+                               (* This is an impl block - use the name directly *)
+                               let ir_type = IRStruct (impl_name, [], false) in
+                               make_ir_value (IRVariable impl_name) ir_type struct_arg.expr_pos
+                           | _ ->
+                               (* Regular variable - use normal processing *)
+                               lower_expression ctx struct_arg)
+                      | None ->
+                          (* Not found in symbol table - use normal processing *)
+                          lower_expression ctx struct_arg)
+                 | _ ->
+                     (* Not an identifier - use normal processing *)
+                     lower_expression ctx struct_arg
+               in
                let result_reg = allocate_register ctx in
                let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
                let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr.expr_pos in
@@ -1730,7 +1751,7 @@ let convert_match_return_calls_to_tail_calls ir_function =
   { ir_function with basic_blocks = updated_blocks }
 
 (** Lower AST function to IR function *)
-let lower_function ctx prog_name (func_def : Ast.function_def) =
+let lower_function ctx prog_name ?(program_type = None) (func_def : Ast.function_def) =
   ctx.current_function <- Some func_def.func_name;
   
   (* Reset for new function *)
@@ -1809,6 +1830,9 @@ let lower_function ctx prog_name (func_def : Ast.function_def) =
     ~total_stack_usage:ctx.stack_usage
     ~is_main:is_main
     func_def.func_pos in
+  
+  (* Set the program type for the function *)
+  ir_function.func_program_type <- program_type;
   
   (* Convert IRReturnCall actions to IRReturnTailCall in IRMatchReturn instructions *)
   convert_match_return_calls_to_tail_calls ir_function
@@ -1983,7 +2007,7 @@ let lower_userspace_function ctx func_def =
   );
   
   ctx.is_userspace <- true;
-  let ir_function = lower_function ctx func_def.Ast.func_name func_def in
+  let ir_function = lower_function ctx func_def.Ast.func_name ~program_type:None func_def in
   ctx.is_userspace <- false;
   ir_function
 
@@ -2146,8 +2170,9 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
   (* Lower program-local functions only - kernel functions are handled separately *)
   let ir_program_functions = List.mapi (fun index func -> 
     (* For attributed functions (single function programs), the function IS the entry function *)
-    let is_attributed_entry = (List.length prog_def.prog_functions = 1 && index = 0) in
-    let temp_func = lower_function ctx prog_def.prog_name func in
+    (* But struct_ops functions should NOT be marked as main functions *)
+    let is_attributed_entry = (List.length prog_def.prog_functions = 1 && index = 0 && prog_def.prog_type <> Ast.StructOps) in
+    let temp_func = lower_function ctx prog_def.prog_name ~program_type:(Some prog_def.prog_type) func in
     if is_attributed_entry then
       (* Mark the attributed function as entry by updating the is_main field *)
       { temp_func with is_main = true }
@@ -2156,7 +2181,14 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
   ) prog_def.prog_functions in
   
   (* Find entry function - for attributed functions, it's the single function we just marked *)
-  let entry_function = List.find (fun f -> f.is_main) ir_program_functions in
+  (* For struct_ops functions, we'll use the first function as entry but it won't be marked as main *)
+  let entry_function = 
+    try
+      List.find (fun f -> f.is_main) ir_program_functions
+    with Not_found ->
+      (* For struct_ops functions, use the first function as entry *)
+      List.hd ir_program_functions
+  in
   
   (* Create IR program with the entry function *)
   make_ir_program 
@@ -2193,6 +2225,18 @@ let lower_multi_program ast symbol_table source_name =
   (* Analyze assignment patterns for optimization early *)
   let _optimization_info = analyze_assignment_patterns ctx ast in
   
+  (* Extract impl blocks as struct_ops declarations *)
+  let impl_block_declarations = List.filter_map (function
+    | Ast.ImplBlock impl_block ->
+        (* Check if this impl block has @struct_ops attribute *)
+        let has_struct_ops_attr = List.exists (function
+          | Ast.AttributeWithArg ("struct_ops", _) -> true
+          | _ -> false
+        ) impl_block.impl_attributes in
+        if has_struct_ops_attr then Some impl_block else None
+    | _ -> None
+  ) ast in
+  
   (* Find all program declarations by converting from attributed functions *)
   let prog_defs = List.filter_map (function
     | Ast.AttributedFunction attr_func ->
@@ -2226,11 +2270,47 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> None
   ) ast in
   
-  if prog_defs = [] then
-    failwith "No program declarations found";
+  (* Add impl block functions as program definitions *)
+  let impl_block_prog_defs = List.map (fun impl_block ->
+    List.filter_map (fun item ->
+      match item with
+      | Ast.ImplFunction func ->
+          (* Create a program definition for each impl block function *)
+          (* These will be eBPF programs with SEC("struct_ops/function_name") *)
+          Some {
+            Ast.prog_name = func.func_name;
+            prog_type = Ast.StructOps;  (* Use the struct_ops program type *)
+            prog_functions = [func];
+            prog_maps = [];
+            prog_structs = [];
+            prog_pos = func.func_pos;
+          }
+      | Ast.ImplStaticField (_, _) -> None  (* Static fields are not programs *)
+    ) impl_block.impl_items
+  ) impl_block_declarations |> List.concat in
   
-  (* Validate multiple programs *)
-  validate_multiple_programs prog_defs;
+  (* Combine regular program definitions with impl block program definitions *)
+  let all_prog_defs = prog_defs @ impl_block_prog_defs in
+  
+  (* Allow compilation if we have either traditional eBPF programs OR struct_ops declarations *)
+  (* Extract struct_ops declarations early to check for valid compilation targets *)
+  let struct_ops_declarations = List.filter_map (function
+    | Ast.StructDecl struct_def ->
+        (* Check if this struct has @struct_ops attribute *)
+        let has_struct_ops_attr = List.exists (function
+          | Ast.AttributeWithArg ("struct_ops", _) -> true
+          | _ -> false
+        ) struct_def.struct_attributes in
+        if has_struct_ops_attr then Some struct_def else None
+    | _ -> None
+  ) ast in
+  
+  if all_prog_defs = [] && struct_ops_declarations = [] && impl_block_declarations = [] then
+    failwith "No program declarations or struct_ops found";
+  
+  (* Only validate multiple programs if we have any traditional eBPF programs *)
+  if all_prog_defs <> [] then
+    validate_multiple_programs all_prog_defs;
   
   (* Collect global map declarations *)
   let global_map_decls = List.filter_map (function
@@ -2264,7 +2344,7 @@ let lower_multi_program ast symbol_table source_name =
     List.iter (fun (map_def : ir_map_def) -> 
       Hashtbl.add ctx.maps map_def.map_name map_def
     ) ir_program_maps
-  ) prog_defs;
+  ) all_prog_defs;
   
   (* Separate global functions by scope and extract @helper attributed functions as kernel shared functions *)
   let all_global_functions = List.filter_map (function
@@ -2299,14 +2379,14 @@ let lower_multi_program ast symbol_table source_name =
   Hashtbl.iter (fun map_name map_def -> 
     Hashtbl.add kernel_ctx.maps map_name map_def
   ) ctx.maps;
-  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel") all_kernel_shared_functions in
+  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None) all_kernel_shared_functions in
   
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
     let prog_ctx = create_context ~global_variables:ir_global_variables symbol_table in
     lower_single_program prog_ctx prog_def ir_global_maps all_kernel_shared_functions
-  ) prog_defs in
+  ) all_prog_defs in
   
   (* Convert AST userspace functions to IR userspace program *)
   let userspace_program = 
@@ -2407,18 +2487,6 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> None
   ) ast in
   
-  (* Collect struct_ops declarations from regular structs with @struct_ops attribute *)
-  let struct_ops_declarations = List.filter_map (function
-    | Ast.StructDecl struct_def ->
-        (* Check if this struct has @struct_ops attribute *)
-        let has_struct_ops_attr = List.exists (function
-          | Ast.AttributeWithArg ("struct_ops", _) -> true
-          | _ -> false
-        ) struct_def.struct_attributes in
-        if has_struct_ops_attr then Some struct_def else None
-    | _ -> None
-  ) ast in
-  
   (* Note: struct_ops instances are now just regular variable declarations with struct literals *)
   
   (* Lower struct_ops declarations to IR *)
@@ -2443,12 +2511,44 @@ let lower_multi_program ast symbol_table source_name =
       struct_def.Ast.struct_pos
   ) struct_ops_declarations in
   
+  (* Lower impl blocks to struct_ops declarations *)
+  let ir_impl_block_declarations = List.map (fun impl_block ->
+    (* Extract kernel struct name from @struct_ops attribute *)
+    let kernel_struct_name = List.fold_left (fun acc attr ->
+      match attr with
+      | Ast.AttributeWithArg ("struct_ops", name) -> name
+      | _ -> acc
+    ) "" impl_block.impl_attributes in
+    
+    (* Convert impl block functions to struct_ops methods *)
+    let ir_methods = List.filter_map (fun item ->
+      match item with
+      | Ast.ImplFunction func ->
+          (* Create method from function signature *)
+          let method_type = match func.func_return_type with
+            | Some ret_type -> ast_type_to_ir_type ret_type
+            | None -> IRVoid
+          in
+          Some (make_ir_struct_ops_method 
+            func.func_name
+            method_type
+            func.func_pos)
+      | Ast.ImplStaticField (_, _) -> None  (* Static fields are not methods *)
+    ) impl_block.impl_items in
+    
+    make_ir_struct_ops_declaration
+      impl_block.impl_name
+      kernel_struct_name
+      ir_methods
+      impl_block.impl_pos
+  ) impl_block_declarations in
+  
   (* Lower struct_ops instances to IR (empty for now - handled through regular variable declarations) *)
   let ir_struct_ops_instances = [] in
   
   (* Generate userspace bindings *)
   let userspace_bindings = 
-    generate_userspace_bindings_from_multi_programs prog_defs userspace_functions map_flag_infos config_declarations
+    generate_userspace_bindings_from_multi_programs all_prog_defs userspace_functions map_flag_infos config_declarations
   in
   
   (* Helper function to convert AST literals to IR values *)
@@ -2521,10 +2621,13 @@ let lower_multi_program ast symbol_table source_name =
   ) config_declarations in
   
   (* Create multi-program IR *)
-  let multi_pos = match prog_defs with
+  let multi_pos = match all_prog_defs with
     | [] -> { line = 1; column = 1; filename = source_name }
     | first :: _ -> first.prog_pos
   in
+  
+  (* Combine both traditional struct_ops declarations and impl block declarations *)
+  let combined_struct_ops_declarations = ir_struct_ops_declarations @ ir_impl_block_declarations in
   
   make_ir_multi_program 
     source_name 
@@ -2533,7 +2636,7 @@ let lower_multi_program ast symbol_table source_name =
     ir_global_maps 
     ~global_configs:ir_global_configs
     ~global_variables:ir_global_variables
-    ~struct_ops_declarations:ir_struct_ops_declarations
+    ~struct_ops_declarations:combined_struct_ops_declarations
     ~struct_ops_instances:ir_struct_ops_instances
     ?userspace_program:userspace_program 
     ~userspace_bindings:userspace_bindings 

@@ -20,7 +20,13 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
   if param_count > 5 then
     errors := "Too many parameters (max 5 for eBPF)" :: !errors;
   
-  if ir_func.is_main then (
+  (* Check if this is a struct_ops function - if so, skip main function validation *)
+  let is_struct_ops_function = match ir_func.func_program_type with
+    | Some Ast.StructOps -> true
+    | _ -> false
+  in
+  
+  if ir_func.is_main && not is_struct_ops_function then (
     if param_count <> 1 then
       errors := "Main function must have exactly one parameter (context)" :: !errors;
     match ir_func.parameters with
@@ -44,6 +50,13 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | Some _ when is_tc_program -> errors := "TC programs must return int (i32)" :: !errors;
     | Some _ -> errors := "Main function must return an action type (or int for TC programs)" :: !errors;
     | None -> errors := "Main function must have a return type" :: !errors
+  );
+  
+  (* For struct_ops functions, we have different validation rules *)
+  if is_struct_ops_function then (
+    (* struct_ops functions can have various signatures depending on the struct_ops type *)
+    (* For now, we'll be permissive and allow any signature *)
+    ()
   );
   
   {

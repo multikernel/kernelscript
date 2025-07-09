@@ -118,7 +118,7 @@ let create_context symbol_table ast =
   let maps = Hashtbl.create 16 in
   let configs = Hashtbl.create 16 in
   
-  (* Extract enum constants from symbol table and add to variables *)
+  (* Extract enum constants and impl blocks from symbol table and add to variables *)
   let global_symbols = Symbol_table.get_global_symbols symbol_table in
   List.iter (fun symbol ->
     match symbol.Symbol_table.kind with
@@ -126,6 +126,15 @@ let create_context symbol_table ast =
         (* Add enum constant as a U32 variable (standard for enum values) *)
         let enum_type = Enum enum_name in
         Hashtbl.replace variables symbol.Symbol_table.name enum_type
+    | Symbol_table.TypeDef (StructDef (name, _, true)) ->
+        (* Check if this is an impl block by looking in the AST context *)
+        let is_impl_block = List.exists (function
+          | ImplBlock impl_block when impl_block.impl_name = name -> true
+          | _ -> false
+        ) ast in
+        if is_impl_block then
+          (* Add impl block as a struct_ops variable *)
+          Hashtbl.replace variables name (Struct name)
     | _ -> ()
   ) global_symbols;
   
@@ -2063,6 +2072,19 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
         in
         Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
         Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
+    | ImplBlock impl_block ->
+        (* Register impl block functions in context *)
+        List.iter (function
+          | ImplFunction func ->
+              let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
+              let return_type = match func.func_return_type with
+                | Some t -> resolve_user_type ctx t
+                | None -> U32  (* default return type *)
+              in
+              Hashtbl.replace ctx.functions func.func_name (param_types, return_type);
+              Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
+          | ImplStaticField (_, _) -> ()  (* Static fields don't need function registration *)
+        ) impl_block.impl_items
   ) ast;
   
   (* Second pass: type check attributed functions and global functions with multi-program awareness *)
@@ -2189,6 +2211,15 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | GlobalFunction func ->
         let typed_func = type_check_function ctx func in
         (attr_acc, typed_func :: userspace_acc)
+    | ImplBlock impl_block ->
+        (* Type check impl block functions - treat them as eBPF functions with struct_ops attributes *)
+        let typed_impl_functions = List.filter_map (function
+          | ImplFunction func ->
+              let typed_func = type_check_function ctx func in
+              Some (impl_block.impl_attributes, typed_func)
+          | ImplStaticField (_, _) -> None  (* Static fields don't need type checking as functions *)
+        ) impl_block.impl_items in
+        (typed_impl_functions @ attr_acc, userspace_acc)
     | _ -> (attr_acc, userspace_acc)
   ) ([], []) ast in
   let typed_attributed_functions = List.rev typed_attributed_functions in

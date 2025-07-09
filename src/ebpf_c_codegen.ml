@@ -2447,18 +2447,24 @@ let generate_c_function ctx ir_func =
      ) ir_func.parameters)
   in
   
-  let section_attr = if ir_func.is_main then
-    match ir_func.parameters with
-    | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
-    | (_, IRContext XdpCtx) :: _ -> "SEC(\"xdp\")"
-    | (_, IRContext TcCtx) :: _ -> "SEC(\"tc\")"
-    | (_, IRContext KprobeCtx) :: _ -> "SEC(\"kprobe\")"
-    | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> "SEC(\"xdp\")"
-    | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
-    | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
-    | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
-    | _ -> "SEC(\"prog\")"
-  else ""
+  let section_attr = 
+    (* Check if this is a struct_ops function first *)
+    match ir_func.func_program_type with
+    | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
+    | _ ->
+        (* For non-struct_ops functions, only generate SEC if it's a main function *)
+        if ir_func.is_main then
+          match ir_func.parameters with
+          | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
+          | (_, IRContext XdpCtx) :: _ -> "SEC(\"xdp\")"
+          | (_, IRContext TcCtx) :: _ -> "SEC(\"tc\")"
+          | (_, IRContext KprobeCtx) :: _ -> "SEC(\"kprobe\")"
+          | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> "SEC(\"xdp\")"
+          | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
+          | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
+          | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
+          | _ -> "SEC(\"prog\")"
+        else ""
   in
   
   emit_line ctx section_attr;

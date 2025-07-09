@@ -314,6 +314,9 @@ let track_function_usage ctx instr =
       let config_map_name = config_name ^ "_config" in
       if not (List.mem config_map_name ctx.function_usage.used_maps) then
         ctx.function_usage.used_maps <- config_map_name :: ctx.function_usage.used_maps
+  | IRStructOpsRegister (_, _) ->
+      (* Struct_ops registration requires skeleton object to be loaded *)
+      ctx.function_usage.uses_attach <- true
   | _ -> ()
 
 (** Recursively track usage in all instructions *)
@@ -1442,18 +1445,41 @@ let rec generate_c_instruction_from_ir ctx instruction =
            let rest_parts = List.map (generate_match_arm false) rest_arms in
            String.concat " " (first_part :: rest_parts))
   | IRStructOpsRegister (result_val, struct_ops_val) ->
-      (* Generate struct_ops registration call *)
-      let struct_ops_str = generate_c_value_from_ir ctx struct_ops_val in
+      (* Generate struct_ops registration call using skeleton API *)
       let result_str = generate_c_value_from_ir ctx result_val in
-      sprintf "%s = bpf_map__attach_struct_ops(%s);" result_str struct_ops_str
+      (* For struct_ops, the struct_ops_val can be either a variable name or a direct reference to the impl block *)
+      let instance_name = match struct_ops_val.value_desc with
+        | IRVariable name -> name
+        | IRRegister _ -> 
+            (* If it's a register, get the variable name from the register *)
+            generate_c_value_from_ir ctx struct_ops_val
+        | _ -> 
+            (* For other cases (direct impl block references), extract the name from the value *)
+            (match struct_ops_val.val_type with
+             | IRStruct (name, _, _) -> name
+             | _ -> failwith "struct_ops register() argument must be an impl block instance")
+      in
+      (* Generate normal C code instead of statement expressions *)
+      sprintf {|if (!obj) {
+        fprintf(stderr, "eBPF skeleton not loaded for struct_ops registration\n");
+        return -1;
+    }
+    struct bpf_map *map = bpf_object__find_map_by_name(obj->obj, "%s");
+    if (!map) {
+        fprintf(stderr, "Failed to find struct_ops map '%s'\n");
+        return -1;
+    }
+    %s = bpf_map__attach_struct_ops(map);|} instance_name instance_name result_str
 
 (** Generate C struct from IR struct definition *)
 let generate_c_struct_from_ir ir_struct =
   let fields_str = String.concat ";\n    " 
     (List.map (fun (field_name, field_type) ->
-       (* Handle string types specially for correct C syntax *)
+       (* Handle array and string types specially for correct C syntax *)
        match field_type with
        | IRStr size -> sprintf "char %s[%d]" field_name size
+       | IRArray (inner_type, size, _) -> 
+           sprintf "%s %s[%d]" (c_type_from_ir_type inner_type) field_name size
        | _ -> sprintf "%s %s" (c_type_from_ir_type field_type) field_name
      ) ir_struct.struct_fields)
   in
@@ -1525,7 +1551,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
     }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
 
 (** Generate C function from IR function *)
-let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) (ir_func : ir_function) =
+let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) ?(ir_multi_prog = None) (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
        generate_c_declaration ir_type name
@@ -1546,13 +1572,34 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   let body_parts = List.map (fun block ->
     let label_part = if block.label <> "entry" then [sprintf "%s:" block.label] else [] in
     let instr_parts = List.map (generate_c_instruction_from_ir ctx) block.instructions in
-    label_part @ instr_parts
+    let combined_parts = label_part @ instr_parts in
+    String.concat "\n    " combined_parts
   ) ir_func.basic_blocks in
   
-  let body_c = String.concat "\n    " (List.flatten body_parts) in
+  let body_c = String.concat "\n    " body_parts in
   
-  (* Generate variable declarations *)
-  let var_decls = generate_variable_declarations ctx in
+  (* Generate variable declarations, filtering out impl block variables *)
+  let var_decls = 
+    let all_declarations = Hashtbl.fold (fun var_name ir_type acc ->
+      let declaration = generate_c_declaration ir_type var_name ^ ";" in
+      (var_name, declaration) :: acc
+    ) ctx.var_declarations [] in
+    
+    (* Filter out impl block variables if we have ir_multi_prog *)
+    let filtered_declarations = match ir_multi_prog with
+      | Some multi_prog ->
+          List.filter (fun (var_name, _) ->
+            (* Check if this variable corresponds to a struct_ops declaration *)
+            not (List.exists (fun struct_ops_decl ->
+              struct_ops_decl.ir_struct_ops_name = var_name
+            ) multi_prog.struct_ops_declarations)
+          ) all_declarations
+      | None -> all_declarations
+    in
+    
+    if filtered_declarations = [] then ""
+    else "    " ^ String.concat "\n    " (List.map snd filtered_declarations) ^ "\n"
+  in
   
   let adjusted_params = if ir_func.func_name = "main" then 
     (* Main function can be either main() or main(args) - generate appropriate C signature *)
@@ -2071,7 +2118,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
-    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations) userspace_prog.userspace_functions) in
+    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog)) userspace_prog.userspace_functions) in
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
@@ -2084,7 +2131,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Filter out kernel-defined structs that are provided by kernel headers *)
   let user_defined_ir_structs = List.filter (fun ir_struct ->
-    not ir_struct.kernel_defined && not (Kernel_types.is_well_known_ebpf_type ir_struct.struct_name)
+    not ir_struct.kernel_defined && 
+    not (Kernel_types.is_well_known_ebpf_type ir_struct.struct_name) &&
+    not (Struct_ops_registry.is_known_struct_ops ir_struct.struct_name)
   ) non_config_ir_structs in
   
   let structs = String.concat "\n\n" 
@@ -2298,3 +2347,9 @@ int main(void) {
 
 (** Compatibility functions for tests *)
 let generate_c_statement _stmt = "/* IR-based statement generation */"
+
+(** Check if a variable name is an impl block instance *)
+let is_impl_block_variable ir_multi_prog var_name =
+  List.exists (fun struct_ops_decl ->
+    struct_ops_decl.ir_instance_name = var_name
+  ) ir_multi_prog.struct_ops_instances

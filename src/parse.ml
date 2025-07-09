@@ -123,6 +123,12 @@ let validate_ast ast =
     | ConfigDecl _ -> true (* Config declarations are always valid once parsed *)
     | StructDecl _ -> true (* Struct declarations are always valid once parsed *)
     | GlobalVarDecl _ -> true (* Global variable declarations are always valid once parsed *)
+    | ImplBlock impl_block -> 
+        (* Validate all functions in the impl block *)
+        List.for_all (function
+          | ImplFunction func -> validate_function func
+          | ImplStaticField (_, expr) -> validate_expr expr
+        ) impl_block.impl_items
   in
   
   List.for_all validate_declaration ast

@@ -415,6 +415,25 @@ and process_declaration_accumulate table declaration =
   | Ast.GlobalVarDecl global_var_decl ->
       add_global_var_decl table global_var_decl;
       table
+      
+  | Ast.ImplBlock impl_block ->
+      (* Add the impl block itself as a struct_ops symbol *)
+      add_symbol table impl_block.impl_name (TypeDef (StructDef (impl_block.impl_name, [], true))) Public impl_block.impl_pos;
+      
+      (* Process impl block functions and add them to symbol table *)
+      List.iter (fun item ->
+        match item with
+        | Ast.ImplFunction func ->
+            add_function table func Public;
+            let table_with_func = enter_scope table (FunctionScope ("global", func.func_name)) in
+            List.iter (fun (param_name, param_type) ->
+              add_variable table_with_func param_name param_type func.func_pos
+            ) func.func_params;
+            List.iter (process_statement table_with_func) func.func_body;
+            let _ = exit_scope table_with_func in ()
+        | Ast.ImplStaticField (_, _) -> ()  (* Static fields don't need symbol table processing *)
+      ) impl_block.impl_items;
+      table
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
@@ -463,6 +482,24 @@ and process_declaration table = function
       
   | Ast.GlobalVarDecl global_var_decl ->
       add_global_var_decl table global_var_decl
+      
+  | Ast.ImplBlock impl_block ->
+      (* Add the impl block itself as a struct_ops symbol *)
+      add_symbol table impl_block.impl_name (TypeDef (StructDef (impl_block.impl_name, [], true))) Public impl_block.impl_pos;
+      
+      (* Process impl block functions and add them to symbol table *)
+      List.iter (fun item ->
+        match item with
+        | Ast.ImplFunction func ->
+            add_function table func Public;
+            let table_with_func = enter_scope table (FunctionScope ("global", func.func_name)) in
+            List.iter (fun (param_name, param_type) ->
+              add_variable table_with_func param_name param_type func.func_pos
+            ) func.func_params;
+            List.iter (process_statement table_with_func) func.func_body;
+            let _ = exit_scope table_with_func in ()
+        | Ast.ImplStaticField (_, _) -> ()  (* Static fields don't need symbol table processing *)
+      ) impl_block.impl_items
 
 and process_statement table stmt =
   match stmt.stmt_desc with

@@ -62,14 +62,21 @@ let test_regular_struct_parsing () =
 let test_register_with_struct_ops () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
-    struct MyTcpCong {
-        slow_start: u32,
-        cong_avoid: u32
+    impl MyTcpCong {
+        fn slow_start(sk: *u8) -> u32 {
+            return 1
+        }
+        
+        fn cong_avoid(sk: *u8, ack: u32, acked: u32) -> void {
+            // Implementation
+        }
+        
+        name: "my_tcp_cong",
+        owner: null,
     }
     
     fn main() -> i32 {
-        var tcp_ops = MyTcpCong { slow_start: 1, cong_avoid: 2 }
-        var result = register(tcp_ops)
+        var result = register(MyTcpCong)
         return result
     }
   |} in
@@ -115,37 +122,51 @@ let test_register_rejects_regular_struct () =
 let test_multiple_struct_ops () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
-    struct TcpOps {
-        init: u32,
-        release: u32
+    impl TcpOps {
+        fn init(sk: *u8) -> u32 {
+            return 1
+        }
+        
+        fn release(sk: *u8) -> void {
+            // Release implementation
+        }
+        
+        name: "tcp_ops",
+        owner: null,
     }
     
     @struct_ops("bpf_iter_ops")
-    struct IterOps {
-        init: u32,
-        fini: u32
+    impl IterOps {
+        fn init_seq() -> u32 {
+            return 3
+        }
+        
+        fn fini_seq() -> void {
+            // Cleanup implementation
+        }
+        
+        name: "iter_ops",
+        owner: null,
     }
     
     fn main() -> i32 {
-        var tcp_ops = TcpOps { init: 1, release: 2 }
-        var iter_ops = IterOps { init: 3, fini: 4 }
-        var result1 = register(tcp_ops)
-        var result2 = register(iter_ops)
+        var result1 = register(TcpOps)
+        var result2 = register(IterOps)
         return result1 + result2
     }
   |} in
   
   let ast = Parse.parse_string program in
   
-  (* Both struct_ops should be parsed correctly *)
-  let struct_count = List.fold_left (fun acc decl ->
+  (* Both impl blocks should be parsed correctly *)
+  let impl_count = List.fold_left (fun acc decl ->
     match decl with
-    | StructDecl struct_def ->
-        if List.length struct_def.struct_attributes > 0 then acc + 1 else acc
+    | ImplBlock impl_block ->
+        if List.length impl_block.impl_attributes > 0 then acc + 1 else acc
     | _ -> acc
   ) 0 ast in
   
-  check int "Number of struct_ops" 2 struct_count;
+  check int "Number of struct_ops" 2 impl_count;
   
   (* Type checking should succeed *)
   try
@@ -158,9 +179,17 @@ let test_multiple_struct_ops () =
 let test_struct_ops_ir_generation () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
-    struct MyTcpCong {
-        init: u32,
-        release: u32
+    impl MyTcpCong {
+        fn init(sk: *u8) -> u32 {
+            return 1
+        }
+        
+        fn release(sk: *u8) -> void {
+            // Release implementation
+        }
+        
+        name: "my_tcp_cong",
+        owner: null,
     }
     
     @xdp fn xdp_prog(ctx: *xdp_md) -> xdp_action {
@@ -168,8 +197,7 @@ let test_struct_ops_ir_generation () =
     }
     
     fn main() -> i32 {
-        var tcp_ops = MyTcpCong { init: 1, release: 2 }
-        var result = register(tcp_ops)
+        var result = register(MyTcpCong)
         return result
     }
   |} in
@@ -189,17 +217,25 @@ let test_struct_ops_ir_generation () =
        check string "Kernel struct name" "tcp_congestion_ops" declaration.ir_kernel_struct_name
    | _ -> fail "Expected exactly one struct_ops declaration in IR");
    
-  (* Note: struct_ops instances are handled as regular variable declarations with register() calls *)
-  (* This is part of the simplified struct_ops approach - no separate instance tracking in IR *)
+  (* With impl blocks, the functions become individual eBPF programs *)
+  check bool "IR contains impl block programs" true (List.length ir.programs >= 2); (* init and release functions *)
   ()
 
 (** Test eBPF C code generation with struct_ops *)
 let test_ebpf_struct_ops_codegen () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
-    struct MyTcpCong {
-        init: u32,
-        release: u32
+    impl MyTcpCong {
+        fn init(sk: *u8) -> u32 {
+            return 1
+        }
+        
+        fn release(sk: *u8) -> void {
+            // Release implementation
+        }
+        
+        name: "my_tcp_cong",
+        owner: null,
     }
     
     @xdp fn xdp_prog(ctx: *xdp_md) -> xdp_action {
@@ -207,8 +243,7 @@ let test_ebpf_struct_ops_codegen () =
     }
     
     fn main() -> i32 {
-        var tcp_ops = MyTcpCong { init: 1, release: 2 }
-        var result = register(tcp_ops)
+        var result = register(MyTcpCong)
         return result
     }
   |} in
@@ -221,17 +256,27 @@ let test_ebpf_struct_ops_codegen () =
   (* Generate eBPF C code *)
   let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
   
-  (* In the simplified struct_ops approach, struct_ops are handled through register() calls *)
-  (* The eBPF code may not contain explicit struct_ops declarations since they're userspace concerns *)
-  check bool "eBPF code generation completed" true (String.length c_code > 0)
+  (* With impl blocks, each function becomes an eBPF program with struct_ops section *)
+  check bool "eBPF code generation completed" true (String.length c_code > 0);
+  (* The generated code should contain struct_ops section annotations *)
+  check bool "Contains struct_ops sections" true
+    (try ignore (Str.search_forward (Str.regexp "SEC(\"struct_ops") c_code 0); true with Not_found -> false)
 
 (** Test userspace code generation with struct_ops *)
 let test_userspace_struct_ops_codegen () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
-    struct MyTcpCong {
-        init: u32,
-        release: u32
+    impl MyTcpCong {
+        fn init(sk: *u8) -> u32 {
+            return 1
+        }
+        
+        fn release(sk: *u8) -> void {
+            // Release implementation
+        }
+        
+        name: "my_tcp_cong",
+        owner: null,
     }
     
     @xdp fn xdp_prog(ctx: *xdp_md) -> xdp_action {
@@ -239,8 +284,7 @@ let test_userspace_struct_ops_codegen () =
     }
     
     fn main() -> i32 {
-        var tcp_ops = MyTcpCong { init: 1, release: 2 }
-        var result = register(tcp_ops)
+        var result = register(MyTcpCong)
         return result
     }
   |} in
@@ -314,31 +358,40 @@ let test_register_with_non_struct () =
 let test_nested_struct_ops () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
-    struct OuterStruct {
-        inner: InnerStruct,
-        value: u32
+    impl OuterImpl {
+        fn outer_func(sk: *u8) -> u32 {
+            return 42
+        }
+        
+        name: "outer_impl",
+        owner: null,
     }
     
-    struct InnerStruct {
-        data: u64
+    @struct_ops("bpf_iter_ops")  
+    impl InnerImpl {
+        fn inner_func() -> u64 {
+            return 100
+        }
+        
+        name: "inner_impl",
+        owner: null,
     }
     
     fn main() -> i32 {
-        var inner = InnerStruct { data: 100 }
-        var outer = OuterStruct { inner: inner, value: 42 }
-        var result = register(outer)
-        return result
+        var result1 = register(OuterImpl)
+        var result2 = register(InnerImpl)
+        return result1 + result2
     }
   |} in
   
   let ast = Parse.parse_string program in
   
-  (* Type checking should succeed - nested structs are allowed *)
+  (* Type checking should succeed - multiple impl blocks are allowed *)
   try
     let _ = Type_checker.type_check_and_annotate_ast ast in
-    check bool "Nested struct_ops type checking" true true
+    check bool "Multiple impl blocks type checking" true true
   with
-  | _ -> fail "Type checking should succeed for nested struct_ops"
+  | _ -> fail "Type checking should succeed for multiple impl blocks"
 
 (** Test symbol table integration with struct_ops *)
 let test_symbol_table_struct_ops () =

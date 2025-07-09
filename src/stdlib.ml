@@ -29,7 +29,7 @@ type builtin_function = {
   validate: (bpf_type list -> declaration list -> position -> bool * string option) option;
 }
 
-(** Validation function for register() - checks struct_ops attribute *)
+(** Validation function for register() - only accepts impl block arguments *)
 let validate_register_function arg_types ast_context _pos =
   if List.length arg_types <> 1 then
     (false, Some "register() takes exactly one argument")
@@ -37,21 +37,21 @@ let validate_register_function arg_types ast_context _pos =
     let arg_type = List.hd arg_types in
     match arg_type with
     | Struct struct_name | UserType struct_name -> 
-        (* Check if this struct has @struct_ops attribute by looking in AST declarations *)
-        let has_struct_ops_attr = List.exists (function
-          | StructDecl struct_def when struct_def.struct_name = struct_name ->
+        (* Check if this is an impl block with @struct_ops attribute *)
+        let has_impl_block_attr = List.exists (function
+          | ImplBlock impl_block when impl_block.impl_name = struct_name ->
               List.exists (function
                 | AttributeWithArg ("struct_ops", _) -> true
                 | _ -> false
-              ) struct_def.struct_attributes
+              ) impl_block.impl_attributes
           | _ -> false
         ) ast_context in
-        if has_struct_ops_attr then
+        if has_impl_block_attr then
           (true, None)
         else
-          (false, Some ("register() can only be used with struct_ops structs (structs with @struct_ops attribute). '" ^ struct_name ^ "' is not a struct_ops."))
+          (false, Some ("register() can only be used with impl block instances (with @struct_ops attribute). '" ^ struct_name ^ "' is not an impl block."))
     | _ -> 
-        (false, Some "register() requires a struct_ops struct argument")
+        (false, Some "register() requires an impl block argument")
 
 (** Standard library built-in functions *)
 let builtin_functions = [
@@ -92,7 +92,7 @@ let builtin_functions = [
     name = "register";
     param_types = []; (* Custom validation handles type checking *)
     return_type = U32; (* Returns 0 on success *)
-    description = "Register a struct_ops instance with the kernel";
+    description = "Register an impl block instance (struct_ops) with the kernel";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_map__attach_struct_ops";

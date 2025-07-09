@@ -67,6 +67,13 @@ let get_execution_context = function
       execution_stage = "static_tracing";
       can_drop_packets = false;
     }
+  | StructOps -> {
+      program_type = StructOps;
+      hook_point = "kernel_struct_ops_callbacks";
+      stack_layer = 0;  (* Can be anywhere - depends on subsystem *)
+      execution_stage = "struct_ops_callbacks";
+      can_drop_packets = false;
+    }
 
 (** Check if two programs execute sequentially (not concurrently) *)
 let are_sequential prog_type1 prog_type2 =
@@ -113,6 +120,7 @@ let extract_programs (ast: declaration list) : program_def list =
                     | "tracepoint" -> Tracepoint
                     | "lsm" -> Lsm
                     | "cgroup_skb" -> CgroupSkb
+                    | "struct_ops" -> StructOps
                     | _ -> failwith ("Unknown program type: " ^ prog_type_str)
                   in
                   Some {
