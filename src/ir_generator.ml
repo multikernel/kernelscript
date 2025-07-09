@@ -2401,43 +2401,14 @@ let lower_multi_program ast symbol_table source_name =
       if List.length main_functions > 1 then
         failwith "Only one main() function is allowed";
       
-      (* Extract struct definitions from AST *)
+      (* Extract struct definitions from AST (single source of truth) *)
       let struct_definitions = List.filter_map (function
         | Ast.StructDecl struct_def -> Some struct_def
         | _ -> None
       ) ast in
       
-             (* Convert struct definitions to IR *)
-       let ir_struct_definitions = List.map (fun struct_def ->
-         let ir_fields = List.map (fun (field_name, field_type) ->
-           let ir_field_type = match field_type with
-             | Ast.Function (param_types, return_type) ->
-                 (* Convert function types to function pointers *)
-                 let ir_param_types = List.map ast_type_to_ir_type param_types in
-                 let ir_return_type = ast_type_to_ir_type return_type in
-                 IRFunctionPointer (ir_param_types, ir_return_type)
-             | _ -> ast_type_to_ir_type field_type
-           in
-           (field_name, ir_field_type)
-         ) struct_def.Ast.struct_fields in
-         {
-           struct_name = struct_def.Ast.struct_name;
-           struct_fields = ir_fields;
-           struct_alignment = 8; (* default alignment *)
-           struct_size = List.length ir_fields * 8; (* estimated size *)
-           struct_pos = struct_def.Ast.struct_pos;
-           kernel_defined = false; (* Structs in source file are user-defined, regardless of BTF origin *)
-         }
-       ) struct_definitions in
-      
-      (* Collect struct declarations from AST *)
-      let userspace_struct_decls = List.filter_map (function
-        | Ast.StructDecl struct_def -> Some struct_def
-        | _ -> None
-      ) ast in
-      
-      (* Convert AST struct declarations to IR struct definitions *)
-      let ir_userspace_structs = List.map (fun struct_decl ->
+      (* Convert struct definitions to IR (no duplication) *)
+      let ir_userspace_structs = List.map (fun struct_def ->
         let ir_fields = List.map (fun (field_name, field_type) ->
           let ir_field_type = match field_type with
             | Ast.Function (param_types, return_type) ->
@@ -2448,14 +2419,14 @@ let lower_multi_program ast symbol_table source_name =
             | _ -> ast_type_to_ir_type field_type
           in
           (field_name, ir_field_type)
-        ) struct_decl.Ast.struct_fields in
+        ) struct_def.Ast.struct_fields in
         make_ir_struct_def 
-          struct_decl.Ast.struct_name 
+          struct_def.Ast.struct_name 
           ir_fields 
           8 (* default alignment *)
           (List.length ir_fields * 8) (* estimated size *)
-          struct_decl.Ast.struct_pos
-      ) userspace_struct_decls in
+          struct_def.Ast.struct_pos
+      ) struct_definitions in
       
       let userspace_ctx = create_context ~global_variables:ir_global_variables symbol_table in
       (* Copy maps from main context to userspace context *)
@@ -2463,7 +2434,7 @@ let lower_multi_program ast symbol_table source_name =
         Hashtbl.add userspace_ctx.maps map_name map_def
       ) ctx.maps;
       let ir_functions = List.map (fun func -> lower_userspace_function userspace_ctx func) userspace_functions in
-      Some (make_ir_userspace_program ir_functions (ir_userspace_structs @ ir_struct_definitions) [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
+      Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
   
   (* Extract all map assignments from the AST to analyze initial values *)

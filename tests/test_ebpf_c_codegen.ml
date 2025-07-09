@@ -231,7 +231,7 @@ let test_builtin_print_calls () =
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   check bool "print call uses bpf_printk" true (contains_substr output "bpf_printk");
-  check bool "print call has string data" true (contains_substr output ".data")
+  check bool "print call has string literal" true (contains_substr output "\"Hello eBPF\"")
 
 (** Test advanced control flow *)
 let test_control_flow () =
@@ -349,15 +349,15 @@ let test_string_literal_in_function_calls () =
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
-  (* Critical fix: should use .data field, not the struct directly *)
-  check bool "function call uses .data field" true (contains_substr output "str_lit_1.data");
-  check bool "function call not using struct directly" false (contains_substr output "bpf_printk(\"%s\", str_lit_1);");
+  (* Critical fix: should use string literal directly, not .data field *)
+  check bool "function call uses string literal directly" true (contains_substr output "\"Debug message\"");
+  check bool "function call not using .data field" false (contains_substr output "str_lit_1.data");
   
   (* Should generate bpf_printk call *)
   check bool "generates bpf_printk" true (contains_substr output "bpf_printk");
   
-  (* Should use the original format string directly, not "%s" *)
-  check bool "has format string" true (contains_substr output "str_lit_1.data")
+  (* Should use the original string literal directly *)
+  check bool "has string literal" true (contains_substr output "\"Debug message\"")
 
 (** Test string literals in multi-argument function calls *)
 let test_string_literal_multi_arg_calls () =
@@ -373,11 +373,11 @@ let test_string_literal_multi_arg_calls () =
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
-  (* Should use .data field for string argument *)
-  check bool "multi-arg uses .data field" true (contains_substr output "str_lit_1.data");
+  (* Should use string literal directly in multi-arg context *)
+  check bool "multi-arg uses string literal directly" true (contains_substr output "\"Test: %d\"");
   check bool "includes integer argument" true (contains_substr output "42");
-  (* Should use the original format string directly, not "%s%d" *)
-  check bool "has proper format specifiers" true (contains_substr output "str_lit_1.data")
+  (* Should use the original format string directly *)
+  check bool "has proper format specifiers" true (contains_substr output "\"Test: %d\"")
 
 (** Test string type definition generation *)
 let test_string_typedef_generation () =
@@ -714,6 +714,167 @@ let test_complete_type_alias_fix_integration () =
   check bool "PacketSize typedef" true (contains_substr c_code "typedef __u16 PacketSize");
   ()
 
+(** Test string size collection from userspace structs (bug fix regression test) *)
+let test_string_size_collection_from_userspace_structs () =
+  (* Create a userspace struct with string fields to test string size collection *)
+  let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  
+  let userspace_struct = {
+    Kernelscript.Ir.struct_name = "network_config";
+    struct_fields = [
+      ("interface", Kernelscript.Ir.IRStr 16);  (* This should be collected as str_16_t *)
+      ("hostname", Kernelscript.Ir.IRStr 20);   (* This should be collected as str_20_t *)
+      ("max_packet_size", Kernelscript.Ir.IRU32);
+    ];
+    struct_alignment = 1;
+    struct_size = 32;
+    struct_pos = dummy_pos;
+    kernel_defined = false;
+  } in
+  
+  let userspace_program = {
+    Kernelscript.Ir.userspace_structs = [userspace_struct];
+    userspace_functions = [];
+    userspace_configs = [];
+    coordinator_logic = {
+      setup_logic = [];
+      event_processing = [];
+      cleanup_logic = [];
+      config_management = {
+        config_loads = [];
+        config_updates = [];
+        runtime_config_sync = [];
+      };
+    };
+    userspace_pos = dummy_pos;
+  } in
+  
+  let multi_ir = {
+    Kernelscript.Ir.source_name = "test";
+    programs = [];
+    kernel_functions = [];
+    global_maps = [];
+    global_variables = [];
+    global_configs = [];
+    struct_ops_declarations = [];
+    struct_ops_instances = [];
+    userspace_program = Some userspace_program;
+    userspace_bindings = [];
+    multi_pos = dummy_pos;
+  } in
+  
+  (* Test that string sizes are NOT collected from userspace structs (bug fix regression test) *)
+  (* This test verifies that we fixed the bug where userspace-only structs were being included in eBPF code *)
+  let collected_sizes = collect_string_sizes_from_multi_program multi_ir in
+  
+  (* Verify that userspace-only string sizes are NOT collected *)
+  check bool "string size 16 NOT collected (userspace-only)" false (List.mem 16 collected_sizes);
+  check bool "string size 20 NOT collected (userspace-only)" false (List.mem 20 collected_sizes);
+  check bool "no string sizes collected from userspace-only structs" true (collected_sizes = []);
+  ()
+
+(** Test declaration ordering (bug fix regression test) *)
+let test_declaration_ordering_fix () =
+  (* Create a multi-program IR with map and function to test ordering *)
+  let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  
+  let map_def = make_ir_map_def "test_map" IRU32 IRU64 IRHashMap 1024 dummy_pos in
+  
+  let map_lookup_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) dummy_pos in
+  let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 dummy_pos in
+  let dest_val = make_ir_value (IRVariable "result") IRU64 dummy_pos in
+  
+  (* Create instruction that uses the map *)
+  let map_instr = make_ir_instruction (IRMapLoad (map_lookup_val, key_val, dest_val, MapLookup)) dummy_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some dest_val)) dummy_pos in
+  
+  let main_block = make_ir_basic_block "entry" [map_instr; return_instr] 0 in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+  
+  let ir_program = {
+    Kernelscript.Ir.name = "test_program";
+    program_type = Kernelscript.Ast.Xdp;
+    entry_function = main_func;
+    ir_pos = dummy_pos;
+  } in
+  
+  let multi_ir = {
+    Kernelscript.Ir.source_name = "test";
+    programs = [ir_program];
+    kernel_functions = [];
+    global_maps = [map_def];
+    global_variables = [];
+    global_configs = [];
+    struct_ops_declarations = [];
+    struct_ops_instances = [];
+    userspace_program = None;
+    userspace_bindings = [];
+    multi_pos = dummy_pos;
+  } in
+  
+  (* Generate C code *)
+  let c_code = generate_c_multi_program multi_ir in
+  
+  (* Find positions of map definition and function definition *)
+  let map_pos = try 
+    Str.search_forward (Str.regexp "BPF_MAP_TYPE_HASH") c_code 0
+  with Not_found -> -1 in
+  
+  let func_pos = try 
+    Str.search_forward (Str.regexp "SEC(\"xdp\")") c_code 0 
+  with Not_found -> -1 in
+  
+  (* Verify map is defined before function *)
+  check bool "map found in generated code" true (map_pos >= 0);
+  check bool "function found in generated code" true (func_pos >= 0);
+  check bool "map defined before function" true (map_pos < func_pos);
+  ()
+
+(** Test bpf_printk string literal handling (bug fix regression test) *)
+let test_bpf_printk_string_literal_fix () =
+  (* Test that string literals in print statements are handled correctly *)
+  let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  
+  (* Create a print call with a string literal *)
+  let str_literal = make_ir_value (IRLiteral (StringLit "test message")) (IRStr 12) dummy_pos in
+  let result_var = make_ir_value (IRVariable "result") IRU32 dummy_pos in
+  let print_instr = make_ir_instruction (IRCall (DirectCall "print", [str_literal], Some result_var)) dummy_pos in
+  
+  let main_block = make_ir_basic_block "entry" [print_instr] 0 in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+  
+  let ir_program = {
+    Kernelscript.Ir.name = "test_program";
+    program_type = Kernelscript.Ast.Xdp;
+    entry_function = main_func;
+    ir_pos = dummy_pos;
+  } in
+  
+  let multi_ir = {
+    Kernelscript.Ir.source_name = "test";
+    programs = [ir_program];
+    kernel_functions = [];
+    global_maps = [];
+    global_variables = [];
+    global_configs = [];
+    struct_ops_declarations = [];
+    struct_ops_instances = [];
+    userspace_program = None;
+    userspace_bindings = [];
+    multi_pos = dummy_pos;
+  } in
+  
+  (* Generate C code *)
+  let c_code = generate_c_multi_program multi_ir in
+  
+  (* Verify that bpf_printk is called with string literal directly, not with .data *)
+  check bool "bpf_printk called with string literal" true (contains_substr c_code "bpf_printk(\"test message\")");
+  
+  (* Verify that .data is NOT used in bpf_printk call (this was the bug) *)
+  check bool "bpf_printk does not use .data" false (contains_substr c_code "bpf_printk(str_lit_");
+  check bool "bpf_printk does not use struct field" false (contains_substr c_code ".data)");
+  ()
+
 (** Test suite definition *)
 let suite =
   [
@@ -746,6 +907,10 @@ let suite =
     ("Struct fields use alias names", `Quick, test_struct_fields_use_alias_names);
     ("Struct definition with aliases", `Quick, test_struct_definition_with_aliases);
     ("Complete type alias fix integration", `Quick, test_complete_type_alias_fix_integration);
+    (* Bug fix regression tests *)
+    ("String size collection from userspace structs", `Quick, test_string_size_collection_from_userspace_structs);
+    ("Declaration ordering fix", `Quick, test_declaration_ordering_fix);
+    ("BPF printk string literal fix", `Quick, test_bpf_printk_string_literal_fix);
   ]
 
 (** Run all tests *)

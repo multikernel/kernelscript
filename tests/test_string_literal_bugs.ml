@@ -55,20 +55,20 @@ let test_hello_world_truncation_bug () =
 let test_bpf_printk_data_field_bug () =
   let ctx = create_c_context () in
   
-  (* Test print function with string literal - this was generating wrong code *)
+  (* Test print function with string literal - the fix now passes strings directly to bpf_printk *)
   let debug_msg_val = make_ir_value (IRLiteral (StringLit "Debug message")) (IRStr 13) test_pos in
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [debug_msg_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
-  (* POSITIVE TEST: Ensure .data field is used *)
-  Alcotest.(check bool) "Function call uses .data field" 
-    true (contains_substr output "str_lit_1.data");
+  (* POSITIVE TEST: Ensure string literal is passed directly to bpf_printk (the fix) *)
+  Alcotest.(check bool) "Function call uses string literal directly" 
+    true (contains_substr output "bpf_printk(\"Debug message\")");
   
-  (* REGRESSION TEST: Ensure struct is NOT passed directly *)
-  Alcotest.(check bool) "Function call does NOT pass struct directly" 
-    false (contains_substr output "bpf_printk(\"%s\", str_lit_1);");
+  (* REGRESSION TEST: Ensure .data field is NOT used for string literals in print *)
+  Alcotest.(check bool) "Function call does NOT use .data field for string literals" 
+    false (contains_substr output "str_lit_1.data");
   
   (* POSITIVE TEST: Ensure bpf_printk is generated *)
   Alcotest.(check bool) "Generates bpf_printk call" 
@@ -84,7 +84,7 @@ let test_bpf_printk_data_field_bug () =
 let test_multi_arg_printk_data_field_bug () =
   let ctx = create_c_context () in
   
-  (* Test multi-argument print call *)
+  (* Test multi-argument print call - the fix now passes strings directly *)
   let format_val = make_ir_value (IRLiteral (StringLit "Count: %d")) (IRStr 9) test_pos in
   let count_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [format_val; count_val], None)) test_pos in
@@ -92,17 +92,17 @@ let test_multi_arg_printk_data_field_bug () =
   
   let output = String.concat "\n" (List.rev ctx.output_lines) in
   
-  (* POSITIVE TEST: Ensure .data field is used in multi-arg context *)
-  Alcotest.(check bool) "Multi-arg call uses .data field" 
-    true (contains_substr output "str_lit_1.data");
+  (* POSITIVE TEST: Ensure string literal is passed directly in multi-arg context *)
+  Alcotest.(check bool) "Multi-arg call uses string literal directly" 
+    true (contains_substr output "bpf_printk(\"Count: %d\", 42)");
   
   (* POSITIVE TEST: Ensure integer argument is included *)
   Alcotest.(check bool) "Multi-arg call includes integer" 
     true (contains_substr output "42");
   
-  (* REGRESSION TEST: Ensure struct is NOT passed directly in multi-arg *)
-  Alcotest.(check bool) "Multi-arg call does NOT pass struct directly" 
-    false (contains_substr output ", str_lit_1, 42")
+  (* REGRESSION TEST: Ensure .data field is NOT used for string literals in multi-arg print *)
+  Alcotest.(check bool) "Multi-arg call does NOT use .data field for string literals" 
+    false (contains_substr output "str_lit_1.data")
 
 (**
  * Integration Test: Both bugs together
@@ -123,21 +123,21 @@ let test_combined_bugs_integration () =
   Alcotest.(check bool) "Integration: No truncation" 
     false (contains_substr output "\"Hello worl\"");
   
-  (* POSITIVE TEST: Full string present *)
-  Alcotest.(check bool) "Integration: Full string present" 
-    true (contains_substr output "\"Hello world\"");
+  (* POSITIVE TEST: Full string present and passed directly to bpf_printk *)
+  Alcotest.(check bool) "Integration: Full string passed directly" 
+    true (contains_substr output "bpf_printk(\"Hello world\")");
   
-  (* POSITIVE TEST: Correct length *)
-  Alcotest.(check bool) "Integration: Correct length" 
-    true (contains_substr output ".len = 11");
+  (* REGRESSION TEST: Does not use string struct for print statement *)
+  Alcotest.(check bool) "Integration: Does not generate string struct for print" 
+    false (contains_substr output ".len = 11");
   
-  (* POSITIVE TEST: Uses .data field *)
-  Alcotest.(check bool) "Integration: Uses .data field" 
-    true (contains_substr output "str_lit_1.data");
+  (* REGRESSION TEST: Does not use .data field for string literals in print *)
+  Alcotest.(check bool) "Integration: Does not use .data field for string literals" 
+    false (contains_substr output "str_lit_1.data");
   
-  (* REGRESSION TEST: Does not pass struct directly *)
-  Alcotest.(check bool) "Integration: Does not pass struct directly" 
-    false (contains_substr output "bpf_printk(\"%s\", str_lit_1);")
+  (* POSITIVE TEST: Uses bpf_printk correctly *)
+  Alcotest.(check bool) "Integration: Uses bpf_printk correctly" 
+    true (contains_substr output "bpf_printk")
 
 (**
  * Bug Fix Test 4: Null Terminator Buffer Size Bug
@@ -301,29 +301,29 @@ let test_edge_cases_for_bugs () =
   Alcotest.(check bool) "Exact fit: Correct length" 
     true (contains_substr output1 ".len = 5");
   
-  (* Test single character *)
+  (* Test single character - print should use string literal directly *)
   let ctx2 = create_c_context () in
   let single_char_val = make_ir_value (IRLiteral (StringLit "x")) (IRStr 1) test_pos in
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [single_char_val], None)) test_pos in
   generate_c_instruction ctx2 print_instr;
   let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
   
-  Alcotest.(check bool) "Single char: Uses .data field" 
-    true (contains_substr output2 "str_lit_1.data");
-  Alcotest.(check bool) "Single char: Has correct content" 
-    true (contains_substr output2 "\"x\"");
+  Alcotest.(check bool) "Single char: Uses string literal directly in print" 
+    true (contains_substr output2 "bpf_printk(\"x\")");
+  Alcotest.(check bool) "Single char: Does NOT use .data field for print" 
+    false (contains_substr output2 "str_lit_1.data");
   
-  (* Test empty string *)
+  (* Test empty string - print should use string literal directly *)
   let ctx3 = create_c_context () in
   let empty_val = make_ir_value (IRLiteral (StringLit "")) (IRStr 1) test_pos in
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [empty_val], None)) test_pos in
   generate_c_instruction ctx3 print_instr;
   let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
   
-  Alcotest.(check bool) "Empty string: Uses .data field" 
-    true (contains_substr output3 "str_lit_1.data");
-  Alcotest.(check bool) "Empty string: Has zero length" 
-    true (contains_substr output3 ".len = 0")
+  Alcotest.(check bool) "Empty string: Uses string literal directly in print" 
+    true (contains_substr output3 "bpf_printk(\"\")");
+  Alcotest.(check bool) "Empty string: Does NOT use .data field for print" 
+    false (contains_substr output3 "str_lit_1.data")
 
 (** Test suite for string literal bug fixes *)
 let bug_fix_suite =

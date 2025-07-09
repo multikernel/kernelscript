@@ -436,10 +436,26 @@ let collect_string_sizes_from_function ir_func =
   ) [] ir_func.basic_blocks
 
 let collect_string_sizes_from_multi_program ir_multi_prog =
-  List.fold_left (fun acc ir_prog ->
+  let program_sizes = List.fold_left (fun acc ir_prog ->
     let entry_sizes = collect_string_sizes_from_function ir_prog.entry_function in
     acc @ entry_sizes
-  ) [] ir_multi_prog.programs
+  ) [] ir_multi_prog.programs in
+  
+  (* Also collect from kernel functions *)
+  let kernel_func_sizes = List.fold_left (fun acc ir_func ->
+    let func_sizes = collect_string_sizes_from_function ir_func in
+    acc @ func_sizes
+  ) [] ir_multi_prog.kernel_functions in
+  
+  (* NOTE: We used to collect string sizes from all userspace structs here, but this was incorrect.
+     Only structs that are actually used by eBPF programs should be considered.
+     The existing logic already collects string sizes from:
+     1. eBPF programs and their functions  
+     2. Kernel functions
+     This is sufficient to capture all string sizes needed by eBPF programs.
+     Userspace-only structs (like command-line argument structs) should not be included. *)
+  
+  program_sizes @ kernel_func_sizes
 
 (** Collect enum definitions from IR types *)
 let collect_enum_definitions ?symbol_table ir_multi_prog =
@@ -682,17 +698,14 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   (* Also collect from kernel functions *)
   List.iter collect_from_function ir_multi_prog.kernel_functions;
   
-  (* Collect struct definitions from userspace program - these are source-defined structs
-     that need to be available for both userspace and eBPF code generation *)
-  (match ir_multi_prog.userspace_program with
-   | Some userspace_prog ->
-       List.iter (fun struct_def ->
-         let struct_name = struct_def.struct_name in
-         let struct_fields = struct_def.struct_fields in
-         if not (List.mem_assoc struct_name !struct_defs) then
-           struct_defs := (struct_name, struct_fields) :: !struct_defs
-       ) userspace_prog.userspace_structs
-   | None -> ());
+  (* NOTE: We used to blindly include all userspace structs here, but this was incorrect.
+     Only structs that are actually used by eBPF programs should be included.
+     The existing logic already collects structs from:
+     1. eBPF programs and their functions
+     2. Global maps  
+     3. Kernel functions
+     This is sufficient to capture all structs needed by eBPF programs.
+     Userspace-only structs (like command-line argument structs) should not be included. *)
   
   List.rev !struct_defs
 
@@ -1817,10 +1830,16 @@ let rec generate_c_instruction ctx ir_instr =
                   | [] -> (ebpf_impl, ["\"\""])
                   | [first_ir] -> 
                       (* Single argument case - use as format string *)
-                      let first_arg = generate_c_value ctx first_ir in
-                      (match first_ir.val_type with
-                       | IRStr _ -> (ebpf_impl, [first_arg ^ ".data"])
-                       | _ -> (ebpf_impl, [first_arg]))
+                      (match first_ir.value_desc with
+                       | IRLiteral (StringLit s) -> 
+                           (* String literal - use directly for bpf_printk *)
+                           (ebpf_impl, [sprintf "\"%s\"" s])
+                       | _ ->
+                           (* Other types - generate as usual *)
+                           let first_arg = generate_c_value ctx first_ir in
+                           (match first_ir.val_type with
+                            | IRStr _ -> (ebpf_impl, [first_arg ^ ".data"])
+                            | _ -> (ebpf_impl, [first_arg])))
                   | first_ir :: rest_ir ->
                      (* Multiple arguments: first is format string, rest are arguments *)
                      (* bpf_printk limits: format string + up to 3 args *)
@@ -1835,10 +1854,16 @@ let rec generate_c_instruction ctx ir_instr =
                      in
                      
                      (* Use the first argument directly as the format string *)
-                     let format_str = generate_c_value ctx first_ir in
-                     let format_arg = match first_ir.val_type with
-                       | IRStr _ -> format_str ^ ".data"
-                       | _ -> format_str
+                     let format_arg = match first_ir.value_desc with
+                       | IRLiteral (StringLit s) -> 
+                           (* String literal - use directly for bpf_printk *)
+                           sprintf "\"%s\"" s
+                       | _ ->
+                           (* Other types - generate as usual *)
+                           let format_str = generate_c_value ctx first_ir in
+                           (match first_ir.val_type with
+                            | IRStr _ -> format_str ^ ".data"
+                            | _ -> format_str)
                      in
                      
                      (* Generate remaining arguments *)
@@ -2852,10 +2877,17 @@ let compile_multi_to_c_with_tail_calls
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
   generate_struct_definitions ctx struct_defs;
   
+  (* Generate global map definitions BEFORE functions that use them *)
+  List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
+  
+  (* Generate config maps from IR multi-program BEFORE functions that use them *)
+  if ir_multi_prog.global_configs <> [] then
+    List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
+  
   (* Generate kernel functions once - they are shared across all programs *)
   List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
 
-  (* Generate C functions for each eBPF program first so they can be referenced *)
+  (* Generate C functions for each eBPF program after maps and configs are defined *)
   List.iter (fun ir_prog ->
     generate_c_function ctx ir_prog.entry_function
   ) ir_multi_prog.programs;
@@ -2893,13 +2925,6 @@ let compile_multi_to_c_with_tail_calls
   
   if max_index > 0 then
     generate_prog_array_map ctx max_index;
-  
-  (* Generate global map definitions *)
-  List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
-  
-  (* Generate config maps from IR multi-program *)
-  if ir_multi_prog.global_configs <> [] then
-    List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
   
   (* Generate global variables *)
   generate_global_variables ctx ir_multi_prog.global_variables;
