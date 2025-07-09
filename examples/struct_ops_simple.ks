@@ -44,10 +44,6 @@ impl minimal_congestion_control {
 
     // Optional function implementations (can be omitted for minimal testing)
     // These would be null in the generated struct_ops map
-    
-    // Static metadata fields - these become static data in the struct_ops
-    name: "minimal_cc",
-    owner: null,
 }
 
 // Userspace main function

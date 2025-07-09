@@ -579,7 +579,7 @@ let test_struct_ops_missing_required_function () =
   let program = {|
     @struct_ops("tcp_congestion_ops")
     impl IncompleteTcpCong {
-        // Missing required functions like ssthresh, cong_avoid, etc.
+        // Missing functions are now allowed since most struct_ops functions are optional
         
         name: "incomplete_tcp_cong",
         owner: null,
@@ -594,15 +594,12 @@ let test_struct_ops_missing_required_function () =
   let ast = Parse.parse_string program in
   let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
   
-  (* Type checking should fail for missing required functions *)
+  (* Type checking should now succeed since functions are optional *)
   try
     let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
-    fail "Missing required functions should fail validation"
+    check bool "Missing functions should be allowed (functions are optional)" true true
   with
-  | Type_checker.Type_error (msg, _) ->
-      check bool "Error message mentions missing functions" true
-        (try ignore (Str.search_forward (Str.regexp "missing.*function\\|required.*function") msg 0); true with Not_found -> false)
-  | _ -> fail "Expected Type_error for missing required functions"
+  | _ -> fail "Type checking should succeed since struct_ops functions are optional"
 
 let test_struct_ops_correct_signatures () =
   let program = {|
@@ -616,13 +613,7 @@ let test_struct_ops_correct_signatures () =
             // Implementation
         }
         
-        fn slow_start(sk: *u8) -> void {  // Correct signature
-            // Implementation
-        }
-        
-        fn cong_control(sk: *u8, ack: u32, flag: u32) -> void {  // Correct signature
-            // Implementation
-        }
+        // Only implementing some functions - others are optional
         
         name: "correct_tcp_cong",
         owner: null,

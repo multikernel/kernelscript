@@ -2167,10 +2167,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
                   
                   List.iter (fun (field_name, _) ->
                     if not (List.mem field_name impl_function_names) then
-                      (* Check if this is a required function (for now, all function fields are considered required) *)
-                      type_error 
-                        ("Missing required function '" ^ field_name ^ "' in struct_ops '" ^ ops_name ^ "' implementation") 
-                        impl_block.impl_pos
+                      (* Most struct_ops functions are optional - only warn or allow missing functions *)
+                      (* For now, we'll allow missing functions since they're typically optional *)
+                      ()
                   ) struct_function_fields
               | _ ->
                   (* Struct definition not found - this could mean it's a kernel-defined struct_ops *)

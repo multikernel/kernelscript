@@ -1929,10 +1929,11 @@ let rec ast_type_to_ir_type = function
     let bounds = make_bounds_info ~nullable:true () in
     IRPointer (ast_type_to_ir_type inner_type, bounds)
   | Ast.Result (ok_type, err_type) -> IRResult (ast_type_to_ir_type ok_type, ast_type_to_ir_type err_type)
-  | Ast.Function (_param_types, return_type) -> 
-      (* Functions are represented as pointers to function *)
-      let return_ir_type = ast_type_to_ir_type return_type in
-      IRPointer (return_ir_type, make_bounds_info ())
+  | Ast.Function (param_types, return_type) -> 
+      (* Functions are represented as proper function pointers *)
+      let ir_param_types = List.map ast_type_to_ir_type param_types in
+      let ir_return_type = ast_type_to_ir_type return_type in
+      IRFunctionPointer (ir_param_types, ir_return_type)
   | Ast.Map (key_type, value_type, _map_type) ->
       let ir_key_type = ast_type_to_ir_type key_type in
       let ir_value_type = ast_type_to_ir_type value_type in
@@ -2400,6 +2401,35 @@ let lower_multi_program ast symbol_table source_name =
       if List.length main_functions > 1 then
         failwith "Only one main() function is allowed";
       
+      (* Extract struct definitions from AST *)
+      let struct_definitions = List.filter_map (function
+        | Ast.StructDecl struct_def -> Some struct_def
+        | _ -> None
+      ) ast in
+      
+             (* Convert struct definitions to IR *)
+       let ir_struct_definitions = List.map (fun struct_def ->
+         let ir_fields = List.map (fun (field_name, field_type) ->
+           let ir_field_type = match field_type with
+             | Ast.Function (param_types, return_type) ->
+                 (* Convert function types to function pointers *)
+                 let ir_param_types = List.map ast_type_to_ir_type param_types in
+                 let ir_return_type = ast_type_to_ir_type return_type in
+                 IRFunctionPointer (ir_param_types, ir_return_type)
+             | _ -> ast_type_to_ir_type field_type
+           in
+           (field_name, ir_field_type)
+         ) struct_def.Ast.struct_fields in
+         {
+           struct_name = struct_def.Ast.struct_name;
+           struct_fields = ir_fields;
+           struct_alignment = 8; (* default alignment *)
+           struct_size = List.length ir_fields * 8; (* estimated size *)
+           struct_pos = struct_def.Ast.struct_pos;
+           kernel_defined = false; (* Structs in source file are user-defined, regardless of BTF origin *)
+         }
+       ) struct_definitions in
+      
       (* Collect struct declarations from AST *)
       let userspace_struct_decls = List.filter_map (function
         | Ast.StructDecl struct_def -> Some struct_def
@@ -2409,7 +2439,15 @@ let lower_multi_program ast symbol_table source_name =
       (* Convert AST struct declarations to IR struct definitions *)
       let ir_userspace_structs = List.map (fun struct_decl ->
         let ir_fields = List.map (fun (field_name, field_type) ->
-          (field_name, ast_type_to_ir_type field_type)
+          let ir_field_type = match field_type with
+            | Ast.Function (param_types, return_type) ->
+                (* Convert function types to function pointers *)
+                let ir_param_types = List.map ast_type_to_ir_type param_types in
+                let ir_return_type = ast_type_to_ir_type return_type in
+                IRFunctionPointer (ir_param_types, ir_return_type)
+            | _ -> ast_type_to_ir_type field_type
+          in
+          (field_name, ir_field_type)
         ) struct_decl.Ast.struct_fields in
         make_ir_struct_def 
           struct_decl.Ast.struct_name 
@@ -2425,7 +2463,7 @@ let lower_multi_program ast symbol_table source_name =
         Hashtbl.add userspace_ctx.maps map_name map_def
       ) ctx.maps;
       let ir_functions = List.map (fun func -> lower_userspace_function userspace_ctx func) userspace_functions in
-      Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
+      Some (make_ir_userspace_program ir_functions (ir_userspace_structs @ ir_struct_definitions) [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
   
   (* Extract all map assignments from the AST to analyze initial values *)
@@ -2499,9 +2537,17 @@ let lower_multi_program ast symbol_table source_name =
     ) "" struct_def.struct_attributes in
     
     let ir_methods = List.map (fun (field_name, field_type) ->
+      let ir_field_type = match field_type with
+        | Ast.Function (param_types, return_type) ->
+            (* Convert function types to function pointers *)
+            let ir_param_types = List.map ast_type_to_ir_type param_types in
+            let ir_return_type = ast_type_to_ir_type return_type in
+            IRFunctionPointer (ir_param_types, ir_return_type)
+        | _ -> ast_type_to_ir_type field_type
+      in
       make_ir_struct_ops_method 
         field_name
-        (ast_type_to_ir_type field_type)
+        ir_field_type
         struct_def.Ast.struct_pos
     ) struct_def.Ast.struct_fields in
     make_ir_struct_ops_declaration
@@ -2525,10 +2571,12 @@ let lower_multi_program ast symbol_table source_name =
       match item with
       | Ast.ImplFunction func ->
           (* Create method from function signature *)
-          let method_type = match func.func_return_type with
+          let ir_param_types = List.map (fun (_, param_type) -> ast_type_to_ir_type param_type) func.func_params in
+          let ir_return_type = match func.func_return_type with
             | Some ret_type -> ast_type_to_ir_type ret_type
             | None -> IRVoid
           in
+          let method_type = IRFunctionPointer (ir_param_types, ir_return_type) in
           Some (make_ir_struct_ops_method 
             func.func_name
             method_type
@@ -2543,14 +2591,48 @@ let lower_multi_program ast symbol_table source_name =
       impl_block.impl_pos
   ) impl_block_declarations in
   
-  (* Lower struct_ops instances to IR (empty for now - handled through regular variable declarations) *)
-  let ir_struct_ops_instances = [] in
+  (* Lower struct_ops instances to IR - create from impl blocks *)
+  let ir_struct_ops_instances = List.map (fun impl_block ->
+    (* Extract kernel struct name from @struct_ops attribute *)
+    let kernel_struct_name = List.fold_left (fun acc attr ->
+      match attr with
+      | Ast.AttributeWithArg ("struct_ops", name) -> name
+      | _ -> acc
+    ) "" impl_block.impl_attributes in
+    
+    (* Convert impl block items to struct_ops instance fields *)
+    let ir_instance_fields = List.filter_map (fun item ->
+      match item with
+      | Ast.ImplFunction func ->
+          (* Function reference - create IRFunctionRef *)
+          let func_val = make_ir_value (IRFunctionRef func.func_name) IRVoid func.func_pos in
+          Some (func.func_name, func_val)
+      | Ast.ImplStaticField (field_name, field_expr) ->
+          (* Static field - convert expression to IR value *)
+          let field_val = match field_expr.expr_desc with
+            | Ast.Literal literal ->
+                (match literal with
+                | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) field_expr.expr_pos
+                | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) field_expr.expr_pos
+                | _ -> failwith "Unsupported literal type in static field")
+            | _ -> failwith "Static fields must be literals"
+          in
+          Some (field_name, field_val)
+    ) impl_block.impl_items in
+    
+    make_ir_struct_ops_instance
+      impl_block.impl_name
+      kernel_struct_name
+      ir_instance_fields
+      impl_block.impl_pos
+  ) impl_block_declarations in
   
   (* Generate userspace bindings *)
   let userspace_bindings = 
     generate_userspace_bindings_from_multi_programs all_prog_defs userspace_functions map_flag_infos config_declarations
   in
   
+
   (* Helper function to convert AST literals to IR values *)
   let ast_literal_to_ir_value literal pos =
     match literal with
@@ -2620,6 +2702,8 @@ let lower_multi_program ast symbol_table source_name =
       config_decl.Ast.config_pos
   ) config_declarations in
   
+
+
   (* Create multi-program IR *)
   let multi_pos = match all_prog_defs with
     | [] -> { line = 1; column = 1; filename = source_name }
