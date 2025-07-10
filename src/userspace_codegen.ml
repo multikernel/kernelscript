@@ -391,6 +391,13 @@ let collect_string_sizes_from_ir_instruction ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest, expr) -> 
       (collect_string_sizes_from_ir_value dest) @ (collect_string_sizes_from_ir_expr expr)
+  | IRDeclareVariable (dest, _typ, init_expr_opt) ->
+      let dest_sizes = collect_string_sizes_from_ir_value dest in
+      let init_sizes = match init_expr_opt with
+        | Some init_expr -> collect_string_sizes_from_ir_expr init_expr
+        | None -> []
+      in
+      dest_sizes @ init_sizes
   | IRCall (_, args, ret_opt) ->
       let ret_sizes = match ret_opt with
         | Some ret_val -> collect_string_sizes_from_ir_value ret_val
@@ -481,6 +488,11 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
+    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
+        collect_from_value dest_val;
+        (match init_expr_opt with
+         | Some init_expr -> collect_from_expr init_expr
+         | None -> ())
     | IRCall (_, args, ret_opt) ->
         List.iter collect_from_value args;
         (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
@@ -816,16 +828,30 @@ let generate_c_value_from_ir ctx ir_value =
   | IRLiteral (StringLit s) -> 
       (* Generate simple string literal for userspace *)
       sprintf "\"%s\"" s
-  | IRLiteral (ArrayLit elems) -> 
-      let elem_strs = List.map (function
-        | Ast.IntLit (i, _) -> string_of_int i
-        | Ast.CharLit c -> sprintf "'%c'" c
-        | Ast.BoolLit b -> if b then "true" else "false"
-        | Ast.StringLit s -> sprintf "\"%s\"" s
-        | Ast.NullLit -> "NULL"
-        | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
-      ) elems in
-      sprintf "{%s}" (String.concat ", " elem_strs)
+  | IRLiteral (ArrayLit init_style) -> 
+      (* Generate C array initialization syntax *)
+      (match init_style with
+       | ZeroArray -> "{0}"  (* Empty array initialization *)
+       | FillArray fill_lit ->
+           let fill_str = match fill_lit with
+             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.BoolLit b -> if b then "true" else "false"
+             | Ast.CharLit c -> sprintf "'%c'" c
+             | Ast.StringLit s -> sprintf "\"%s\"" s
+             | Ast.NullLit -> "NULL"
+             | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
+           in
+           sprintf "{%s}" fill_str
+       | ExplicitArray elems ->
+           let elem_strs = List.map (function
+             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.CharLit c -> sprintf "'%c'" c
+             | Ast.BoolLit b -> if b then "true" else "false"
+             | Ast.StringLit s -> sprintf "\"%s\"" s
+             | Ast.NullLit -> "NULL"
+             | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
+           ) elems in
+           sprintf "{%s}" (String.concat ", " elem_strs))
   | IRVariable name -> 
       (* Check if this is a global variable that should be accessed through skeleton *)
       let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
@@ -1139,6 +1165,46 @@ let rec generate_c_instruction_from_ir ctx instruction =
   | IRConstAssign (dest, src) ->
       (* Const assignment with const keyword *)
       generate_variable_assignment ctx dest src true
+      
+  | IRDeclareVariable (dest_val, typ, init_expr_opt) ->
+      (* Variable declaration with optional initialization *)
+      let var_name = match dest_val.value_desc with
+        | IRVariable name -> name
+        | IRRegister reg -> sprintf "temp_%d" reg
+        | _ -> failwith "IRDeclareVariable target must be a variable or register"
+      in
+      
+      (* Special handling for different types in variable declarations *)
+      (match typ with
+       | IRStr size ->
+           (* String declaration with proper C array syntax *)
+           let string_decl = sprintf "char %s[%d]" var_name size in
+           (match init_expr_opt with
+            | Some init_expr ->
+                (* Use the existing string assignment logic for safe string handling *)
+                let assignment = generate_variable_assignment ctx dest_val init_expr false in
+                sprintf "%s;\n    %s" string_decl assignment
+            | None ->
+                sprintf "%s;" string_decl)
+       | IRArray (element_type, size, _) ->
+           (* Array declaration with proper C syntax *)
+           let element_type_str = c_type_from_ir_type element_type in
+           let array_decl = sprintf "%s %s[%d]" element_type_str var_name size in
+           (match init_expr_opt with
+            | Some init_expr ->
+                let init_str = generate_c_expression_from_ir ctx init_expr in
+                sprintf "%s = %s;" array_decl init_str
+            | None ->
+                sprintf "%s;" array_decl)
+       | _ ->
+           (* Regular variable declaration *)
+           let type_str = c_type_from_ir_type typ in
+           (match init_expr_opt with
+            | Some init_expr ->
+                let init_str = generate_c_expression_from_ir ctx init_expr in
+                sprintf "%s %s = %s;" type_str var_name init_str
+            | None ->
+                sprintf "%s %s;" type_str var_name))
       
   | IRCall (target, args, ret_opt) ->
       (* Track function usage for optimization *)
@@ -1527,14 +1593,24 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
           (match default_value with
            | Ast.IntLit (i, _) -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
            | Ast.BoolLit b -> sprintf "    init_config.%s = %s;" field.Ast.field_name (if b then "true" else "false")
-           | Ast.ArrayLit elements ->
-               (* Handle array initialization *)
-               let elements_str = List.mapi (fun i element ->
-                 match element with
-                 | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
-                 | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
-               ) elements in
-               String.concat "\n" elements_str
+           | Ast.ArrayLit init_style ->
+               (* Handle enhanced array initialization *)
+               (match init_style with
+                | ZeroArray -> sprintf "    /* %s defaults to zero-initialized */" field.Ast.field_name
+                | FillArray fill_lit ->
+                    let fill_value = match fill_lit with
+                      | Ast.IntLit (value, _) -> string_of_int value
+                      | Ast.BoolLit b -> if b then "1" else "0"
+                      | _ -> "0"
+                    in
+                    sprintf "    memset(init_config.%s, %s, sizeof(init_config.%s));" field.Ast.field_name fill_value field.Ast.field_name
+                | ExplicitArray elements ->
+                    let elements_str = List.mapi (fun i element ->
+                      match element with
+                      | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
+                      | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
+                    ) elements in
+                    String.concat "\n" elements_str)
            | _ -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* fallback *))
       | None -> sprintf "    init_config.%s = 0;" field.Ast.field_name (* default to 0 if no default specified *)
     in

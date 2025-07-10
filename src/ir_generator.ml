@@ -131,27 +131,44 @@ let lower_literal lit pos =
     | NullLit -> 
         let bounds = make_bounds_info ~nullable:true () in
         IRPointer (IRU32, bounds)  (* null literal as nullable pointer to u32 *)
-    | ArrayLit literals -> 
-        (* Implement proper array literal lowering *)
-        let element_count = List.length literals in
-        if element_count = 0 then
-          (* Empty array defaults to u32 *)
-          IRArray (IRU32, 0, make_bounds_info ())
-        else
-          (* Determine element type from first literal *)
-          let first_lit = List.hd literals in
-          let element_ir_type = match first_lit with
-            | IntLit _ -> IRU32
-            | BoolLit _ -> IRBool
-            | CharLit _ -> IRChar
-            | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-            | ArrayLit _ -> IRU32  (* Nested arrays default to u32 for now *)
-            | NullLit -> 
-                let bounds = make_bounds_info ~nullable:true () in
-                IRPointer (IRU32, bounds)  (* null in arrays as nullable pointer *)
-          in
-          let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
-          IRArray (element_ir_type, element_count, bounds_info)
+    | ArrayLit init_style -> 
+        (* Handle enhanced array literal lowering *)
+        (match init_style with
+         | ZeroArray ->
+             (* [] - zero initialize, size determined by context *)
+             IRArray (IRU32, 0, make_bounds_info ())
+         | FillArray fill_lit ->
+             (* [0] - fill entire array with single value, size from context *)
+             let element_ir_type = match fill_lit with
+               | IntLit _ -> IRU32
+               | BoolLit _ -> IRBool
+               | CharLit _ -> IRChar
+               | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+               | NullLit -> 
+                   let bounds = make_bounds_info ~nullable:true () in
+                   IRPointer (IRU32, bounds)
+               | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
+             in
+             IRArray (element_ir_type, 0, make_bounds_info ())  (* Size resolved during type unification *)
+         | ExplicitArray literals ->
+             (* [a,b,c] - explicit values, zero-fill rest *)
+             let element_count = List.length literals in
+             if element_count = 0 then
+               IRArray (IRU32, 0, make_bounds_info ())
+             else
+               let first_lit = List.hd literals in
+               let element_ir_type = match first_lit with
+                 | IntLit _ -> IRU32
+                 | BoolLit _ -> IRBool
+                 | CharLit _ -> IRChar
+                 | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+                 | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
+                 | NullLit -> 
+                     let bounds = make_bounds_info ~nullable:true () in
+                     IRPointer (IRU32, bounds)
+               in
+               let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
+               IRArray (element_ir_type, element_count, bounds_info))
   in
   make_ir_value ir_lit ir_type pos
 
@@ -937,24 +954,9 @@ and lower_statement ctx stmt =
       emit_instruction ctx instr
       
   | Ast.Declaration (name, typ_opt, expr_opt) ->
-      let value = match expr_opt with
-        | Some expr -> lower_expression ctx expr
-        | None -> 
-            (* Uninitialized variable - create default value *)
-            let default_type = match typ_opt with
-              | Some ast_type -> ast_type_to_ir_type ast_type
-              | None -> IRU32 (* Default to u32 *)
-            in
-            make_ir_value (IRLiteral (IntLit (0, None))) default_type (make_position 0 0 "")
-      in
       let reg = get_variable_register ctx name in
       let target_type = match typ_opt with
         | Some ast_type -> 
-                         (* Generate comment for variable name tracking *)
-             let debug_comment = make_ir_instruction 
-               (IRComment (Printf.sprintf "Declaration %s" name))
-               stmt.stmt_pos in
-             emit_instruction ctx debug_comment;
             (* Check if this is a type alias and track it *)
             (match ast_type with
              | UserType alias_name ->
@@ -967,10 +969,16 @@ and lower_statement ctx stmt =
                            Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
                            (* Create IRTypeAlias to preserve the alias name *)
                            IRTypeAlias (alias_name, underlying_ir_type)
-                                               | _ -> ast_type_to_ir_type ast_type)
+                       | _ -> ast_type_to_ir_type ast_type)
                    | None -> ast_type_to_ir_type ast_type)
               | _ -> ast_type_to_ir_type ast_type)
-        | None -> value.val_type
+        | None -> 
+            (* Infer type from expression if provided *)
+            (match expr_opt with
+             | Some expr -> 
+                 let value = lower_expression ctx expr in
+                 value.val_type
+             | None -> IRU32) (* Default to u32 *)
       in
       
       (* Add stack usage for local variables *)
@@ -987,17 +995,22 @@ and lower_statement ctx stmt =
       
       let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
       
-      (* If the target type is different from the value type, create a new value with the target type *)
-      let coerced_value = 
-        if target_type <> value.val_type then
-          make_ir_value value.value_desc target_type value.val_pos
-        else
-          value
+      (* Handle optional initialization expression *)
+      let init_expr_opt = match expr_opt with
+        | Some expr -> 
+            let value = lower_expression ctx expr in
+            let coerced_value = 
+              if target_type <> value.val_type then
+                make_ir_value value.value_desc target_type value.val_pos
+              else
+                value
+            in
+            Some (make_ir_expr (IRValue coerced_value) target_type stmt.stmt_pos)
+        | None -> None
       in
       
-      let value_expr = make_ir_expr (IRValue coerced_value) target_type stmt.stmt_pos in
       let instr = make_ir_instruction 
-        (IRAssign (target_val, value_expr)) 
+        (IRDeclareVariable (target_val, target_type, init_expr_opt)) 
         ~stack_usage:size
         stmt.stmt_pos in
       emit_instruction ctx instr
@@ -2433,15 +2446,25 @@ let lower_multi_program ast symbol_table source_name =
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
             | NullLit -> "null"
-            | ArrayLit literals -> 
-                "[" ^ (String.concat ", " (List.map (function
-                  | IntLit (i, _) -> string_of_int i
-                  | StringLit s -> "\"" ^ s ^ "\""
-                  | CharLit c -> "'" ^ String.make 1 c ^ "'"
-                  | BoolLit b -> string_of_bool b
-                  | NullLit -> "null"
-                  | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
-                ) literals)) ^ "]"
+            | ArrayLit init_style -> 
+                (match init_style with
+                 | ZeroArray -> "[]"
+                 | FillArray lit -> "[" ^ (match lit with
+                     | IntLit (i, _) -> string_of_int i
+                     | StringLit s -> "\"" ^ s ^ "\""
+                     | CharLit c -> "'" ^ String.make 1 c ^ "'"
+                     | BoolLit b -> string_of_bool b
+                     | NullLit -> "null"
+                     | ArrayLit _ -> "[]") ^ "]"
+                 | ExplicitArray literals ->
+                     "[" ^ (String.concat ", " (List.map (function
+                       | IntLit (i, _) -> string_of_int i
+                       | StringLit s -> "\"" ^ s ^ "\""
+                       | CharLit c -> "'" ^ String.make 1 c ^ "'"
+                       | BoolLit b -> string_of_bool b
+                       | NullLit -> "null"
+                       | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
+                     ) literals)) ^ "]")
           in
           let value_str = match value_lit with
             | IntLit (i, _) -> string_of_int i
@@ -2588,16 +2611,18 @@ let lower_multi_program ast symbol_table source_name =
     | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) pos
     | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar pos
     | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) pos
-    | Ast.ArrayLit elements ->
-        let ir_elements = List.map (function
-          | Ast.IntLit (i, orig) -> IntLit (i, orig)
-          | Ast.BoolLit b -> BoolLit b
-          | Ast.StringLit s -> StringLit s
-          | Ast.CharLit c -> CharLit c
-          | Ast.NullLit -> NullLit
-          | Ast.ArrayLit _ -> failwith "Nested arrays not supported in config defaults"
-        ) elements in
-        make_ir_value (IRLiteral (ArrayLit ir_elements)) (IRArray (IRU32, List.length elements, make_bounds_info ())) pos
+    | Ast.ArrayLit init_style ->
+        (* Handle enhanced array literal lowering *)
+        (match init_style with
+         | ZeroArray ->
+             (* [] - zero initialize, size determined by context *)
+             make_ir_value (IRLiteral (ArrayLit ZeroArray)) (IRArray (IRU32, 0, make_bounds_info ())) pos
+         | FillArray fill_lit ->
+             (* [0] - fill entire array with single value, size from context *)
+             make_ir_value (IRLiteral (ArrayLit (FillArray fill_lit))) (IRArray (IRU32, 0, make_bounds_info ())) pos
+         | ExplicitArray literals ->
+             (* [a,b,c] - explicit values, zero-fill rest *)
+             make_ir_value (IRLiteral (ArrayLit (ExplicitArray literals))) (IRArray (IRU32, List.length literals, make_bounds_info ())) pos)
   in
   
   (* Convert config declarations to IR *)

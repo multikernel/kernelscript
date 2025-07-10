@@ -248,6 +248,16 @@ let rec unify_types t1 t2 =
        | Some unified -> Some (Array (unified, s1))
        | None -> None)
   
+  (* Special case: size-0 arrays (from enhanced array initialization) can unify with any sized array *)
+  | Array (t1, 0), Array (t2, s2) ->
+      (match unify_types t1 t2 with
+       | Some unified -> Some (Array (unified, s2))
+       | None -> None)
+  | Array (t1, s1), Array (t2, 0) ->
+      (match unify_types t1 t2 with
+       | Some unified -> Some (Array (unified, s1))
+       | None -> None)
+  
   (* Pointer types - any pointer can be null *)
   | Pointer t1, Pointer t2 ->
       (match unify_types t1 t2 with
@@ -294,12 +304,38 @@ let can_assign to_type from_type =
   match unify_types to_type from_type with
   | Some _ -> true
   | None ->
-      (* Allow assignment if types can be promoted *)
-      (match integer_promotion to_type from_type with
-       | Some _ -> true
-       | None -> false)
+      (* Special case: explicit arrays can be assigned to larger arrays (with implicit zero-fill) *)
+      (match to_type, from_type with
+       | Array (t1, s1), Array (t2, s2) when s2 <= s1 && s2 > 0 ->
+           (match unify_types t1 t2 with
+            | Some _ -> true
+            | None -> false)
+       | _ ->
+           (* Allow assignment if types can be promoted *)
+           (match integer_promotion to_type from_type with
+            | Some _ -> true
+            | None -> false))
 
 
+
+(** Helper function to get the type of a literal *)
+let get_literal_type lit =
+  match lit with
+  | IntLit (value, _) -> if value < 0 then I32 else U32
+  | StringLit s -> Str (max 1 (String.length s))
+  | CharLit _ -> Char
+  | BoolLit _ -> Bool
+  | NullLit -> Pointer U32
+  | ArrayLit _ -> U32  (* Nested arrays default to u32 *)
+
+(** Helper function to check type equality for array literals *)
+let rec types_equal t1 t2 =
+  match t1, t2 with
+  | U32, U32 | I32, I32 | Bool, Bool | Char, Char -> true
+  | Str s1, Str s2 -> s1 = s2
+  | Pointer t1, Pointer t2 -> types_equal t1 t2
+  | Array (t1, s1), Array (t2, s2) -> types_equal t1 t2 && s1 = s2
+  | _ -> false
 
 (** Type check literals *)
 let type_check_literal lit pos =
@@ -316,29 +352,44 @@ let type_check_literal lit pos =
     | CharLit _ -> Char
     | BoolLit _ -> Bool
     | NullLit -> Pointer U32  (* null literal as nullable pointer, can be unified with any pointer type *)
-    | ArrayLit literals ->
-        (* Implement proper array literal type checking *)
-        (match literals with
-         | [] -> Array (U32, 0)  (* Empty array defaults to u32 *)
-         | first_lit :: rest_lits ->
-             let get_lit_type lit = match lit with
-               | IntLit (value, _) -> if value < 0 then I32 else U32
-               | BoolLit _ -> Bool
-               | CharLit _ -> Char
-               | StringLit s -> Str (max 1 (String.length s))
-               | ArrayLit _ -> U32  (* Nested arrays default to u32 for now *)
-               | NullLit -> Pointer U32  (* null in arrays as nullable pointer *)
-             in
-             let first_type = get_lit_type first_lit in
-             (* Verify all elements have the same type *)
-             let all_same_type = List.for_all (fun lit ->
-               let lit_type = get_lit_type lit in
-               lit_type = first_type
-             ) rest_lits in
-             if not all_same_type then
-               type_error "All elements in array literal must have the same type" pos
-             else
-               Array (first_type, List.length literals))
+    | ArrayLit init_style ->
+        (* Handle enhanced array literal type checking *)
+        (match init_style with
+         | ZeroArray -> Array (U32, 0)
+         | FillArray fill_lit ->
+             let fill_type = get_literal_type fill_lit in
+             Array (fill_type, 0)
+         | ExplicitArray literals ->
+             (match literals with
+              | [] -> Array (U32, 0)
+              | first_lit :: rest_lits ->
+                  let first_type = get_literal_type first_lit in
+                  (* Check that all literals have the same type *)
+                  List.iter (fun lit ->
+                    let lit_type = get_literal_type lit in
+                    if not (types_equal first_type lit_type) then
+                      type_error ("Array literal contains mixed types: expected " ^ 
+                                 (match first_type with
+                                  | U32 -> "integer"
+                                  | I32 -> "integer"
+                                  | Bool -> "boolean"
+                                  | Char -> "character"
+                                  | Str _ -> "string"
+                                  | Pointer _ -> "pointer"
+                                  | Array _ -> "array"
+                                  | _ -> "unknown") ^
+                                 " but found " ^
+                                 (match lit_type with
+                                  | U32 -> "integer"
+                                  | I32 -> "integer"
+                                  | Bool -> "boolean"
+                                  | Char -> "character"
+                                  | Str _ -> "string"
+                                  | Pointer _ -> "pointer"
+                                  | Array _ -> "array"
+                                  | _ -> "unknown")) pos
+                  ) rest_lits;
+                  Array (first_type, List.length literals)))
   in
   { texpr_desc = TLiteral lit; texpr_type = typ; texpr_pos = pos }
 
@@ -353,19 +404,25 @@ let type_of_literal lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
-  | ArrayLit literals ->
-      (match literals with
-       | [] -> Array (U32, 0)
-       | first_lit :: _ ->
-           let first_type = match first_lit with
-             | IntLit (value, _) -> if value < 0 then I32 else U32
-             | StringLit s -> Str (max 1 (String.length s))
-             | CharLit _ -> Char
-             | BoolLit _ -> Bool
-             | NullLit -> Pointer U32
-             | ArrayLit _ -> U32  (* Nested arrays default to u32 *)
-           in
-           Array (first_type, List.length literals))
+  | ArrayLit init_style ->
+      (* Handle enhanced array literal type checking *)
+      (match init_style with
+       | ZeroArray -> Array (U32, 0)
+       | FillArray fill_lit ->
+           let fill_type = get_literal_type fill_lit in
+           Array (fill_type, 0)
+       | ExplicitArray literals ->
+           (match literals with
+            | [] -> Array (U32, 0)
+            | first_lit :: rest_lits ->
+                let first_type = get_literal_type first_lit in
+                (* Check that all literals have the same type *)
+                List.iter (fun lit ->
+                  let lit_type = get_literal_type lit in
+                  if not (types_equal first_type lit_type) then
+                    failwith ("Array literal contains mixed types")
+                ) rest_lits;
+                Array (first_type, List.length literals)))
 
 (** Set multi-program context for an expression *)
 let set_multi_program_context ctx expr =

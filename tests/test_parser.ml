@@ -47,10 +47,10 @@ let make_call name args = {
 }
 
 let make_array elements = {
-  expr_desc = Literal (ArrayLit (List.map (function
+  expr_desc = Literal (ArrayLit (ExplicitArray (List.map (function
     | {expr_desc = Literal lit; _} -> lit
     | _ -> IntLit (0, None) (* fallback *)
-  ) elements));
+  ) elements)));
   expr_type = None;
   expr_pos = dummy_loc;
   type_checked = false;

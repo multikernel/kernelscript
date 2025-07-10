@@ -148,7 +148,7 @@ struct ArrayElement {
     } else {
         var new_data = PerCpuData {
             local_counter: 1,
-            temp_storage: [0; 64],
+            temp_storage: [0],
         }
         percpu_data[cpu_id] = new_data
     }
@@ -201,7 +201,7 @@ struct ArrayElement {
     var event = Event {
         timestamp: bpf_ktime_get_ns(),
         event_type: ctx->entry_type,
-        data: [0; 32],  // Simplified data
+        data: [0],  // Simplified data
     }
     
     // Ring buffer output - single writer recommended

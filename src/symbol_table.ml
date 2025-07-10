@@ -306,7 +306,12 @@ let add_global_var_decl table global_var_decl =
               | Literal (BoolLit _) -> Bool
               | Literal (CharLit _) -> Char
               | Literal (NullLit) -> Pointer U8  (* Default pointer type *)
-              | Literal (ArrayLit elems) -> Array (U32, List.length elems)  (* Infer array size from elements *)
+              | Literal (ArrayLit init_style) -> 
+                  (* Infer array size from enhanced array initialization *)
+                  (match init_style with
+                   | ZeroArray -> Array (U32, 0)  (* Size must be inferred from context *)
+                   | FillArray _ -> Array (U32, 0)  (* Size must be inferred from context *)
+                   | ExplicitArray elems -> Array (U32, List.length elems)  (* Size from explicit elements *))
               | UnaryOp (Neg, _) -> I32  (* Negative expressions default to signed *)
               | _ -> U32)  (* Default to U32 for other expressions *)
          | None -> U32)  (* Default type when no type or value specified *)

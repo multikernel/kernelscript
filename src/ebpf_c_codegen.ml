@@ -314,6 +314,13 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
   | IRConstAssign (dest_val, expr) -> 
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
+  | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
+      let dest_sizes = collect_string_sizes_from_value dest_val in
+      let init_sizes = match init_expr_opt with
+        | Some init_expr -> collect_string_sizes_from_expr init_expr
+        | None -> []
+      in
+      dest_sizes @ init_sizes
   | IRCall (_, args, ret_opt) ->
       let args_sizes = List.fold_left (fun acc arg -> 
         acc @ (collect_string_sizes_from_value arg)) [] args in
@@ -508,6 +515,11 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
+    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
+        collect_from_value dest_val;
+        (match init_expr_opt with
+         | Some init_expr -> collect_from_expr init_expr
+         | None -> ())
     | IRCall (_, args, ret_opt) ->
         List.iter collect_from_value args;
         (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
@@ -650,6 +662,11 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
+    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
+        collect_from_value dest_val;
+        (match init_expr_opt with
+         | Some init_expr -> collect_from_expr init_expr
+         | None -> ())
     | IRCall (_, args, ret_opt) ->
         List.iter collect_from_value args;
         (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
@@ -660,10 +677,10 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     | IRMapDelete (map_val, key_val) ->
         collect_from_value map_val; collect_from_value key_val
     | IRReturn (Some ret_val) -> collect_from_value ret_val
-          | IRIf (cond_val, then_instrs, else_instrs_opt) ->
-          collect_from_value cond_val;
-          List.iter collect_from_instr then_instrs;
-          (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
+    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+        collect_from_value cond_val;
+        List.iter collect_from_instr then_instrs;
+        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
     | IRIfElseChain (conditions_and_bodies, final_else) ->
         List.iter (fun (cond_val, then_instrs) ->
           collect_from_value cond_val;
@@ -1231,7 +1248,34 @@ let generate_c_value ctx ir_val =
            emit_line ctx "};";
            temp_var
        | _ -> sprintf "\"%s\"" s) (* Fallback for non-string types *)
-  | IRLiteral (ArrayLit _) -> "/* Array literal not supported */"
+  | IRLiteral (ArrayLit init_style) ->
+      (* Generate C array initialization syntax *)
+      (match init_style with
+       | ZeroArray -> "{0}"  (* Empty array initialization *)
+       | FillArray fill_lit ->
+           let fill_str = match fill_lit with
+             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.BoolLit b -> if b then "1" else "0"
+             | Ast.CharLit c -> sprintf "'%c'" c
+             | Ast.StringLit s -> sprintf "\"%s\"" s
+             | Ast.NullLit -> "NULL"
+             | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
+           in
+           "{" ^ fill_str ^ "}"
+       | ExplicitArray elements ->
+           let element_strings = List.map (fun elem ->
+             match elem with
+             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.BoolLit b -> if b then "1" else "0"
+             | Ast.CharLit c -> sprintf "'%c'" c
+             | Ast.StringLit s -> sprintf "\"%s\"" s
+             | Ast.NullLit -> "NULL"
+             | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
+           ) elements in
+           if List.length elements = 0 then
+             "{0}"  (* Empty array initialization *)
+           else
+             "{" ^ String.concat ", " element_strings ^ "}")
   | IRVariable name -> 
       (* Check if this is a pinned global variable *)
       if List.mem name ctx.pinned_globals then
@@ -1840,6 +1884,36 @@ let rec generate_c_instruction ctx ir_instr =
   | IRConstAssign (dest_val, expr) ->
       (* Const assignment with const keyword *)
       generate_assignment ctx dest_val expr true
+      
+  | IRDeclareVariable (dest_val, typ, init_expr_opt) ->
+      (* Variable declaration with optional initialization *)
+      let var_name = get_meaningful_var_name ctx 
+        (match dest_val.value_desc with 
+         | IRRegister reg -> reg 
+         | _ -> failwith "IRDeclareVariable target must be a register") 
+        dest_val.val_type in
+      let type_str = ebpf_type_from_ir_type typ in
+      
+      (* Special handling for array types in variable declarations *)
+      (match typ with
+       | IRArray (element_type, size, _) ->
+           (* Array declaration with proper C syntax *)
+           let element_type_str = ebpf_type_from_ir_type element_type in
+           let array_decl = sprintf "%s %s[%d]" element_type_str var_name size in
+           (match init_expr_opt with
+            | Some init_expr ->
+                let init_str = generate_c_expression ctx init_expr in
+                emit_line ctx (sprintf "%s = %s;" array_decl init_str)
+            | None ->
+                emit_line ctx (sprintf "%s;" array_decl))
+       | _ ->
+           (* Regular variable declaration *)
+           (match init_expr_opt with
+            | Some init_expr ->
+                let init_str = generate_c_expression ctx init_expr in
+                emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+            | None ->
+                emit_line ctx (sprintf "%s %s;" type_str var_name)))
       
   | IRCall (target, args, ret_opt) ->
       (* Handle different call targets *)
@@ -2454,6 +2528,11 @@ let collect_registers_in_function ir_func =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
     | IRConstAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
+    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
+        collect_in_value dest_val;
+        (match init_expr_opt with
+         | Some init_expr -> collect_in_expr init_expr
+         | None -> ())
     | IRCall (_, args, ret_opt) -> 
         List.iter collect_in_value args;
         Option.iter collect_in_value ret_opt
@@ -2574,14 +2653,27 @@ let generate_c_function ctx ir_func =
   (* Collect all registers used (parameters use IRVariable, not registers) *)
   let all_registers = collect_registers_in_function ir_func in
   
+  (* Collect registers that are handled by IRDeclareVariable instructions *)
+  let declared_registers = ref [] in
+  List.iter (fun block ->
+    List.iter (fun instr ->
+      match instr.instr_desc with
+      | IRDeclareVariable (dest_val, _, _) ->
+          (match dest_val.value_desc with
+           | IRRegister reg -> declared_registers := reg :: !declared_registers
+           | _ -> ())
+      | _ -> ()
+    ) block.instructions
+  ) ir_func.basic_blocks;
+  
   (* Declare temporary variables for all registers *)
   let register_variable_map = collect_register_variable_mapping ir_func in
   
-  (* Group registers by type to reduce declarations *)
+  (* Group registers by type to reduce declarations, but skip those handled by IRDeclareVariable *)
   let register_groups = Hashtbl.create 16 in
   List.iter (fun (reg, reg_type) ->
-    (* Skip declaration if register can be inlined *)
-    if not (can_inline_register ctx reg) then (
+    (* Skip declaration if register can be inlined or is handled by IRDeclareVariable *)
+    if not (can_inline_register ctx reg) && not (List.mem reg !declared_registers) then (
       let c_type = match reg_type with
         | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
         | _ ->
@@ -2608,6 +2700,7 @@ let generate_c_function ctx ir_func =
   Hashtbl.iter (fun c_type var_names ->
     let sorted_vars = List.sort String.compare var_names in
     List.iter (fun var_name ->
+      (* Simple variable declaration - IRDeclareVariable handles initialization *)
       emit_line ctx (sprintf "%s %s;" c_type var_name)
     ) sorted_vars
   ) register_groups;

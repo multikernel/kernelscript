@@ -112,6 +112,7 @@
 %type <Ast.match_arm> match_arm
 %type <Ast.match_pattern> match_pattern
 %type <Ast.literal> literal
+%type <Ast.array_init_style> array_init_expr
 %type <Ast.expr * Ast.expr> range_expression
 %type <Ast.expr list> argument_list
 %type <Ast.literal list> literal_list
@@ -430,10 +431,14 @@ literal:
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
   | NULL { NullLit }
-  | LBRACKET literal_list RBRACKET { ArrayLit $2 }
+  | LBRACKET array_init_expr RBRACKET { ArrayLit $2 }
+
+array_init_expr:
+  | /* empty */ { ZeroArray }                           (* [] - zero initialize *)
+  | literal { FillArray $1 }                           (* [0] - fill with value *)
+  | literal COMMA literal_list { ExplicitArray ($1 :: $3) }  (* [a,b,c] - explicit values *)
 
 literal_list:
-  | /* empty */ { [] }
   | literal { [$1] }
   | literal COMMA literal_list { $1 :: $3 }
 

@@ -180,6 +180,11 @@
  (libraries kernelscript alcotest str))
 
 (executable
+ (name test_array_init)
+ (modules test_array_init)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_config_validation)
  (modules test_config_validation)
  (libraries kernelscript alcotest str))
@@ -602,6 +607,7 @@
   test_config.exe
   test_config_struct_generation.exe
   test_array_literals.exe
+  test_array_init.exe
   test_config_validation.exe
   test_stdlib.exe
   test_struct_field_access.exe
@@ -641,6 +647,7 @@
    (run ./test_config.exe)
    (run ./test_config_struct_generation.exe)
    (run ./test_array_literals.exe)
+   (run ./test_array_init.exe)
    (run ./test_config_validation.exe)
    (run ./test_stdlib.exe)
    (run ./test_struct_field_access.exe)

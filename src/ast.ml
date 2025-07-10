@@ -92,8 +92,14 @@ type literal =
   | StringLit of string 
   | CharLit of char 
   | BoolLit of bool
-  | ArrayLit of literal list
+  | ArrayLit of array_init_style   (* Enhanced array initialization *)
   | NullLit
+
+(** Array initialization styles *)
+and array_init_style =
+  | FillArray of literal        (* [0] - fill entire array with single value *)
+  | ExplicitArray of literal list (* [a,b,c] - explicit values, zero-fill rest *)
+  | ZeroArray                   (* [] - zero initialize entire array *)
 
 (** Binary operators *)
 type binary_op =
@@ -519,8 +525,10 @@ let rec string_of_literal = function
   | StringLit s -> Printf.sprintf "\"%s\"" s
   | CharLit c -> Printf.sprintf "'%c'" c
   | BoolLit b -> string_of_bool b
-  | ArrayLit literals -> 
+  | ArrayLit (FillArray lit) -> Printf.sprintf "[%s]" (string_of_literal lit)
+  | ArrayLit (ExplicitArray literals) ->
       Printf.sprintf "[%s]" (String.concat ", " (List.map string_of_literal literals))
+  | ArrayLit (ZeroArray) -> "[]"
   | NullLit -> "null"
 
 let string_of_binary_op = function
