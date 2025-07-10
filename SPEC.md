@@ -17,8 +17,8 @@ Instead of complex templates, KernelScript uses **simple type aliases** and **fi
 // Simple type aliases for common patterns
 type IpAddress = u32
 type Port = u16
-type PacketBuffer = [u8][1500]
-type SmallBuffer = [u8][256]
+type PacketBuffer = u8[1500]
+type SmallBuffer = u8[256]
 
 // Fixed-size arrays (no complex bounds)
 u8[64]                 // 64-byte buffer
@@ -1351,11 +1351,11 @@ fn main() -> i32 {
 The `register()` function is type-aware and generates the appropriate registration code:
 
 ```kernelscript
-fn register<T>(ops: T) -> Result<Link, Error>
+fn register(ops) -> i32
 ```
 
 - For `@struct_ops` impl blocks: Generates libbpf registration using `bpf_map__attach_struct_ops()`
-- Returns a `Link` handle for later unregistration
+- Returns 0 on success, negative error code on failure
 - The compiler determines the registration method based on the impl block attribute
 - Impl blocks provide a cleaner syntax compared to struct initialization
 
@@ -3035,48 +3035,46 @@ struct SystemCoordinator {
     security_filter: BpfProgram,
     
     // Global map access (shared across all programs)
-    global_flows: &'static GlobalMap<FlowKey, FlowStats>,
-    global_events: &'static GlobalRingBuffer<Event>,
-    global_config: &'static GlobalMap<ConfigKey, ConfigValue>,
+    global_flows: *FlowStatsMap,
+    global_events: *EventRingBuffer,
+    global_config: *ConfigMap,
 }
 
-impl SystemCoordinator {
-    fn new() -> Result<Self, Error> {
-        Ok(Self {
+fn new_system_coordinator() -> *SystemCoordinator {
+        return SystemCoordinator {
             network_monitor: load(network_monitor),
-        security_filter: load(security_filter),
+            security_filter: load(security_filter),
             
             // Global maps are automatically accessible
             global_flows: GlobalMaps::flows(),
             global_events: GlobalMaps::events(),
             global_config: GlobalMaps::config(),
-        })
-    }
-    
-    fn start(&self) -> Result<(), Error> {
-        // Coordinate multiple programs
-        attach(network_monitor, "eth0", 0)?
-    attach(security_filter, "socket_connect", 0)?
-        Ok(())
-    }
-    
-    fn process_events(&self) {
-        // Process events from all programs
-        var event = self.global_events.read()
-        if (event != null) {
-            if (event.event_type == EVENT_PACKET_PROCESSED) {
-                print("Processed packet for flow: ", event.flow_key)
-            } else if (event.event_type == EVENT_THREAT_DETECTED) {
-                print("THREAT DETECTED: ", event.flow_key)
-                self.handle_threat(event.flow_key)
-            }
+        }
+}
+
+fn start_coordinator() -> i32 {
+    // Coordinate multiple programs
+    var result1 = attach(network_monitor, "eth0", 0)
+    var result2 = attach(security_filter, "socket_connect", 0)
+    return if (result1 == 0 && result2 == 0) { 0 } else { -1 }
+}
+
+fn process_events(coordinator: *SystemCoordinator) {
+    // Process events from all programs
+    var event = coordinator->global_events.read()
+    if (event != null) {
+        if (event.event_type == EVENT_PACKET_PROCESSED) {
+            print("Processed packet for flow: ", event.flow_key)
+        } else if (event.event_type == EVENT_THREAT_DETECTED) {
+            print("THREAT DETECTED: ", event.flow_key)
+            handle_threat(coordinator, event.flow_key)
         }
     }
-    
-    fn handle_threat(&self, flow_key: FlowKey) {
-        // Coordinated response across all programs
-        self.global_config[CONFIG_KEY_THREAT_LEVEL] = CONFIG_VALUE_HIGH
-    }
+}
+
+fn handle_threat(coordinator: *SystemCoordinator, flow_key: FlowKey) {
+    // Coordinated response across all programs
+    coordinator->global_config[CONFIG_KEY_THREAT_LEVEL] = CONFIG_VALUE_HIGH
 }
 
 struct Args {
@@ -3088,15 +3086,15 @@ fn main(args: Args) -> i32 {
     // Command line arguments automatically parsed
     // Usage: program --interface-id=0 --monitoring-enabled=1
     
-    var coordinator = SystemCoordinator::new().unwrap()
-    coordinator.start_on_interface_by_id(args.interface_id).unwrap()
+    var coordinator = new_system_coordinator()
+    start_coordinator()
     
     if (args.monitoring_enabled == 1) {
         print("Multi-program eBPF system started on interface: ", args.interface_id)
     }
     
-    loop {
-        coordinator.process_events()
+    while (true) {
+        process_events(coordinator)
         sleep(100)
     }
     
@@ -3153,7 +3151,7 @@ fn main(args: Args) -> i32 {
     }
     
     // Coordinate both programs
-    handle_system_events(args.verbose_mode = = 1)
+    handle_system_events(args.verbose_mode == 1)
     
     return 0
 }
@@ -3196,7 +3194,7 @@ fn safe_packet_processing(ctx: *xdp_md) -> xdp_action {
 }
 
 // Userspace Context - Traditional pointer safety
-fn safe_userspace_access(data: *u8, len: usize) -> Result<u8, Error> {
+fn safe_userspace_access(data: *u8, len: u32) -> u8 {
     // Explicit null and bounds checking
     if (data == null || len == 0) {
         throw INVALID_POINTER_ERROR
@@ -3343,15 +3341,15 @@ fn null_safety_demonstration(maybe_ptr: *PacketData) -> u32 {
 
 // Optional pointer types for clarity
 @helper
-fn optional_pointer_example() -> ProcessResult {
+fn optional_pointer_example() -> i32 {
     var data_ptr: *u8 = try_get_data()  // May return null
     
     // Compiler enforces null checking
     if (data_ptr != null) {
         var result = process_data(data_ptr)
-        return ProcessResult::success(result)
+        return 0
     } else {
-        return ProcessResult::no_data()
+        return -1
     }
 }
 ```
@@ -3450,16 +3448,16 @@ kernelscript attach perf_monitor --function=sys_read
 ```kernelscript
 // Network utilities
 mod net {
-    pub fn parse_ethernet(data: &[u8]) -> Result<EthernetHeader, ParseError>
-    pub fn parse_ipv4(data: &[u8]) -> Result<Ipv4Header, ParseError>
-    pub fn parse_tcp(data: &[u8]) -> Result<TcpHeader, ParseError>
-    pub fn calculate_checksum(data: &[u8]) -> u16
+    pub fn parse_ethernet(data: *u8, len: u32) -> *EthernetHeader
+    pub fn parse_ipv4(data: *u8, len: u32) -> *Ipv4Header
+    pub fn parse_tcp(data: *u8, len: u32) -> *TcpHeader
+    pub fn calculate_checksum(data: *u8, len: u32) -> u16
 }
 
 // String utilities (limited for eBPF)
 mod str {
-    pub fn compare(a: &[u8], b: &[u8]) -> i32
-    pub fn find_byte(haystack: &[u8], needle: u8) -> i32  // Returns index or -1 if not found
+    pub fn compare(a: *u8, a_len: u32, b: *u8, b_len: u32) -> i32
+    pub fn find_byte(haystack: *u8, len: u32, needle: u8) -> i32  // Returns index or -1 if not found
 }
 
 // Math utilities
@@ -3483,24 +3481,7 @@ mod program {
     pub fn attach(handle: ProgramHandle, target: string, flags: u32) -> u32
     
     // Register struct_ops impl blocks
-    pub fn register<T>(ops: T) -> Result<Link, Error>
-}
-```
-
-### 12.2 Context Helpers
-```kernelscript
-// XDP context helpers
-impl xdp_md {
-    pub fn packet(&self) -> Result<Packet, ContextError>
-    pub fn adjust_head(&self, delta: i32) -> Result<(), ContextError>
-    pub fn adjust_tail(&self, delta: i32) -> Result<(), ContextError>
-}
-
-// Kprobe context helpers
-impl KprobeContext {
-    pub fn arg<T>(&self, index: usize) -> T
-    pub fn return_value<T>(&self) -> T
-    pub fn function_name(&self) -> &str
+    pub fn register(ops) -> i32
 }
 ```
 
@@ -4084,13 +4065,12 @@ type_annotation = primitive_type | compound_type | identifier
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
                  "bool" | "char" | "void" | "ProgramRef" | string_type 
 
-compound_type = array_type | pointer_type | result_type | function_type 
+compound_type = array_type | pointer_type | function_type 
 
 string_type = "str" "<" integer_literal ">" 
 
 array_type = "[" type_annotation "" integer_literal "]" 
 pointer_type = "*" type_annotation 
-result_type = "Result_" type_annotation "_" type_annotation 
 function_type = "fn" "(" [ type_annotation { "," type_annotation } ] ")" [ "->" type_annotation ] 
 
 (* Literals *)
