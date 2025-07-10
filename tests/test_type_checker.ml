@@ -155,7 +155,7 @@ let test_struct_field_access () =
     let _ = type_check_and_annotate_ast_with_builtins ast in
     check bool "struct field access" true true
   with
-  | _ -> check bool "struct field access" false true  (* Expected to fail for now *)
+  | _ -> fail "Error occurred"
 
 (** Test statement type checking *)
 let test_statement_type_checking () =

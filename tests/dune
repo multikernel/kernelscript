@@ -197,12 +197,12 @@
 (executable
  (name test_struct_field_access)
  (modules test_struct_field_access)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils str))
 
 (executable
  (name test_struct_initialization)
  (modules test_struct_initialization)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest str test_utils))
 
 (executable
  (name test_program_ref)

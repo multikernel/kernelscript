@@ -15,6 +15,15 @@ let parse_string s =
   let lexbuf = Lexing.from_string s in
   Kernelscript.Parser.program Kernelscript.Lexer.token lexbuf
 
+(** Helper function to create symbol table with builtin types *)
+let build_symbol_table_with_builtins ast =
+  Test_utils.Helpers.create_test_symbol_table ast
+
+(** Helper function to type check with builtin types *)
+let type_check_and_annotate_ast_with_builtins ast =
+  let symbol_table = build_symbol_table_with_builtins ast in
+  Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast
+
 (** Test 1: Top-level struct with eBPF function parameter field access *)
 let test_toplevel_struct_ebpf_parameter () =
   let program_text = {|
@@ -303,8 +312,8 @@ fn main() -> i32 {
 |} in
   try
     let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+    let symbol_table = build_symbol_table_with_builtins ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
     let _ir = generate_ir annotated_ast symbol_table "test" in
     check bool "main calling helper with struct" true true
   with

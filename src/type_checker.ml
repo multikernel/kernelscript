@@ -118,7 +118,7 @@ let create_context symbol_table ast =
   let maps = Hashtbl.create 16 in
   let configs = Hashtbl.create 16 in
   
-  (* Extract enum constants and impl blocks from symbol table and add to variables *)
+  (* Extract enum constants, impl blocks, and type definitions from symbol table *)
   let global_symbols = Symbol_table.get_global_symbols symbol_table in
   List.iter (fun symbol ->
     match symbol.Symbol_table.kind with
@@ -126,15 +126,22 @@ let create_context symbol_table ast =
         (* Add enum constant as a U32 variable (standard for enum values) *)
         let enum_type = Enum enum_name in
         Hashtbl.replace variables symbol.Symbol_table.name enum_type
-    | Symbol_table.TypeDef (StructDef (name, _, true)) ->
+    | Symbol_table.TypeDef type_def ->
+        (* Add type definition to types hashtable *)
+        (match type_def with
+         | StructDef (name, _, _) | EnumDef (name, _, _) | TypeAlias (name, _) ->
+             Hashtbl.replace types name type_def);
         (* Check if this is an impl block by looking in the AST context *)
-        let is_impl_block = List.exists (function
-          | ImplBlock impl_block when impl_block.impl_name = name -> true
-          | _ -> false
-        ) ast in
-        if is_impl_block then
-          (* Add impl block as a struct_ops variable *)
-          Hashtbl.replace variables name (Struct name)
+        (match type_def with
+         | StructDef (name, _, true) ->
+             let is_impl_block = List.exists (function
+               | ImplBlock impl_block when impl_block.impl_name = name -> true
+               | _ -> false
+             ) ast in
+             if is_impl_block then
+               (* Add impl block as a struct_ops variable *)
+               Hashtbl.replace variables name (Struct name)
+         | _ -> ())
     | _ -> ()
   ) global_symbols;
   
@@ -747,41 +754,34 @@ and type_check_field_access ctx obj field pos =
 and type_check_arrow_access ctx obj field pos =
   let typed_obj = type_check_expression ctx obj in
   
-  match typed_obj.texpr_type with
-  | Pointer (Struct "__sk_buff") ->
-      (* __sk_buff context field access through pointer *)
-      (match field with
-       | "data" | "data_end" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
-       | "len" | "ifindex" | "protocol" | "mark" | "priority" | "ingress_ifindex" | "tc_index" | "hash" | "tc_classid" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
-       | "pkt_type" | "queue_mapping" | "vlan_present" | "vlan_tci" | "vlan_proto" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
-       | "cb" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Array (U32, 5); texpr_pos = pos }
-       | _ -> type_error ("Unknown __sk_buff context field: " ^ field) pos)
+  (* Extract struct name from pointer type uniformly *)
+  let struct_name = match typed_obj.texpr_type with
+    | Pointer (Struct name) | Pointer (UserType name) -> name
+    (* Map context types to their corresponding struct names *)
+    | Pointer Xdp_md -> "xdp_md"
+    | Pointer KprobeContext -> "pt_regs"
+    | Pointer UprobeContext -> "pt_regs"
+    | Pointer TracepointContext -> "trace_entry"
+    | Pointer LsmContext -> "task_struct"
+    | Pointer CgroupSkbContext -> "__sk_buff"
+    | _ -> 
+        type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
+  in
   
-  | Pointer (Xdp_md | KprobeContext | UprobeContext | TracepointContext | LsmContext | CgroupSkbContext) ->
-      (* Built-in context field access through pointer *)
-      (match field with
-       | "data" | "data_end" | "data_meta" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = Pointer U8; texpr_pos = pos }
-       | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" -> { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = U32; texpr_pos = pos }
-       | _ -> type_error ("Unknown context field: " ^ field) pos)
-  
-  | Pointer (Struct struct_name) | Pointer (UserType struct_name) ->
-      (* Look up struct definition and field type *)
-      (try
-         let type_def = Hashtbl.find ctx.types struct_name in
-         match type_def with
-         | StructDef (_, fields, _) ->
-             (try
-                let field_type = List.assoc field fields in
-                { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
-              with Not_found ->
-                type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) pos)
-         | _ ->
-             type_error (struct_name ^ " is not a struct") pos
-       with Not_found ->
-         type_error ("Undefined struct: " ^ struct_name) pos)
-  
-  | _ ->
-      type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
+  (* Use unified struct field lookup for all struct types *)
+  (try
+     let type_def = Hashtbl.find ctx.types struct_name in
+     match type_def with
+     | StructDef (_, fields, _) ->
+         (try
+            let field_type = List.assoc field fields in
+            { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
+          with Not_found ->
+            type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) pos)
+     | _ ->
+         type_error (struct_name ^ " is not a struct") pos
+   with Not_found ->
+     type_error ("Undefined struct: " ^ struct_name) pos)
 
 (** Type check binary operation *)
 and type_check_binary_op ctx left op right pos =

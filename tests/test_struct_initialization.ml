@@ -1,6 +1,5 @@
 open Alcotest
 open Kernelscript.Ast
-open Kernelscript.Symbol_table
 open Kernelscript.Type_checker
 open Kernelscript.Ir_generator
 open Kernelscript.Ebpf_c_codegen
@@ -23,8 +22,8 @@ let contains_substr str substr =
 (** Helper to generate IR and C code from program text *)
 let generate_c_from_program program_text program_name =
   let ast = parse_string program_text in
-  let symbol_table = build_symbol_table ast in
-  let (annotated_ast, _) = type_check_and_annotate_ast ast in
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  let (annotated_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
   let ir_multi_prog = generate_ir annotated_ast symbol_table program_name in
   
   (* Initialize context codegens *)
@@ -270,8 +269,8 @@ fn main() -> i32 {
 |} in
   try
     let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _) = type_check_and_annotate_ast ast in
+    let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+    let (annotated_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
     let ir_multi_prog = generate_ir annotated_ast symbol_table "test_ir" in
     
     (* Extract the main function from IR *)
