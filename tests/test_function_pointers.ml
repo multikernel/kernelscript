@@ -46,7 +46,7 @@ struct tcp_congestion_ops {
 let test_standalone_function_pointer_parsing () =
   let input = {|
 var ssthresh: fn(arg: *u8) -> u32
-var complex_func: fn(a: u32, b: *u8, c: str<32>) -> i32
+var complex_func: fn(a: u32, b: *u8, c: str(32)) -> i32
 |} in
   let ast = parse_string input in
   

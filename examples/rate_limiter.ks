@@ -49,7 +49,7 @@ config network {
 }
 
 struct Args {
-  interface : str<20>,
+  interface : str(20),
   limit : u32
 }
 

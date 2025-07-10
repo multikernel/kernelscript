@@ -45,7 +45,7 @@ let test_const_assignment_error () =
 let test_const_integer_types_only () =
   let program_text = {|
     @xdp fn test_program(ctx: *xdp_md) -> xdp_action {
-      const name: str<16> = "test"
+      const name: str(16) = "test"
       return 2
     }
   |} in

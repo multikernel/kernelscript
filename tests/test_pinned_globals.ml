@@ -15,7 +15,7 @@ let test_parse_pinned_globals () =
   let program_text = {|
 pin var session_count: u64 = 0
 pin var debug_enabled: bool = false
-var temp_buffer: str<256> = "temporary"
+var temp_buffer: str(256) = "temporary"
 local var internal_counter: u32 = 42
 
 @xdp

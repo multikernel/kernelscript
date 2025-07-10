@@ -127,7 +127,7 @@ fn get_dst_ip(ctx: *xdp_md) -> u32 {
 @helper fn get_ip_protocol_tc(ctx: *__sk_buff) -> u32 { return 6 }
 @helper fn get_tcp_dest_port_tc(ctx: *__sk_buff) -> u32 { return 80 }
 @helper fn get_udp_dest_port_tc(ctx: *__sk_buff) -> u32 { return 53 }
-@helper fn set_qos_mark(ctx: *__sk_buff, class: str<16>) -> void { }
+@helper fn set_qos_mark(ctx: *__sk_buff, class: str(16)) -> void { }
 
 // Main packet processing functions using match constructs
 

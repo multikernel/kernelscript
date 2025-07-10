@@ -45,7 +45,7 @@ map<u32, u64> packet_stats : HashMap(1024)
 // Userspace coordination (no wrapper)
 struct Args {
     enable_debug: u32,
-    interface: str<16>
+    interface: str(16)
 }
 
 fn main(args: Args) -> i32 {

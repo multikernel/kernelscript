@@ -203,7 +203,7 @@ bpf_type:
   | BOOL { Bool }
   | CHAR { Char }
   | VOID { Void }
-  | STR LT INT GT { Str (fst $3) }
+  | STR LPAREN INT RPAREN { Str (fst $3) }
   | IDENTIFIER { UserType $1 }
   | array_type { $1 }
   | function_type { $1 }

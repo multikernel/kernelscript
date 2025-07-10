@@ -195,7 +195,7 @@ let test_argument_parsing_assignment_bug_fix () =
 
 struct Args {
     enable_debug: u32,
-    interface: str<16>
+    interface: str(16)
 }
 
 fn main(args: Args) -> i32 {

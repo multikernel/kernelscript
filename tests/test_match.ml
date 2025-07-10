@@ -182,7 +182,7 @@ let test_nested_match () =
 (** Test match with string patterns *)
 let test_match_string_patterns () =
   let input = {|
-    fn test_strings(name: str<10>) -> u32 {
+    fn test_strings(name: str(10)) -> u32 {
       return match (name) {
         "tcp": 1,
         "udp": 2,

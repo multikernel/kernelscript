@@ -24,7 +24,7 @@ let contains_substr str substr =
 let test_hello_world_truncation_bug () =
   let ctx = create_c_context () in
   
-  (* Test the exact case that was failing: "Hello world" in str<11> *)
+  (* Test the exact case that was failing: "Hello world" in str(11) *)
   let hello_world_val = make_ir_value (IRLiteral (StringLit "Hello world")) (IRStr 11) test_pos in
   let _ = generate_c_value ctx hello_world_val in
   let output = String.concat "\n" (List.rev ctx.output_lines) in

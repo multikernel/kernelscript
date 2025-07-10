@@ -75,7 +75,7 @@ fn analyzer(ctx: *__sk_buff) -> int {
 }
 
 // User space (regular functions)
-struct Args { interface: str<16> }
+struct Args { interface: str(16) }
 fn main(args: Args) -> i32 {
     // Cannot call update_counters() here - it's kernel-only
     
@@ -202,22 +202,22 @@ Global variables support three forms of declaration, with optional `pin` keyword
 ```kernelscript
 // Form 1: Full declaration with type and initial value
 var global_counter: u32 = 0
-var global_string: str<256> = "default_value"
+var global_string: str(256) = "default_value"
 var global_flag: bool = true
 
 // Form 2: Type-only declaration (uninitialized)
 var uninitialized_counter: u32
-var uninitialized_buffer: str<128>
+var uninitialized_buffer: str(128)
 
 // Form 3: Value-only declaration (type inferred)
 var inferred_int = 42           // Type: u32 (default for integer literals)
-var inferred_string = "hello"   // Type: str<6> (inferred from string length)
+var inferred_string = "hello"   // Type: str(6) (inferred from string length)
 var inferred_bool = false       // Type: bool
 var inferred_char = 'a'         // Type: char
 
 // Pinned global variables - persisted to filesystem
 pin var persistent_counter: u64 = 0
-pin var persistent_config: str<64> = "default_config"
+pin var persistent_config: str(64) = "default_config"
 pin var persistent_flag: bool = false
 pin var persistent_buffer: [u8; 256] = [0; 256]
 ```
@@ -229,7 +229,7 @@ When no explicit type is provided, KernelScript infers the type based on the ini
 | Literal Type | Inferred Type | Example |
 |-------------|---------------|---------|
 | `IntLit` | `u32` | `var x = 42` → `u32` |
-| `StringLit` | `str<N>` | `var s = "hello"` → `str<6>` |
+| `StringLit` | `str(N)` | `var s = "hello"` → `str(6)` |
 | `BoolLit` | `bool` | `var b = true` → `bool` |
 | `CharLit` | `char` | `var c = 'a'` → `char` |
 | `NullLit` | `*u8` | `var p = null` → `*u8` |
@@ -263,7 +263,7 @@ fn packet_monitor(ctx: *xdp_md) -> xdp_action {
 
 // Userspace program using global variables
 struct Args {
-    interface: str<16>,
+    interface: str(16),
     debug: bool,
 }
 
@@ -292,11 +292,11 @@ KernelScript provides explicit control over global variable visibility between k
 // Shared variables (default) - accessible from both kernel and userspace
 var packet_count: u64 = 0
 var enable_logging: bool = true
-var shared_buffer: str<256> = "default"
+var shared_buffer: str(256) = "default"
 
 // Pinned shared variables - persisted to filesystem and shared
 pin var persistent_packet_count: u64 = 0
-pin var persistent_config: str<128> = "default_config"
+pin var persistent_config: str(128) = "default_config"
 pin var persistent_state: bool = false
 
 // Local variables - kernel-only, not exposed to userspace
@@ -376,13 +376,13 @@ Since eBPF doesn't support pinning global variables directly, the compiler imple
 ```kernelscript
 // User writes this:
 pin var packet_count: u64 = 0
-pin var config_string: str<64> = "default"
+pin var config_string: str(64) = "default"
 pin var enable_feature: bool = false
 
 // Compiler generates (conceptually):
 struct PinnedGlobals {
     packet_count: u64,
-    config_string: str<64>,
+    config_string: str(64),
     enable_feature: bool,
 }
 
@@ -409,7 +409,7 @@ pin map<u32, PinnedGlobals> __pinned_globals : Array(1)
 ```kernelscript
 // Declaration - user syntax remains clean
 pin var session_counter: u64 = 0
-pin var last_interface: str<16> = "eth0"
+pin var last_interface: str(16) = "eth0"
 pin var debug_mode: bool = false
 
 @xdp
@@ -631,7 +631,7 @@ fn adaptive_filter(ctx: *xdp_md) -> xdp_action {
 
 // Userspace coordination and CLI handling
 struct Args {
-    interface: str<16>,
+    interface: str(16),
     strict_mode: bool,
 }
 
@@ -1398,7 +1398,7 @@ char                   // 8-bit character
 null                   // Represents expected absence of value
 
 // Fixed-size string types (same syntax for both kernel and userspace)
-str<N>                 // Fixed-size string with capacity N characters (N can be any positive integer)
+str(N)                 // Fixed-size string with capacity N characters (N can be any positive integer)
 
 // Pointer types - unified syntax for all contexts
 *T                     // Pointer to type T (e.g., *u8, *PacketHeader, *[u8])
@@ -1648,12 +1648,12 @@ type SmallBuffer = [u8 256];  // Small general buffer
 type PacketBuffer = [u8 1500] // Maximum packet buffer
 
 // String type aliases for common patterns
-type ProcessName = str<16>     // Process name string
-type IpAddressStr = str<16>    // IP address string ("255.255.255.255")
-type FilePath = str<256>       // File path string
-type LogMessage = str<128>     // Log message string
-type ShortString = str<32>     // Short general-purpose string
-type MediumString = str<128>   // Medium general-purpose string
+type ProcessName = str(16)     // Process name string
+type IpAddressStr = str(16)    // IP address string ("255.255.255.255")
+type FilePath = str(256)       // File path string
+type LogMessage = str(128)     // Log message string
+type ShortString = str(32)     // Short general-purpose string
+type MediumString = str(128)   // Medium general-purpose string
 
 // Function pointer type aliases
 type BinaryOp = fn(i32, i32) -> i32     // Binary arithmetic operation
@@ -1663,16 +1663,16 @@ type ErrorHandler = fn(error_code: i32) -> bool  // Error handling callback
 ```
 
 ### 4.5 String Operations
-KernelScript supports fixed-size strings with `str<N>` syntax, where N can be any positive integer (e.g., `str<1>`, `str<10>`, `str<42>`, `str<1000>`). The following operations are supported:
+KernelScript supports fixed-size strings with `str(N)` syntax, where N can be any positive integer (e.g., `str(1)`, `str(10)`, `str(42)`, `str(1000)`). The following operations are supported:
 
 ```kernelscript
 // String declaration and assignment (N can be any positive integer)
-var name: str<16> = "John"
-var surname: str<16> = "Doe"
-var buffer: str<32> = "Hello"
-var small_buffer: str<8> = "tiny"
-var custom_size: str<42> = "custom"
-var large_buffer: str<512> = "large text content"
+var name: str(16) = "John"
+var surname: str(16) = "Doe"
+var buffer: str(32) = "Hello"
+var small_buffer: str(8) = "tiny"
+var custom_size: str(42) = "custom"
+var large_buffer: str(512) = "large text content"
 
 // Assignment
 buffer = name                  // Assignment (size must be compatible)
@@ -1682,9 +1682,9 @@ var first_char: char = name[0] // Returns 'J'
 var last_char: char = name[3]  // Returns 'n'
 
 // String concatenation (explicit result size required)
-var full_name: str<32> = name + surname  // "JohnDoe"
-var greeting: str<20> = "Hello " + name  // "Hello John"
-var custom_msg: str<100> = small_buffer + " and " + custom_size  // Arbitrary sizes work
+var full_name: str(32) = name + surname  // "JohnDoe"
+var greeting: str(20) = "Hello " + name  // "Hello John"
+var custom_msg: str(100) = small_buffer + " and " + custom_size  // Arbitrary sizes work
 
 // String comparison
 if (name == "John") {             // Equality comparison
@@ -1697,9 +1697,9 @@ if (surname != "Smith") {         // Inequality comparison
 
 // Examples with different contexts
 struct PersonInfo {
-    name: ProcessName,          // str<16>
-    address: FilePath,          // str<256>
-    status: ShortString,        // str<32>
+    name: ProcessName,          // str(16)
+    address: FilePath,          // str(256)
+    status: ShortString,        // str(32)
 }
 
 // Kernel space usage
@@ -1721,14 +1721,14 @@ program user_monitor : kprobe("sys_open") {
 
 // Userspace usage
 struct Args {
-    interface: str<16>,
-    config_file: str<256>,
+    interface: str(16),
+    config_file: str(256),
 }
 
 fn main(args: Args) -> i32 {
     // Same string operations in userspace
     if (args.interface == "eth0") {
-        var status_msg: str<64> = "Using interface: " + args.interface
+        var status_msg: str(64) = "Using interface: " + args.interface
         print(status_msg)
     }
     
@@ -2580,8 +2580,8 @@ Tail calls are completely transparent to userspace code. Each attributed functio
 
 ```kernelscript
 struct Args {
-    interface: str<16>,
-    mode: str<16>,
+    interface: str(16),
+    mode: str(16),
 }
 
 fn main(args: Args) -> i32 {
@@ -3594,7 +3594,7 @@ fn security_monitor(ctx: *__sk_buff) -> int {
 
 // Userspace coordination with explicit program lifecycle
 struct Args {
-    interface: str<16>,
+    interface: str(16),
     quiet_mode: bool,
     strict_mode: bool,
 }
@@ -3652,17 +3652,17 @@ var max_allowed_size: u32 = 1500
 
 // Pinned global variables - persisted across program restarts
 pin var total_sessions: u64 = 0
-pin var persistent_config: str<64> = "default_config"
+pin var persistent_config: str(64) = "default_config"
 pin var crash_count: u32 = 0
 
 // Type inference examples
 var inferred_counter = 0            // Type: u32
-var inferred_message = "startup"    // Type: str<8>
+var inferred_message = "startup"    // Type: str(8)
 var inferred_flag = true            // Type: bool
 
 // Uninitialized global variables
 var total_bytes: u64
-var interface_name: str<16>
+var interface_name: str(16)
 
 // eBPF program using global and pinned variables
 @xdp
@@ -3689,7 +3689,7 @@ fn packet_counter(ctx: *xdp_md) -> xdp_action {
 
 // Userspace program using global and pinned variables
 struct Args {
-    interface: str<16>,
+    interface: str(16),
     debug: bool,
     max_size: u32,
     reset_stats: bool,
@@ -4067,7 +4067,7 @@ primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" |
 
 compound_type = array_type | pointer_type | function_type 
 
-string_type = "str" "<" integer_literal ">" 
+string_type = "str" "(" integer_literal ")" 
 
 array_type = "[" type_annotation "" integer_literal "]" 
 pointer_type = "*" type_annotation 

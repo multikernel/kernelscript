@@ -47,9 +47,9 @@ let test_struct_field_string_syntax () =
 
 struct Args {
     enable_debug: u32,
-    interface: str<16>,
-    config_path: str<256>,
-    short_name: str<8>
+    interface: str(16),
+    config_path: str(256),
+    short_name: str(8)
 }
 
 fn main(args: Args) -> i32 {
@@ -91,7 +91,7 @@ let test_function_parameter_string_syntax () =
   return 2
 }
 
-fn process_message(msg: str<64>, target: str<32>) -> i32 {
+fn process_message(msg: str(64), target: str(32)) -> i32 {
     return 0
 }
 
@@ -129,9 +129,9 @@ let test_variable_declaration_string_syntax () =
 }
 
 fn main() -> i32 {
-  var small_buffer: str<16> = "small"
-  var medium_buffer: str<64> = "medium"
-  var large_buffer: str<256> = "large"
+  var small_buffer: str(16) = "small"
+  var medium_buffer: str(64) = "medium"
+  var large_buffer: str(256) = "large"
   return 0
 }
 |} in
@@ -166,8 +166,8 @@ let test_argument_parsing_string_handling () =
 
 struct Args {
     enable_debug: u32,
-    interface: str<16>,
-    config_file: str<64>,
+    interface: str(16),
+    config_file: str(64),
     log_level: u32
 }
 
@@ -214,9 +214,9 @@ let test_help_text_string_type_hints () =
 
 struct Args {
     port: u32,
-    hostname: str<64>,
+    hostname: str(64),
     debug: bool,
-    interface: str<16>
+    interface: str(16)
 }
 
 fn main(args: Args) -> i32 {
@@ -255,15 +255,15 @@ let test_comprehensive_string_struct_fixes () =
 }
 
 struct Config {
-    server_name: str<128>,
+    server_name: str(128),
     port: u32,
-    interface: str<16>,
+    interface: str(16),
     enabled: bool,
-    log_file: str<256>
+    log_file: str(256)
 }
 
 fn main(config: Config) -> i32 {
-    var local_buffer: str<32> = "test"
+    var local_buffer: str(32) = "test"
     return 0
 } 
 |} in
@@ -326,11 +326,11 @@ let test_string_size_edge_cases () =
 }
 
 struct EdgeCases {
-    tiny: str<1>,
-    small: str<8>,
-    medium: str<64>,
-    large: str<512>,
-    huge: str<1024>
+    tiny: str(1),
+    small: str(8),
+    medium: str(64),
+    large: str(512),
+    huge: str(1024)
 }
 
 fn main(args: EdgeCases) -> i32 {
@@ -378,8 +378,8 @@ let test_ebpf_string_typedef_generation () =
   
   let program_text = {|
 struct ConfigData {
-    interface_name: str<16>,
-    log_message: str<20>
+    interface_name: str(16),
+    log_message: str(20)
 }
 
 config test_config {
@@ -387,7 +387,7 @@ config test_config {
 }
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
-    var local_str: str<32> = "test string"
+    var local_str: str(32) = "test string"
     if (test_config.enable_logging) {
         print("Dropping packets")
         return 2

@@ -252,7 +252,7 @@ let test_pointer_type_errors () =
   (* Test a more obvious type error - trying to use string as pointer *)
   let obvious_type_error = {|
     fn test() -> u32 {
-      var s: str<10> = "hello"
+      var s: str(10) = "hello"
       return s->length
     }
     fn main() -> i32 { return 0 }

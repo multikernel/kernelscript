@@ -46,9 +46,9 @@ let test_string_assignment_codegen () =
 }
 
 fn main() -> i32 {
-  var greeting: str<20> = "Hello"
-  var name: str<30> = "World"
-  var short: str<5> = "Hi"
+  var greeting: str(20) = "Hello"
+  var name: str(30) = "World"
+  var short: str(5) = "Hi"
   return 0
 }
 |} in
@@ -75,9 +75,9 @@ let test_string_concatenation_codegen () =
 }
 
 fn main() -> i32 {
-  var first: str<10> = "Hello"
-  var second: str<10> = "World"
-  var result: str<25> = first + second
+  var first: str(10) = "Hello"
+  var second: str(10) = "World"
+  var result: str(25) = first + second
   return 0
 }
 |} in
@@ -106,8 +106,8 @@ let test_string_comparison_codegen () =
 }
 
 fn main() -> i32 {
-  var name: str<20> = "Alice"
-  var second: str<20> = "Bob"
+  var name: str(20) = "Alice"
+  var second: str(20) = "Bob"
   
   if (name == second) {
     return 1
@@ -166,7 +166,7 @@ let test_string_indexing_codegen () =
 }
 
 fn main() -> i32 {
-  var message: str<20> = "Hello"
+  var message: str(20) = "Hello"
   var first: char = message[0]
   var second: char = message[1]
   return 0
@@ -194,9 +194,9 @@ let test_string_truncation_edge_cases () =
 }
 
 fn main() -> i32 {
-  var short: str<6> = "toolong"  // Will be truncated
-  var exact: str<6> = "exact"    // Fits exactly
-  var tiny: str<3> = "hi"        // Much shorter than buffer
+  var short: str(6) = "toolong"  // Will be truncated
+  var exact: str(6) = "exact"    // Fits exactly
+  var tiny: str(3) = "hi"        // Much shorter than buffer
   return 0
 }
 |} in
@@ -224,12 +224,12 @@ let test_complex_string_operations () =
 }
 
 fn main() -> i32 {
-  var greeting: str<10> = "Hello"
-  var target: str<10> = "World"
-  var punctuation: str<5> = "!"
+  var greeting: str(10) = "Hello"
+  var target: str(10) = "World"
+  var punctuation: str(5) = "!"
   
-  var message: str<25> = greeting + target
-  var final_msg: str<30> = message + punctuation
+  var message: str(25) = greeting + target
+  var final_msg: str(30) = message + punctuation
   
   if (final_msg == "HelloWorld!") {
     var first_char: char = final_msg[0]
@@ -264,8 +264,8 @@ let test_empty_and_single_char_strings () =
 }
 
 fn main() -> i32 {
-  var single: str<2> = "A"
-  var empty_like: str<1> = ""
+  var single: str(2) = "A"
+  var empty_like: str(1) = ""
   return 0
 }
 |} in
@@ -292,9 +292,9 @@ let test_string_variable_declarations () =
 }
 
 fn main() -> i32 {
-  var small: str<16> = "small"
-  var medium: str<64> = "medium"
-  var large: str<256> = "large"
+  var small: str(16) = "small"
+  var medium: str(64) = "medium"
+  var large: str(256) = "large"
   return 0
 }
 |} in
@@ -321,8 +321,8 @@ let test_string_literal_and_mixed_comparisons () =
 }
 
 fn main() -> i32 {
-  var name: str<20> = "Alice"
-  var other: str<20> = "Bob"
+  var name: str(20) = "Alice"
+  var other: str(20) = "Bob"
   
   if (name == "Alice") {
     return 1

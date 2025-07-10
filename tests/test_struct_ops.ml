@@ -775,7 +775,7 @@ let test_selective_struct_inclusion_in_ebpf () =
     // This struct should NOT be included in eBPF code - it's userspace-only
     struct Args {
         enable_debug: u32,
-        interface: str<16>,
+        interface: str(16),
     }
     
     // This struct should be included in eBPF code - it's referenced by struct_ops
@@ -905,7 +905,7 @@ let test_mixed_struct_types_inclusion () =
     // Command-line args struct - should NOT be included in eBPF
     struct CliArgs {
         verbose: bool,
-        output_file: str<256>,
+        output_file: str(256),
     }
     
     // eBPF-used struct - should be included

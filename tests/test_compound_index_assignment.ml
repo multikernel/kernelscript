@@ -170,7 +170,7 @@ map<u32, %s> test_map : HashMap(1024)
 (** Test 5: Type checking with non-integer value types (should fail) *)
 let test_non_integer_value_types () =
   let non_integer_types = [
-    ("str<10>", "string type");
+    ("str(10)", "string type");
     ("bool", "boolean type");
   ] in
   

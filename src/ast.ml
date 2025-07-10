@@ -484,7 +484,7 @@ let rec string_of_bpf_type = function
   | Bool -> "bool"
   | Char -> "char"
   | Void -> "void"
-  | Str size -> Printf.sprintf "str<%d>" size
+  | Str size -> Printf.sprintf "str(%d)" size
   | Array (t, size) -> Printf.sprintf "[%s; %d]" (string_of_bpf_type t) size
   | Pointer t -> Printf.sprintf "*%s" (string_of_bpf_type t)
   | UserType name -> name

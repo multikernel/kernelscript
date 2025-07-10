@@ -31,12 +31,12 @@ let test_global_var_parsing_forms () =
   let program_text = {|
 // Form 1: Full declaration with type and initial value
 var global_counter: u32 = 42
-var global_string: str<256> = "hello"
+var global_string: str(256) = "hello"
 var global_bool: bool = true
 
 // Form 2: Type-only declaration (uninitialized)
 var uninitialized_counter: u32
-var uninitialized_string: str<128>
+var uninitialized_string: str(128)
 
 // Form 3: Value-only declaration (type inferred)
 var inferred_int = 100
@@ -118,7 +118,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
 let test_specific_type_inference_rules () =
   let program_text = {|
 var int_lit = 42            // Should be u32
-var string_lit = "hello"    // Should be str<6> 
+var string_lit = "hello"    // Should be str(6) 
 var bool_lit = true         // Should be bool
 var char_lit = 'a'          // Should be char
 var null_lit = null         // Should be *u8
@@ -139,12 +139,12 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
          check bool "int literal inferred as u32" true true
      | _ -> fail "int literal not inferred as u32");
     
-    (* Test string literal -> str<N> *)
+    (* Test string literal -> str(N) *)
     (match lookup_symbol symbol_table "string_lit" with
      | Some {kind = GlobalVariable (Str 6, _); _} -> 
          check bool "string literal inferred with correct size" true true
      | Some {kind = GlobalVariable (str_type, _); _} ->
-         fail ("string literal inferred as: " ^ (match str_type with Str n -> "str<" ^ string_of_int n ^ ">" | _ -> "non-string"))
+         fail ("string literal inferred as: " ^ (match str_type with Str n -> "str(" ^ string_of_int n ^ ")" | _ -> "non-string"))
      | _ -> fail "string literal not found or not GlobalVariable");
     
     (* Test bool literal -> bool *)
@@ -171,7 +171,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
 let test_global_var_symbol_table () =
   let program_text = {|
 var global_int: u32 = 42
-var global_string: str<256> = "test"
+var global_string: str(256) = "test"
 var inferred_var = 100
 
 @xdp
@@ -231,7 +231,7 @@ fn packet_counter(ctx: *xdp_md) -> xdp_action {
 let test_global_var_userspace_usage () =
   let program_text = {|
 var config_value: u32 = 1500
-var interface_name: str<16> = "eth0"
+var interface_name: str(16) = "eth0"
 
 fn main() -> i32 {
     config_value = 2000
@@ -347,7 +347,7 @@ let test_complex_global_var_scenario () =
 var packet_count: u64 = 0
 var debug_enabled: bool = false
 var max_packet_size: u32 = 1500
-var interface_name: str<16> = "eth0"
+var interface_name: str(16) = "eth0"
 
 // Type inferred variables
 var total_bytes = 0
@@ -356,7 +356,7 @@ var last_error_message = "none"
 
 // Uninitialized variables
 var current_time: u64
-var status_message: str<256>
+var status_message: str(256)
 
 @xdp
 fn packet_processor(ctx: *xdp_md) -> xdp_action {
@@ -534,8 +534,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
 (** Test global variable edge cases *)
 let test_global_var_edge_cases () =
   let program_text = {|
-var empty_string: str<1> = ""
-var single_char_string: str<2> = "a"
+var empty_string: str(1) = ""
+var single_char_string: str(2) = "a"
 var zero_value: u32 = 0
 var max_u32: u32 = 4294967295
 
