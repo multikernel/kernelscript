@@ -2115,7 +2115,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | EnumDef (enum_name, enum_values, _) ->
         let enum_type = match enum_name with
           | "xdp_action" -> Xdp_action
-          | _ -> UserType enum_name
+          | _ -> Enum enum_name
         in
         List.iter (fun (const_name, _) ->
           Hashtbl.replace ctx.variables const_name enum_type
