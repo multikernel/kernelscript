@@ -94,6 +94,29 @@ and detect_tail_calls_in_stmt stmt attributed_functions =
   match stmt.stmt_desc with
   | Return (Some expr) ->
       detect_tail_calls_in_expr expr attributed_functions
+  | If (_, then_stmts, else_stmts_opt) ->
+      (* Recursively analyze if/else branches *)
+      let then_calls = List.fold_left (fun acc stmt ->
+        acc @ (detect_tail_calls_in_stmt stmt attributed_functions)
+      ) [] then_stmts in
+      let else_calls = match else_stmts_opt with
+        | Some else_stmts ->
+            List.fold_left (fun acc stmt ->
+              acc @ (detect_tail_calls_in_stmt stmt attributed_functions)
+            ) [] else_stmts
+        | None -> []
+      in
+      then_calls @ else_calls
+  | For (_, _, _, body_stmts) ->
+      (* Recursively analyze for loop body *)
+      List.fold_left (fun acc stmt ->
+        acc @ (detect_tail_calls_in_stmt stmt attributed_functions)
+      ) [] body_stmts
+  | While (_, body_stmts) ->
+      (* Recursively analyze while loop body *)
+      List.fold_left (fun acc stmt ->
+        acc @ (detect_tail_calls_in_stmt stmt attributed_functions)
+      ) [] body_stmts
   | _ -> []
 
 (** Analyze a single attributed function for tail call dependencies *)

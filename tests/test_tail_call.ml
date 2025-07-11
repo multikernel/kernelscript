@@ -325,6 +325,45 @@ let test_match_with_mixed_tail_calls _ =
   ) analysis.dependencies in
   check bool "has mixed match tail call dependency" has_dependency true
 
+(** Test tail calls inside if statements - regression test for nested control flow bug *)
+let test_tail_calls_in_if_statements _ =
+  (* Create a function that has a tail call inside an if statement *)
+  let condition_expr = make_expr (UnaryOp (Not, make_expr (Call (make_expr (Identifier "validate_packet") make_test_position, [make_expr (Identifier "size") make_test_position])) make_test_position)) make_test_position in
+  let tail_call_expr = make_expr (Call (make_expr (Identifier "drop_handler") make_test_position, [make_expr (Identifier "ctx") make_test_position])) make_test_position in
+  let return_stmt = make_stmt (Return (Some tail_call_expr)) make_test_position in
+  let if_stmt = make_stmt (If (condition_expr, [return_stmt], None)) make_test_position in
+  let final_return = make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position in
+  
+  let packet_filter = make_test_func "packet_filter" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Declaration ("size", Some U32, Some (make_expr (Literal (IntLit (128, None))) make_test_position))) make_test_position;
+    if_stmt;
+    final_return
+  ] in
+  
+  let drop_handler = make_test_func "drop_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_DROP") make_test_position))) make_test_position
+  ] in
+  
+  let attr_packet_filter = make_test_attr_func [SimpleAttribute "xdp"] packet_filter in
+  let attr_drop_handler = make_test_attr_func [SimpleAttribute "xdp"] drop_handler in
+  
+  let ast = [AttributedFunction attr_packet_filter; AttributedFunction attr_drop_handler] in
+  let analysis = analyze_tail_calls ast in
+  
+  (* Should detect 1 tail call dependency from packet_filter to drop_handler *)
+  check int "if statement tail call dependencies" (List.length analysis.dependencies) 1;
+  
+  (* Should create prog_array with 1 entry *)
+  check int "if statement prog_array size" analysis.prog_array_size 1;
+  
+  (* Verify the specific dependency *)
+  let dep = List.hd analysis.dependencies in
+  check string "if statement caller" "packet_filter" dep.caller;
+  check string "if statement target" "drop_handler" dep.target;
+  
+  (* Verify index mapping contains the target *)
+  check bool "drop_handler should be in mapping" true (Hashtbl.mem analysis.index_mapping "drop_handler")
+
 let suite = [
   "test_tail_call_detection", `Quick, test_tail_call_detection;
   "test_program_type_compatibility", `Quick, test_program_type_compatibility;
@@ -336,6 +375,7 @@ let suite = [
   "tail_call_match_expressions", `Quick, test_tail_call_match_expressions;
   "nested_match_tail_calls", `Quick, test_nested_match_tail_calls;
   "match_with_mixed_tail_calls", `Quick, test_match_with_mixed_tail_calls;
+  "test_tail_calls_in_if_statements", `Quick, test_tail_calls_in_if_statements;
 ]
 
 let () = Alcotest.run "Tail Call Tests" [("main", suite)] 
