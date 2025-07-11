@@ -21,6 +21,7 @@ type runtime_value =
   | ContextValue of string * (string * runtime_value) list
   | NullValue  (* Simple null value representation *)
   | UnitValue
+  | None  (* Sentinel value for map lookup failures and missing values *)
 
 (** Additional exceptions that depend on runtime_value *)
 exception Return_value of runtime_value
@@ -37,6 +38,7 @@ let rec runtime_values_equal v1 v2 =
   | EnumValue (name1, val1), EnumValue (name2, val2) -> name1 = name2 && val1 = val2
   | NullValue, NullValue -> true
   | UnitValue, UnitValue -> true
+  | None, None -> true
   | PointerValue addr1, PointerValue addr2 -> addr1 = addr2
   | MapHandle name1, MapHandle name2 -> name1 = name2
   | ArrayValue arr1, ArrayValue arr2 -> 
@@ -308,6 +310,7 @@ let rec string_of_runtime_value = function
           name ^ " = " ^ string_of_runtime_value value) fields))
   | NullValue -> "null"
   | UnitValue -> "()"
+  | None -> "none"
 
 (** Convert literal to runtime value *)
 let runtime_value_of_literal = function
@@ -316,6 +319,7 @@ let runtime_value_of_literal = function
   | CharLit c -> CharValue c
   | BoolLit b -> BoolValue b
   | NullLit -> NullValue  (* null is represented as simple null value *)
+  | NoneLit -> None      (* none is represented as none sentinel value *)
   | ArrayLit _literals -> 
       (* TODO: Implement array literal evaluation *)
       failwith "Array literal evaluation not implemented yet"
@@ -326,11 +330,28 @@ let int_of_runtime_value rv pos =
   | IntValue i -> i
   | _ -> eval_error ("Expected integer value, got " ^ string_of_runtime_value rv) pos
 
-(** Extract boolean value from runtime value *)
-let bool_of_runtime_value rv pos =
+(** Convert runtime value to boolean for truthy/falsy evaluation *)
+let is_truthy_value rv =
   match rv with
   | BoolValue b -> b
-  | _ -> eval_error ("Expected boolean value, got " ^ string_of_runtime_value rv) pos
+  | IntValue i -> i <> 0                          (* 0 is falsy, non-zero is truthy *)
+  | StringValue s -> String.length s > 0          (* empty string is falsy, non-empty is truthy *)
+  | CharValue c -> c <> '\000'                    (* null character is falsy, others truthy *)
+  | PointerValue addr -> addr <> 0                (* null pointer is falsy, non-null is truthy *)
+  | EnumValue (_, value) -> value <> 0            (* enum based on numeric value *)
+  | MapHandle _ -> true                           (* maps are always truthy *)
+  | ContextValue (_, _) -> true                   (* context values are always truthy *)
+  | NullValue -> false                            (* null is always falsy *)
+  | UnitValue -> false                            (* unit value is falsy *)
+  | None -> false                                 (* none is always falsy *)
+  | ArrayValue _ -> failwith "Arrays cannot be used in boolean context"
+  | StructValue _ -> failwith "Structs cannot be used in boolean context"
+
+(** Extract boolean value from runtime value with truthy/falsy conversion *)
+let bool_of_runtime_value rv _pos =
+  match rv with
+  | BoolValue b -> b
+  | _ -> is_truthy_value rv  (* Use truthy/falsy conversion for non-boolean values *)
 
 (** Evaluate binary operations with proper operator precedence *)
 let eval_binary_op left_val op right_val pos =
@@ -368,6 +389,14 @@ let eval_binary_op left_val op right_val pos =
   | Ne, NullValue, _ -> BoolValue true
   | Eq, _, NullValue -> BoolValue false
   | Ne, _, NullValue -> BoolValue true
+  
+  (* None comparisons *)
+  | Eq, None, None -> BoolValue true
+  | Ne, None, None -> BoolValue false
+  | Eq, None, _ -> BoolValue false
+  | Ne, None, _ -> BoolValue true
+  | Eq, _, None -> BoolValue false
+  | Ne, _, None -> BoolValue true
   
   (* Logical operations *)
   | And, BoolValue l, BoolValue r -> BoolValue (l && r)
@@ -530,8 +559,8 @@ and eval_array_access ctx arr_expr idx_expr pos =
        (try
           Hashtbl.find map_store key_str
         with Not_found ->
-          (* For map access, return a default value or error based on map type *)
-          IntValue 0)  (* Default value for missing keys *)
+          (* For map access, return sentinel value for missing keys *)
+          None)
    | _ ->
        (* Regular array access *)
        let arr_val = eval_expression ctx arr_expr in
@@ -847,7 +876,7 @@ and eval_statement ctx stmt =
   
   | If (cond, then_stmts, else_opt) ->
       let cond_val = eval_expression ctx cond in
-      let cond_bool = bool_of_runtime_value cond_val stmt.stmt_pos in
+      let cond_bool = is_truthy_value cond_val in  (* Use truthy/falsy conversion *)
       if cond_bool then
         eval_statements ctx then_stmts
       else
@@ -908,7 +937,7 @@ and eval_statement ctx stmt =
   | While (cond, body) ->
       let rec loop () =
         let cond_val = eval_expression ctx cond in
-        let cond_bool = bool_of_runtime_value cond_val stmt.stmt_pos in
+        let cond_bool = is_truthy_value cond_val in  (* Use truthy/falsy conversion *)
         if cond_bool then
           (try
              eval_statements ctx body;

@@ -303,6 +303,8 @@ let rec unify_types t1 t2 =
   (* Special built-in type compatibility for specific enums *)
   | Enum "xdp_action", Xdp_action | Xdp_action, Enum "xdp_action" -> Some Xdp_action
   
+
+  
   (* No unification possible *)
   | _ -> None
 
@@ -333,6 +335,7 @@ let get_literal_type lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
+  | NoneLit -> NoneType
   | ArrayLit _ -> U32  (* Nested arrays default to u32 *)
 
 (** Helper function to check type equality for array literals *)
@@ -359,6 +362,7 @@ let type_check_literal lit pos =
     | CharLit _ -> Char
     | BoolLit _ -> Bool
     | NullLit -> Pointer U32  (* null literal as nullable pointer, can be unified with any pointer type *)
+    | NoneLit -> NoneType  (* none literal represents missing/absent values *)
     | ArrayLit init_style ->
         (* Handle enhanced array literal type checking *)
         (match init_style with
@@ -411,6 +415,7 @@ let type_of_literal lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
+  | NoneLit -> NoneType
   | ArrayLit init_style ->
       (* Handle enhanced array literal type checking *)
       (match init_style with
@@ -573,8 +578,19 @@ let type_check_builtin_call _ctx name typed_args arg_types pos =
        | None -> type_error ("Unknown builtin function: " ^ name) pos)
   | None -> None
 
+(** Convert any type to boolean for truthy/falsy evaluation *)
+let is_truthy_type bpf_type =
+  match bpf_type with
+  | Bool -> true
+  | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> true  (* numbers: 0 is falsy, non-zero is truthy *)
+  | Char -> true                                          (* characters: '\0' is falsy, others truthy *)
+  | Str _ -> true                                         (* strings: empty is falsy, non-empty is truthy *)
+  | Pointer _ -> true                                     (* pointers: null is falsy, non-null is truthy *)
+  | Enum _ -> true                                        (* enums: based on numeric value *)
+  | _ -> false                                            (* other types not allowed in boolean context *)
+
 (** Type check a user function call *)
-let type_check_user_function_call ctx name typed_args arg_types pos =
+let rec type_check_user_function_call ctx name typed_args arg_types pos =
   try
     let (expected_params, return_type) = Hashtbl.find ctx.functions name in
     
@@ -625,7 +641,7 @@ let type_check_user_function_call ctx name typed_args arg_types pos =
   with Not_found -> None
 
 (** Type check a function pointer call (for variables with function type) *)
-let type_check_function_pointer_variable ctx name typed_args arg_types pos =
+and type_check_function_pointer_variable ctx name typed_args arg_types pos =
   try
     let var_symbol = Hashtbl.find ctx.variables name in
     let resolved_var_type = resolve_user_type ctx var_symbol in
@@ -651,7 +667,7 @@ let type_check_function_pointer_variable ctx name typed_args arg_types pos =
   with Not_found -> None
 
 (** Type check a function pointer call (for complex expressions) *)
-let type_check_function_pointer_call ctx typed_callee typed_args arg_types pos =
+and type_check_function_pointer_call ctx typed_callee typed_args arg_types pos =
   let resolved_func_type = resolve_user_type ctx typed_callee.texpr_type in
   match resolved_func_type with
   | Function (param_types, return_type) ->
@@ -667,7 +683,7 @@ let type_check_function_pointer_call ctx typed_callee typed_args arg_types pos =
       type_error ("Cannot call non-function expression") pos
 
 (** Type check array access *)
-let rec type_check_array_access ctx arr idx pos =
+and type_check_array_access ctx arr idx pos =
   let typed_idx = type_check_expression ctx idx in
   
   (* Index must be integer type *)
@@ -687,7 +703,7 @@ let rec type_check_array_access ctx arr idx pos =
         | Some _ -> 
             (* Create a synthetic map type for the result *)
             let typed_arr = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = arr.expr_pos } in
-            (* Map access returns the value type directly, but can be null at runtime *)
+            (* Map access returns the actual value type *)
             { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = map_decl.value_type; texpr_pos = pos }
         | None -> type_error ("Map key type mismatch") pos)
    | _ ->
@@ -792,18 +808,23 @@ and type_check_binary_op ctx left op right pos =
   let resolved_left_type = resolve_user_type ctx typed_left.texpr_type in
   let resolved_right_type = resolve_user_type ctx typed_right.texpr_type in
   
+
+  
+  let effective_left_type = resolved_left_type in
+  let effective_right_type = resolved_right_type in
+  
   let result_type = match op with
     (* Arithmetic operations *)
     | Add ->
         (* Handle string concatenation *)
-        (match resolved_left_type, resolved_right_type with
+        (match effective_left_type, effective_right_type with
          | Str size1, Str size2 -> 
              (* String concatenation - we'll allow it and require explicit result sizing *)
              (* For now, return a placeholder size that will be refined by assignment context *)
              Str (size1 + size2)
          | _ ->
              (* Continue with regular arithmetic/pointer handling *)
-             (match resolved_left_type, resolved_right_type with
+             (match effective_left_type, effective_right_type with
               (* Pointer + Integer = Pointer (pointer offset) *)
               | Pointer t, (U8|U16|U32|U64|I8|I16|I32|I64) -> Pointer t
               (* Integer + Pointer = Pointer (pointer offset) *)
@@ -811,7 +832,7 @@ and type_check_binary_op ctx left op right pos =
               (* Regular numeric arithmetic *)
               | _ ->
                   (* Try integer promotion for Add operations *)
-                  (match integer_promotion resolved_left_type resolved_right_type with
+                  (match integer_promotion effective_left_type effective_right_type with
                    | Some unified_type ->
                        (match unified_type with
                         | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
@@ -820,7 +841,7 @@ and type_check_binary_op ctx left op right pos =
     
     | Sub | Mul | Div | Mod ->
         (* Handle pointer arithmetic for subtraction *)
-        (match resolved_left_type, resolved_right_type, op with
+        (match effective_left_type, effective_right_type, op with
          (* Pointer - Pointer = size (pointer subtraction) *)
          | Pointer _, Pointer _, Sub -> U64  (* Return size type for pointer difference *)
          (* Pointer - Integer = Pointer (pointer offset) *)
@@ -828,7 +849,7 @@ and type_check_binary_op ctx left op right pos =
          (* Regular numeric arithmetic *)
          | _ ->
              (* Try integer promotion for Sub/Mul/Div/Mod operations *)
-             (match integer_promotion resolved_left_type resolved_right_type with
+             (match integer_promotion effective_left_type effective_right_type with
               | Some unified_type ->
                   (match unified_type with
                    | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> unified_type
@@ -842,6 +863,29 @@ and type_check_binary_op ctx left op right pos =
          | Str _, Str _ -> Bool  (* Allow string comparison regardless of size *)
          (* Null comparisons - any type can be compared with null *)
          | _, Pointer _ | Pointer _, _ -> Bool
+         (* None comparisons - allow with map access expressions or variables that could contain map results *)
+         | NoneType, _ | _, NoneType -> 
+             (* Check if at least one operand is a map access or could reasonably be a map result *)
+             let has_map_related_value = 
+               (match left.expr_desc with
+                | ArrayAccess (map_expr, _) -> 
+                    (match map_expr.expr_desc with
+                     | Identifier map_name -> Hashtbl.mem ctx.maps map_name
+                     | _ -> false)
+                | Identifier _ -> true  (* Variables can contain map lookup results *)
+                | _ -> false) ||
+               (match right.expr_desc with
+                | ArrayAccess (map_expr, _) -> 
+                    (match map_expr.expr_desc with
+                     | Identifier map_name -> Hashtbl.mem ctx.maps map_name
+                     | _ -> false)
+                | Identifier _ -> true  (* Variables can contain map lookup results *)
+                | _ -> false)
+             in
+             if has_map_related_value then
+               Bool
+             else
+               type_error "'none' can only be compared with map access expressions or variables that may contain map results" pos
          | _ ->
              (match unify_types resolved_left_type resolved_right_type with
               | Some _ -> Bool
@@ -1127,6 +1171,10 @@ and type_check_statement ctx stmt =
   
     | Assignment (name, expr) ->
       let typed_expr = type_check_expression ctx expr in
+      (* Check if trying to assign none to a variable *)
+      (match typed_expr.texpr_type with
+       | NoneType -> type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
+       | _ -> ());
       (* Check if the variable is const by looking it up in the symbol table *)
       (match Symbol_table.lookup_symbol ctx.symbol_table name with
        | Some symbol when Symbol_table.is_const_variable symbol ->
@@ -1384,6 +1432,12 @@ and type_check_statement ctx stmt =
            type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
        | _ -> ());
       
+      (* Check if trying to assign none to a variable *)
+      (match typed_expr_opt with
+       | Some typed_expr when (match typed_expr.texpr_type with NoneType -> true | _ -> false) ->
+           type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
+       | _ -> ());
+      
       let var_type = match type_opt with
         | Some declared_type ->
             let resolved_declared_type = resolve_user_type ctx declared_type in
@@ -1410,6 +1464,11 @@ and type_check_statement ctx stmt =
       (* Check if trying to assign a map to a const *)
       (match typed_expr.texpr_type with
        | Map (_, _, _) -> type_error ("Maps cannot be assigned to const variables") stmt.stmt_pos
+       | _ -> ());
+      
+      (* Check if trying to assign none to a const *)
+      (match typed_expr.texpr_type with
+       | NoneType -> type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
        | _ -> ());
       
       (* Validate that the expression is a compile-time constant (literals and negated literals) *)
@@ -1495,9 +1554,7 @@ and type_check_statement ctx stmt =
       { tstmt_desc = TReturn typed_expr_opt; tstmt_pos = stmt.stmt_pos }
   
   | If (cond, then_stmts, else_opt) ->
-      let typed_cond = type_check_expression ctx cond in
-      if typed_cond.texpr_type <> Bool then
-        type_error "If condition must be boolean" stmt.stmt_pos;
+      let typed_cond = type_check_condition ctx cond in
       let typed_then = List.map (type_check_statement ctx) then_stmts in
       let typed_else = Option.map (List.map (type_check_statement ctx)) else_opt in
       { tstmt_desc = TIf (typed_cond, typed_then, typed_else); tstmt_pos = stmt.stmt_pos }
@@ -1544,9 +1601,7 @@ and type_check_statement ctx stmt =
        | _ -> type_error "For-iter expression must be iterable (array or map)" stmt.stmt_pos)
   
   | While (cond, body) ->
-      let typed_cond = type_check_expression ctx cond in
-      if typed_cond.texpr_type <> Bool then
-        type_error "While condition must be boolean" stmt.stmt_pos;
+      let typed_cond = type_check_condition ctx cond in
       incr loop_depth;
       let typed_body = List.map (type_check_statement ctx) body in
       decr loop_depth;
@@ -1641,6 +1696,17 @@ and type_check_statement ctx stmt =
       (* Type check the deferred expression *)
       let typed_expr = type_check_expression ctx expr in
       { tstmt_desc = TDefer typed_expr; tstmt_pos = stmt.stmt_pos }
+
+(** Type check boolean conversion for if/while conditions *)
+and type_check_condition ctx expr =
+  let typed_expr = type_check_expression ctx expr in
+  let resolved_type = resolve_user_type ctx typed_expr.texpr_type in
+  
+  if is_truthy_type resolved_type then
+    typed_expr
+  else
+    type_error ("Expression of type " ^ string_of_bpf_type resolved_type ^ 
+               " cannot be used in boolean context") expr.expr_pos
 
 (** Type check function *)
 let type_check_function ?(register_signature=true) ctx func =
@@ -2632,5 +2698,6 @@ and populate_multi_program_context ast multi_prog_analysis =
         List.iter enhance_userspace_stmt func.func_body;
         GlobalFunction func
 
-    | other_decl -> other_decl
-        ) ast
+    |       other_decl -> other_decl
+          ) ast
+

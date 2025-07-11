@@ -65,6 +65,8 @@ and bpf_type =
   | ProgramRef of program_type
   (* Program handle type - represents a loaded program *)
   | ProgramHandle
+  (* None type - represents missing/absent values *)
+  | NoneType
 
 (** Map configuration *)
 type map_config = {
@@ -94,6 +96,7 @@ type literal =
   | BoolLit of bool
   | ArrayLit of array_init_style   (* Enhanced array initialization *)
   | NullLit
+  | NoneLit
 
 (** Array initialization styles *)
 and array_init_style =
@@ -516,6 +519,7 @@ let rec string_of_bpf_type = function
   | Xdp_action -> "xdp_action"
   | ProgramRef pt -> string_of_program_type pt
   | ProgramHandle -> "ProgramHandle"
+  | NoneType -> "none"
 
 let rec string_of_literal = function
   | IntLit (i, original_opt) -> 
@@ -530,6 +534,7 @@ let rec string_of_literal = function
       Printf.sprintf "[%s]" (String.concat ", " (List.map string_of_literal literals))
   | ArrayLit (ZeroArray) -> "[]"
   | NullLit -> "null"
+  | NoneLit -> "none"
 
 let string_of_binary_op = function
   | Add -> "+"

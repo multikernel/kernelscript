@@ -206,6 +206,7 @@ and ir_value_desc =
   | IRMapRef of string
   | IREnumConstant of string * string * int  (* enum_name, constant_name, value *)
   | IRFunctionRef of string  (* Function reference by name *)
+  | IRMapAccess of string * ir_value * (ir_value_desc * ir_type)  (* map_name, key, (underlying_value_desc, underlying_type) *)
 
 (** IR expressions with simplified operations *)
 and ir_expr = {
@@ -327,7 +328,7 @@ and bounds_check = {
   check_type: bounds_check_type;
 }
 
-and bounds_check_type = ArrayAccess | PointerDeref | StackAccess | MapAccess
+and bounds_check_type = ArrayAccess | PointerDeref | StackAccess
 
 and verifier_hint =
   | LoopBound of int
@@ -663,9 +664,11 @@ let rec ast_type_to_ir_type = function
       let ir_param_types = List.map ast_type_to_ir_type param_types in
       let ir_return_type = ast_type_to_ir_type return_type in
       IRFunctionPointer (ir_param_types, ir_return_type)
+
   | Map (_, _, _) -> failwith "Map types handled separately"
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
   | ProgramHandle -> IRI32 (* Program handles are represented as file descriptors (i32) in IR to support error codes *)
+  | NoneType -> IRU32 (* None type represented as u32 sentinel value in IR *)
 
 (* Helper function that preserves type aliases when converting AST types to IR types *)
 let rec ast_type_to_ir_type_with_context symbol_table ast_type =
@@ -750,7 +753,7 @@ let rec string_of_ir_type = function
       let return_str = string_of_ir_type return_type in
       Printf.sprintf "fn(%s) -> %s" (String.concat ", " param_strs) return_str
 
-let string_of_ir_value_desc = function
+let rec string_of_ir_value_desc = function
   | IRLiteral lit -> string_of_literal lit
   | IRVariable name -> name
   | IRRegister reg -> Printf.sprintf "r%d" reg
@@ -758,8 +761,9 @@ let string_of_ir_value_desc = function
   | IRMapRef name -> Printf.sprintf "&%s" name
   | IREnumConstant (_enum_name, constant_name, _value) -> constant_name
   | IRFunctionRef function_name -> Printf.sprintf "fn:%s" function_name
+  | IRMapAccess (map_name, key, _) -> Printf.sprintf "map_access %s[%s]" map_name (string_of_ir_value key)
 
-let string_of_ir_value value =
+and string_of_ir_value value =
   Printf.sprintf "%s: %s" 
     (string_of_ir_value_desc value.value_desc)
     (string_of_ir_type value.val_type)

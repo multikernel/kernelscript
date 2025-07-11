@@ -47,6 +47,8 @@ type ir_context = {
   function_parameters: (string, ir_type) Hashtbl.t; (* param_name -> param_type *)
   (* Track global variables for proper access *)
   global_variables: (string, ir_global_variable) Hashtbl.t; (* global_var_name -> global_var *)
+  (* Track variables that originate from map accesses *)
+  map_origin_variables: (string, (string * ir_value * (ir_value_desc * ir_type))) Hashtbl.t; (* var_name -> (map_name, key, underlying_info) *)
 }
 
 (** Create new IR generation context *)
@@ -71,6 +73,7 @@ let create_context ?(global_variables = []) symbol_table = {
   global_variables = (let tbl = Hashtbl.create 16 in
                      List.iter (fun gv -> Hashtbl.add tbl gv.global_var_name gv) global_variables;
                      tbl);
+  map_origin_variables = Hashtbl.create 32;
 }
 
 (** Register allocation *)
@@ -131,6 +134,7 @@ let lower_literal lit pos =
     | NullLit -> 
         let bounds = make_bounds_info ~nullable:true () in
         IRPointer (IRU32, bounds)  (* null literal as nullable pointer to u32 *)
+    | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
     | ArrayLit init_style -> 
         (* Handle enhanced array literal lowering *)
         (match init_style with
@@ -147,6 +151,7 @@ let lower_literal lit pos =
                | NullLit -> 
                    let bounds = make_bounds_info ~nullable:true () in
                    IRPointer (IRU32, bounds)
+               | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
                | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
              in
              IRArray (element_ir_type, 0, make_bounds_info ())  (* Size resolved during type unification *)
@@ -166,6 +171,7 @@ let lower_literal lit pos =
                  | NullLit -> 
                      let bounds = make_bounds_info ~nullable:true () in
                      IRPointer (IRU32, bounds)
+                 | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
                in
                let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
                IRArray (element_ir_type, element_count, bounds_info))
@@ -239,7 +245,9 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
   match operation with
   | "lookup" ->
       let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) map_def.map_value_type pos in
+      (* Map lookup returns pointer to value type, not value type itself *)
+      let result_val = make_ir_value (IRRegister result_reg) 
+        (IRPointer (map_def.map_value_type, make_bounds_info ())) pos in
       let instr = make_ir_instruction
         (IRMapLoad (map_val, key_val, result_val, MapLookup))
         ~verifier_hints:[HelperCall "map_lookup_elem"]
@@ -283,73 +291,95 @@ let rec lower_expression ctx (expr : Ast.expr) =
         let map_type = IRPointer (IRU8, make_bounds_info ()) in (* Maps are represented as pointers *)
         make_ir_value (IRMapRef name) map_type expr.expr_pos
       else
-        (* Check if this is a function reference *)
-        (match expr.expr_type with
-         | Some (Function (param_types, return_type)) ->
-             (* Function references should be converted to function references *)
-             let ir_param_types = List.map ast_type_to_ir_type param_types in
-             let ir_return_type = ast_type_to_ir_type return_type in
-             let func_type = IRFunctionPointer (ir_param_types, ir_return_type) in
-             make_ir_value (IRFunctionRef name) func_type expr.expr_pos
-         | Some (ProgramRef _) ->
-             (* Program references should be converted to string literals containing the program name *)
-             make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
-         | _ ->
-             (* Check if this is a function parameter *)
-             if Hashtbl.mem ctx.function_parameters name then
-               (* Function parameters use IRVariable with their original names *)
-               let param_type = Hashtbl.find ctx.function_parameters name in
-               make_ir_value (IRVariable name) param_type expr.expr_pos
-             (* Check if this is a global variable *)
-             else if Hashtbl.mem ctx.global_variables name then
-               (* Global variables use IRVariable with their original names *)
-               let global_var = Hashtbl.find ctx.global_variables name in
-               make_ir_value (IRVariable name) global_var.global_var_type expr.expr_pos
-             else
-               (* Check if this is a constant from the symbol table *)
-               (match Symbol_table.lookup_symbol ctx.symbol_table name with
-                | Some symbol -> 
-                    (match symbol.kind with
-                     | Symbol_table.EnumConstant (enum_name, Some value) ->
-                         (* Preserve enum constants as identifiers *)
-                         let ir_type = match expr.expr_type with
-                           | Some ast_type -> ast_type_to_ir_type ast_type
-                           | None -> IRU32
-                         in
-                         (* Detect action types by enum name and constant name *)
-                         let final_ir_type = match ir_type with
-                           | IRAction _ -> ir_type  (* Keep action type intact *)
-                           | _ -> 
-                               (* Check if this is an action constant *)
-                               (match enum_name, name with
-                                | "xdp_action", _ -> IRAction Xdp_actionType
-                                | _ -> ir_type)
-                         in
-                         make_ir_value (IREnumConstant (enum_name, name, value)) final_ir_type expr.expr_pos
-                     | Symbol_table.EnumConstant (_, None) ->
-                         (* Enum constant without value - treat as variable *)
-                         let reg = get_variable_register ctx name in
-                         let ir_type = match expr.expr_type with
-                           | Some ast_type -> ast_type_to_ir_type ast_type
-                           | None -> failwith ("Untyped identifier: " ^ name)
-                         in
-                         make_ir_value (IRRegister reg) ir_type expr.expr_pos
-                     | _ ->
-                         (* Regular variable *)
-                         let reg = get_variable_register ctx name in
-                         let ir_type = match expr.expr_type with
-                           | Some ast_type -> ast_type_to_ir_type ast_type
-                           | None -> failwith ("Untyped identifier: " ^ name)
-                         in
-                         make_ir_value (IRRegister reg) ir_type expr.expr_pos)
-                | None ->
-                    (* Regular variable *)
-                    let reg = get_variable_register ctx name in
-                    let ir_type = match expr.expr_type with
-                      | Some ast_type -> ast_type_to_ir_type ast_type
-                      | None -> failwith ("Untyped identifier: " ^ name)
+        (* Check if this variable originates from a map access *)
+        (match Hashtbl.find_opt ctx.map_origin_variables name with
+         | Some (map_name, key, underlying_info) ->
+             (* This variable originates from a map access - recreate the IRMapAccess *)
+             let map_def = Hashtbl.find ctx.maps map_name in
+             { value_desc = IRMapAccess (map_name, key, underlying_info); 
+               val_type = map_def.map_value_type; 
+               stack_offset = None; 
+               bounds_checked = false; 
+               val_pos = expr.expr_pos }
+         | None ->
+             (* Regular variable or function reference *)
+             (match expr.expr_type with
+              | Some (Function (param_types, return_type)) ->
+                  (* Function references should be converted to function references *)
+                  let ir_param_types = List.map ast_type_to_ir_type param_types in
+                  let ir_return_type = ast_type_to_ir_type return_type in
+                  let func_type = IRFunctionPointer (ir_param_types, ir_return_type) in
+                  make_ir_value (IRFunctionRef name) func_type expr.expr_pos
+              | Some (ProgramRef _) ->
+                  (* Program references should be converted to string literals containing the program name *)
+                  make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
+              | _ ->
+                  (* Regular variable lookup *)
+                  if Hashtbl.mem ctx.variables name then
+                    let reg = Hashtbl.find ctx.variables name in
+                    let var_type = match expr.expr_type with
+                      | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+                      | None -> IRU32 (* Default type if not available *)
                     in
-                    make_ir_value (IRRegister reg) ir_type expr.expr_pos))
+                    make_ir_value (IRRegister reg) var_type expr.expr_pos
+                  else if Hashtbl.mem ctx.function_parameters name then
+                    let param_type = Hashtbl.find ctx.function_parameters name in
+                    make_ir_value (IRVariable name) param_type expr.expr_pos
+                  else if Hashtbl.mem ctx.global_variables name then
+                    let global_var = Hashtbl.find ctx.global_variables name in
+                    make_ir_value (IRVariable name) global_var.global_var_type expr.expr_pos
+                  else
+                    (* Check symbol table for various types of identifiers *)
+                    (match Symbol_table.lookup_symbol ctx.symbol_table name with
+                     | Some symbol ->
+                         (match symbol.kind with
+                          | Symbol_table.EnumConstant (enum_name, Some value) ->
+                              (* Preserve enum constants as identifiers *)
+                              let ir_type = match expr.expr_type with
+                                | Some ast_type -> ast_type_to_ir_type ast_type
+                                | None -> IRU32
+                              in
+                              (* Detect action types by enum name and constant name *)
+                              let final_ir_type = match ir_type with
+                                | IRAction _ -> ir_type  (* Keep action type intact *)
+                                | _ -> 
+                                    (* Check if this is an action constant *)
+                                    (match enum_name, name with
+                                     | "xdp_action", _ -> IRAction Xdp_actionType
+                                     | _ -> ir_type)
+                              in
+                              make_ir_value (IREnumConstant (enum_name, name, value)) final_ir_type expr.expr_pos
+                          | Symbol_table.EnumConstant (_, None) ->
+                              (* Enum constant without value - treat as variable *)
+                              let reg = get_variable_register ctx name in
+                              let ir_type = match expr.expr_type with
+                                | Some ast_type -> ast_type_to_ir_type ast_type
+                                | None -> failwith ("Untyped identifier: " ^ name)
+                              in
+                              make_ir_value (IRRegister reg) ir_type expr.expr_pos
+                          | Symbol_table.TypeDef _ ->
+                              (* This is a type definition (like impl blocks) - treat as variable *)
+                              let ir_type = match expr.expr_type with
+                                | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+                                | None -> IRStruct (name, [], false) (* Default to struct type for impl blocks *)
+                              in
+                              make_ir_value (IRVariable name) ir_type expr.expr_pos
+                          | _ ->
+                              (* Other symbol types - treat as variable *)
+                              let reg = get_variable_register ctx name in
+                              let ir_type = match expr.expr_type with
+                                | Some ast_type -> ast_type_to_ir_type ast_type
+                                | None -> failwith ("Untyped identifier: " ^ name)
+                              in
+                              make_ir_value (IRRegister reg) ir_type expr.expr_pos)
+                     | None ->
+                         (* Symbol not found - treat as regular variable *)
+                         let reg = get_variable_register ctx name in
+                         let ir_type = match expr.expr_type with
+                           | Some ast_type -> ast_type_to_ir_type ast_type
+                           | None -> failwith ("Untyped identifier: " ^ name)
+                         in
+                         make_ir_value (IRRegister reg) ir_type expr.expr_pos)))
       
   | Ast.ConfigAccess (config_name, field_name) ->
       (* Handle config access like config.field_name *)
@@ -474,7 +504,15 @@ let rec lower_expression ctx (expr : Ast.expr) =
        | Ast.Identifier map_name when Hashtbl.mem ctx.maps map_name ->
            (* This is map access - handle it specially *)
            let index_val = lower_expression ctx index_expr in
-           expand_map_operation ctx map_name "lookup" index_val None expr.expr_pos
+           let lookup_result = expand_map_operation ctx map_name "lookup" index_val None expr.expr_pos in
+           (* Mark this as a map access result for special handling *)
+           (* The IRMapAccess should represent the value type, not the pointer type *)
+           let map_def = Hashtbl.find ctx.maps map_name in
+           { value_desc = IRMapAccess (map_name, index_val, (lookup_result.value_desc, lookup_result.val_type)); 
+             val_type = map_def.map_value_type; 
+             stack_offset = None; 
+             bounds_checked = false; 
+             val_pos = expr.expr_pos }
        | _ ->
            (* Regular array access *)
            let array_val = lower_expression ctx array_expr in
@@ -635,7 +673,12 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let result_type = match op with
         | AddressOf -> 
             (* &T -> *T (pointer to the operand type) *)
-            IRPointer (operand_val.val_type, make_bounds_info ~nullable:false ())
+            (* Special handling for map access: the result is a pointer to the map value type *)
+            (match operand_val.value_desc with
+             | IRMapAccess (_, _, _) -> 
+                 (* Map access: &stats should return a pointer to the map value type *)
+                 IRPointer (operand_val.val_type, make_bounds_info ~nullable:true ())
+             | _ -> IRPointer (operand_val.val_type, make_bounds_info ~nullable:false ()))
         | Deref ->
             (* *T -> T (dereference the pointer to get the pointed-to type) *)
             (match operand_val.val_type with
@@ -647,10 +690,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
       in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
-      let un_expr = make_ir_expr (IRUnOp (ir_op, operand_val)) result_type expr.expr_pos in
-      let instr = make_ir_instruction (IRAssign (result_val, un_expr)) expr.expr_pos in
-      emit_instruction ctx instr;
-      result_val
+             (* Handle all unary operations uniformly to avoid register reference issues *)
+       let un_expr = make_ir_expr (IRUnOp (ir_op, operand_val)) result_type expr.expr_pos in
+       let instr = make_ir_instruction (IRAssign (result_val, un_expr)) expr.expr_pos in
+       emit_instruction ctx instr;
+       result_val
       
   | Ast.StructLiteral (struct_name, field_assignments) ->
       let result_reg = allocate_register ctx in
@@ -811,6 +855,15 @@ and lower_statement ctx stmt =
       
   | Ast.Assignment (name, expr) ->
       let value = lower_expression ctx expr in
+      
+      (* Track if this assignment is from a map access *)
+      (match value.value_desc with
+       | IRMapAccess (map_name, key, underlying_info) ->
+           (* Store map origin information for this variable *)
+           Hashtbl.replace ctx.map_origin_variables name (map_name, key, underlying_info)
+       | _ -> 
+           (* Remove any previous map origin information *)
+           Hashtbl.remove ctx.map_origin_variables name);
       
       (* Check if this is a global variable assignment *)
       if Hashtbl.mem ctx.global_variables name then
@@ -999,6 +1052,16 @@ and lower_statement ctx stmt =
       let init_expr_opt = match expr_opt with
         | Some expr -> 
             let value = lower_expression ctx expr in
+            
+            (* Track if this variable is initialized from a map access *)
+            (match value.value_desc with
+             | IRMapAccess (map_name, key, underlying_info) ->
+                 (* Store map origin information for this variable *)
+                 Hashtbl.replace ctx.map_origin_variables name (map_name, key, underlying_info)
+             | _ -> 
+                 (* Remove any previous map origin information *)
+                 Hashtbl.remove ctx.map_origin_variables name);
+            
             let coerced_value = 
               if target_type <> value.val_type then
                 make_ir_value value.value_desc target_type value.val_pos
@@ -1936,6 +1999,8 @@ let rec ast_type_to_ir_type = function
   | Ast.Xdp_action -> IRAction Xdp_actionType
   | Ast.ProgramRef _prog_type -> IRU32  (* Program refs become integers *)
   | Ast.ProgramHandle -> IRI32  (* Program handles are file descriptors (i32) to support error codes *)
+  | Ast.NoneType -> IRU32  (* None type represented as u32 sentinel value *)
+
 
 (** Convert AST types to IR types with symbol table lookup for struct field resolution *)
 let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
@@ -2446,6 +2511,7 @@ let lower_multi_program ast symbol_table source_name =
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
             | NullLit -> "null"
+            | NoneLit -> "none"
             | ArrayLit init_style -> 
                 (match init_style with
                  | ZeroArray -> "[]"
@@ -2455,6 +2521,7 @@ let lower_multi_program ast symbol_table source_name =
                      | CharLit c -> "'" ^ String.make 1 c ^ "'"
                      | BoolLit b -> string_of_bool b
                      | NullLit -> "null"
+                     | NoneLit -> "none"
                      | ArrayLit _ -> "[]") ^ "]"
                  | ExplicitArray literals ->
                      "[" ^ (String.concat ", " (List.map (function
@@ -2463,6 +2530,7 @@ let lower_multi_program ast symbol_table source_name =
                        | CharLit c -> "'" ^ String.make 1 c ^ "'"
                        | BoolLit b -> string_of_bool b
                        | NullLit -> "null"
+                       | NoneLit -> "none"
                        | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
                      ) literals)) ^ "]")
           in
@@ -2472,6 +2540,7 @@ let lower_multi_program ast symbol_table source_name =
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
             | NullLit -> "null"
+            | NoneLit -> "none"
             | ArrayLit _ -> "{...}"
           in
           Some (key_str ^ ":" ^ value_str)
@@ -2611,6 +2680,7 @@ let lower_multi_program ast symbol_table source_name =
     | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) pos
     | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar pos
     | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) pos
+    | Ast.NoneLit -> make_ir_value (IRLiteral NoneLit) IRU32 pos
     | Ast.ArrayLit init_style ->
         (* Handle enhanced array literal lowering *)
         (match init_style with

@@ -255,6 +255,9 @@ type userspace_context = {
   function_usage: function_usage;
   (* Global variables for skeleton access *)
   global_variables: ir_global_variable list;
+  mutable inlinable_registers: (int, string) Hashtbl.t;
+  mutable current_function: ir_function option;
+  mutable temp_var_counter: int;
 }
 
 let create_userspace_context ?(global_variables = []) () = {
@@ -265,6 +268,9 @@ let create_userspace_context ?(global_variables = []) () = {
   var_declarations = Hashtbl.create 32;
   function_usage = create_function_usage ();
   global_variables;
+  inlinable_registers = Hashtbl.create 32;
+  current_function = None;
+  temp_var_counter = 0;
 }
 
 let create_main_context ?(global_variables = []) () = {
@@ -275,6 +281,9 @@ let create_main_context ?(global_variables = []) () = {
   var_declarations = Hashtbl.create 32;
   function_usage = create_function_usage ();
   global_variables;
+  inlinable_registers = Hashtbl.create 32;
+  current_function = None;
+  temp_var_counter = 0;
 }
 
 let fresh_temp_var ctx prefix =
@@ -785,14 +794,15 @@ let determine_global_var_section (global_var : ir_global_variable) =
   | None -> "bss"  (* Uninitialized variables go to .bss *)
   | Some init_val ->
       (match init_val.value_desc with
-       | IRLiteral (Ast.IntLit (0, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
-       | IRLiteral (Ast.BoolLit false) -> "bss"      (* False booleans go to .bss *)
-       | IRLiteral (Ast.NullLit) -> "bss"            (* Null pointers go to .bss *)
-       | IRLiteral (Ast.IntLit (_, _)) -> "data"     (* Non-zero integers go to .data *)
-       | IRLiteral (Ast.BoolLit true) -> "data"      (* True booleans go to .data *)
-       | IRLiteral (Ast.StringLit _) -> "data"       (* String literals go to .data *)
-       | IRLiteral (Ast.CharLit _) -> "data"         (* Character literals go to .data *)
-       | IRLiteral (Ast.ArrayLit _) -> "data"        (* Array literals go to .data *)
+         | IRLiteral (Ast.IntLit (0, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
+  | IRLiteral (Ast.BoolLit false) -> "bss"      (* False booleans go to .bss *)
+  | IRLiteral (Ast.NullLit) -> "bss"            (* Null pointers go to .bss *)
+  | IRLiteral (Ast.NoneLit) -> "bss"            (* None values go to .bss *)
+  | IRLiteral (Ast.IntLit (_, _)) -> "data"     (* Non-zero integers go to .data *)
+  | IRLiteral (Ast.BoolLit true) -> "data"      (* True booleans go to .data *)
+  | IRLiteral (Ast.StringLit _) -> "data"       (* String literals go to .data *)
+  | IRLiteral (Ast.CharLit _) -> "data"         (* Character literals go to .data *)
+  | IRLiteral (Ast.ArrayLit _) -> "data"        (* Array literals go to .data *)
        | _ -> "bss"  (* Default to .bss for unknown initialization *)
       )
 
@@ -814,8 +824,8 @@ let get_register_var_name ctx reg_id ir_type =
       var_name
 
 (** Generate C value from IR value *)
-let generate_c_value_from_ir ctx ir_value =
-  match ir_value.value_desc with
+let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
+  let base_result = match ir_value.value_desc with
   | IRLiteral (IntLit (i, original_opt)) -> 
       (* Use original format if available, otherwise use decimal *)
       (match original_opt with
@@ -825,6 +835,7 @@ let generate_c_value_from_ir ctx ir_value =
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (NullLit) -> "NULL"
+  | IRLiteral (NoneLit) -> "/* none */"
   | IRLiteral (StringLit s) -> 
       (* Generate simple string literal for userspace *)
       sprintf "\"%s\"" s
@@ -839,6 +850,7 @@ let generate_c_value_from_ir ctx ir_value =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" s
              | Ast.NullLit -> "NULL"
+             | Ast.NoneLit -> "/* none */"
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            in
            sprintf "{%s}" fill_str
@@ -849,6 +861,7 @@ let generate_c_value_from_ir ctx ir_value =
              | Ast.BoolLit b -> if b then "true" else "false"
              | Ast.StringLit s -> sprintf "\"%s\"" s
              | Ast.NullLit -> "NULL"
+             | Ast.NoneLit -> "/* none */"
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            ) elems in
            sprintf "{%s}" (String.concat ", " elem_strs))
@@ -879,11 +892,35 @@ let generate_c_value_from_ir ctx ir_value =
   | IRFunctionRef function_name ->
       (* Generate function reference (just the function name) *)
       function_name
+  | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
+      (* Map access semantics: 
+         - Default: return the dereferenced value (kernelscript semantics)
+         - Special contexts (address-of, none comparisons): return the pointer
+      *)
+      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = ir_value.val_pos } in
+      let ptr_str = generate_c_value_from_ir ~auto_deref_map_access:false ctx underlying_val in
+      
+      if auto_deref_map_access then
+        (* Return the dereferenced value (default kernelscript semantics) *)
+        sprintf "({ %s __val = {0}; if (%s) { __val = *(%s); } __val; })" 
+          (c_type_from_ir_type ir_value.val_type) ptr_str ptr_str
+      else
+                 (* Return the pointer (for address-of operations and none comparisons) *)
+         ptr_str
+   in
+  
+  (* The auto_deref_map_access flag is now used to control whether to return 
+     the value (true - default) or the pointer (false - for special contexts) *)
+  base_result
 
 (** Generate C expression from IR expression *)
 let generate_c_expression_from_ir ctx ir_expr =
   match ir_expr.expr_desc with
-  | IRValue ir_value -> generate_c_value_from_ir ctx ir_value
+  | IRValue ir_value -> 
+      (* For IRMapAccess values, auto-dereference by default to return the value *)
+      (match ir_value.value_desc with
+       | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:true ctx ir_value
+       | _ -> generate_c_value_from_ir ctx ir_value)
   | IRBinOp (left_val, op, right_val) ->
       (* Check if this is a string operation *)
       (match left_val.val_type, op, right_val.val_type with
@@ -914,40 +951,80 @@ let generate_c_expression_from_ir ctx ir_expr =
            let index_str = generate_c_value_from_ir ctx right_val in
            sprintf "%s[%s]" array_str index_str
        | _ ->
-           (* Regular binary operation *)
-           let left_str = generate_c_value_from_ir ctx left_val in
-           let right_str = generate_c_value_from_ir ctx right_val in
-           let op_str = match op with
-             | IRAdd -> "+"
-             | IRSub -> "-"
-             | IRMul -> "*"
-             | IRDiv -> "/"
-             | IRMod -> "%"
-             | IREq -> "=="
-             | IRNe -> "!="
-             | IRLt -> "<"
-             | IRLe -> "<="
-             | IRGt -> ">"
-             | IRGe -> ">="
-             | IRAnd -> "&&"
-             | IROr -> "||"
-             | IRBitAnd -> "&"
-             | IRBitOr -> "|"
-             | IRBitXor -> "^"
-             | IRShiftL -> "<<"
-             | IRShiftR -> ">>"
-           in
-           sprintf "(%s %s %s)" left_str op_str right_str)
+           (* Check for none comparisons first *)
+           (match left_val.value_desc, op, right_val.value_desc with
+            | _, IREq, IRLiteral (Ast.NoneLit) 
+            | IRLiteral (Ast.NoneLit), IREq, _ ->
+                (* Comparison with none: check if pointer is NULL *)
+                let non_none_val = if left_val.value_desc = IRLiteral (Ast.NoneLit) then right_val else left_val in
+                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
+                let val_str = (match non_none_val.value_desc with
+                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx non_none_val
+                  | _ -> generate_c_value_from_ir ctx non_none_val) in
+                sprintf "(%s == NULL)" val_str
+            | _, IRNe, IRLiteral (Ast.NoneLit)
+            | IRLiteral (Ast.NoneLit), IRNe, _ ->
+                (* Not-equal comparison with none: check if pointer is not NULL *)
+                let non_none_val = if left_val.value_desc = IRLiteral (Ast.NoneLit) then right_val else left_val in
+                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
+                let val_str = (match non_none_val.value_desc with
+                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx non_none_val
+                  | _ -> generate_c_value_from_ir ctx non_none_val) in
+                sprintf "(%s != NULL)" val_str
+            | _ ->
+                (* Regular binary operation - auto-dereference map access for operands *)
+                let left_str = (match left_val.value_desc with
+                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:true ctx left_val
+                  | _ -> generate_c_value_from_ir ctx left_val) in
+                let right_str = (match right_val.value_desc with  
+                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:true ctx right_val
+                  | _ -> generate_c_value_from_ir ctx right_val) in
+                let op_str = match op with
+                  | IRAdd -> "+"
+                  | IRSub -> "-"
+                  | IRMul -> "*"
+                  | IRDiv -> "/"
+                  | IRMod -> "%"
+                  | IREq -> "=="
+                  | IRNe -> "!="
+                  | IRLt -> "<"
+                  | IRLe -> "<="
+                  | IRGt -> ">"
+                  | IRGe -> ">="
+                  | IRAnd -> "&&"
+                  | IROr -> "||"
+                  | IRBitAnd -> "&"
+                  | IRBitOr -> "|"
+                  | IRBitXor -> "^"
+                  | IRShiftL -> "<<"
+                  | IRShiftR -> ">>"
+                in
+                sprintf "(%s %s %s)" left_str op_str right_str))
   | IRUnOp (op, operand_val) ->
-      let operand_str = generate_c_value_from_ir ctx operand_val in
-      let op_str = match op with
-        | IRNot -> "!"
-        | IRNeg -> "-"
-        | IRBitNot -> "~"
-        | IRDeref -> "*"
-        | IRAddressOf -> "&"
-      in
-      sprintf "%s%s" op_str operand_str
+      (match op with
+       | IRAddressOf ->
+           (* Address-of operation: for map access, return the pointer directly *)
+           (match operand_val.value_desc with
+            | IRMapAccess (_, _, _) -> 
+                (* For map access address-of, return the underlying pointer *)
+                generate_c_value_from_ir ~auto_deref_map_access:false ctx operand_val
+            | _ ->
+                (* For other values, take address normally *)
+                let operand_str = generate_c_value_from_ir ctx operand_val in
+                sprintf "&%s" operand_str)
+       | _ ->
+           (* For other unary operations, auto-dereference map access *)
+           let operand_str = (match operand_val.value_desc with
+             | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:true ctx operand_val
+             | _ -> generate_c_value_from_ir ctx operand_val) in
+           let op_str = match op with
+             | IRNot -> "!"
+             | IRNeg -> "-"
+             | IRBitNot -> "~"
+             | IRDeref -> "*"
+             | _ -> failwith "Unexpected unary op"
+           in
+           sprintf "%s%s" op_str operand_str)
   | IRCast (value, target_type) ->
       (* Handle string type conversions *)
       (match value.val_type, target_type with
@@ -1010,17 +1087,18 @@ let generate_map_load_from_ir ctx map_val key_val dest_val load_type =
   | DirectLoad ->
       sprintf "%s = *%s;" dest_str map_str
   | MapLookup ->
+      (* Map lookup returns pointer directly - same as eBPF *)
       (match key_val.value_desc with
         | IRLiteral _ -> 
             let temp_key = fresh_temp_var ctx "key" in
             let key_type = c_type_from_ir_type key_val.val_type in
             let key_str = generate_c_value_from_ir ctx key_val in
-            sprintf "%s %s = %s;\n    { void* __tmp_ptr = bpf_map_lookup_elem(%s, &%s);\n      if (__tmp_ptr) %s = *(%s*)__tmp_ptr;\n      else %s = 0; }" 
-              key_type temp_key key_str map_str temp_key dest_str (c_type_from_ir_type dest_val.val_type) dest_str
+            sprintf "%s %s = %s;\n    %s = bpf_map_lookup_elem(%s, &%s);" 
+              key_type temp_key key_str dest_str map_str temp_key
         | _ -> 
             let key_str = generate_c_value_from_ir ctx key_val in
-            sprintf "{ void* __tmp_ptr = bpf_map_lookup_elem(%s, &(%s));\n      if (__tmp_ptr) %s = *(%s*)__tmp_ptr;\n      else %s = 0; }" 
-              map_str key_str dest_str (c_type_from_ir_type dest_val.val_type) dest_str)
+            sprintf "%s = bpf_map_lookup_elem(%s, &(%s));" 
+              dest_str map_str key_str)
   | MapPeek ->
       sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str
 
@@ -1128,6 +1206,7 @@ let generate_variable_assignment ctx dest src is_const =
         (* Global variable assignment - add null check to prevent segfault *)
         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
         if global_var.is_local then
+          (* Local global variables are not accessible from userspace *)
           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
         else if global_var.is_pinned then
           (* Pinned global variable assignment through map update *)
@@ -1140,20 +1219,69 @@ let generate_variable_assignment ctx dest src is_const =
         (* Regular variable assignment *)
         let dest_str = generate_c_value_from_ir ctx dest in
         (* For string assignments, use safer approach to avoid truncation warnings *)
-        (match dest.val_type with
+        let result = (match dest.val_type with
          | IRStr size -> 
              sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
          | _ -> 
-             sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+             sprintf "%s%s = %s;" assignment_prefix dest_str src_str) in
+        
+        (* Transfer success flag from source to destination for map lookup results *)
+        (match dest.value_desc, src.expr_desc with
+                | IRRegister _dest_reg, IRValue src_val ->
+           (match src_val.value_desc with
+            | IRRegister _src_reg ->
+                (* Success flag tracking no longer needed with simplified approach *)
+                ()
+            | _ -> ())
+       | _ -> ());
+        
+        result
   | _ ->
       (* Non-variable assignment (registers, etc.) *)
       let dest_str = generate_c_value_from_ir ctx dest in
       (* For string assignments, use safer approach to avoid truncation warnings *)
-      (match dest.val_type with
+      let result = (match dest.val_type with
        | IRStr size -> 
            sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
        | _ -> 
-           sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+           sprintf "%s%s = %s;" assignment_prefix dest_str src_str) in
+      
+      (* Transfer success flag from source to destination for map lookup results *)
+      (match dest.value_desc, src.expr_desc with
+       | IRRegister _dest_reg, IRValue src_val ->
+           (match src_val.value_desc with
+            | IRRegister _src_reg ->
+                (* Success flag tracking no longer needed with simplified approach *)
+                ()
+            | _ -> ())
+       | _ -> ());
+      
+      result
+
+(** Generate C code for truthy/falsy conversion in userspace *)
+let generate_truthy_conversion_userspace ctx ir_value =
+  match ir_value.val_type with
+  | IRBool -> 
+      (* Already boolean, use as-is *)
+      generate_c_value_from_ir ctx ir_value
+  | IRU8 | IRU16 | IRU32 | IRU64 | IRI8 | IRI16 | IRI32 | IRI64 ->
+      (* Numbers: 0 is falsy, non-zero is truthy *)
+      sprintf "(%s != 0)" (generate_c_value_from_ir ctx ir_value)
+  | IRChar ->
+      (* Characters: '\0' is falsy, others truthy *)
+      sprintf "(%s != '\\0')" (generate_c_value_from_ir ctx ir_value)
+  | IRStr _ ->
+      (* Strings: empty is falsy, non-empty is truthy *)
+      sprintf "(strlen(%s) > 0)" (generate_c_value_from_ir ctx ir_value)
+  | IRPointer (_, _) ->
+      (* Pointers: null is falsy, non-null is truthy *)
+      sprintf "(%s != NULL)" (generate_c_value_from_ir ctx ir_value)
+  | IREnum (_, _, _) ->
+      (* Enums: based on numeric value *)
+      sprintf "(%s != 0)" (generate_c_value_from_ir ctx ir_value)
+  | _ ->
+      (* This should never be reached due to type checking *)
+      failwith ("Internal error: Type " ^ (string_of_ir_type ir_value.val_type) ^ " cannot be used in boolean context")
 
 (** Generate C instruction from IR instruction *)
 let rec generate_c_instruction_from_ir ctx instruction =
@@ -1358,7 +1486,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
   
   | IRIf (condition, then_body, else_body) ->
       (* Generate simple if statement *)
-      let cond_str = generate_c_value_from_ir ctx condition in
+      let cond_str = generate_truthy_conversion_userspace ctx condition in
       let then_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) then_body) in
       let else_part = match else_body with
         | None -> ""
@@ -1371,7 +1499,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
   | IRIfElseChain (conditions_and_bodies, final_else) ->
       (* Generate if-else-if chains with proper C formatting *)
       let if_parts = List.mapi (fun i (cond, then_stmts) ->
-        let cond_str = generate_c_value_from_ir ctx cond in
+        let cond_str = generate_truthy_conversion_userspace ctx cond in
         let then_stmts_str = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) then_stmts) in
         let keyword = if i = 0 then "if" else "else if" in
         sprintf "%s (%s) {\n        %s\n    }" keyword cond_str then_stmts_str

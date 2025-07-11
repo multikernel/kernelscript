@@ -11,7 +11,7 @@
 %token <string> STRING IDENTIFIER
 %token <char> CHAR_LIT
 %token <bool> BOOL_LIT
-%token NULL
+%token NULL NONE
 
 /* Keywords */
 %token FN MAP PIN TYPE STRUCT ENUM IMPL
@@ -154,12 +154,13 @@ config_declaration:
 
 config_fields:
   | /* empty */ { [] }
-  | config_field config_fields { $1 :: $2 }
+  | config_field COMMA config_fields { $1 :: $3 }
+  | config_field { [$1] }
 
 config_field:
-  | IDENTIFIER COLON bpf_type ASSIGN literal COMMA
+  | IDENTIFIER COLON bpf_type ASSIGN literal
     { make_config_field $1 $3 (Some $5) (make_pos ()) }
-  | IDENTIFIER COLON bpf_type COMMA
+  | IDENTIFIER COLON bpf_type
     { make_config_field $1 $3 None (make_pos ()) }
 
 /* Attributed function declaration: @attribute [attribute...] fn name(params) -> return_type { body } */
@@ -431,6 +432,7 @@ literal:
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
   | NULL { NullLit }
+  | NONE { NoneLit }
   | LBRACKET array_init_expr RBRACKET { ArrayLit $2 }
 
 array_init_expr:
