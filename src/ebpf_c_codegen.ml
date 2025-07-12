@@ -2978,7 +2978,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   (* Generate global map definitions *)
   List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
   
-  (* Generate global variables *)
+  (* Generate global variables BEFORE functions that use them *)
   generate_global_variables ctx ir_multi_program.global_variables;
   
   (* Generate struct_ops definitions and instances *)
@@ -3174,6 +3174,9 @@ let compile_multi_to_c_with_tail_calls
   if prog_array_size > 0 then
     generate_prog_array_map ctx prog_array_size;
   
+  (* Generate global variables BEFORE functions that use them *)
+  generate_global_variables ctx ir_multi_prog.global_variables;
+  
   (* Generate kernel functions once - they are shared across all programs *)
   List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
 
@@ -3184,9 +3187,6 @@ let compile_multi_to_c_with_tail_calls
 
   (* Generate struct_ops definitions and instances after functions are defined *)
   generate_struct_ops ctx ir_multi_prog;
-  
-  (* Generate global variables *)
-  generate_global_variables ctx ir_multi_prog.global_variables;
   
   (* Emit pending callbacks *)
   List.rev ctx.pending_callbacks |> List.iter (emit_line ctx);

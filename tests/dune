@@ -69,6 +69,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_global_var_ordering)
+ (modules test_global_var_ordering)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_string_to_array_unification)
  (modules test_string_to_array_unification)
  (libraries kernelscript alcotest test_utils))
@@ -700,13 +705,14 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe)
+ (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe test_global_var_ordering.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
    (run ./test_nested_if_codegen.exe)
    (run ./test_integer_literal_codegen.exe)
-   (run ./test_context_field_types.exe))))
+   (run ./test_context_field_types.exe)
+   (run ./test_global_var_ordering.exe))))
 
 ; Top-level alias to run all tests
 (alias
