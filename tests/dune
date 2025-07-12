@@ -240,6 +240,11 @@
  (libraries kernelscript alcotest str unix))
 
 (executable
+ (name test_ebpf_string_generation)
+ (modules test_ebpf_string_generation)
+ (libraries kernelscript alcotest str unix))
+
+(executable
  (name test_userspace_skeleton_header)
  (modules test_userspace_skeleton_header)
  (libraries kernelscript alcotest str))
@@ -504,6 +509,10 @@
  (action (run ./test_string_codegen.exe)))
 
 (rule
+ (alias runtest_ebpf_string_generation)
+ (action (run ./test_ebpf_string_generation.exe)))
+
+(rule
  (alias runtest_string_struct_fixes)
  (action (run ./test_string_struct_fixes.exe)))
 
@@ -710,10 +719,11 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe test_global_var_ordering.exe test_bpf_loop_callbacks.exe)
+ (deps test_ebpf_c_codegen.exe test_ebpf_string_generation.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe test_global_var_ordering.exe test_bpf_loop_callbacks.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
+   (run ./test_ebpf_string_generation.exe)
    (run ./test_nested_if_codegen.exe)
    (run ./test_integer_literal_codegen.exe)
    (run ./test_context_field_types.exe)

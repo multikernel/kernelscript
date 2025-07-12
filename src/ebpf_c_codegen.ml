@@ -1933,13 +1933,32 @@ and generate_assignment ctx dest_val expr is_const =
    | _ ->
        (* Check if this is a string assignment *)
        (match dest_val.val_type, expr.expr_desc with
+        | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
+            (* String to string assignment with compatible sizes - regenerate src with dest size *)
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = match src_val.value_desc with
+              | IRLiteral (StringLit s) ->
+                  (* Regenerate string literal with destination size *)
+                  let temp_var = fresh_var ctx "str_lit" in
+                  let len = String.length s in
+                  let max_content_len = dest_size in
+                  let actual_len = min len max_content_len in
+                  let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+                  emit_line ctx (sprintf "str_%d_t %s = {" dest_size temp_var);
+                  emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+                  emit_line ctx (sprintf "    .len = %d" actual_len);
+                  emit_line ctx "};";
+                  temp_var
+              | _ -> generate_c_value ctx src_val
+            in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
         | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
             (* String to string assignment - need to copy struct *)
             let dest_str = generate_c_value ctx dest_val in
             let src_str = generate_c_value ctx src_val in
             emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
         | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
-            (* String literal to string assignment - already handled in generate_c_value *)
+            (* String literal to string assignment - already handled above *)
             let dest_str = generate_c_value ctx dest_val in
             let src_str = generate_c_value ctx src_val in
             emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
@@ -2021,6 +2040,32 @@ let rec generate_c_instruction ctx ir_instr =
                 emit_line ctx (sprintf "%s = %s;" array_decl init_str)
             | None ->
                 emit_line ctx (sprintf "%s;" array_decl))
+       | IRStr dest_size ->
+           (* String variable declaration with special handling for string literals *)
+           (match init_expr_opt with
+            | Some init_expr ->
+                (match init_expr.expr_desc with
+                 | IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
+                     (* String literal initialization - generate compatible literal *)
+                     (match src_val.value_desc with
+                      | IRLiteral (StringLit s) ->
+                          let len = String.length s in
+                          let max_content_len = dest_size in
+                          let actual_len = min len max_content_len in
+                          let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+                          emit_line ctx (sprintf "%s %s = {" type_str var_name);
+                          emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+                          emit_line ctx (sprintf "    .len = %d" actual_len);
+                          emit_line ctx "};"
+                      | _ ->
+                          let init_str = generate_c_expression ctx init_expr in
+                          emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
+                 | _ ->
+                     (* Other initialization expressions *)
+                     let init_str = generate_c_expression ctx init_expr in
+                     emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
+            | None ->
+                emit_line ctx (sprintf "%s %s;" type_str var_name))
        | _ ->
            (* Regular variable declaration *)
            (match init_expr_opt with
