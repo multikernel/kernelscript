@@ -1591,8 +1591,14 @@ let generate_c_expression ctx ir_expr =
                  else
                    sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field
              | _ -> 
-                 (* Direct struct field access *)
-                 sprintf "%s.%s" obj_str field))
+                 (* Check if this is actually a pointer type that wasn't detected *)
+                 (match obj_val.value_desc with
+                  | IRMapAccess (_, _, _) -> 
+                      (* Map lookups return pointers, always use arrow notation *)
+                      sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field
+                  | _ -> 
+                      (* Direct struct field access *)
+                      sprintf "%s.%s" obj_str field)))
       
   | IRStructLiteral (_struct_name, field_assignments) ->
       (* Generate C struct literal: {.field1 = value1, .field2 = value2} *)
