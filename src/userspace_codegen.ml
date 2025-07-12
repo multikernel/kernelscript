@@ -374,81 +374,104 @@ let collect_string_sizes_from_ir_value ir_value =
          | _ -> [])
     | _ -> []
   in
-  type_sizes @ literal_sizes
+    type_sizes @ literal_sizes
 
-let collect_string_sizes_from_ir_expr ir_expr =
+(** Collect string sizes from IR - but only those used in concatenation operations *)
+let rec collect_string_concat_sizes_from_ir_expr ir_expr =
   match ir_expr.expr_desc with
-  | IRValue ir_value -> collect_string_sizes_from_ir_value ir_value
-  | IRBinOp (left, _, right) -> 
-      (collect_string_sizes_from_ir_value left) @ (collect_string_sizes_from_ir_value right)
-  | IRUnOp (_, operand) -> collect_string_sizes_from_ir_value operand
-  | IRCast (value, target_type) -> 
-      (collect_string_sizes_from_ir_value value) @ (collect_string_sizes_from_ir_type target_type)
-  | IRFieldAccess (obj, _) -> collect_string_sizes_from_ir_value obj
+  | IRValue _ir_value -> []  (* Values alone don't need concatenation helpers *)
+  | IRBinOp (left, op, right) -> 
+      (* Only collect sizes for string concatenation operations *)
+      (match left.val_type, op, right.val_type with
+       | IRStr _, IRAdd, IRStr _ ->
+           (* This is a string concatenation - collect the result size *)
+           (match ir_expr.expr_type with
+            | IRStr result_size -> [result_size]
+            | _ -> [])
+       | _ -> [])  (* Other binary operations don't need concatenation helpers *)
+  | IRUnOp (_, _operand) -> []  (* Unary operations don't need concatenation helpers *)
+  | IRCast (_value, _target_type) -> []  (* Casts don't need concatenation helpers *)
+  | IRFieldAccess (_obj, _) -> []  (* Field access doesn't need concatenation helpers *)
   | IRStructLiteral (_, field_assignments) ->
       List.fold_left (fun acc (_, field_val) ->
-        acc @ (collect_string_sizes_from_ir_value field_val)
+        acc @ (collect_string_concat_sizes_from_ir_value field_val)
       ) [] field_assignments
   | IRMatch (matched_val, arms) ->
       (* Collect string sizes from matched expression and all arms *)
-      (collect_string_sizes_from_ir_value matched_val) @
+      (collect_string_concat_sizes_from_ir_value matched_val) @
       (List.fold_left (fun acc arm ->
-        acc @ (collect_string_sizes_from_ir_value arm.ir_arm_value)
+        acc @ (collect_string_concat_sizes_from_ir_value arm.ir_arm_value)
       ) [] arms)
 
-let collect_string_sizes_from_ir_instruction ir_instr =
+and collect_string_concat_sizes_from_ir_value ir_value =
+  match ir_value.value_desc with
+  | IRLiteral _ -> []  (* Literals alone don't need concatenation helpers *)
+  | _ -> []  (* Other values don't need concatenation helpers *)
+
+let rec collect_string_concat_sizes_from_ir_instruction ir_instr =
   match ir_instr.instr_desc with
-  | IRAssign (dest, expr) -> 
-      (collect_string_sizes_from_ir_value dest) @ (collect_string_sizes_from_ir_expr expr)
-  | IRDeclareVariable (dest, _typ, init_expr_opt) ->
-      let dest_sizes = collect_string_sizes_from_ir_value dest in
-      let init_sizes = match init_expr_opt with
-        | Some init_expr -> collect_string_sizes_from_ir_expr init_expr
-        | None -> []
-      in
-      dest_sizes @ init_sizes
-  | IRCall (_, args, ret_opt) ->
-      let ret_sizes = match ret_opt with
-        | Some ret_val -> collect_string_sizes_from_ir_value ret_val
-        | None -> []
-      in
-      let arg_sizes = List.fold_left (fun acc arg -> 
-        acc @ (collect_string_sizes_from_ir_value arg)
-      ) [] args in
-      ret_sizes @ arg_sizes
+  | IRAssign (_dest, expr) -> 
+      (* Only collect from expressions that involve concatenation *)
+      collect_string_concat_sizes_from_ir_expr expr
+  | IRDeclareVariable (_dest, _typ, init_expr_opt) ->
+      (match init_expr_opt with
+       | Some init_expr -> collect_string_concat_sizes_from_ir_expr init_expr
+       | None -> [])
+  | IRCall (_, _args, _ret_opt) -> []  (* Function calls don't need concatenation helpers *)
   | IRReturn value_opt ->
       (match value_opt with
-       | Some value -> collect_string_sizes_from_ir_value value
+       | Some value -> collect_string_concat_sizes_from_ir_value value
        | None -> [])
-  | IRIf (cond, _, _) -> collect_string_sizes_from_ir_value cond
-  | IRIfElseChain (conditions_and_bodies, _) ->
-      List.fold_left (fun acc (cond, _) ->
-        acc @ (collect_string_sizes_from_ir_value cond)
-      ) [] conditions_and_bodies
-  | IRMapLoad (_, _, dest, _) -> collect_string_sizes_from_ir_value dest
-  | IRMapStore (_, _, value, _) -> collect_string_sizes_from_ir_value value
-  | IRMapDelete (_, _) -> []
-  | IRConfigFieldUpdate (_, _, _, value) -> collect_string_sizes_from_ir_value value
-  | IRBoundsCheck (value, _, _) -> collect_string_sizes_from_ir_value value
-  | _ -> [] (* Other instruction types don't contain string sizes *)
+  | IRIf (_cond, then_body, else_body) ->
+      let then_sizes = List.fold_left (fun acc instr ->
+        acc @ (collect_string_concat_sizes_from_ir_instruction instr)
+      ) [] then_body in
+      let else_sizes = match else_body with
+        | Some else_instrs -> List.fold_left (fun acc instr ->
+            acc @ (collect_string_concat_sizes_from_ir_instruction instr)
+          ) [] else_instrs
+        | None -> []
+      in
+      then_sizes @ else_sizes
+  | IRIfElseChain (conditions_and_bodies, final_else) ->
+      let chain_sizes = List.fold_left (fun acc (_cond, then_body) ->
+        acc @ (List.fold_left (fun acc2 instr ->
+          acc2 @ (collect_string_concat_sizes_from_ir_instruction instr)
+        ) [] then_body)
+      ) [] conditions_and_bodies in
+      let final_sizes = match final_else with
+        | Some else_instrs -> List.fold_left (fun acc instr ->
+            acc @ (collect_string_concat_sizes_from_ir_instruction instr)
+          ) [] else_instrs
+        | None -> []
+      in
+      chain_sizes @ final_sizes
+  | IRBpfLoop (_, _, _, _, body_instrs) ->
+      List.fold_left (fun acc instr ->
+        acc @ (collect_string_concat_sizes_from_ir_instruction instr)
+      ) [] body_instrs
+  | IRTry (try_instrs, catch_clauses) ->
+      let try_sizes = List.fold_left (fun acc instr ->
+        acc @ (collect_string_concat_sizes_from_ir_instruction instr)
+      ) [] try_instrs in
+      let catch_sizes = List.fold_left (fun acc clause ->
+        acc @ (List.fold_left (fun acc2 instr ->
+          acc2 @ (collect_string_concat_sizes_from_ir_instruction instr)
+        ) [] clause.catch_body)
+      ) [] catch_clauses in
+      try_sizes @ catch_sizes
+  | _ -> []  (* Other instruction types don't involve concatenation *)
 
-let collect_string_sizes_from_ir_function ir_func =
-  let param_sizes = List.fold_left (fun acc (_, param_type) ->
-    acc @ (collect_string_sizes_from_ir_type param_type)
-  ) [] ir_func.parameters in
-  let return_sizes = match ir_func.return_type with
-    | Some ret_type -> collect_string_sizes_from_ir_type ret_type
-    | None -> [] in
-  let body_sizes = List.fold_left (fun acc block ->
+and collect_string_concat_sizes_from_ir_function ir_func =
+  List.fold_left (fun acc block ->
     List.fold_left (fun acc2 instr ->
-      acc2 @ (collect_string_sizes_from_ir_instruction instr)
+      acc2 @ (collect_string_concat_sizes_from_ir_instruction instr)
     ) acc block.instructions
-  ) [] ir_func.basic_blocks in
-  param_sizes @ return_sizes @ body_sizes
+  ) [] ir_func.basic_blocks
 
-let collect_string_sizes_from_userspace_program userspace_prog =
+and collect_string_concat_sizes_from_userspace_program userspace_prog =
   List.fold_left (fun acc func ->
-    acc @ (collect_string_sizes_from_ir_function func)
+    acc @ (collect_string_concat_sizes_from_ir_function func)
   ) [] userspace_prog.userspace_functions
 
 (** Collect enum definitions from IR types *)
@@ -807,9 +830,26 @@ let determine_global_var_section (global_var : ir_global_variable) =
       )
 
 (** Generate string helper functions *)
-let generate_string_helpers _string_sizes =
-  (* For userspace, we don't need complex string helper functions - just use standard C *)
-  ""
+let generate_string_helpers string_sizes =
+  (* Generate concatenation helper functions for each string size *)
+  let concat_helpers = List.map (fun size ->
+    sprintf {|static inline char* str_concat_%d(const char* left, const char* right) {
+    static char result[%d];
+    size_t left_len = strlen(left);
+    size_t right_len = strlen(right);
+    if (left_len + right_len < %d) {
+        strcpy(result, left);
+        strcat(result, right);
+    } else {
+        strncpy(result, left, %d - 1);
+        result[%d - 1] = '\0';
+    }
+    return result;
+}|} size size size size size
+  ) (List.sort_uniq compare string_sizes) in
+  
+  if concat_helpers = [] then ""
+  else "/* String helper functions */\n" ^ (String.concat "\n\n" concat_helpers) ^ "\n\n"
 
 (** Get or create a meaningful variable name for a register *)
 let get_register_var_name ctx reg_id ir_type =
@@ -930,16 +970,15 @@ let generate_c_expression_from_ir ctx ir_expr =
       (* Check if this is a string operation *)
       (match left_val.val_type, op, right_val.val_type with
        | IRStr _, IRAdd, IRStr _ ->
-           (* String concatenation - use safer approach for userspace *)
+           (* String concatenation - avoid compound literals by using helper function *)
            let left_str = generate_c_value_from_ir ctx left_val in
            let right_str = generate_c_value_from_ir ctx right_val in
-           (* Use a temporary stack array for concatenation *) 
            let result_size = match ir_expr.expr_type with
              | IRStr size -> size
              | _ -> 256 (* fallback size *)
            in
-           sprintf "({ char __tmp[%d] = {0}; size_t __left_len = strlen(%s); size_t __right_len = strlen(%s); if (__left_len + __right_len < %d) { strcpy(__tmp, %s); strcat(__tmp, %s); } else { strncpy(__tmp, %s, %d - 1); __tmp[%d - 1] = '\\0'; } __tmp; })" 
-             result_size left_str right_str result_size left_str right_str left_str result_size result_size
+           (* Instead of compound literal, generate a function call that will be expanded *)
+           sprintf "str_concat_%d(%s, %s)" result_size left_str right_str
        | IRStr _, IREq, IRStr _ ->
            (* String equality - use strcmp *)
            let left_str = generate_c_value_from_ir ctx left_val in
@@ -1033,11 +1072,10 @@ let generate_c_expression_from_ir ctx ir_expr =
   | IRCast (value, target_type) ->
       (* Handle string type conversions *)
       (match value.val_type, target_type with
-       | IRStr src_size, IRStr dest_size when src_size <> dest_size ->
-           (* String type conversion: copy data and length from source *)
+       | IRStr _src_size, IRStr _dest_size ->
+           (* For userspace, strings are just char arrays - no special conversion needed *)
            let value_str = generate_c_value_from_ir ctx value in
-           sprintf "({ str_%d_t __conv; strncpy(__conv.data, (%s).data, (%s).len); __conv.len = (%s).len; if (__conv.len >= %d) __conv.len = %d - 1; __conv.data[__conv.len] = '\\0'; __conv; })" 
-             dest_size value_str value_str value_str dest_size dest_size
+           value_str  (* Direct use since both are char* in userspace *)
        | _ ->
            let value_str = generate_c_value_from_ir ctx value in
            let type_str = c_type_from_ir_type target_type in
@@ -2307,8 +2345,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     | _ -> ""
   in
   
-  (* Collect string sizes from the userspace program *)
-  let string_sizes = collect_string_sizes_from_userspace_program userspace_prog in
+  (* Collect string sizes from the userspace program - only those used in concatenation *)
+  let string_sizes = collect_string_concat_sizes_from_userspace_program userspace_prog in
   
   (* Generate string type definitions and helpers *)
   let string_typedefs = generate_string_typedefs string_sizes in

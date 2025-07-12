@@ -85,16 +85,17 @@ fn main() -> i32 {
   try
     let result = generate_userspace_code_from_program program_text "test_string_concat" in
     
-    (* Should generate safe concatenation with temporary buffers *)
-    check bool "uses temporary buffer" true (contains_pattern result "__tmp\\[[0-9]+\\]");
-    check bool "initializes temp buffer" true (contains_pattern result "__tmp\\[[0-9]+\\].*=.*{0}");
-    check bool "has strlen checks for concat" true (contains_pattern result "strlen.*__left_len.*strlen.*__right_len");
-    check bool "has safe concat path" true (contains_pattern result "strcpy.*__tmp.*strcat.*__tmp");
-    check bool "has truncation path" true (contains_pattern result "strncpy.*__tmp");
-    check bool "bounds check for concat" true (contains_pattern result "if.*__left_len.*\\+.*__right_len.*<");
+    (* Should generate safe concatenation with helper functions *)
+    check bool "uses str_concat helper" true (contains_pattern result "str_concat_[0-9]+");
+    check bool "has helper function definition" true (contains_pattern result "static inline char\\* str_concat_[0-9]+");
+    (* The helper function should have safe concatenation operations *)
+    check bool "has strcpy in helper" true (contains_pattern result "strcpy.*result.*left");
+    check bool "has strcat in helper" true (contains_pattern result "strcat.*result.*right");
+    check bool "has truncation path" true (contains_pattern result "strncpy");
+    check bool "bounds check for concat" true (contains_pattern result "if.*len.*\\+.*len.*<");
     
-    (* Should return the temporary buffer within the assignment context *)
-    check bool "returns temp buffer" true (contains_pattern result "__tmp.*}.*}");
+    (* Should call the helper function in assignment *)
+    check bool "calls helper in assignment" true (contains_pattern result "str_concat_[0-9]+.*var_.*var_");
   with
   | exn -> fail ("String concatenation test failed: " ^ Printexc.to_string exn)
 
@@ -246,13 +247,13 @@ fn main() -> i32 {
     
     (* Should have all string operations *)
     check bool "has string assignment" true (contains_pattern result "strlen.*__src_len");
-    check bool "has concatenation" true (contains_pattern result "__tmp\\[[0-9]+\\].*strcpy.*strcat");
+    check bool "has concatenation" true (contains_pattern result "str_concat_[0-9]+");
     check bool "has comparison" true (contains_pattern result "strcmp.*\"HelloWorld!\".*==.*0");
     check bool "has indexing" true (contains_pattern result "var_.*\\[[0-9]+\\]");
     
     (* Should be properly nested and structured *)
     check bool "has conditional with comparison variable" true (contains_pattern result "if.*var_");
-    check bool "has temp buffer usage" true (contains_pattern result "__tmp\\[[0-9]+\\]");
+    check bool "has helper function usage" true (contains_pattern result "str_concat_[0-9]+");
   with
   | exn -> fail ("Complex string operations test failed: " ^ Printexc.to_string exn)
 
