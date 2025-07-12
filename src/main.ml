@@ -338,6 +338,28 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
         in
         if prog_type_str <> "" then
           let template = Btf_parser.get_program_template prog_type_str btf_vmlinux_path in
+          
+          (* Extract context structures and integrate them with context codegen *)
+          List.iter (fun btf_type ->
+            (* Convert Btf_parser.btf_type_info to Context_codegen.btf_type_info *)
+            let context_btf_type = {
+              Kernelscript_context.Context_codegen.name = btf_type.Btf_parser.name;
+              kind = btf_type.Btf_parser.kind;
+              size = btf_type.Btf_parser.size;
+              members = btf_type.Btf_parser.members;
+              kernel_defined = btf_type.Btf_parser.kernel_defined;
+            } in
+            
+            match btf_type.Btf_parser.name with
+            | "xdp_md" -> 
+                Printf.printf "🔧 Integrating BTF xdp_md structure with context codegen\n";
+                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "xdp" context_btf_type
+            | "__sk_buff" ->
+                Printf.printf "🔧 Integrating BTF __sk_buff structure with context codegen\n";
+                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "tc" context_btf_type
+            | _ -> ()
+          ) template.types;
+          
           template.types @ acc
         else
           acc

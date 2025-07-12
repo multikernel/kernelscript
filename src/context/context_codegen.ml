@@ -9,6 +9,15 @@ type context_field_access = {
   field_type: string; (* C type of the field *)
 }
 
+(** BTF type information for context codegen *)
+type btf_type_info = {
+  name: string;
+  kind: string;
+  size: int option;
+  members: (string * string) list option; (* field_name * field_type *)
+  kernel_defined: bool;
+}
+
 type context_codegen = {
   name: string;
   c_type: string;
@@ -49,8 +58,6 @@ let get_context_includes ctx_type =
   | Some codegen -> codegen.generate_includes ()
   | None -> []
 
-
-
 (** Map action constant for a context type *)
 let map_context_action_constant ctx_type action_value =
   match get_context_codegen ctx_type with
@@ -89,4 +96,153 @@ let get_context_field_c_type ctx_type field_name =
         let (_, field_access) = List.find (fun (name, _) -> name = field_name) codegen.field_mappings in
         Some field_access.field_type
       with Not_found -> None)
-  | None -> None 
+  | None -> None
+
+(** Create context field access from BTF field information *)
+let create_btf_field_access field_name field_type =
+  (* Determine if casting is needed based on field type *)
+  let requires_cast = 
+    String.contains field_type '*' || 
+    (String.contains field_type 'u' && String.contains field_type '6') (* __u64 *)
+  in
+  
+  let c_expression = fun ctx_var ->
+    if requires_cast then
+      Printf.sprintf "(%s)(long)%s->%s" field_type ctx_var field_name
+    else
+      Printf.sprintf "%s->%s" ctx_var field_name
+  in
+  
+  {
+    field_name;
+    c_expression;
+    requires_cast;
+    field_type;
+  }
+
+(** Create context codegen from BTF type information *)
+let create_context_codegen_from_btf ctx_type_name btf_type_info =
+  let field_mappings = match btf_type_info.members with
+    | Some members ->
+        List.map (fun (field_name, field_type) ->
+          (field_name, create_btf_field_access field_name field_type)
+        ) members
+    | None -> []
+  in
+  
+  let generate_field_access ctx_var field_name =
+    try
+      let (_, field_access) = List.find (fun (name, _) -> name = field_name) field_mappings in
+      field_access.c_expression ctx_var
+    with Not_found ->
+      failwith ("Unknown BTF context field: " ^ field_name ^ " for type: " ^ ctx_type_name)
+  in
+  
+  let generate_includes () = 
+    (* Generate appropriate includes based on context type *)
+    match ctx_type_name with
+    | "xdp" -> [
+        "#include <linux/bpf.h>";
+        "#include <bpf/bpf_helpers.h>";
+        "#include <linux/if_ether.h>";
+        "#include <linux/ip.h>";
+        "#include <linux/in.h>";
+        "#include <linux/if_xdp.h>";
+      ]
+    | "tc" -> [
+        "#include <linux/bpf.h>";
+        "#include <bpf/bpf_helpers.h>";
+        "#include <linux/if_ether.h>";
+        "#include <linux/ip.h>";
+        "#include <linux/in.h>";
+        "#include <linux/pkt_cls.h>";
+      ]
+    | _ -> [
+        "#include <linux/bpf.h>";
+        "#include <bpf/bpf_helpers.h>";
+      ]
+  in
+  
+  let map_action_constant = match ctx_type_name with
+    | "xdp" -> (function
+        | 0 -> Some "XDP_ABORTED"
+        | 1 -> Some "XDP_DROP"
+        | 2 -> Some "XDP_PASS"
+        | 3 -> Some "XDP_REDIRECT"
+        | 4 -> Some "XDP_TX"
+        | _ -> None)
+    | "tc" -> (function
+        | 255 -> Some "TC_ACT_UNSPEC"
+        | 0 -> Some "TC_ACT_OK"
+        | 1 -> Some "TC_ACT_RECLASSIFY"
+        | 2 -> Some "TC_ACT_SHOT"
+        | 3 -> Some "TC_ACT_PIPE"
+        | 4 -> Some "TC_ACT_STOLEN"
+        | 5 -> Some "TC_ACT_QUEUED"
+        | 6 -> Some "TC_ACT_REPEAT"
+        | 7 -> Some "TC_ACT_REDIRECT"
+        | _ -> None)
+    | _ -> (fun _ -> None)
+  in
+  
+  let c_type = match ctx_type_name with
+    | "xdp" -> "struct xdp_md*"
+    | "tc" -> "struct __sk_buff*"
+    | _ -> Printf.sprintf "struct %s*" btf_type_info.name
+  in
+  
+  let section_prefix = match ctx_type_name with
+    | "xdp" -> "xdp"
+    | "tc" -> "classifier"
+    | _ -> ctx_type_name
+  in
+  
+  {
+    name = Printf.sprintf "%s (BTF)" ctx_type_name;
+    c_type;
+    section_prefix;
+    field_mappings;
+    generate_includes;
+    generate_field_access;
+    map_action_constant;
+  }
+
+(** Register context codegen from BTF type information *)
+let register_btf_context_codegen ctx_type_name btf_type_info =
+  let codegen = create_context_codegen_from_btf ctx_type_name btf_type_info in
+  register_context_codegen ctx_type_name codegen;
+  Printf.printf "🔧 Registered BTF-based context codegen for %s with %d fields\n" 
+    ctx_type_name (List.length codegen.field_mappings)
+
+(** Update context codegen with BTF information if available *)
+let update_context_codegen_with_btf ctx_type_name btf_type_info =
+  match get_context_codegen ctx_type_name with
+  | Some existing_codegen ->
+      (* Merge BTF fields with existing hardcoded fields *)
+      let btf_fields = match btf_type_info.members with
+        | Some members ->
+            List.map (fun (field_name, field_type) ->
+              (field_name, create_btf_field_access field_name field_type)
+            ) members
+        | None -> []
+      in
+      
+      (* Combine existing and BTF fields, with BTF fields taking precedence *)
+      let existing_field_names = List.map fst existing_codegen.field_mappings in
+      let btf_only_fields = List.filter (fun (name, _) -> 
+        not (List.mem name existing_field_names)
+      ) btf_fields in
+      let combined_fields = existing_codegen.field_mappings @ btf_only_fields in
+      
+      let updated_codegen = {
+        existing_codegen with
+        field_mappings = combined_fields;
+        name = Printf.sprintf "%s (BTF-enhanced)" ctx_type_name;
+      } in
+      
+      register_context_codegen ctx_type_name updated_codegen;
+      Printf.printf "🔧 Enhanced context codegen for %s with %d additional BTF fields\n" 
+        ctx_type_name (List.length btf_only_fields)
+  | None ->
+      (* No existing codegen, create new one from BTF *)
+      register_btf_context_codegen ctx_type_name btf_type_info 
