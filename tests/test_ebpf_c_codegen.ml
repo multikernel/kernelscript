@@ -875,6 +875,40 @@ let test_bpf_printk_string_literal_fix () =
   check bool "bpf_printk does not use struct field" false (contains_substr c_code ".data)");
   ()
 
+(** Test map field access pointer fix (bug fix regression test) *)
+let test_map_field_access_pointer_fix () =
+  (* Test that field access on map lookup results uses arrow notation via SAFE_PTR_ACCESS *)
+  let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  let ctx = create_c_context () in
+  
+  (* Create a value that represents a map access result *)
+  let key_val = make_ir_value (IRLiteral (IntLit (1, None))) IRU32 dummy_pos in
+  let map_access_val = make_ir_value 
+    (IRMapAccess ("buffer_map", key_val, (IRRegister 5, IRPointer (IRStruct ("DataBuffer", [("size", IRU32)], false), make_bounds_info ()))))
+    (IRPointer (IRStruct ("DataBuffer", [("size", IRU32)], false), make_bounds_info ()))
+    dummy_pos in
+  
+  (* Create field access expression *)
+  let field_expr = make_ir_expr (IRFieldAccess (map_access_val, "size")) IRU32 dummy_pos in
+  
+  (* Generate C code for the field access *)
+  let c_result = generate_c_expression ctx field_expr in
+  
+  (* Verify that SAFE_PTR_ACCESS is used for map access field access *)
+  check bool "SAFE_PTR_ACCESS used for map field access" true (contains_substr c_result "SAFE_PTR_ACCESS");
+  
+  (* Verify that dot notation is NOT used (this was the bug) *)
+  check bool "no dot notation for map field access" false (contains_substr c_result ".size");
+  
+  (* Now test regular struct (non-map) field access to ensure it still uses dot notation *)
+  let regular_val = make_ir_value (IRVariable "my_struct") (IRStruct ("DataBuffer", [("size", IRU32)], false)) dummy_pos in
+  let regular_field_expr = make_ir_expr (IRFieldAccess (regular_val, "size")) IRU32 dummy_pos in
+  let regular_result = generate_c_expression ctx regular_field_expr in
+  
+  (* Verify that regular struct access still uses dot notation *)
+  check bool "dot notation used for regular struct field access" true (contains_substr regular_result "my_struct.size");
+  ()
+
 (** Test suite definition *)
 let suite =
   [
@@ -907,6 +941,7 @@ let suite =
     ("Struct fields use alias names", `Quick, test_struct_fields_use_alias_names);
     ("Struct definition with aliases", `Quick, test_struct_definition_with_aliases);
     ("Complete type alias fix integration", `Quick, test_complete_type_alias_fix_integration);
+    ("Map field access pointer fix", `Quick, test_map_field_access_pointer_fix);
     (* Bug fix regression tests *)
     ("String size collection from userspace structs", `Quick, test_string_size_collection_from_userspace_structs);
     ("Declaration ordering fix", `Quick, test_declaration_ordering_fix);
