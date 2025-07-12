@@ -841,7 +841,6 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
       if string_contains_substring c_code pattern then
         check bool description true true
       else (
-        Printf.printf "Generated C code:\n%s\n" c_code;
         fail (description ^ " - pattern not found: " ^ pattern)
       )
     in

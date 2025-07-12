@@ -80,3 +80,13 @@ let get_context_struct_fields ctx_type =
         (field_name, field_access.field_type)
       ) codegen.field_mappings
   | None -> [] 
+
+(** Get the C type string for a context field *)
+let get_context_field_c_type ctx_type field_name =
+  match get_context_codegen ctx_type with
+  | Some codegen ->
+      (try
+        let (_, field_access) = List.find (fun (name, _) -> name = field_name) codegen.field_mappings in
+        Some field_access.field_type
+      with Not_found -> None)
+  | None -> None 

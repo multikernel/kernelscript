@@ -3,6 +3,9 @@ open Kernelscript.Symbol_table
 open Kernelscript.Type_checker
 open Kernelscript.Ir_generator
 
+(* Initialize context codegens *)
+let () = Kernelscript_context.Xdp_codegen.register ()
+
 (** Helper function to check if string contains substring *)
 let contains_substr str substr =
   try

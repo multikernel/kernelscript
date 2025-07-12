@@ -902,8 +902,13 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
       
       if auto_deref_map_access then
         (* Return the dereferenced value (default kernelscript semantics) *)
+        (* For map access, the underlying_type is the pointer type, so we need to dereference it *)
+        let deref_type = match underlying_type with
+          | IRPointer (inner_type, _) -> inner_type
+          | other_type -> other_type
+        in
         sprintf "({ %s __val = {0}; if (%s) { __val = *(%s); } __val; })" 
-          (c_type_from_ir_type ir_value.val_type) ptr_str ptr_str
+          (c_type_from_ir_type deref_type) ptr_str ptr_str
       else
                  (* Return the pointer (for address-of operations and none comparisons) *)
          ptr_str

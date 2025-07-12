@@ -784,20 +784,51 @@ and type_check_arrow_access ctx obj field pos =
         type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
   in
   
-  (* Use unified struct field lookup for all struct types *)
-  (try
-     let type_def = Hashtbl.find ctx.types struct_name in
-     match type_def with
-     | StructDef (_, fields, _) ->
-         (try
-            let field_type = List.assoc field fields in
-            { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
-          with Not_found ->
-            type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) pos)
-     | _ ->
-         type_error (struct_name ^ " is not a struct") pos
-   with Not_found ->
-     type_error ("Undefined struct: " ^ struct_name) pos)
+  (* Use context codegen as authoritative source for context struct fields *)
+  let is_context_struct = match struct_name with
+    | "xdp_md" | "__sk_buff" -> true
+    | _ -> false
+  in
+  
+  if is_context_struct then
+    (* Use context codegen to get the correct field type *)
+    let ctx_type_str = match struct_name with
+      | "xdp_md" -> "xdp"
+      | "__sk_buff" -> "tc"
+      | _ -> failwith ("Unknown context struct: " ^ struct_name)
+    in
+    (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
+     | Some c_type ->
+         (* Convert C type to AST type for consistency with type checker *)
+         let ast_field_type = match c_type with
+           | "__u8*" | "void*" -> Pointer U8
+           | "__u16*" -> Pointer U16 
+           | "__u32*" -> Pointer U32
+           | "__u64*" -> Pointer U64
+           | "__u8" -> U8
+           | "__u16" -> U16
+           | "__u32" -> U32
+           | "__u64" -> U64
+           | _ -> failwith ("Unsupported context field C type: " ^ c_type)
+         in
+         { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = ast_field_type; texpr_pos = pos }
+     | None ->
+         type_error ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str) pos)
+  else
+    (* Use regular struct field lookup for non-context types *)
+    (try
+       let type_def = Hashtbl.find ctx.types struct_name in
+       match type_def with
+       | StructDef (_, fields, _) ->
+           (try
+              let field_type = List.assoc field fields in
+              { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
+            with Not_found ->
+              type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) pos)
+       | _ ->
+           type_error (struct_name ^ " is not a struct") pos
+     with Not_found ->
+       type_error ("Undefined struct: " ^ struct_name) pos)
 
 (** Type check binary operation *)
 and type_check_binary_op ctx left op right pos =
@@ -2388,15 +2419,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
              if List.length params <> 1 ||
                 resolved_param_type <> Pointer (Struct "__sk_buff") ||
                 resolved_return_type <> Some I32 then (
-               Printf.printf "DEBUG TC validation failed:\n";
-               Printf.printf "  param count: %d (expected 1)\n" (List.length params);
-               Printf.printf "  resolved_param_type: %s\n" (Ast.string_of_bpf_type resolved_param_type);
-               Printf.printf "  expected param type: %s\n" (Ast.string_of_bpf_type (Pointer (Struct "__sk_buff")));
-               Printf.printf "  resolved_return_type: %s\n" 
-                 (match resolved_return_type with 
-                  | Some t -> Ast.string_of_bpf_type t 
-                  | None -> "None");
-               Printf.printf "  expected return type: %s\n" (Ast.string_of_bpf_type I32);
+                   (* TC validation failed - detailed diagnostics available in error message *)
                type_error ("@tc attributed function must have signature (ctx: *__sk_buff) -> int") attr_func.attr_pos
              )
          | Some Kprobe ->

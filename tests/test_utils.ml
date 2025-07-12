@@ -209,6 +209,10 @@ module Helpers = struct
   
   (** Create symbol table with test builtin types *)
   let create_test_symbol_table ?(include_xdp=true) ?(include_tc=true) ?(include_kprobe=true) ?(include_struct_ops=true) ast =
+    (* Register context codegens for tests *)
+    if include_xdp then Kernelscript_context.Xdp_codegen.register ();
+    if include_tc then Kernelscript_context.Tc_codegen.register ();
+    
     let builtin_asts = 
       (if include_xdp then [Xdp.builtin_ast] else []) @
       (if include_tc then [Tc.builtin_ast] else []) @

@@ -345,9 +345,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     with
     | _ -> 
         Printf.printf "⚠️ Warning: Could not load BTF types, using context defaults\n";
-        (* Initialize context codegens *)
-        Kernelscript_context.Xdp_codegen.register ();
-        Kernelscript_context.Tc_codegen.register ();
+        (* Context codegens already initialized at the start - don't register again *)
         
         (* Get context types from AST *)
         let program_types = Multi_program_analyzer.get_program_types_from_ast ast in

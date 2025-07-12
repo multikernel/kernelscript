@@ -137,6 +137,8 @@ type c_context = {
   mutable register_name_hints: (int, string) Hashtbl.t;
   (* Track which registers can be inlined *)
   mutable inlinable_registers: (int, string) Hashtbl.t;
+  (* Current function's context type for proper field access generation *)
+  mutable current_function_context_type: string option;
 }
 
 let create_c_context () = {
@@ -155,6 +157,7 @@ let create_c_context () = {
   enable_temp_var_optimization = true;
   register_name_hints = Hashtbl.create 32;
   inlinable_registers = Hashtbl.create 32;
+  current_function_context_type = None;
 }
 
 (** Helper functions for code generation *)
@@ -1327,8 +1330,13 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
       
       if auto_deref_map_access then
         (* Return the dereferenced value (default kernelscript semantics) *)
+        (* For map access, the underlying_type is the pointer type, so we need to dereference it *)
+        let deref_type = match underlying_type with
+          | IRPointer (inner_type, _) -> inner_type
+          | other_type -> other_type
+        in
         sprintf "({ %s __val = {0}; if (%s) { __val = *(%s); } __val; })" 
-          (ebpf_type_from_ir_type ir_val.val_type) ptr_str ptr_str
+          (ebpf_type_from_ir_type deref_type) ptr_str ptr_str
       else
         (* Return the pointer (for address-of operations and none comparisons) *)
         ptr_str
@@ -1457,6 +1465,20 @@ let generate_c_expression ctx ir_expr =
                 let right_str = (match right.value_desc with  
                   | IRMapAccess (_, _, _) -> generate_c_value ~auto_deref_map_access:true ctx right
                   | _ -> generate_c_value ctx right) in
+                
+                (* Add casting for pointer arithmetic *)
+                let (left_str, right_str) = match left.val_type, op, right.val_type with
+                  (* Pointer - Pointer = size (cast both to uintptr_t) *)
+                  | IRPointer _, IRSub, IRPointer _ -> 
+                      (sprintf "((__u64)%s)" left_str, sprintf "((__u64)%s)" right_str)
+                  (* Pointer + Integer = Pointer (no casting needed) *)
+                  | IRPointer _, (IRAdd | IRSub), _ -> (left_str, right_str)
+                  (* Integer + Pointer = Pointer (no casting needed) *)
+                  | _, IRAdd, IRPointer _ -> (left_str, right_str)
+                  (* Default case - no casting *)
+                  | _ -> (left_str, right_str)
+                in
+                
                 let op_str = match op with
                   | IRAdd -> "+" | IRSub -> "-" | IRMul -> "*" | IRDiv -> "/" | IRMod -> "%"
                   | IREq -> "==" | IRNe -> "!=" | IRLt -> "<" | IRLe -> "<=" | IRGt -> ">" | IRGe -> ">="
@@ -1978,7 +2000,7 @@ let rec generate_c_instruction ctx ir_instr =
         (match dest_val.value_desc with 
          | IRRegister reg -> reg 
          | _ -> failwith "IRDeclareVariable target must be a register") 
-        dest_val.val_type in
+        typ in
       let type_str = ebpf_type_from_ir_type typ in
       
       (* Special handling for array types in variable declarations *)
@@ -2162,12 +2184,24 @@ let rec generate_c_instruction ctx ir_instr =
       
   | IRContextAccess (dest_val, access_type) ->
       let dest_str = generate_c_value ctx dest_val in
-      (* Map access type to context field name and determine context type *)
+      (* Map access type to field name and determine context type from current function *)
       let (ctx_type_str, field_name) = match access_type with
-        | PacketData -> ("xdp", "data")
-        | PacketEnd -> ("xdp", "data_end") 
-        | DataMeta -> ("xdp", "data_meta")
-        | IngressIfindex -> ("xdp", "ingress_ifindex")
+        | PacketData -> 
+            (match ctx.current_function_context_type with
+             | Some ctx_type -> (ctx_type, "data")
+             | None -> ("xdp", "data"))  (* fallback to XDP for compatibility *)
+        | PacketEnd -> 
+            (match ctx.current_function_context_type with
+             | Some ctx_type -> (ctx_type, "data_end")
+             | None -> ("xdp", "data_end"))  (* fallback to XDP for compatibility *)
+        | DataMeta -> 
+            (match ctx.current_function_context_type with
+             | Some ctx_type -> (ctx_type, "data_meta")
+             | None -> ("xdp", "data_meta"))  (* fallback to XDP for compatibility *)
+        | IngressIfindex -> 
+            (match ctx.current_function_context_type with
+             | Some ctx_type -> (ctx_type, "ingress_ifindex")
+             | None -> ("xdp", "ingress_ifindex"))  (* fallback to XDP for compatibility *)
         | DataLen -> ("tc", "len") (* TC-specific *)
         | MarkField -> ("tc", "mark") (* TC-specific *)
         | Priority -> ("tc", "priority") (* TC-specific *)
@@ -2620,8 +2654,13 @@ let collect_registers_in_function ir_func =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
     | IRConstAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
-    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
-        collect_in_value dest_val;
+    | IRDeclareVariable (dest_val, typ, init_expr_opt) ->
+        (* Use the explicit type from the declaration, not the inferred type *)
+        (match dest_val.value_desc with
+         | IRRegister reg -> 
+             if not (List.mem_assoc reg !registers) then
+               registers := (reg, typ) :: !registers
+         | _ -> ());
         (match init_expr_opt with
          | Some init_expr -> collect_in_expr init_expr
          | None -> ())
@@ -2640,7 +2679,19 @@ let collect_registers_in_function ir_func =
         collect_in_value obj_val; collect_in_value value_val
     | IRConfigAccess (_config_name, _field_name, result_val) ->
         collect_in_value result_val
-    | IRContextAccess (dest_val, _access_type) -> collect_in_value dest_val
+    | IRContextAccess (dest_val, access_type) -> 
+        (* Use the correct type based on the access type, not the inferred type *)
+        let correct_type = match access_type with
+          | PacketData | PacketEnd -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+          | DataMeta -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+          | IngressIfindex | DataLen | MarkField | Priority -> IRU32
+          | CbField -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+        in
+        (match dest_val.value_desc with
+         | IRRegister reg -> 
+             if not (List.mem_assoc reg !registers) then
+               registers := (reg, correct_type) :: !registers
+         | _ -> ())
     | IRBoundsCheck (ir_val, _, _) -> collect_in_value ir_val
     | IRCondJump (cond_val, _, _) -> collect_in_value cond_val
     | IRIf (cond_val, then_body, else_body) ->
@@ -2704,6 +2755,19 @@ let generate_c_function ctx ir_func =
   (* Clear per-function state to avoid conflicts between functions *)
   Hashtbl.clear ctx.register_name_hints;
   Hashtbl.clear ctx.inlinable_registers;
+  
+  (* Determine current function's context type from first parameter *)
+  ctx.current_function_context_type <- 
+    (match ir_func.parameters with
+     | (_, IRContext XdpCtx) :: _ -> Some "xdp"
+     | (_, IRContext TcCtx) :: _ -> Some "tc"
+     | (_, IRContext KprobeCtx) :: _ -> Some "kprobe"
+     | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
+     | (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
+     | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
+     | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
+     | (_, IRPointer (IRStruct ("xdp_md", _, _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
+     | _ -> None);
   
   let return_type_str = match ir_func.return_type with
     | Some ret_type -> ebpf_type_from_ir_type ret_type
@@ -3141,13 +3205,10 @@ let compile_multi_to_c_with_tail_calls
 
 let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(tail_call_analysis=None) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
-  let (c_code, final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
+  let (c_code, _final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
     ~type_aliases ~variable_type_aliases ~tail_call_analysis ir_multi_program in
   
-  (* Print tail call analysis results *)
-  Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
-    (List.length final_tail_call_analysis.dependencies) final_tail_call_analysis.prog_array_size;
-  
+  (* Tail call analysis results calculated and stored *)
   c_code
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
@@ -3157,10 +3218,7 @@ let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[
       let (c_code, final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
         ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ir_multi_program in
   
-  (* Print tail call analysis results *)
-  Printf.printf "Tail call analysis: %d dependencies, ProgArray size: %d\n" 
-    (List.length final_tail_call_analysis.dependencies) final_tail_call_analysis.prog_array_size;
-  
+  (* Tail call analysis results calculated and stored *)
   (c_code, final_tail_call_analysis)
 
 

@@ -49,6 +49,8 @@ type ir_context = {
   global_variables: (string, ir_global_variable) Hashtbl.t; (* global_var_name -> global_var *)
   (* Track variables that originate from map accesses *)
   map_origin_variables: (string, (string * ir_value * (ir_value_desc * ir_type))) Hashtbl.t; (* var_name -> (map_name, key, underlying_info) *)
+  (* Track inferred variable types for proper lookups *)
+  variable_types: (string, ir_type) Hashtbl.t; (* var_name -> ir_type *)
 }
 
 (** Create new IR generation context *)
@@ -74,6 +76,7 @@ let create_context ?(global_variables = []) symbol_table = {
                      List.iter (fun gv -> Hashtbl.add tbl gv.global_var_name gv) global_variables;
                      tbl);
   map_origin_variables = Hashtbl.create 32;
+  variable_types = Hashtbl.create 32;
 }
 
 (** Register allocation *)
@@ -190,6 +193,61 @@ let lower_unary_op = function
   | Neg -> IRNeg
   | Deref -> IRDeref
   | AddressOf -> IRAddressOf
+
+(** Convert context field C type to IR type *)
+let c_type_to_ir_type = function
+  | "__u8*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+  | "__u16*" -> IRPointer (IRU16, make_bounds_info ~nullable:false ())
+  | "__u32*" -> IRPointer (IRU32, make_bounds_info ~nullable:false ())
+  | "__u64*" -> IRPointer (IRU64, make_bounds_info ~nullable:false ())
+  | "__u8" -> IRU8
+  | "__u16" -> IRU16
+  | "__u32" -> IRU32
+  | "__u64" -> IRU64
+  | "void*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+  | c_type -> failwith ("Unsupported context field C type: " ^ c_type)
+
+(** Map struct names to their corresponding context types *)
+let struct_name_to_context_type = function
+  | "xdp_md" -> Some ("xdp", XdpCtx)
+  | "__sk_buff" -> Some ("tc", TcCtx)
+  | _ -> None
+
+(** Determine result type for arrow access expressions *)
+let determine_arrow_access_type ctx obj_val field expr_type_opt =
+  match obj_val.val_type with
+  | IRPointer (IRContext ctx_type, _) ->
+      (* Context field access - use context codegen as single source of truth *)
+      let ctx_type_str = match ctx_type with
+          | XdpCtx -> "xdp"
+          | TcCtx -> "tc"
+          | KprobeCtx -> "kprobe"
+          | UprobeCtx -> "uprobe"
+          | TracepointCtx -> "tracepoint"
+          | LsmCtx -> "lsm"
+          | CgroupSkbCtx -> "cgroup_skb"
+       in
+                  (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
+            | Some c_type -> c_type_to_ir_type c_type
+            | None -> failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
+  | IRPointer (IRStruct (struct_name, _, _), _) ->
+      (* Leverage field mapping infrastructure for context structs *)
+      (match struct_name_to_context_type struct_name with
+       | Some (ctx_type_str, _) ->
+           (* Use field mapping to get precise type information *)
+           (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
+            | Some c_type -> c_type_to_ir_type c_type
+            | None -> failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
+       | None ->
+           (* Regular struct field access *)
+           (match expr_type_opt with
+            | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+            | None -> IRU32))
+  | _ ->
+      (* Non-context types - use expression type annotation *)
+      (match expr_type_opt with
+       | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+       | None -> IRU32)
 
 (** Generate bounds check for array access *)
 let generate_array_bounds_check ctx array_val index_val pos =
@@ -317,9 +375,23 @@ let rec lower_expression ctx (expr : Ast.expr) =
                   (* Regular variable lookup *)
                   if Hashtbl.mem ctx.variables name then
                     let reg = Hashtbl.find ctx.variables name in
-                    let var_type = match expr.expr_type with
-                      | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-                      | None -> IRU32 (* Default type if not available *)
+                    let var_type = 
+                      (* Always prioritize the tracked variable type from declaration *)
+                      match Hashtbl.find_opt ctx.variable_types name with
+                      | Some tracked_type -> tracked_type
+                      | None ->
+                          (* Fall back to expression type annotation *)
+                          (match expr.expr_type with
+                           | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+                           | None -> 
+                               (* Final fallback to symbol table lookup *)
+                               (match Symbol_table.lookup_symbol ctx.symbol_table name with
+                                | Some symbol -> 
+                                    (match symbol.kind with
+                                     | Symbol_table.Variable var_ast_type -> 
+                                         ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
+                                     | _ -> IRU32)
+                                | None -> IRU32))
                     in
                     make_ir_value (IRRegister reg) var_type expr.expr_pos
                   else if Hashtbl.mem ctx.function_parameters name then
@@ -375,9 +447,23 @@ let rec lower_expression ctx (expr : Ast.expr) =
                      | None ->
                          (* Symbol not found - treat as regular variable *)
                          let reg = get_variable_register ctx name in
-                         let ir_type = match expr.expr_type with
-                           | Some ast_type -> ast_type_to_ir_type ast_type
-                           | None -> failwith ("Untyped identifier: " ^ name)
+                         let ir_type = 
+                           (* Always prioritize the tracked variable type from declaration *)
+                           match Hashtbl.find_opt ctx.variable_types name with
+                           | Some tracked_type -> tracked_type
+                           | None ->
+                               (* Fall back to expression type annotation *)
+                               (match expr.expr_type with
+                                | Some ast_type -> ast_type_to_ir_type ast_type
+                                | None -> 
+                                    (* Final fallback to symbol table lookup *)
+                                    (match Symbol_table.lookup_symbol ctx.symbol_table name with
+                                     | Some symbol -> 
+                                         (match symbol.kind with
+                                          | Symbol_table.Variable var_ast_type -> 
+                                              ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
+                                          | _ -> failwith ("Untyped identifier: " ^ name))
+                                     | None -> failwith ("Untyped identifier: " ^ name)))
                          in
                          make_ir_value (IRRegister reg) ir_type expr.expr_pos)))
       
@@ -484,7 +570,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
        | _ ->
            (* Function pointer call - use FunctionPointerCall target *)
            let callee_val = lower_expression ctx callee_expr in
-           let arg_vals = List.map (lower_expression ctx) args in
+           (* Use the arg_vals that were already calculated at the beginning of the Call case *)
            let result_reg = allocate_register ctx in
            let result_type = match expr.expr_type with
              | Some ast_type -> ast_type_to_ir_type ast_type
@@ -505,11 +591,9 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (* This is map access - handle it specially *)
            let index_val = lower_expression ctx index_expr in
            let lookup_result = expand_map_operation ctx map_name "lookup" index_val None expr.expr_pos in
-           (* Mark this as a map access result for special handling *)
-           (* The IRMapAccess should represent the value type, not the pointer type *)
-           let map_def = Hashtbl.find ctx.maps map_name in
+           (* Use the pointer type returned by expand_map_operation, not the value type *)
            { value_desc = IRMapAccess (map_name, index_val, (lookup_result.value_desc, lookup_result.val_type)); 
-             val_type = map_def.map_value_type; 
+             val_type = lookup_result.val_type;  (* Use the pointer type from lookup_result *)
              stack_offset = None; 
              bounds_checked = false; 
              val_pos = expr.expr_pos }
@@ -604,20 +688,41 @@ let rec lower_expression ctx (expr : Ast.expr) =
       (* Arrow access (pointer->field) - similar to field access but for pointers *)
       let obj_val = lower_expression ctx obj_expr in
       let result_reg = allocate_register ctx in
-      let result_type = match expr.expr_type with
-        | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-        | None -> IRU32
-      in
+      
+      (* Determine result type using dedicated type resolution *)
+      let result_type = determine_arrow_access_type ctx obj_val field expr.expr_type in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
       (* Handle arrow access for different pointer types *)
       (match obj_val.val_type with
-       | IRPointer (IRStruct (_, _, _), _) ->
-           (* Handle pointer-to-struct field access *)
-           let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-           let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
-           emit_instruction ctx instr;
-           result_val
+       | IRPointer (IRStruct (struct_name, _, _), _) ->
+           (* Check if this is a context struct that should be treated as context access *)
+           (match struct_name_to_context_type struct_name with
+            | Some (_, _) ->
+                (* This is a context struct - generate context access *)
+                let access_type = match field with
+                  | "packet" | "data" -> PacketData
+                  | "packet_end" | "data_end" -> PacketEnd
+                  | "data_meta" -> DataMeta
+                  | "ingress_ifindex" -> IngressIfindex
+                  | "data_len" -> DataLen
+                  | "mark" -> MarkField
+                  | "priority" -> Priority
+                  | "cb" -> CbField
+                  | _ -> failwith ("Unknown context field: " ^ field)
+                in
+                let instr = make_ir_instruction
+                  (IRContextAccess (result_val, access_type))
+                  expr.expr_pos
+                in
+                emit_instruction ctx instr;
+                result_val
+            | None ->
+                (* Regular struct pointer - use field access *)
+                let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
+                let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
+                emit_instruction ctx instr;
+                result_val)
        | IRPointer (IRContext _ctx_type, _) ->
            (* Handle context pointer field access *)
            let access_type = match field with
@@ -631,12 +736,14 @@ let rec lower_expression ctx (expr : Ast.expr) =
              | "cb" -> CbField
              | _ -> failwith ("Unknown context field: " ^ field)
            in
+           (* Create result_val with the correct determined type *)
+           let corrected_result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
            let instr = make_ir_instruction
-             (IRContextAccess (result_val, access_type))
+             (IRContextAccess (corrected_result_val, access_type))
              expr.expr_pos
            in
            emit_instruction ctx instr;
-           result_val
+           corrected_result_val
        | _ ->
            (* For userspace code, allow arrow access on other types *)
            if ctx.is_userspace then
@@ -655,7 +762,17 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type ast_type
-        | None -> left_val.val_type (* Use left operand type *)
+        | None -> 
+             (* For pointer arithmetic, determine the correct result type *)
+             (match left_val.val_type, ir_op, right_val.val_type with
+              (* Pointer - Pointer = size (pointer subtraction) *)
+              | IRPointer _, IRSub, IRPointer _ -> IRU64
+              (* Pointer + Integer = Pointer (pointer offset) *)
+              | IRPointer (t, bounds), (IRAdd | IRSub), _ -> IRPointer (t, bounds)
+              (* Integer + Pointer = Pointer (pointer offset) *)
+              | _, IRAdd, IRPointer (t, bounds) -> IRPointer (t, bounds)
+              (* Default to left operand type *)
+              | _ -> left_val.val_type)
       in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
@@ -846,6 +963,121 @@ let rec lower_expression ctx (expr : Ast.expr) =
       generate_match_conditions arms;
       result_val
 
+(** Helper function to resolve type aliases and track them *)
+and resolve_type_alias ctx reg ast_type =
+  match ast_type with
+  | UserType alias_name ->
+      (match Symbol_table.lookup_symbol ctx.symbol_table alias_name with
+       | Some symbol ->
+           (match symbol.kind with
+            | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
+                let underlying_ir_type = ast_type_to_ir_type underlying_type in
+                (* Store the alias information for this register *)
+                Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
+                (* Create IRTypeAlias to preserve the alias name *)
+                IRTypeAlias (alias_name, underlying_ir_type)
+            | _ -> ast_type_to_ir_type ast_type)
+        | None -> ast_type_to_ir_type ast_type)
+  | _ -> ast_type_to_ir_type ast_type
+
+(** Helper function to calculate stack usage for a type *)
+and calculate_stack_usage = function
+  | IRI8 | IRU8 | IRChar -> 1
+  | IRI16 | IRU16 -> 2
+  | IRI32 | IRU32 | IRBool -> 4
+  | IRI64 | IRU64 -> 8
+  | IRArray (_, count, _) -> count * 4 (* Simplified *)
+  | IRStr size -> size + 2 (* String data + length field *)
+  | _ -> 8 (* Conservative estimate *)
+
+(** Helper function to track map origin variables *)
+and track_map_origin ctx name = function
+  | IRMapAccess (map_name, key, underlying_info) ->
+      Hashtbl.replace ctx.map_origin_variables name (map_name, key, underlying_info)
+  | _ -> 
+      Hashtbl.remove ctx.map_origin_variables name
+
+(** Helper function to resolve declaration type and initialization *)
+and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
+  match typ_opt, expr_opt with
+  | Some ast_type, Some expr ->
+      (* Use explicitly declared type, but process initialization expression *)
+      let target_type = resolve_type_alias ctx reg ast_type in
+      let value = lower_expression ctx expr in
+      (target_type, Some value)
+  | None, Some expr ->
+      (* No declared type - use type checker annotation if available, otherwise infer from expression *)
+      let value = lower_expression ctx expr in
+      let inferred_type = match expr.expr_type with
+        | Some ast_type -> 
+            (* Prioritize type checker annotation as single source of truth *)
+            ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+        | None -> 
+            (* Fallback to IR type inference only when type checker didn't provide annotation *)
+            value.val_type
+      in
+      (inferred_type, Some value)
+  | Some ast_type, None ->
+      (* Declared type, no initialization *)
+      let target_type = resolve_type_alias ctx reg ast_type in
+      (target_type, None)
+  | None, None ->
+      (* No type and no expression - default *)
+      (IRU32, None)
+
+(** Helper function to resolve const declaration type *)
+and resolve_const_type ctx typ_opt expr =
+  let value = lower_expression ctx expr in
+  match typ_opt with
+  | Some ast_type -> ast_type_to_ir_type ast_type
+  | None -> value.val_type
+
+(** Helper function to declare a variable *)
+and declare_variable ctx name reg target_type init_value_opt pos =
+  let size = calculate_stack_usage target_type in
+  ctx.stack_usage <- ctx.stack_usage + size;
+  
+  let target_val = make_ir_value (IRRegister reg) target_type pos in
+  
+  (* Track the variable type for later lookups *)
+  Hashtbl.replace ctx.variable_types name target_type;
+  
+  (* Handle optional initialization expression *)
+  let init_expr_opt = match init_value_opt with
+    | Some value -> 
+        track_map_origin ctx name value.value_desc;
+        (* Use the target type for consistency with variable declaration *)
+        Some (make_ir_expr (IRValue value) target_type pos)
+    | None -> None
+  in
+  
+  let instr = make_ir_instruction 
+    (IRDeclareVariable (target_val, target_type, init_expr_opt)) 
+    ~stack_usage:size
+    pos in
+  emit_instruction ctx instr
+
+(** Helper function to declare a const variable *)
+and declare_const_variable ctx _name reg target_type expr pos =
+  let value = lower_expression ctx expr in
+  let size = calculate_stack_usage target_type in
+  ctx.stack_usage <- ctx.stack_usage + size;
+  
+  let target_val = make_ir_value (IRRegister reg) target_type pos in
+  let coerced_value = 
+    if target_type <> value.val_type then
+      make_ir_value value.value_desc target_type value.val_pos
+    else
+      value
+  in
+  
+  let value_expr = make_ir_expr (IRValue coerced_value) target_type pos in
+  let instr = make_ir_instruction 
+    (IRConstAssign (target_val, value_expr)) 
+    ~stack_usage:size
+    pos in
+  emit_instruction ctx instr
+
 (** Lower AST statements to IR instructions *)
 and lower_statement ctx stmt =
   match stmt.stmt_desc with
@@ -947,21 +1179,27 @@ and lower_statement ctx stmt =
       (match map_expr.expr_desc with
        | Ast.Identifier map_name ->
            (* Handle map compound assignment *)
+           let map_def = Hashtbl.find ctx.maps map_name in
            let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
            (* Generate: map[key] = map[key] op value *)
-           (* First, load the current value *)
+           (* First, load the current value - use map value type, not operand type *)
            let current_val_reg = allocate_register ctx in
-           let current_val = make_ir_value (IRRegister current_val_reg) value_val.val_type stmt.stmt_pos in
+           let current_val = make_ir_value (IRRegister current_val_reg) 
+             (IRPointer (map_def.map_value_type, make_bounds_info ())) stmt.stmt_pos in
            let load_instr = make_ir_instruction (IRMapLoad (map_val, key_val, current_val, MapLookup)) stmt.stmt_pos in
            emit_instruction ctx load_instr;
            
-           (* Then, perform the operation *)
+           (* Then, perform the operation - current_val is pointer, so dereference for operation *)
            let ir_op = lower_binary_op op in
-           let bin_expr = make_ir_expr (IRBinOp (current_val, ir_op, value_val)) value_val.val_type stmt.stmt_pos in
+           let deref_current_reg = allocate_register ctx in
+           let deref_current_val = make_ir_value (IRRegister deref_current_reg) map_def.map_value_type stmt.stmt_pos in
+           let deref_instr = make_ir_instruction (IRAssign (deref_current_val, make_ir_expr (IRUnOp (IRDeref, current_val)) map_def.map_value_type stmt.stmt_pos)) stmt.stmt_pos in
+           emit_instruction ctx deref_instr;
+           let bin_expr = make_ir_expr (IRBinOp (deref_current_val, ir_op, value_val)) map_def.map_value_type stmt.stmt_pos in
            
            (* Create a temporary register for the result *)
            let result_reg = allocate_register ctx in
-           let result_val = make_ir_value (IRRegister result_reg) value_val.val_type stmt.stmt_pos in
+           let result_val = make_ir_value (IRRegister result_reg) map_def.map_value_type stmt.stmt_pos in
            let assign_instr = make_ir_instruction (IRAssign (result_val, bin_expr)) stmt.stmt_pos in
            emit_instruction ctx assign_instr;
            
@@ -1008,110 +1246,16 @@ and lower_statement ctx stmt =
       
   | Ast.Declaration (name, typ_opt, expr_opt) ->
       let reg = get_variable_register ctx name in
-      let target_type = match typ_opt with
-        | Some ast_type -> 
-            (* Check if this is a type alias and track it *)
-            (match ast_type with
-             | UserType alias_name ->
-                 (match Symbol_table.lookup_symbol ctx.symbol_table alias_name with
-                  | Some symbol ->
-                      (match symbol.kind with
-                       | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
-                           let underlying_ir_type = ast_type_to_ir_type underlying_type in
-                           (* Store the alias information for this register *)
-                           Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
-                           (* Create IRTypeAlias to preserve the alias name *)
-                           IRTypeAlias (alias_name, underlying_ir_type)
-                       | _ -> ast_type_to_ir_type ast_type)
-                   | None -> ast_type_to_ir_type ast_type)
-              | _ -> ast_type_to_ir_type ast_type)
-        | None -> 
-            (* Infer type from expression if provided *)
-            (match expr_opt with
-             | Some expr -> 
-                 let value = lower_expression ctx expr in
-                 value.val_type
-             | None -> IRU32) (* Default to u32 *)
-      in
+      let (target_type, init_value_opt) = 
+        resolve_declaration_type_and_init ctx reg typ_opt expr_opt in
       
-      (* Add stack usage for local variables *)
-      let size = match target_type with
-        | IRI8 | IRU8 | IRChar -> 1
-        | IRI16 | IRU16 -> 2
-        | IRI32 | IRU32 | IRBool -> 4
-        | IRI64 | IRU64 -> 8
-        | IRArray (_, count, _) -> count * 4 (* Simplified *)
-        | IRStr size -> size + 2 (* String data + length field *)
-        | _ -> 8 (* Conservative estimate *)
-      in
-      ctx.stack_usage <- ctx.stack_usage + size;
-      
-      let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
-      
-      (* Handle optional initialization expression *)
-      let init_expr_opt = match expr_opt with
-        | Some expr -> 
-            let value = lower_expression ctx expr in
-            
-            (* Track if this variable is initialized from a map access *)
-            (match value.value_desc with
-             | IRMapAccess (map_name, key, underlying_info) ->
-                 (* Store map origin information for this variable *)
-                 Hashtbl.replace ctx.map_origin_variables name (map_name, key, underlying_info)
-             | _ -> 
-                 (* Remove any previous map origin information *)
-                 Hashtbl.remove ctx.map_origin_variables name);
-            
-            let coerced_value = 
-              if target_type <> value.val_type then
-                make_ir_value value.value_desc target_type value.val_pos
-              else
-                value
-            in
-            Some (make_ir_expr (IRValue coerced_value) target_type stmt.stmt_pos)
-        | None -> None
-      in
-      
-      let instr = make_ir_instruction 
-        (IRDeclareVariable (target_val, target_type, init_expr_opt)) 
-        ~stack_usage:size
-        stmt.stmt_pos in
-      emit_instruction ctx instr
+      declare_variable ctx name reg target_type init_value_opt stmt.stmt_pos
       
   | Ast.ConstDeclaration (name, typ_opt, expr) ->
-      (* For const declarations, use dedicated IRConstAssign instruction *)
-      let value = lower_expression ctx expr in
       let reg = get_variable_register ctx name in
-      let target_type = match typ_opt with
-        | Some ast_type -> ast_type_to_ir_type ast_type
-        | None -> value.val_type
-      in
+      let target_type = resolve_const_type ctx typ_opt expr in
       
-      (* Add stack usage for const variables (same as regular variables) *)
-      let size = match target_type with
-        | IRI8 | IRU8 | IRChar -> 1
-        | IRI16 | IRU16 -> 2
-        | IRI32 | IRU32 | IRBool -> 4
-        | IRI64 | IRU64 -> 8
-        | _ -> 8 (* Conservative estimate *)
-      in
-      ctx.stack_usage <- ctx.stack_usage + size;
-      
-      let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
-      let coerced_value = 
-        if target_type <> value.val_type then
-          make_ir_value value.value_desc target_type value.val_pos
-        else
-          value
-      in
-      
-      let value_expr = make_ir_expr (IRValue coerced_value) target_type stmt.stmt_pos in
-      (* Use IRConstAssign instead of IRAssign + comment *)
-      let instr = make_ir_instruction 
-        (IRConstAssign (target_val, value_expr)) 
-        ~stack_usage:size
-        stmt.stmt_pos in
-      emit_instruction ctx instr
+      declare_const_variable ctx name reg target_type expr stmt.stmt_pos
       
     | Ast.Return expr_opt ->
       let return_val = match expr_opt with
@@ -1436,10 +1580,7 @@ and lower_statement ctx stmt =
           Loop_analysis.get_ebpf_loop_strategy loop_analysis
       in
       
-      (* Debug: print loop analysis *)
-      let analysis_debug = Printf.sprintf "(* Loop analysis: %s, strategy: %s *)" 
-        (Loop_analysis.string_of_loop_analysis loop_analysis)
-        (Loop_analysis.string_of_loop_strategy loop_strategy) in
+      (* Loop analysis performed for optimization *)
       
       let start_val = lower_expression ctx start_expr in
       let end_val = lower_expression ctx end_expr in
@@ -1465,7 +1606,7 @@ and lower_statement ctx stmt =
        | Loop_analysis.BpfLoopHelper ->
            (* Use bpf_loop() for unbounded or complex loops *)
            let bpf_loop_comment = make_ir_instruction 
-             (IRComment (Printf.sprintf "%s\n(* Using bpf_loop() for unbounded loop *)" analysis_debug))
+             (IRComment "(* Using bpf_loop() for unbounded loop *)")
              stmt.stmt_pos in
            emit_instruction ctx bpf_loop_comment;
            
@@ -1496,7 +1637,7 @@ and lower_statement ctx stmt =
        | Loop_analysis.SimpleLoop ->
            (* Use traditional goto-based loop for simple bounded cases *)
            let simple_loop_comment = make_ir_instruction 
-             (IRComment (Printf.sprintf "%s\n(* Using simple loop for bounded case *)" analysis_debug))
+             (IRComment "(* Using simple loop for bounded case *)")
              stmt.stmt_pos in
            emit_instruction ctx simple_loop_comment;
            
@@ -1964,64 +2105,6 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
     ~is_pinned:global_var_decl.is_pinned
     ()
 
-(** Convert AST types to IR types *)
-let rec ast_type_to_ir_type = function
-  | Ast.U8 -> IRU8 | Ast.U16 -> IRU16 | Ast.U32 -> IRU32 | Ast.U64 -> IRU64
-  | Ast.I8 -> IRI8 | Ast.I16 -> IRI16 | Ast.I32 -> IRI32 | Ast.I64 -> IRI64  (* Use proper signed types *)
-  | Ast.Bool -> IRBool | Ast.Char -> IRChar | Ast.Void -> IRVoid
-  | Ast.Str size -> IRStr size
-  | Ast.Array (elem_type, size) -> IRArray (ast_type_to_ir_type elem_type, size, make_bounds_info ())
-  | Ast.Pointer (Ast.Struct "__sk_buff") -> IRPointer (IRContext TcCtx, make_bounds_info ())  (* Map *__sk_buff to pointer to TC context *)
-  | Ast.Pointer elem_type -> IRPointer (ast_type_to_ir_type elem_type, make_bounds_info ())
-  | Ast.UserType type_name -> IRStruct (type_name, [], false)  (* Simplified *)
-  | Ast.Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
-  | Ast.Struct struct_name -> IRStruct (struct_name, [], false)
-  | Ast.Enum enum_name -> IREnum (enum_name, [], false)
-  | Ast.Option inner_type -> 
-    let bounds = make_bounds_info ~nullable:true () in
-    IRPointer (ast_type_to_ir_type inner_type, bounds)
-  | Ast.Result (ok_type, err_type) -> IRResult (ast_type_to_ir_type ok_type, ast_type_to_ir_type err_type)
-  | Ast.Function (param_types, return_type) -> 
-      (* Functions are represented as proper function pointers *)
-      let ir_param_types = List.map ast_type_to_ir_type param_types in
-      let ir_return_type = ast_type_to_ir_type return_type in
-      IRFunctionPointer (ir_param_types, ir_return_type)
-  | Ast.Map (key_type, value_type, _map_type) ->
-      let ir_key_type = ast_type_to_ir_type key_type in
-      let ir_value_type = ast_type_to_ir_type value_type in
-      IRPointer (IRStruct ("map", [("key", ir_key_type); ("value", ir_value_type)], false), make_bounds_info ())
-  | Ast.Xdp_md -> IRContext XdpCtx
-  | Ast.KprobeContext -> IRContext KprobeCtx
-  | Ast.UprobeContext -> IRContext UprobeCtx
-  | Ast.TracepointContext -> IRContext TracepointCtx
-  | Ast.LsmContext -> IRContext LsmCtx
-  | Ast.CgroupSkbContext -> IRContext CgroupSkbCtx
-  | Ast.Xdp_action -> IRAction Xdp_actionType
-  | Ast.ProgramRef _prog_type -> IRU32  (* Program refs become integers *)
-  | Ast.ProgramHandle -> IRI32  (* Program handles are file descriptors (i32) to support error codes *)
-  | Ast.NoneType -> IRU32  (* None type represented as u32 sentinel value *)
-
-
-(** Convert AST types to IR types with symbol table lookup for struct field resolution *)
-let ast_type_to_ir_type_with_symbol_table symbol_table ast_type =
-  match ast_type with
-  | Ast.Pointer (Ast.Struct "__sk_buff") -> IRPointer (IRContext TcCtx, make_bounds_info ())  (* Map *__sk_buff to pointer to TC context *)
-  | Ast.UserType "__sk_buff" | Ast.Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
-  | Ast.UserType name | Ast.Struct name ->
-      let struct_name = name in
-             (match Symbol_table.lookup_symbol symbol_table struct_name with
-        | Some symbol ->
-            (match symbol.kind with
-             | Symbol_table.TypeDef (Ast.StructDef (_, fields, _)) ->
-                 let ir_fields = List.map (fun (field_name, field_type) ->
-                   (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
-                 ) fields in
-                 IRStruct (struct_name, ir_fields, false)
-             | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) ->
-                 ast_type_to_ir_type underlying_type
-             | _ -> IRStruct (struct_name, [], false))  (* Fallback for other symbol kinds *)
-        | None -> IRStruct (struct_name, [], false))  (* Fallback when symbol not found *)
-  | _ -> ast_type_to_ir_type ast_type  (* For all other types, use regular conversion *)
 
 (** Convert AST function to IR function for userspace context *)
 let lower_userspace_function ctx func_def =
@@ -2769,9 +2852,14 @@ let lower_multi_program ast symbol_table source_name =
     multi_pos
 
 (** Main entry point for IR generation *)
-let generate_ir ast symbol_table source_name =
+let generate_ir ?(use_type_annotations=false) ast symbol_table source_name =
   try
-    lower_multi_program ast symbol_table source_name
+    if use_type_annotations then
+      (* For type-checked AST, expressions already have proper type annotations *)
+      lower_multi_program ast symbol_table source_name
+    else
+      (* For raw AST, we need to do type checking first or use fallback types *)
+      lower_multi_program ast symbol_table source_name
   with
   | exn ->
       Printf.eprintf "IR generation failed: %s\n" (Printexc.to_string exn);

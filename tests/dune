@@ -339,7 +339,10 @@
  (modules test_tail_call)
  (libraries kernelscript alcotest))
 
-
+(executable
+ (name test_context_field_types)
+ (modules test_context_field_types)
+ (libraries kernelscript alcotest str))
 
 ; Test rules for individual execution
 (rule
@@ -550,6 +553,10 @@
  (alias runtest_match)
  (action (run ./test_match.exe)))
 
+(rule
+ (alias runtest_context_field_types)
+ (action (run ./test_context_field_types.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -693,12 +700,13 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe)
+ (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
    (run ./test_nested_if_codegen.exe)
-   (run ./test_integer_literal_codegen.exe))))
+   (run ./test_integer_literal_codegen.exe)
+   (run ./test_context_field_types.exe))))
 
 ; Top-level alias to run all tests
 (alias

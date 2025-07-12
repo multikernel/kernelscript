@@ -122,7 +122,7 @@ let generate_optimized_ir (annotated_ast: declaration list)
   
   (* Step 1: Generate baseline IR using existing generator *)
   Printf.printf "Step 1: Generating baseline IR...\n";
-  let baseline_ir = Ir_generator.generate_ir annotated_ast symbol_table source_name in
+  let baseline_ir = Ir_generator.generate_ir ~use_type_annotations:true annotated_ast symbol_table source_name in
   
   (* Step 1.5: Validate function signatures *)
   Printf.printf "Step 1.5: Validating function signatures...\n";

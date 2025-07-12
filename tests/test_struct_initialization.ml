@@ -21,13 +21,14 @@ let contains_substr str substr =
 
 (** Helper to generate IR and C code from program text *)
 let generate_c_from_program program_text program_name =
+  (* Initialize context codegens first *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  
   let ast = parse_string program_text in
   let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
   let (annotated_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
   let ir_multi_prog = generate_ir annotated_ast symbol_table program_name in
-  
-  (* Initialize context codegens *)
-  Kernelscript_context.Xdp_codegen.register ();
   
   (* Generate C code *)
   let c_code = generate_c_multi_program ir_multi_prog in
