@@ -160,6 +160,11 @@
  (libraries kernelscript alcotest str))
 
 (executable
+ (name test_bpf_loop_callbacks)
+ (modules test_bpf_loop_callbacks)
+ (libraries kernelscript alcotest str))
+
+(executable
  (name test_userspace_for_codegen)
  (modules test_userspace_for_codegen)
  (libraries kernelscript alcotest str unix))
@@ -705,14 +710,15 @@
 
 (rule
  (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe test_global_var_ordering.exe)
+ (deps test_ebpf_c_codegen.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe test_global_var_ordering.exe test_bpf_loop_callbacks.exe)
  (action
   (progn
    (run ./test_ebpf_c_codegen.exe)
    (run ./test_nested_if_codegen.exe)
    (run ./test_integer_literal_codegen.exe)
    (run ./test_context_field_types.exe)
-   (run ./test_global_var_ordering.exe))))
+   (run ./test_global_var_ordering.exe)
+   (run ./test_bpf_loop_callbacks.exe))))
 
 ; Top-level alias to run all tests
 (alias
