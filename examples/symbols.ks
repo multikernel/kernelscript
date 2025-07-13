@@ -59,8 +59,8 @@ pin map<u32, PacketInfo> packet_cache : LruHash(256)
 
 pin map<u32, u32> traffic_data : Array(128)
 
-// Global function (public visibility)
-pub fn log_packet(info: PacketInfo) -> u32 {
+@helper
+fn log_packet(info: PacketInfo) -> u32 {
     global_stats[info.protocol] = global_stats[info.protocol] + 1
     return info.size
 }

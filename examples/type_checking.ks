@@ -24,10 +24,10 @@ type IpAddress = u32
 type PacketSize = u16
 
 struct PacketHeader {
-  src_ip: IpAddress;
-  dst_ip: IpAddress;
-  protocol: u8;
-  length: PacketSize;
+  src_ip: IpAddress,
+  dst_ip: IpAddress,
+  protocol: u8,
+  length: PacketSize,
 }
 
 enum ProtocolType {
@@ -46,7 +46,7 @@ enum FilterDecision {
 pin map<IpAddress, u64> connection_stats : HashMap(1024)
 
 @helper
-fn extract_header(ctx: *xdp_md) -> xdp_action {
+fn extract_header(ctx: *xdp_md) -> *PacketHeader {
   // Type checker validates context parameter access
   var data = ctx->data
   var data_end = ctx->data_end
@@ -55,7 +55,7 @@ fn extract_header(ctx: *xdp_md) -> xdp_action {
   var packet_len = data_end - data
   
   if (packet_len < 20) {
-    return 1
+    return null
   }
   
   // Type checker validates struct field types
@@ -66,20 +66,18 @@ fn extract_header(ctx: *xdp_md) -> xdp_action {
     length: packet_len     // Type promoted from arithmetic to u16
   }
   
-  return 2
+  return &header
 }
 
 @helper
 fn classify_protocol(proto: u8) -> ProtocolType {
   // Type checker validates enum constant access
-  if (proto == 6) {
-    return some PROTOCOL_TYPE_TCP
-  } else if (proto == 17) {
-    return some PROTOCOL_TYPE_UDP
-  } else if (proto == 1) {
-    return some PROTOCOL_TYPE_ICMP
+  match (proto) {
+    6: TCP,
+    17: UDP,  
+    1: ICMP,
+    default: TCP  // Default to TCP for unknown protocols
   }
-  return none
 }
 
 @helper
@@ -101,17 +99,18 @@ fn make_decision(header: PacketHeader) -> FilterDecision {
   // Type checker validates function call signatures
   var proto_type = classify_protocol(header.protocol)
   
-  match proto_type {
-    some PROTOCOL_TYPE_TCP -> {
+  match (proto_type) {
+    TCP: {
       // Type checker validates field access on struct types
       if (header.length > 1500) {
-        return FILTER_DECISION_BLOCK
+        Block
+      } else {
+        Allow
       }
-      return FILTER_DECISION_ALLOW
     },
-    some PROTOCOL_TYPE_UDP -> return FILTER_DECISION_ALLOW,
-    some PROTOCOL_TYPE_ICMP -> return FILTER_DECISION_LOG,
-    none -> return FILTER_DECISION_BLOCK
+    UDP: Allow,
+    ICMP: Log,
+    default: Block
   }
 }
 
@@ -119,26 +118,23 @@ fn make_decision(header: PacketHeader) -> FilterDecision {
   // Type checker validates context parameter and return type
   var packet_header = extract_header(ctx)
   
-  match packet_header {
-    some header -> {
-      // Type checker validates function calls with correct types
-      update_statistics(header)
-      var decision = make_decision(header)
-      
-      // Type checker validates match expressions and enum types
-      match decision {
-        FILTER_DECISION_ALLOW -> return XDP_PASS,
-        FILTER_DECISION_BLOCK -> return XDP_DROP,
-        FILTER_DECISION_LOG -> {
-          // Type checker validates built-in function signatures
-          bpf_trace_printk("Logging packet", 14)
-          return XDP_PASS
-        }
-      }
-    },
-    none -> {
-      // Type checker validates return type compatibility
-      return XDP_DROP
+  if (packet_header == null) {
+    // Type checker validates return type compatibility
+    return XDP_DROP
+  }
+  
+  // Type checker validates function calls with correct types
+  update_statistics(*packet_header)
+  var decision = make_decision(*packet_header)
+  
+  // Type checker validates match expressions and enum types
+  match (decision) {
+    Allow: XDP_PASS,
+    Block: XDP_DROP,
+    Log: {
+      // Type checker validates built-in function signatures
+      print("Logging packet", 14)
+      XDP_PASS
     }
   }
 }

@@ -25,6 +25,12 @@ map<u32, u64> test_map : HashMap(1024)
 // 2 = Overflow detected (error condition)
 
 @helper
+fn cleanup_lock() {
+    // Simulate cleanup operation
+    var result = 0
+}
+
+@helper
 fn process_key(key: u32) -> u32 {
     // Example of defer for resource cleanup
     var lock_acquired = true
@@ -33,11 +39,11 @@ fn process_key(key: u32) -> u32 {
     try {
         // Check if key exists (expected absence - use null)
         var value = test_map[key]
-        if (value == null) {
+        if (value == none) {
             // Key doesn't exist - create default value (expected pattern)
             var default_value = 42
             test_map[key] = default_value
-            return default_value as u32
+            return default_value
         }
         
         // Key exists - validate the value (error condition - use throw)
@@ -46,18 +52,11 @@ fn process_key(key: u32) -> u32 {
         }
         
         // Process the valid value
-        return value as u32
-        
+        return value
     } catch 1 {  // Invalid data
         // Handle invalid data by logging and returning error value
         return 0
     }
-}
-
-@helper
-fn cleanup_lock() {
-    // Simulate cleanup operation
-    var result = 0
 }
 
 @xdp fn error_test(ctx: *xdp_md) -> xdp_action {

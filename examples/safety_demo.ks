@@ -43,7 +43,7 @@ fn safe_function(ctx: *xdp_md) -> xdp_action {
   var protocol: u8 = 6 // TCP
   
   // Safe array access
-  var small_buffer: u8[64] = [0; 64]
+  var small_buffer: u8[64] = [0]
   small_buffer[10] = protocol // Safe: index 10 < 64
   
   // Safe map operations
@@ -55,7 +55,7 @@ fn safe_function(ctx: *xdp_md) -> xdp_action {
 // Function demonstrating bounds checking
 @helper
 fn bounds_demo(ctx: *xdp_md) -> xdp_action {
-  var data_array: u32[10] = [0; 10]
+  var data_array: u32[10] = [0]
   
   // Safe accesses
   data_array[0] = 42   // OK: index 0
@@ -72,7 +72,7 @@ fn bounds_demo(ctx: *xdp_md) -> xdp_action {
 @helper
 fn moderate_stack_usage(ctx: *xdp_md) -> xdp_action {
   // Moderate buffer size - should be within eBPF limits
-  var buffer: u8[256] = [0; 256]
+  var buffer: u8[256] = [0]
   var info: PacketInfo = PacketInfo {
     src_ip: 0,
     dst_ip: 0,
@@ -91,7 +91,7 @@ fn moderate_stack_usage(ctx: *xdp_md) -> xdp_action {
 fn large_stack_usage(ctx: *xdp_md) -> xdp_action {
   // Large buffer - would exceed eBPF 512-byte stack limit
   // This would be flagged by the safety analyzer
-  var large_buffer: u8[600] = [0; 600] // WARNING: Stack overflow
+  var large_buffer: u8[600] = [0] // WARNING: Stack overflow
   
   large_buffer[0] = 1
   
@@ -102,13 +102,8 @@ fn large_stack_usage(ctx: *xdp_md) -> xdp_action {
 @helper
 fn array_validation_demo(ctx: *xdp_md) -> xdp_action {
   // Valid array sizes
-  var valid_small: u32[10] = [0; 10]     // OK
-  var valid_medium: u8[100] = [0; 100]   // OK
-  
-  // The following would be caught by validation:
-  // var invalid_negative: u32[-1] = [0; -1]  // ERROR: Negative size
-  // var invalid_zero: u32[0] = [0; 0]        // ERROR: Zero size
-  // var too_large: u8[2000] = [0; 2000]      // WARNING: Too large for stack
+  var valid_small: u32[10] = [0]     // OK
+  var valid_medium: u8[100] = [0]   // OK
   
   valid_small[5] = 42
   valid_medium[50] = 255

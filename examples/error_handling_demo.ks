@@ -20,7 +20,7 @@ enum xdp_action {
 // Minimal error handling demo
 map<u32, u64> counters : HashMap(1024)
 
-@xdp fn error_demo(ctx: *xdp_md) -> i32 {
+@xdp fn error_demo(ctx: *xdp_md) -> xdp_action {
     var key = 42
     
     try {
@@ -33,7 +33,7 @@ map<u32, u64> counters : HashMap(1024)
         
     } catch 1 {
         // Handle missing key by initializing it
-        counters[key] = 100;
+        counters[key] = 100
         return 1  // XDP_DROP
     }
 }

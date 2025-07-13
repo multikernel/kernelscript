@@ -26,20 +26,20 @@ type Counter = u64
 
 // Struct definition for packet information
 struct PacketInfo {
-  src_ip: IpAddress;
-  dst_ip: IpAddress;
-  protocol: u8;
-  src_port: u16;
-  dst_port: u16;
-  payload_size: PacketSize;
+  src_ip: IpAddress,
+  dst_ip: IpAddress,
+  protocol: u8,
+  src_port: u16,
+  dst_port: u16,
+  payload_size: PacketSize
 }
 
 // Enum for filtering actions
 enum FilterAction {
-  Allow = 0,
-  Block = 1,
-  Log = 2,
-  Redirect = 3
+  FILTER_ACTION_ALLOW = 0,
+  FILTER_ACTION_BLOCK = 1,
+  FILTER_ACTION_LOG = 2,
+  FILTER_ACTION_REDIRECT = 3
 }
 
 // Enum for packet protocols
@@ -54,16 +54,16 @@ pin map<IpAddress, Counter> connection_count : HashMap(1024)
 
 map<PacketInfo, FilterAction> packet_filter : LruHash(512)
 
-map<u32, option PacketInfo> recent_packets : Array(256)
+map<u32, PacketInfo> recent_packets : Array(256)
 
 // Result type for error handling
-map<u32, result PacketInfo u8> packet_cache : PercpuHash(128)
+map<u32, PacketInfo> packet_cache : PercpuHash(128)
 
 // Local maps for program-specific data
 map<Protocol, Counter> protocol_stats : PercpuArray(32)
 
 @helper
-fn extract_packet_info(ctx: *xdp_md) -> option PacketInfo {
+fn extract_packet_info(ctx: *xdp_md) -> *PacketInfo {
   // This would contain actual packet parsing logic
   // For now, return a dummy PacketInfo
   var info: PacketInfo = PacketInfo {
@@ -74,14 +74,14 @@ fn extract_packet_info(ctx: *xdp_md) -> option PacketInfo {
     dst_port: 8080,
     payload_size: 1024
   }
-  return some info
+  return &info
 }
 
 @helper
 fn get_filter_action(info: PacketInfo) -> FilterAction {
   // Look up in the filter map
   var action = packet_filter[info]
-  if (action != null) {
+  if (action != none) {
     return action
   } else {
     return FILTER_ACTION_ALLOW
@@ -89,24 +89,33 @@ fn get_filter_action(info: PacketInfo) -> FilterAction {
 }
 
 @helper
+fn protocol_from_u8(proto_num: u8) -> Protocol {
+  // Convert u8 protocol number to Protocol enum
+  match (proto_num) {
+    1: ICMP,
+    6: TCP,
+    17: UDP,
+    default: TCP  // Default to TCP for unknown protocols
+  }
+}
+
+@helper
 fn update_stats(info: PacketInfo) {
   // Update connection count
   var current_count = connection_count[info.src_ip]
-  if (current_count != null) {
-    connection_count[info.src_ip] = current_count + 1;
+  if (current_count != none) {
+    connection_count[info.src_ip] = current_count + 1
   } else {
-    connection_count[info.src_ip] = 1;
+    connection_count[info.src_ip] = 1
   }
   
   // Update protocol stats
   var proto = protocol_from_u8(info.protocol)
-  if (proto != null) {
-    var stats = protocol_stats[proto]
-    if (stats != null) {
-      protocol_stats[proto] = stats + 1
-    } else {
-      protocol_stats[proto] = 1
-    }
+  var stats = protocol_stats[proto]
+  if (stats != none) {
+    protocol_stats[proto] = stats + 1
+  } else {
+    protocol_stats[proto] = 1
   }
 }
 
@@ -115,33 +124,30 @@ fn update_stats(info: PacketInfo) {
   // Extract packet information
   var packet_info = extract_packet_info(ctx)
   
-  match packet_info {
-    some info -> {
-      // Update statistics
-      update_stats(info)
-      
-      // Get filtering decision
-      var action = get_filter_action(info)
-      
-      // Store in recent packets for userspace inspection
-      var packet_id = ctx->ingress_ifindex
-      recent_packets[packet_id] = info
-      
-      // Apply filtering action
-      match action {
-        FILTER_ACTION_ALLOW -> return XDP_PASS,
-        FILTER_ACTION_BLOCK -> return XDP_DROP,
-        FILTER_ACTION_LOG -> {
-          // Log packet and allow
-          ctx->log_packet(info)
-          return XDP_PASS
-        },
-        FILTER_ACTION_REDIRECT -> return XDP_REDIRECT
-      }
-    },
-    none -> {
-      // Failed to parse packet, drop it
-      return XDP_DROP
+  if (packet_info != none) {
+    // Update statistics
+    update_stats(*packet_info)
+    
+    // Get filtering decision
+    var action = get_filter_action(*packet_info)
+    
+    // Store in recent packets for userspace inspection
+    var packet_id = ctx->ingress_ifindex
+    recent_packets[packet_id] = *packet_info
+    
+    // Apply filtering action
+    return match (action) {
+      FILTER_ACTION_ALLOW: XDP_PASS,
+      FILTER_ACTION_BLOCK: XDP_DROP,
+      FILTER_ACTION_LOG: {
+        // Log packet and allow
+        ctx->log_packet(*packet_info)
+        XDP_PASS
+      },
+      FILTER_ACTION_REDIRECT: XDP_REDIRECT
     }
+  } else {
+    // Failed to parse packet, drop it
+    return XDP_DROP
   }
 } 
