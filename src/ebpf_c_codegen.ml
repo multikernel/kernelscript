@@ -265,6 +265,20 @@ let rec ebpf_type_from_ir_type = function
       let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
       sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
 
+(** Generate proper C declaration for eBPF, handling function pointers correctly *)
+let generate_ebpf_c_declaration ir_type var_name =
+  match ir_type with
+  | IRFunctionPointer (param_types, return_type) ->
+      let return_type_str = ebpf_type_from_ir_type return_type in
+      let param_types_str = List.map ebpf_type_from_ir_type param_types in
+      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+      sprintf "%s (*%s)(%s)" return_type_str var_name params_str
+  | IRStr size -> sprintf "str_%d_t %s" size var_name
+  | IRArray (element_type, size, _) ->
+      let element_type_str = ebpf_type_from_ir_type element_type in
+      sprintf "%s %s[%d]" element_type_str var_name size
+  | _ -> sprintf "%s %s" (ebpf_type_from_ir_type ir_type) var_name
+
 (** Map type conversion *)
 
 let ir_map_type_to_c_type = function
@@ -2026,9 +2040,8 @@ let rec generate_c_instruction ctx ir_instr =
          | IRRegister reg -> reg 
          | _ -> failwith "IRDeclareVariable target must be a register") 
         typ in
-      let type_str = ebpf_type_from_ir_type typ in
       
-      (* Special handling for array types in variable declarations *)
+      (* Special handling for different types in variable declarations *)
       (match typ with
        | IRArray (element_type, size, _) ->
            (* Array declaration with proper C syntax *)
@@ -2042,6 +2055,7 @@ let rec generate_c_instruction ctx ir_instr =
                 emit_line ctx (sprintf "%s;" array_decl))
        | IRStr dest_size ->
            (* String variable declaration with special handling for string literals *)
+           let type_str = ebpf_type_from_ir_type typ in
            (match init_expr_opt with
             | Some init_expr ->
                 (match init_expr.expr_desc with
@@ -2067,13 +2081,14 @@ let rec generate_c_instruction ctx ir_instr =
             | None ->
                 emit_line ctx (sprintf "%s %s;" type_str var_name))
        | _ ->
-           (* Regular variable declaration *)
+           (* Regular variable declaration - use proper C declaration generator *)
+           let decl_str = generate_ebpf_c_declaration typ var_name in
            (match init_expr_opt with
             | Some init_expr ->
                 let init_str = generate_c_expression ctx init_expr in
-                emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+                emit_line ctx (sprintf "%s = %s;" decl_str init_str)
             | None ->
-                emit_line ctx (sprintf "%s %s;" type_str var_name)))
+                emit_line ctx (sprintf "%s;" decl_str)))
       
   | IRCall (target, args, ret_opt) ->
       (* Handle different call targets *)
@@ -2987,12 +3002,12 @@ let generate_c_function ctx ir_func =
   (* Declare temporary variables for all registers *)
   let register_variable_map = collect_register_variable_mapping ir_func in
   
-  (* Group registers by type to reduce declarations, but skip those handled by IRDeclareVariable *)
-  let register_groups = Hashtbl.create 16 in
+  (* Generate proper variable declarations for all registers *)
+  let register_declarations = ref [] in
   List.iter (fun (reg, reg_type) ->
     (* Skip declaration if register can be inlined or is handled by IRDeclareVariable *)
     if not (can_inline_register ctx reg) && not (List.mem reg !declared_registers) then (
-      let c_type = match reg_type with
+      let effective_type = match reg_type with
         | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
         | _ ->
             (* Check if this register corresponds to a variable with a type alias *)
@@ -3002,26 +3017,33 @@ let generate_c_function ctx ir_func =
                  add_register_hint ctx reg var_name;
                  (match List.assoc_opt var_name ctx.variable_type_aliases with
                   | Some alias_name -> alias_name
-                  | None -> ebpf_type_from_ir_type reg_type)
-             | None -> ebpf_type_from_ir_type reg_type)
+                  | None -> 
+                      (* Use the proper declaration function for complex types *)
+                      let var_name = get_meaningful_var_name ctx reg reg_type in
+                      let decl = generate_ebpf_c_declaration reg_type var_name in
+                      register_declarations := (decl ^ ";") :: !register_declarations;
+                      "" (* Skip the simple type processing below *)
+                  )
+             | None -> 
+                 (* Use the proper declaration function for complex types *)
+                 let var_name = get_meaningful_var_name ctx reg reg_type in
+                 let decl = generate_ebpf_c_declaration reg_type var_name in
+                 register_declarations := (decl ^ ";") :: !register_declarations;
+                 "" (* Skip the simple type processing below *)
+            )
       in
-      let var_name = get_meaningful_var_name ctx reg reg_type in
-      let existing_vars = match Hashtbl.find_opt register_groups c_type with
-        | Some vars -> vars
-        | None -> []
-      in
-      Hashtbl.replace register_groups c_type (var_name :: existing_vars)
+      (* Handle simple types that use alias names *)
+      if effective_type <> "" then (
+        let var_name = get_meaningful_var_name ctx reg reg_type in
+        let simple_decl = sprintf "%s %s;" effective_type var_name in
+        register_declarations := simple_decl :: !register_declarations
+      )
     )
   ) all_registers;
   
-  (* Emit individual variable declarations - fixes pointer type issues *)
-  Hashtbl.iter (fun c_type var_names ->
-    let sorted_vars = List.sort String.compare var_names in
-    List.iter (fun var_name ->
-      (* Simple variable declaration - IRDeclareVariable handles initialization *)
-      emit_line ctx (sprintf "%s %s;" c_type var_name)
-    ) sorted_vars
-  ) register_groups;
+  (* Emit all variable declarations *)
+  let sorted_declarations = List.sort String.compare (List.rev !register_declarations) in
+  List.iter (emit_line ctx) sorted_declarations;
   if all_registers <> [] then emit_blank_line ctx;
   
   (* Generate basic blocks *)

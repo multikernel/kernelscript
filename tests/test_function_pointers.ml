@@ -355,6 +355,122 @@ fn main() -> i32 {
       let msg = Printexc.to_string exn in
       fail ("Function pointer call IR generation test failed: " ^ msg)
 
+(** Test C code generation produces correct function pointer syntax - regression test for bug fix *)
+let test_function_pointer_c_generation_syntax () =
+  let program_text = {|
+// Function type alias for testing
+type BinaryOp = fn(i32, i32) -> i32
+
+// Test functions
+fn add_numbers(a: i32, b: i32) -> i32 {
+  return a + b
+}
+
+fn multiply_numbers(a: i32, b: i32) -> i32 {
+  return a * b
+}
+
+@xdp fn test_functions(ctx: *xdp_md) -> xdp_action {
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  // Function pointer variable declarations - these should generate correct C syntax
+  var add_op: BinaryOp = add_numbers
+  var mul_op: BinaryOp = multiply_numbers
+  
+  // Call functions through function pointers
+  var sum = add_op(10, 20)
+  var product = mul_op(5, 6)
+  
+  return 0
+}
+|} in
+  
+  try
+    (* Parse and type check *)
+    let ast = parse_string program_text in
+    let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+    let (annotated_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    
+    (* Generate IR *)
+    let ir_multi_prog = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test_function_pointers" in
+    
+    (* Test eBPF C code generation *)
+    let ebpf_c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir_multi_prog in
+    
+    (* Test userspace C code generation *)
+    let temp_dir = Filename.temp_file "test_function_ptr_codegen" "" in
+    Unix.unlink temp_dir;
+    Unix.mkdir temp_dir 0o755;
+    
+    let _output_file = Kernelscript.Userspace_codegen.generate_userspace_code_from_ir 
+      ir_multi_prog ~output_dir:temp_dir "test_function_pointers" in
+    let userspace_file = Filename.concat temp_dir "test_function_pointers.c" in
+    
+    let userspace_c_code = 
+      if Sys.file_exists userspace_file then (
+        let ic = open_in userspace_file in
+        let content = really_input_string ic (in_channel_length ic) in
+        close_in ic;
+        content
+      ) else "" in
+    
+    (* Cleanup *)
+    (try 
+       if Sys.file_exists userspace_file then Unix.unlink userspace_file;
+       Unix.rmdir temp_dir
+     with _ -> ());
+    
+    (* Check eBPF C code for correct function pointer syntax *)
+    let check_function_pointer_syntax code description =
+      (* Function pointer declarations should be: type ( *name)(params) *)
+      let correct_pattern = Str.regexp "int32_t (\\*[a-zA-Z_][a-zA-Z0-9_]*)(int32_t, int32_t)" in
+      let has_correct_syntax = 
+        try 
+          ignore (Str.search_forward correct_pattern code 0); 
+          true 
+        with Not_found -> false in
+      
+      (* Wrong syntax should NOT appear: type ( * )(params) name *)
+      let wrong_pattern = Str.regexp "int32_t (\\*)(int32_t, int32_t) [a-zA-Z_][a-zA-Z0-9_]*" in
+      let has_wrong_syntax = 
+        try 
+          ignore (Str.search_forward wrong_pattern code 0); 
+          true 
+        with Not_found -> false in
+      
+      check bool (description ^ " - should have correct function pointer syntax") true has_correct_syntax;
+      check bool (description ^ " - should NOT have incorrect function pointer syntax") false has_wrong_syntax
+    in
+    
+    (* Check userspace code - this is where function pointers should be *)
+    if String.length userspace_c_code > 0 then
+      check_function_pointer_syntax userspace_c_code "Userspace C code"
+    else
+      failwith "Expected userspace code to be generated for function pointer test";
+    
+    (* Additional specific checks for common function pointer patterns *)
+    let check_no_malformed_declarations code description =
+      (* Should not contain patterns like: "int32_t ( * )(int32_t, int32_t) temp_" *)
+      let malformed_temp_pattern = Str.regexp "int32_t (\\*)(int32_t, int32_t) temp_[0-9]+" in
+      let has_malformed = 
+        try 
+          ignore (Str.search_forward malformed_temp_pattern code 0); 
+          true 
+        with Not_found -> false in
+      check bool (description ^ " - should not contain malformed temporary variable declarations") false has_malformed
+    in
+    
+    check_no_malformed_declarations ebpf_c_code "eBPF C code";
+    if String.length userspace_c_code > 0 then
+      check_no_malformed_declarations userspace_c_code "Userspace C code"
+      
+  with
+  | exn -> 
+      let msg = Printexc.to_string exn in
+      fail ("Function pointer C generation test failed: " ^ msg)
+
 (** Test suite for function pointer support *)
 let tests = [
   ("function_pointer_struct_parsing", `Quick, test_function_pointer_struct_parsing);
@@ -367,6 +483,7 @@ let tests = [
   ("function_pointer_argument_count_error", `Quick, test_function_pointer_argument_count_error);
   ("complex_struct_function_pointers", `Quick, test_complex_struct_function_pointers);
   ("function_pointer_call_ir_generation", `Quick, test_function_pointer_call_ir_generation);
+  ("function_pointer_c_generation_syntax", `Quick, test_function_pointer_c_generation_syntax);
 ]
 
 let () = run "Function Pointer Tests" [("main", tests)] 

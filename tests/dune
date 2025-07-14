@@ -227,7 +227,7 @@
 (executable
  (name test_function_pointers)
  (modules test_function_pointers)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_string_type)

@@ -863,6 +863,20 @@ let get_register_var_name ctx reg_id ir_type =
         Hashtbl.add ctx.var_declarations var_name ir_type;
       var_name
 
+(** Generate proper C declaration for any IR type with variable name *)
+let generate_c_declaration ir_type var_name =
+  match ir_type with
+  | IRFunctionPointer (param_types, return_type) ->
+      let return_type_str = c_type_from_ir_type return_type in
+      let param_types_str = List.map c_type_from_ir_type param_types in
+      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+      sprintf "%s (*%s)(%s)" return_type_str var_name params_str
+  | IRStr size -> sprintf "char %s[%d]" var_name size
+  | IRArray (element_type, size, _) ->
+      let element_type_str = c_type_from_ir_type element_type in
+      sprintf "%s %s[%d]" element_type_str var_name size
+  | _ -> sprintf "%s %s" (c_type_from_ir_type ir_type) var_name
+
 (** Generate C value from IR value *)
 let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
   let base_result = match ir_value.value_desc with
@@ -1368,14 +1382,14 @@ let rec generate_c_instruction_from_ir ctx instruction =
             | None ->
                 sprintf "%s;" array_decl)
        | _ ->
-           (* Regular variable declaration *)
-           let type_str = c_type_from_ir_type typ in
+           (* Regular variable declaration - use proper C declaration generator *)
+           let decl_str = generate_c_declaration typ var_name in
            (match init_expr_opt with
             | Some init_expr ->
                 let init_str = generate_c_expression_from_ir ctx init_expr in
-                sprintf "%s %s = %s;" type_str var_name init_str
+                sprintf "%s = %s;" decl_str init_str
             | None ->
-                sprintf "%s %s;" type_str var_name))
+                sprintf "%s;" decl_str))
       
   | IRCall (target, args, ret_opt) ->
       (* Track function usage for optimization *)
