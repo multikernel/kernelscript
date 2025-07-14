@@ -6,8 +6,10 @@
 
 (package
  (name kernelscript)
- (synopsis "KernelScript - eBPF programming language with integrated userspace support")
- (description "A domain-specific language for eBPF programming that provides seamless integration between kernel and userspace code")
+ (authors "Cong Wang")
+ (maintainers "Cong Wang <cwang@multikernel.io>")
+ (license Apache-2.0)
+ (synopsis "A modern programming language for eBPF development")
  (depends
   ocaml
   dune
