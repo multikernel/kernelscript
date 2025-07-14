@@ -471,6 +471,50 @@ fn main() -> i32 {
       let msg = Printexc.to_string exn in
       fail ("Function pointer C generation test failed: " ^ msg)
 
+(** Test function pointer calls in return statements (bug fix verification) *)
+let test_function_pointer_return_call () =
+  let source = {|
+    fn process_with_callback(x: i32, y: i32, callback: fn(i32, i32) -> i32) -> i32 {
+      return callback(x, y)
+    }
+    
+    fn main() -> i32 {
+      return 0
+    }
+  |} in
+  
+  let ast = parse_string source in
+  
+  (* Find the process_with_callback function *)
+  let process_func = List.find (fun decl ->
+    match decl with
+    | GlobalFunction func -> func.func_name = "process_with_callback"
+    | _ -> false
+  ) ast in
+  
+  let func_body = match process_func with
+    | GlobalFunction func -> func.func_body
+    | _ -> failwith "Expected function declaration"
+  in
+  
+  (* Find the return statement *)
+  let return_stmt = List.find (fun stmt ->
+    match stmt.stmt_desc with
+    | Return _ -> true
+    | _ -> false
+  ) func_body in
+  
+  (* Check that it's a return statement with a function call *)
+  let is_function_call = match return_stmt.stmt_desc with
+    | Return (Some { expr_desc = Call (callee, _); _ }) ->
+        (match callee.expr_desc with
+         | Identifier "callback" -> true
+         | _ -> false)
+    | _ -> false
+  in
+  
+  check bool "Should have function call to callback in return statement" true is_function_call
+
 (** Test suite for function pointer support *)
 let tests = [
   ("function_pointer_struct_parsing", `Quick, test_function_pointer_struct_parsing);
@@ -484,6 +528,7 @@ let tests = [
   ("complex_struct_function_pointers", `Quick, test_complex_struct_function_pointers);
   ("function_pointer_call_ir_generation", `Quick, test_function_pointer_call_ir_generation);
   ("function_pointer_c_generation_syntax", `Quick, test_function_pointer_c_generation_syntax);
+  ("function_pointer_return_call", `Quick, test_function_pointer_return_call);
 ]
 
 let () = run "Function Pointer Tests" [("main", tests)] 

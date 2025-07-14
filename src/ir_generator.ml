@@ -1403,19 +1403,42 @@ and lower_statement ctx stmt =
                   | Ast.Identifier name ->
                       (* Check if this should be a tail call *)
                       let should_be_tail_call = 
-                        (* Check if we're in an attributed function context *)
-                        match ctx.current_function with
-                        | Some _current_func_name ->
-                            (* Check if target function is an attributed function *)
-                            let target_is_attributed = 
-                              try
-                                let _ = Symbol_table.lookup_function ctx.symbol_table name in
-                                (* Simple heuristic: if function name appears in context, it might be attributed *)
-                                true  (* This will be refined by actual tail call analysis *)
-                              with _ -> false
-                            in
-                            target_is_attributed
-                        | None -> false
+                        (* First check if the identifier is a function parameter or variable (function pointer) *)
+                        let is_function_pointer = 
+                          Hashtbl.mem ctx.function_parameters name || 
+                          Hashtbl.mem ctx.variables name
+                        in
+                        
+                        if is_function_pointer then
+                          (* Function pointer calls should never be tail calls *)
+                          false
+                        else
+                          (* Check if we're in an attributed function context *)
+                          match ctx.current_function with
+                          | Some current_func_name ->
+                              (* Check if caller is attributed (has eBPF attributes) *)
+                              let caller_is_attributed = 
+                                try
+                                  let caller_symbol = Symbol_table.lookup_function ctx.symbol_table current_func_name in
+                                  (* TODO: Check if caller has eBPF attributes like @xdp, @tc, etc. *)
+                                  (* For now, assume attributed functions are defined in symbol table *)
+                                  caller_symbol <> None
+                                with _ -> false
+                              in
+                              
+                              (* Check if target function is an attributed function *)
+                              let target_is_attributed = 
+                                try
+                                  let target_symbol = Symbol_table.lookup_function ctx.symbol_table name in
+                                  (* TODO: Check if target has eBPF attributes like @xdp, @tc, etc. *)
+                                  (* For now, assume attributed functions are defined in symbol table *)
+                                  target_symbol <> None
+                                with _ -> false
+                              in
+                              
+                              (* Only allow tail calls between attributed functions *)
+                              caller_is_attributed && target_is_attributed
+                          | None -> false
                       in
                       
                       if should_be_tail_call then

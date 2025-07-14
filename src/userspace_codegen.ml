@@ -1482,9 +1482,11 @@ let rec generate_c_instruction_from_ir ctx instruction =
         | None -> basic_call
       else basic_call
   
-  | IRTailCall (name, _args, _index) ->
-      (* Tail calls are not supported in userspace - this should not happen *)
-      sprintf "/* ERROR: Tail call to %s not supported in userspace */" name
+  | IRTailCall (name, args, _index) ->
+      (* Tail calls are not supported in userspace - treat as regular function call *)
+      (* This is the correct behavior since tail calls are purely an eBPF optimization *)
+      let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
+      sprintf "return %s(%s);" name args_str
   
   | IRReturn value_opt ->
       (match value_opt with
@@ -1668,7 +1670,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
               | IRReturnTailCall (func_name, args, _) ->
                   (* Tail calls are not supported in userspace - treat as regular function call *)
                   let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
-                  sprintf "return %s(%s); /* Note: tail call converted to regular call in userspace */" func_name args_str
+                  sprintf "return %s(%s);" func_name args_str
             in
             sprintf "%s {\n        %s\n    }" condition_part action_part
         | IRDefaultPattern ->
@@ -1683,7 +1685,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
               | IRReturnTailCall (func_name, args, _) ->
                   (* Tail calls are not supported in userspace - treat as regular function call *)
                   let args_str = String.concat ", " (List.map (generate_c_value_from_ir ctx) args) in
-                  sprintf "return %s(%s); /* Note: tail call converted to regular call in userspace */" func_name args_str
+                  sprintf "return %s(%s);" func_name args_str
             in
             sprintf "else {\n        %s\n    }" action_part
       in
