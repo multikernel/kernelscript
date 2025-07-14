@@ -1523,17 +1523,9 @@ let rec generate_c_instruction_from_ir ctx instruction =
       let result_str = generate_c_value_from_ir ctx result_val in
       sprintf "%s = get_%s_config()->%s;" result_str config_name field_name
   
-  | IRContextAccess (dest, access_type) ->
-      let access_str = match access_type with
-        | PacketData -> "ctx->data"
-        | PacketEnd -> "ctx->data_end" 
-        | DataMeta -> "ctx->data_meta"
-        | IngressIfindex -> "ctx->ingress_ifindex"
-        | DataLen -> "ctx->len"
-        | MarkField -> "ctx->mark"
-        | Priority -> "ctx->priority"
-        | CbField -> "ctx->cb"
-      in
+  | IRContextAccess (dest, context_type, field_name) ->
+      (* Use BTF-integrated context code generation for userspace too *)
+      let access_str = Kernelscript_context.Context_codegen.generate_context_field_access context_type "ctx" field_name in
       sprintf "%s = %s;" (generate_c_value_from_ir ctx dest) access_str
   
   | IRJump label ->

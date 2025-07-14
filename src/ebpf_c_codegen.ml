@@ -366,7 +366,7 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value value_val)
   | IRConfigAccess (_config_name, _field_name, result_val) ->
       collect_string_sizes_from_value result_val
-  | IRContextAccess (dest_val, _access_type) -> 
+  | IRContextAccess (dest_val, _context_type, _field_name) -> 
       collect_string_sizes_from_value dest_val
   | IRBoundsCheck (ir_val, _, _) -> 
       collect_string_sizes_from_value ir_val
@@ -2248,33 +2248,10 @@ let rec generate_c_instruction ctx ir_instr =
       emit_line ctx (sprintf "  } else { %s = 0; }" result_str);
       emit_line ctx (sprintf "}")
       
-  | IRContextAccess (dest_val, access_type) ->
+  | IRContextAccess (dest_val, context_type, field_name) ->
       let dest_str = generate_c_value ctx dest_val in
-      (* Map access type to field name and determine context type from current function *)
-      let (ctx_type_str, field_name) = match access_type with
-        | PacketData -> 
-            (match ctx.current_function_context_type with
-             | Some ctx_type -> (ctx_type, "data")
-             | None -> ("xdp", "data"))  (* fallback to XDP for compatibility *)
-        | PacketEnd -> 
-            (match ctx.current_function_context_type with
-             | Some ctx_type -> (ctx_type, "data_end")
-             | None -> ("xdp", "data_end"))  (* fallback to XDP for compatibility *)
-        | DataMeta -> 
-            (match ctx.current_function_context_type with
-             | Some ctx_type -> (ctx_type, "data_meta")
-             | None -> ("xdp", "data_meta"))  (* fallback to XDP for compatibility *)
-        | IngressIfindex -> 
-            (match ctx.current_function_context_type with
-             | Some ctx_type -> (ctx_type, "ingress_ifindex")
-             | None -> ("xdp", "ingress_ifindex"))  (* fallback to XDP for compatibility *)
-        | DataLen -> ("tc", "len") (* TC-specific *)
-        | MarkField -> ("tc", "mark") (* TC-specific *)
-        | Priority -> ("tc", "priority") (* TC-specific *)
-        | CbField -> ("tc", "cb") (* TC-specific *)
-      in
-      (* Use modular context code generation *)
-      let access_str = Kernelscript_context.Context_codegen.generate_context_field_access ctx_type_str "ctx" field_name in
+      (* Use BTF-integrated context code generation directly *)
+      let access_str = Kernelscript_context.Context_codegen.generate_context_field_access context_type "ctx" field_name in
       emit_line ctx (sprintf "%s = %s;" dest_str access_str)
 
   | IRBoundsCheck (value_val, min_bound, max_bound) ->
@@ -2499,7 +2476,7 @@ let rec generate_c_instruction ctx ir_instr =
               collect_in_value obj_val; collect_in_value value_val
           | IRConfigAccess (_, _, result_val) ->
               collect_in_value result_val
-          | IRContextAccess (result_val, _) ->
+          | IRContextAccess (result_val, _, _) ->
               collect_in_value result_val
           | IRBoundsCheck (value_val, _, _) ->
               collect_in_value value_val
@@ -2856,13 +2833,24 @@ let collect_registers_in_function ir_func =
         collect_in_value obj_val; collect_in_value value_val
     | IRConfigAccess (_config_name, _field_name, result_val) ->
         collect_in_value result_val
-    | IRContextAccess (dest_val, access_type) -> 
-        (* Use the correct type based on the access type, not the inferred type *)
-        let correct_type = match access_type with
-          | PacketData | PacketEnd -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-          | DataMeta -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-          | IngressIfindex | DataLen | MarkField | Priority -> IRU32
-          | CbField -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+    | IRContextAccess (dest_val, context_type, field_name) -> 
+        (* Use BTF to determine the correct type based on the field *)
+        let c_type_to_ir_type = function
+          | "__u8*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+          | "__u16*" -> IRPointer (IRU16, make_bounds_info ~nullable:false ())
+          | "__u32*" -> IRPointer (IRU32, make_bounds_info ~nullable:false ())
+          | "__u64*" -> IRPointer (IRU64, make_bounds_info ~nullable:false ())
+          | "__u8" -> IRU8
+          | "__u16" -> IRU16
+          | "__u32" -> IRU32
+          | "__u64" -> IRU64
+          | "void*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+          | c_type -> failwith ("Unsupported context field C type: " ^ c_type)
+        in
+        let correct_type = 
+          match Kernelscript_context.Context_codegen.get_context_field_c_type context_type field_name with
+          | Some c_type -> c_type_to_ir_type c_type
+          | None -> IRU32  (* Default fallback *)
         in
         (match dest_val.value_desc with
          | IRRegister reg -> 

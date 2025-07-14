@@ -283,7 +283,7 @@ and ir_instr_desc =
   | IRConfigFieldUpdate of ir_value * ir_value * string * ir_value (* map, key, field, value *)
   | IRStructFieldAssignment of ir_value * string * ir_value (* object, field, value *)
   | IRConfigAccess of string * string * ir_value (* config_name, field_name, result_val *)
-  | IRContextAccess of ir_value * context_access_type
+  | IRContextAccess of ir_value * string * string  (* dest_val, context_type, field_name *)
   | IRBoundsCheck of ir_value * int * int (* value, min, max *)
   | IRJump of string
   | IRCondJump of ir_value * string * string
@@ -317,9 +317,6 @@ and ir_catch_pattern =
 and map_load_type = DirectLoad | MapLookup | MapPeek
 and map_store_type = DirectStore | MapUpdate | MapPush
 
-and context_access_type = 
-  | PacketData | PacketEnd | DataMeta | IngressIfindex
-  | DataLen | MarkField | Priority | CbField
 
 and bounds_check = {
   value: ir_value;
@@ -856,14 +853,8 @@ let rec string_of_ir_instruction instr =
         (string_of_ir_value obj) field (string_of_ir_value value)
   | IRConfigAccess (config_name, field_name, result_val) ->
       Printf.sprintf "config_access(%s, %s, %s)" config_name field_name (string_of_ir_value result_val)
-  | IRContextAccess (dest, access_type) ->
-      let access_str = match access_type with
-        | PacketData -> "packet_data" | PacketEnd -> "packet_end"
-        | DataMeta -> "data_meta" | IngressIfindex -> "ingress_ifindex"
-        | DataLen -> "data_len" | MarkField -> "mark" 
-        | Priority -> "priority" | CbField -> "cb"
-      in
-      Printf.sprintf "%s = ctx.%s" (string_of_ir_value dest) access_str
+  | IRContextAccess (dest, context_type, field_name) ->
+      Printf.sprintf "%s = ctx.%s.%s" (string_of_ir_value dest) context_type field_name
   | IRBoundsCheck (value, min_bound, max_bound) ->
       Printf.sprintf "bounds_check(%s, %d, %d)" 
         (string_of_ir_value value) min_bound max_bound

@@ -31,7 +31,7 @@ let test_collect_string_sizes_context_access () =
   
   (* Test IRContextAccess instruction *)
   let dest_val = make_ir_value (IRVariable "dest") (IRStr 8) pos in
-  let ctx_access_instr = make_ir_instruction (IRContextAccess (dest_val, PacketData)) pos in
+  let ctx_access_instr = make_ir_instruction (IRContextAccess (dest_val, "xdp", "data")) pos in
   
   let sizes = collect_string_sizes_from_instr ctx_access_instr in
   check (list int) "Context access string size collection" [8] sizes
@@ -161,7 +161,7 @@ let test_comprehensive_pattern_coverage () =
   
   let config_field_update = make_ir_instruction (IRConfigFieldUpdate (str_val, str_val, "field", str_val)) pos in
   let config_access = make_ir_instruction (IRConfigAccess ("config", "field", str_val)) pos in
-  let ctx_access = make_ir_instruction (IRContextAccess (str_val, PacketData)) pos in
+      let ctx_access = make_ir_instruction (IRContextAccess (str_val, "xdp", "data")) pos in
   let bounds_check = make_ir_instruction (IRBoundsCheck (str_val, 0, 100)) pos in
   let cond_jump = make_ir_instruction (IRCondJump (str_val, "true", "false")) pos in
   let comment = make_ir_instruction (IRComment "test") pos in

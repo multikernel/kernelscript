@@ -279,64 +279,22 @@ let ir_context_type_to_string = function
   | CgroupSkbCtx -> "cgroup_skb"
 
 (** Map context field names to IR access types using BTF-integrated context codegen *)
-let get_context_field_access_type ctx_type field_name =
-  (* Use BTF-integrated context codegen to get field type information *)
-  match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type field_name with
-  | Some c_type ->
-      (* Map C types to appropriate IR access types based on BTF information *)
-      (match c_type with
-       (* Pointer types - typically packet-related *)
-       | "__u8*" | "__u16*" | "__u32*" | "__u64*" | "void*" -> 
-           (* Determine specific access type based on field name *)
-           (match field_name with
-            | "data" -> Some PacketData
-            | "data_end" -> Some PacketEnd
-            | "data_meta" -> Some DataMeta
-            | _ -> Some PacketData)  (* Default to packet data for unknown pointer fields *)
-       (* Integer types - typically metadata *)
-       | "__u32" | "__u16" | "__u8" -> 
-           (match field_name with
-            | "ingress_ifindex" | "rx_queue_index" | "egress_ifindex" 
-            | "ifindex" | "protocol" -> Some IngressIfindex
-            | "len" | "data_len" -> Some DataLen
-            | "mark" -> Some MarkField
-            | "priority" -> Some Priority
-            | _ -> Some IngressIfindex)  (* Default to IngressIfindex for unknown u32 fields *)
-       | "__u64" -> 
-           (match field_name with
-            | "data" | "data_end" | "data_meta" -> Some PacketData  (* u64 can be packet pointers *)
-            | _ -> Some DataLen)  (* Default to DataLen for unknown u64 fields *)
-       (* Special cases *)
-       | "str" -> Some CbField  (* String fields like cb *)
-       | _ -> None)
-  | None -> None
-
-(** Extended context field mapping that includes BTF-discovered fields *)
-let get_extended_context_field_access_type ctx_type field_name =
-  (* Now this just delegates to the BTF-integrated function *)
-  get_context_field_access_type ctx_type field_name
+(* No longer needed - we use BTF field names directly *)
 
 (** Handle context field access with comprehensive BTF support *)
-let handle_context_field_access_comprehensive ctx_type obj_val field result_val expr_pos =
-  match get_extended_context_field_access_type ctx_type field with
-  | Some access_type ->
-      (* Field has a specific IR access type mapping *)
+let handle_context_field_access_comprehensive ctx_type _obj_val field result_val expr_pos =
+  (* Check if field exists in BTF-integrated context codegen *)
+  match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type field with
+  | Some _c_type ->
+      (* Field exists in BTF - generate direct field access using BTF field name *)
       let instr = make_ir_instruction
-        (IRContextAccess (result_val, access_type))
+        (IRContextAccess (result_val, ctx_type, field))
         expr_pos
       in
       Some instr
   | None ->
-      (* Check if field exists in BTF-integrated context codegen *)
-      (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type field with
-       | Some _c_type ->
-           (* Field exists in BTF but doesn't have a specific IR access type mapping *)
-           (* Generate a generic field access - this will be handled by the C codegen *)
-           let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_val.val_type expr_pos in
-           Some (make_ir_instruction (IRAssign (result_val, field_expr)) expr_pos)
-       | None ->
-           (* Field doesn't exist in BTF either *)
-           None)
+      (* Field doesn't exist in BTF *)
+      None
 
 (** Expand built-in context methods *)
 let expand_context_method ctx method_name _args pos =
@@ -349,20 +307,16 @@ let expand_context_method ctx method_name _args pos =
   in
   let result_val = make_ir_value (IRRegister result_reg) result_type pos in
   
-  (* Map context methods to access types - these are different from fields *)
-  let access_type = match method_name with
-    | "packet" -> PacketData
-    | "packet_end" -> PacketEnd
-    | "data_len" -> DataLen
-    | _ -> 
-        (* Try field access mapping as fallback *)
-        (match get_extended_context_field_access_type "xdp" method_name with
-         | Some access_type -> access_type
-         | None -> failwith ("Unknown context method: " ^ method_name))
+  (* Map context methods to field names - these are different from regular field access *)
+  let (ctx_type_str, field_name) = match method_name with
+    | "packet" -> ("xdp", "data")  (* Default to XDP for method calls *)
+    | "packet_end" -> ("xdp", "data_end")
+    | "data_len" -> ("tc", "len")  (* TC-specific method *)
+    | _ -> failwith ("Unknown context method: " ^ method_name)
   in
   
   let instr = make_ir_instruction
-    (IRContextAccess (result_val, access_type))
+    (IRContextAccess (result_val, ctx_type_str, field_name))
     ~verifier_hints:[HelperCall method_name]
     pos
   in

@@ -98,7 +98,7 @@ let test_context_access_lowering () =
   (* Should generate context access instruction *)
   check bool "instruction generated" true (List.length ctx.current_block > 0);
   match (List.hd ctx.current_block).instr_desc with
-  | IRContextAccess (_, PacketData) -> () (* Success *)
+  | IRContextAccess (_, "xdp", "data") -> () (* Success *)
   | _ -> fail "Expected context access instruction"
 
 let test_map_operation_lowering () =
