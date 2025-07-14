@@ -1,265 +1,364 @@
 # KernelScript
 
-**Advanced Multi-Program eBPF Compiler with Coordinated System Analysis**
+**A Domain-Specific Programming Language for eBPF-Centric Development**
 
-KernelScript is a next-generation eBPF compiler that goes beyond single-program compilation to analyze and optimize **entire multi-program eBPF systems**. Unlike traditional eBPF toolchains that treat programs in isolation, KernelScript understands the relationships between programs, detects potential conflicts, and generates coordinated solutions.
+KernelScript is a modern, type-safe, domain-specific programming language that unifies eBPF, userspace, and kernelspace development in a single codebase. Built with an eBPF-centric approach, it provides a clean, readable syntax while generating efficient C code for eBPF programs, coordinated userspace programs, and seamless kernel module (kfunc) integration.
 
-## 🚀 Key Advantages
+## Why KernelScript?
 
-### 1. **Multi-Program System Analysis**
+### The Problem with Current eBPF Development
 
-KernelScript analyzes multiple eBPF programs together as a coordinated system, detecting cross-program dependencies, shared map usage patterns, and optimization opportunities.
+Writing eBPF programs today is challenging and error-prone:
+
+- **Raw C + libbpf**: Requires deep eBPF knowledge, verbose boilerplate, manual memory management, and complex build systems
+- **Kernel development complexity**: Understanding verifier constraints, BPF helper functions, and kernel APIs
+- **Complex tail call management**: Manual program array setup, explicit `bpf_tail_call()` invocation, and error handling for failed tail calls
+- **Intricate dynptr APIs**: Manual management of `bpf_ringbuf_reserve_dynptr()`, `bpf_dynptr_data()`, `bpf_dynptr_write()`, and proper cleanup sequences
+- **Complex struct_ops implementation**: Manual function pointer setup, intricate BTF type registration, kernel interface compliance, and lifecycle management
+- **Complex kfunc implementation**: Manual kernel module creation, BTF symbol registration, export management, and module loading coordination
+- **Userspace coordination**: Manually writing loaders, map management, and program lifecycle code
+- **Multi-program systems**: No coordination between related eBPF programs sharing resources
+
+### Why Not Existing Tools?
+
+**Why not Rust?**
+- **Mixed compilation targets**: Rust's crate-wide, single-target compilation model cannot emit both eBPF bytecode and userspace binaries from one source file. KernelScript's `@xdp`, `@tc`, and regular functions compile to different targets automatically
+- **No first-class eBPF program values**: Rust lacks compile-time reflection to treat functions as values with load/attach lifecycle guarantees. KernelScript's type system prevents calling `attach()` before `load()` succeeds
+- **Cross-domain shared maps**: Rust's visibility and orphan rules conflict with KernelScript's implicit map sharing across programs. Safe userspace APIs for BPF maps require complex build-time generation in Rust
+- **Verifier-incompatible features**: Rust's generics and complex type system often produce code rejected by the eBPF verifier. KernelScript uses fixed-width arrays (`u8[64]`) and simplified types designed for verifier compatibility
+- **Error handling mismatch**: Rust's `Result<T,E>` model doesn't align with eBPF's C-style integer error codes. KernelScript's throw/catch works seamlessly in both userspace and eBPF contexts
+- **Missing eBPF-specific codegen**: Rust/LLVM cannot automatically generate BPF tail calls or kernel module code for `@kfunc` attributes - features that require deep compiler integration
+
+**Why not bpftrace?**
+- Domain-specific for tracing only (no XDP, TC, etc.)
+- Limited programming constructs (no complex data structures, functions)
+- Interpreted at runtime rather than compiled
+- No support for multi-program coordination
+
+**Why not Python/Go eBPF libraries?**
+- Still require writing eBPF programs in C
+- Only handle userspace coordination, not the eBPF programs themselves
+- Complex build systems and dependency management
+
+### KernelScript's Solution
+
+KernelScript addresses these problems through revolutionary language features:
+
+✅ **Single-file multi-target compilation** - Write userspace, eBPF, and kernel module code in one file. The compiler automatically targets each function correctly based on attributes (`@xdp`, `@helper`, regular functions)
+
+✅ **Automatic tail call orchestration** - Simply write `return other_xdp_func(ctx)` and the compiler handles program arrays, `bpf_tail_call()` generation, and error handling automatically
+
+✅ **Transparent dynptr integration** - Use simple pointer operations (`event_log.reserve()`, `buffer[index]`) while the compiler automatically uses complex dynptr APIs (`bpf_ringbuf_reserve_dynptr`, `bpf_dynptr_write`) behind the scenes
+
+✅ **First-class program lifecycle safety** - Programs are typed values with compile-time guarantees that prevent calling `attach()` before `load()` succeeds
+
+✅ **Zero-boilerplate shared state** - Global maps and config blocks are automatically accessible across all programs without imports, exports, or coordination code
+
+✅ **Custom kernel functions (@kfunc)** - Write full-privilege kernel functions that eBPF programs can call, automatically generating kernel modules and BTF registrations
+
+✅ **Unified error handling** - C-style integer throw/catch works seamlessly in both eBPF and userspace contexts, unlike complex Result types
+
+✅ **Verifier-optimized type system** - Fixed-size arrays (`u8[64]`), simple type aliases, and no complex generics that confuse the eBPF verifier
+
+✅ **Complete automated toolchain** - Generate ready-to-use projects with Makefiles, userspace loaders, and build systems from a single source file  
+
+## Language Overview
+
+### Program Types and Contexts
+
+KernelScript supports all major eBPF program types with typed contexts:
 
 ```kernelscript
-map<u32, u32> shared_counter : HashMap(1024) {
-  pinned: "/sys/fs/bpf/shared_counter"
-};
-
-// XDP program for packet counting
-program packet_counter : xdp {
-  fn main(ctx: xdp_md) -> xdp_action {
-    shared_counter[1] = 100;
-    return XDP_PASS;
-  }
-}
-
-// TC program for packet filtering  
-program packet_filter : tc {
-  fn main(ctx: TcContext) -> TcAction {
-    shared_counter[2] = 200;
-    return TC_ACT_OK;
-  }
-}
-```
-
-**KernelScript automatically detects:**
-- ✅ **Shared map access patterns** across programs
-- ⚠️  **Potential race conditions** from concurrent map access
-- 💡 **Optimization opportunities** (e.g., PercpuHash for reduced contention)
-
-### 2. **Intelligent Conflict Detection**
-
-Traditional eBPF compilation treats programs independently, missing critical race conditions. KernelScript's analyzer catches these issues at compile time:
-
-```
-=== Multi-Program Analysis Results ===
-
-Programs analyzed: 2
-  - packet_counter (xdp)
-  - packet_filter (tc)
-
-Global maps: 1
-  - shared_counter (hash_map)
-
-⚠️  Potential conflicts found:
-  - Map 'shared_counter' accessed by multiple programs: packet_counter, packet_filter 
-    (potential race condition)
-
-💡 Optimization opportunities:
-  - Consider using PercpuHash for map 'shared_counter' to reduce contention 
-    between programs: packet_counter, packet_filter
-```
-
-### 3. **Enhanced Code Generation with Analysis**
-
-Generated eBPF code includes analysis-driven optimizations and comments:
-
-```c
-/* Enhanced Multi-Program eBPF System */
-/* Programs: 2, Global Maps: 1 */
-/* Analysis: Map 'shared_counter' accessed by multiple programs */
-/* Optimization: Resource batching applied for coordinated execution */
-
-// XDP program with proper context handling
-SEC("xdp")
-int packet_counter(struct xdp_md *ctx) {
-    // Analysis-optimized map access
-    __u32 key = 1;
-    __u32 value = 100;
-    bpf_map_update_elem(&shared_counter, &key, &value, BPF_ANY);
-    return XDP_PASS;  // Analysis-verified return value
-}
-
-// TC program with proper context handling  
-SEC("tc")
-int packet_filter(struct __sk_buff *ctx) {
-    __u32 key = 2; 
-    __u32 value = 200;
-    bpf_map_update_elem(&shared_counter, &key, &value, BPF_ANY);
-    return TC_ACT_OK;  // Analysis-verified return value
-}
-```
-
-### 4. **Automatic Userspace Coordinator Generation**
-
-KernelScript generates sophisticated userspace coordinators that manage multi-program systems:
-
-```c
-// Generated coordinator manages multiple programs
-static struct bpf_object *bpf_obj = NULL;
-static struct bpf_program **bpf_programs = NULL;
-static int *prog_fds = NULL;
-static int num_programs = 0;
-
-// Enhanced map access with userspace-kernel coordination
-int shared_counter_lookup(void *key, void *value) {
-    if (shared_counter_fd < 0) return -1;
-    return bpf_map_lookup_elem(shared_counter_fd, key, value);
-}
-
-int main(int argc, char **argv) {
-    // Load all programs from single object file
-    if (load_all_bpf_programs() != 0) {
-        fprintf(stderr, "Failed to load BPF programs\n");
-        return 1;
+// XDP program for packet processing
+@xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
+    if (packet_size > 1500) {
+        return XDP_DROP
     }
-    
-    // Setup shared maps with pinning
-    if (setup_maps() != 0) {
-        fprintf(stderr, "Failed to setup maps\n");
-        return 1;
+    return XDP_PASS
+}
+
+// TC program for traffic control
+@tc fn traffic_shaper(ctx: *__sk_buff) -> i32 {
+    if (ctx->len > 1000) {
+        return TC_ACT_SHOT  // Drop large packets
     }
-    
-    // Execute coordinated userspace logic
-    shared_counter_update(&key_1, &value_1, BPF_ANY);
-    shared_counter_update(&key_2, &value_2, BPF_ANY);
-    
-    return 0;
+    return TC_ACT_OK
+}
+
+// Kprobe for kernel function tracing
+@kprobe fn trace_syscall(ctx: *pt_regs) -> i32 {
+    // Trace system call entry
+    return 0
 }
 ```
 
-### 5. **Complete Build System Generation**
+### Type System
 
-Every compilation produces a ready-to-use project:
+KernelScript has a rich type system designed for systems programming:
 
-```makefile
-# Multi-Program eBPF Makefile - Generated by KernelScript
+```kernelscript
+// Type aliases for clarity
+type IpAddress = u32
+type Counter = u64
+type PacketSize = u16
 
-BPF_CC = clang
-CC = gcc
-BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g
-CFLAGS = -Wall -Wextra -O2
-LIBS = -lbpf -lelf -lz
+// Struct definitions
+struct PacketInfo {
+    src_ip: IpAddress,
+    dst_ip: IpAddress,
+    protocol: u8,
+    size: PacketSize
+}
 
-all: multi_programs.ebpf.o multi_programs
-
-multi_programs.ebpf.o: multi_programs.ebpf.c
-	$(BPF_CC) $(BPF_CFLAGS) -c $< -o $@
-
-multi_programs: multi_programs.c multi_programs.ebpf.o
-	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
-
-run: multi_programs
-	sudo ./multi_programs
+// Enums for constants
+enum FilterAction {
+    ALLOW = 0,
+    BLOCK = 1,
+    LOG = 2
+}
 ```
 
-## 🛠️ Usage
+### Maps and Data Structures
 
-### Basic Compilation
-```bash
-# Compile with default output directory
-kernelscript examples/multi_programs.ks
+Built-in support for all eBPF map types:
 
-# Output: multi_programs/ directory with complete project
+```kernelscript
+// Pinned maps persist across program restarts
+pin map<IpAddress, Counter> connection_count : HashMap(1024)
+
+// Per-CPU maps for better performance
+map<u32, u64> cpu_stats : PercpuArray(256)
+
+// LRU maps for automatic eviction
+map<IpAddress, PacketInfo> recent_packets : LruHash(1000)
+
+// Ring buffers for event streaming
+pin map<u32, u8> event_log : RingBuffer(65536)
 ```
 
-### Custom Output Directory
-```bash
-# Specify custom output directory
-kernelscript -o my_ebpf_project examples/multi_programs.ks
+### Functions and Helpers
 
-# Output: my_ebpf_project/ directory
+Clean function syntax with helper function support:
+
+```kernelscript
+// Helper functions for eBPF programs
+@helper
+fn extract_src_ip(ctx: *xdp_md) -> IpAddress {
+    // Packet parsing logic
+    return 0x7f000001  // 127.0.0.1
+}
+
+// Regular functions
+fn update_stats(ip: IpAddress, size: PacketSize) {
+    connection_count[ip] = connection_count[ip] + 1
+}
+
+// Function pointers for callbacks
+type PacketHandler = fn(PacketInfo) -> FilterAction
+
+fn process_packet(info: PacketInfo, handler: PacketHandler) -> FilterAction {
+    return handler(info)
+}
+```
+
+### Pattern Matching and Control Flow
+
+Modern control flow with pattern matching:
+
+```kernelscript
+// Pattern matching on enums
+fn handle_action(action: FilterAction) -> xdp_action {
+    return match (action) {
+        ALLOW: XDP_PASS,
+        BLOCK: XDP_DROP,
+        LOG: {
+            // Log and allow
+            event_log[0] = 1
+            XDP_PASS
+        }
+    }
+}
+
+// Truthy/falsy patterns for maps
+fn lookup_or_create(ip: IpAddress) -> Counter {
+    var count = connection_count[ip]
+    if (count != none) {
+        return count  // Entry exists
+    } else {
+        connection_count[ip] = 1  // Create new entry
+        return 1
+    }
+}
+```
+
+### Multi-Program Coordination
+
+KernelScript can coordinate multiple eBPF programs:
+
+```kernelscript
+// Shared map between programs
+pin map<u32, u32> shared_counter : HashMap(1024)
+
+// XDP program increments counter
+@xdp fn packet_counter(ctx: *xdp_md) -> xdp_action {
+    shared_counter[1] = shared_counter[1] + 1
+    return XDP_PASS
+}
+
+// TC program reads counter
+@tc fn packet_reader(ctx: *__sk_buff) -> int {
+    var count = shared_counter[1]
+    if (count > 1000) {
+        return TC_ACT_SHOT  // Rate limiting
+    }
+    return TC_ACT_OK
+}
+
+// Userspace coordination
+fn main() -> i32 {
+    var xdp_prog = load(packet_counter)
+    var tc_prog = load(packet_reader)
+    
+    attach(xdp_prog, "eth0", 0)
+    attach(tc_prog, "eth0", 0)
+    
+    return 0
+}
+```
+
+## Command Line Usage
+
+### Initialize a New Project
+
+Create a new KernelScript project with template code:
+
+```bash
+# Create XDP project
+kernelscript init xdp my_packet_filter
+
+# Create TC project  
+kernelscript init tc my_traffic_shaper
+
+# Create kprobe project
+kernelscript init kprobe my_tracer
+
+# Create project with custom BTF path
+kernelscript init xdp my_project --btf-vmlinux-path /sys/kernel/btf/vmlinux
+
+# Create struct_ops project
+kernelscript init tcp_congestion_ops my_congestion_control
+```
+
+**Available program types:**
+- `xdp` - XDP programs for packet processing
+- `tc` - Traffic control programs  
+- `kprobe` - Kernel function tracing
+- `uprobe` - User function tracing
+- `tracepoint` - Kernel tracepoint programs
+- `lsm` - Linux Security Module programs
+- `cgroup_skb` - Cgroup socket buffer programs
+
+**Available struct_ops:**
+- `tcp_congestion_ops` - TCP congestion control
+- `bpf_iter_ops` - BPF iterator operations
+- `bpf_struct_ops_test` - Test struct operations
+- Custom struct_ops names
+
+### Project Structure
+
+After initialization or compilation, you get a complete project:
+
+```
+my_project/
+├── my_project.ks          # KernelScript source
+├── my_project.c           # Generated userspace program
+├── my_project.ebpf.c      # Generated eBPF C code
+├── Makefile               # Build system
+└── README.md              # Usage instructions
+```
+
+### Compile KernelScript Programs
+
+Compile `.ks` files to eBPF C code and userspace programs:
+
+```bash
+# Basic compilation
+kernelscript compile my_project/my_project.ks
+
+# Specify output directory
+kernelscript my_project/my_project.ks -o my_output_dir
+kernelscript my_project/my_project.ks --output my_output_dir
+
+# Verbose compilation
+kernelscript my_project/my_project.ks -v
+kernelscript my_project/my_project.ks --verbose
+
+# Don't generate Makefile
+kernelscript my_project/my_project.ks --no-makefile
+
+# Custom BTF path
+kernelscript my_project/my_project.ks --btf-vmlinux-path /custom/path/vmlinux
 ```
 
 ### Build and Run
+
 ```bash
-cd multi_programs/
-make
-sudo ./multi_programs
+cd my_project/
+make                       # Build both eBPF and userspace programs
+sudo ./my_project          # Run the program
 ```
 
-## 🎯 What Makes KernelScript Different
+## Getting Started
 
-| Feature | Traditional eBPF | KernelScript |
-|---------|------------------|--------------|
-| **Program Analysis** | Single program only | Multi-program system analysis |
-| **Conflict Detection** | Manual verification | Automatic race condition detection |
-| **Map Coordination** | Manual synchronization | Intelligent shared map management |
-| **Code Generation** | Basic templates | Analysis-driven optimization |
-| **Userspace Integration** | Manual loader writing | Automatic coordinator generation |
-| **Build System** | Manual Makefile | Complete project generation |
-
-## 🏗️ Architecture
-
-KernelScript uses a 6-phase compilation pipeline:
-
-1. **Parsing** - KernelScript syntax to AST
-2. **Symbol Analysis** - Build symbol tables and scope resolution  
-3. **Multi-Program Analysis** - Detect cross-program dependencies and conflicts
-4. **Type Checking** - Enhanced type checking with multi-program context
-5. **IR Optimization** - Resource planning and cross-program coordination
-6. **Code Generation** - Analysis-aware eBPF and userspace code generation
-
-## 📊 Analysis Output Example
-
-```
-🚀 Advanced Multi-Program IR Optimization
-==========================================
-
-Step 1: Generating baseline IR...
-Step 2: Analyzing optimization opportunities...
-Found 3 optimization strategies:
-  1. Resource reduction: instruction_count
-  2. Cross-program batching: [packet_counter, packet_filter]
-  3. Map type optimization: shared_map (HashMap → PercpuHash)
-
-Step 3: Applying optimizations...
-🔧 Optimization: Applying instruction_count reduction
-🔧 Optimization: Batching programs for coordinated execution
-🔧 Optimization: Converting map type for reduced contention
-
-Step 4: Cross-program validation...
-  ✓ Validating map access patterns...
-  ✓ Checking resource constraints...
-  ✓ Verifying program dependencies...
-
-Step 5: Resource planning and validation...
-  📊 Resource Plan:
-     • Programs: 2
-     • Global maps: 1
-     • Est. instructions: 2000
-     • Est. stack usage: 1024 bytes
-     • Est. memory usage: 1048576 bytes
-     • Verifier compatible: ✅ Yes
-```
-
-## 🚀 Getting Started
-
-1. **Clone and build:**
+1. **Install KernelScript:**
    ```bash
    git clone https://github.com/your-repo/kernelscript
    cd kernelscript
-   dune build
+   eval $(opam env) && dune build && dune install
    ```
 
-2. **Compile your first multi-program system:**
+2. **Create your first project:**
    ```bash
-   dune exec src/main.exe -- examples/multi_programs.ks
+   kernelscript -- init xdp hello_world
+   cd hello_world/
    ```
 
-3. **Build and run:**
+3. **Edit the generated code:**
    ```bash
-   cd multi_programs/
+   # Edit hello_world.ks with your logic
+   vim hello_world.ks
+   ```
+
+4. **Compile and run:**
+   ```bash
+   kernelscript compile hello_world/hello_world.ks
+   cd hello_world/
    make
-   sudo ./multi_programs
+   sudo ./hello_world
    ```
 
-## 🎯 Use Cases
+## Examples
 
-- **Network packet processing pipelines** with XDP + TC coordination
-- **Security monitoring systems** with multiple probe points
-- **Performance profiling** across kernel subsystems  
-- **Resource tracking** with shared state management
-- **Multi-stage data processing** in kernel space
+The `examples/` directory contains comprehensive examples:
 
-KernelScript transforms eBPF development from individual program compilation to **coordinated system engineering**.
+- `packet_filter.ks` - Basic XDP packet filtering
+- `multi_programs.ks` - Multiple coordinated programs
+- `maps_demo.ks` - All map types and operations
+- `functions.ks` - Function definitions and calls
+- `types_demo.ks` - Type system features
+- `error_handling_demo.ks` - Error handling patterns
+
+## Why Choose KernelScript?
+
+| Feature | Raw C + libbpf | Rust eBPF | bpftrace | **KernelScript** |
+|---------|---------------|-----------|----------|------------------|
+| **Syntax** | Complex C | Complex Rust | Simple but limited | Clean & readable |
+| **Type Safety** | Manual | Yes | Limited | Yes |
+| **Multi-program** | Manual | Manual | No | Automatic |
+| **Build System** | Manual Makefiles | Cargo complexity | N/A | Generated |
+| **Userspace Code** | Manual | Manual | N/A | Generated |
+| **Learning Curve** | Steep | Steep | Easy but limited | Moderate |
+| **Program Types** | All | Most | Tracing only | All |
+
+KernelScript combines the power of low-level eBPF programming with the productivity of modern programming languages, making eBPF development accessible to a broader audience while maintaining the performance and flexibility that makes eBPF powerful.
