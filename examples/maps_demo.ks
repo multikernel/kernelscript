@@ -116,7 +116,7 @@ fn get_timestamp() -> u64 {
   
   // Check recent connections
   var recent = recent_connections[src_ip]
-  if (recent != null) {
+  if (recent != none) {
     // Log repeated connection
     event_log[0] = 1
   }

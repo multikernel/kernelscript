@@ -2200,7 +2200,6 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   let has_maps = List.length maps > 0 in
   let has_pinned_maps = List.exists (fun map -> map.pin_path <> None) maps in
   let has_perf_events = List.exists (fun map -> map.map_type = IRPerfEvent) maps in
-  let has_ring_buffer = List.exists (fun map -> map.map_type = IRRingBuffer) maps in
   
   let base_headers = [
     "#include <stdio.h>";
@@ -2222,8 +2221,7 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   ] else [] in
   
   let event_headers = 
-    (if has_perf_events then ["#include <sys/poll.h>"] else []) @
-    (if has_ring_buffer then ["#include <linux/ring_buffer.h>"] else []) in
+    (if has_perf_events then ["#include <sys/poll.h>"] else []) in
   
   String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
 

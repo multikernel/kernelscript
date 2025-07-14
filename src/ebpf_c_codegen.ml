@@ -2234,8 +2234,14 @@ let rec generate_c_instruction ctx ir_instr =
                    emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str)
                  )
              | _ ->
-                 (* Direct struct field assignment *)
-                 emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str)))
+                 (* Check if this is actually a pointer type that wasn't detected *)
+                 (match obj_val.value_desc with
+                  | IRMapAccess (_, _, _) -> 
+                      (* Map lookups return pointers, always use arrow notation *)
+                      emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str)
+                  | _ -> 
+                      (* Direct struct field assignment *)
+                      emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str))))
       
   | IRConfigAccess (config_name, field_name, result_val) ->
       (* For eBPF, config access goes through global maps *)
