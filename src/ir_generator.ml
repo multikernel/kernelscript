@@ -2574,7 +2574,7 @@ let lower_multi_program ast symbol_table source_name =
                 let ir_param_types = List.map ast_type_to_ir_type param_types in
                 let ir_return_type = ast_type_to_ir_type return_type in
                 IRFunctionPointer (ir_param_types, ir_return_type)
-            | _ -> ast_type_to_ir_type field_type
+            | _ -> ast_type_to_ir_type_with_context symbol_table field_type
           in
           (field_name, ir_field_type)
         ) struct_def.Ast.struct_fields in
@@ -2686,7 +2686,7 @@ let lower_multi_program ast symbol_table source_name =
             let ir_param_types = List.map ast_type_to_ir_type param_types in
             let ir_return_type = ast_type_to_ir_type return_type in
             IRFunctionPointer (ir_param_types, ir_return_type)
-        | _ -> ast_type_to_ir_type field_type
+        | _ -> ast_type_to_ir_type_with_context symbol_table field_type
       in
       make_ir_struct_ops_method 
         field_name
