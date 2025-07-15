@@ -227,6 +227,8 @@ fn main() -> i32 {
 }
 ```
 
+📖 **For detailed language specification, syntax reference, and advanced features, please read [`SPEC.md`](SPEC.md).**
+
 ## Command Line Usage
 
 ### Initialize a New Project
@@ -235,19 +237,27 @@ Create a new KernelScript project with template code:
 
 ```bash
 # Create XDP project
-kernelscript init xdp my_packet_filter
+kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux xdp my_packet_filter
 
 # Create TC project  
-kernelscript init tc my_traffic_shaper
+kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux tc my_traffic_shaper
 
 # Create kprobe project
-kernelscript init kprobe my_tracer
+kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux kprobe my_tracer
 
 # Create project with custom BTF path
-kernelscript init xdp my_project --btf-vmlinux-path /sys/kernel/btf/vmlinux
+kernelscript init --btf-vmlinux-path /custom/path/vmlinux xdp my_project
 
 # Create struct_ops project
-kernelscript init tcp_congestion_ops my_congestion_control
+kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux tcp_congestion_ops my_congestion_control
+```
+
+After initialization, you get:
+
+```
+my_project/
+├── my_project.ks          # Generated KernelScript source without user code
+└── README.md              # Usage instructions
 ```
 
 **Available program types:**
@@ -267,7 +277,7 @@ kernelscript init tcp_congestion_ops my_congestion_control
 
 ### Project Structure
 
-After initialization or compilation, you get a complete project:
+After compilation, you get a complete project:
 
 ```
 my_project/
@@ -313,8 +323,9 @@ sudo ./my_project          # Run the program
 
 1. **Install KernelScript:**
    ```bash
-   git clone https://github.com/your-repo/kernelscript
+   git clone https://github.com/multikernel/kernelscript.git
    cd kernelscript
+   opam install . --deps-only
    eval $(opam env) && dune build && dune install
    ```
 
