@@ -99,7 +99,7 @@ for         while       loop        break       continue    return      import
 export      pub         priv        static      unsafe      where       impl
 true        false       null        and         or          not         in
 as          is          try         catch       throw       defer       go
-delete      match
+delete      match       test
 ```
 
 **Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
@@ -134,7 +134,7 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kfunc" | "private" | "helper"
+                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kfunc" | "private" | "helper" | "test"
 attribute_args = string_literal | identifier
 
 parameter_list = parameter { "," parameter }
@@ -3442,9 +3442,170 @@ kernelscript deploy --config=deploy.yaml
 kernelscript attach perf_monitor --function=sys_read
 ```
 
-## 12. Standard Library
+## 12. Testing Framework
 
-### 12.1 Core Library Functions
+KernelScript provides a built-in testing framework that allows developers to write unit tests for their eBPF programs. The testing framework includes the `@test` attribute for marking test functions and the `test()` builtin function for running eBPF programs in a controlled test environment.
+
+### 12.1 Test Functions with @test Attribute
+
+Functions marked with the `@test` attribute are considered test functions and are compiled differently when using the `--test` compilation mode. Test functions can use the `test()` builtin to trigger eBPF program execution in a controlled test environment.
+
+```kernelscript
+// Simple packet filter to test
+@xdp
+fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var packet_size = ctx->data_end - ctx->data
+    if (packet_size > 1000) {
+        return XDP_DROP
+    }
+    return XDP_PASS
+}
+
+// Test function using @test attribute
+@test
+fn test_packet_filter() -> i32 {
+    // Create test context
+    var test_ctx = XdpTestContext {
+        packet_size: 500,
+        interface_id: 1,
+        expected_action: 2,  // XDP_PASS
+    }
+    
+    // Use test() builtin to run the eBPF program
+    var result = test(packet_filter, test_ctx)
+    
+    if (result == 2) {  // XDP_PASS
+        print("Test passed")
+        return 0
+    } else {
+        print("Test failed: expected %d, got %d", 2, result)
+        return 1
+    }
+}
+```
+
+### 12.2 Test Compilation Mode
+
+KernelScript supports a special `--test` compilation mode that generates test-specific userspace code instead of eBPF programs. This mode allows running unit tests in a controlled userspace environment.
+
+**Compilation Modes:**
+
+```bash
+# Regular compilation - generates eBPF programs and userspace code
+kernelscript compile program.ks
+
+# Test compilation - generates test userspace code too
+kernelscript compile --test program.ks
+```
+
+**Test Mode Behavior:**
+
+1. **Only @test functions are compiled**: Regular eBPF programs are excluded from test builds
+2. **Userspace test executable**: Generates `program.test.c` instead of `program.c` and `program.ebpf.c`
+3. **Simple Makefile**: Generates basic Makefile with `test` and `run-test` targets
+4. **Mock environment**: Provides mock implementations of eBPF-specific functions for testing
+
+**Generated Makefile in Test Mode:**
+
+```makefile
+# Auto-generated Makefile for test compilation
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -g
+
+PROGRAM_NAME = program
+TEST_TARGET = $(PROGRAM_NAME).test
+
+.PHONY: test run-test clean
+
+test: $(TEST_TARGET)
+
+run-test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+$(TEST_TARGET): $(PROGRAM_NAME).test.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+clean:
+	rm -f $(TEST_TARGET)
+```
+
+### 12.3 Access Control Restrictions
+
+The `test()` builtin function is **only** available to functions marked with the `@test` attribute. Attempting to call `test()` from regular functions, helper functions, or eBPF program functions will result in a compilation error.
+
+```kernelscript
+// ✅ Valid - test() call from @test function
+@test
+fn test_packet_behavior() -> i32 {
+    var result = test(packet_filter, test_ctx)  // This is allowed
+    return if (result == 2) { 0 } else { 1 }
+}
+
+// ❌ Compilation Error - test() call from regular function
+fn regular_function() -> i32 {
+    var result = test(packet_filter, test_ctx)  // ERROR!
+    return 0
+}
+
+// ❌ Compilation Error - test() call from helper function
+@helper
+fn helper_function() -> i32 {
+    var result = test(packet_filter, test_ctx)  // ERROR!
+    return 0
+}
+
+// ❌ Compilation Error - test() call from eBPF program function
+@xdp
+fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var result = test(packet_filter, test_ctx)  // ERROR!
+    return XDP_PASS
+}
+```
+
+This restriction ensures that testing code is clearly separated from production code and prevents accidental inclusion of test runner calls in production eBPF programs.
+
+### 12.4 Testing Best Practices
+
+**Organize Tests by Functionality:**
+```kernelscript
+@test
+fn test_small_packets() -> i32 {
+    var test_ctx = XdpTestContext { packet_size: 64, interface_id: 1, expected_action: 2 }
+    var result = test(packet_filter, test_ctx)
+    return if (result == 2) { 0 } else { 1 }
+}
+
+@test
+fn test_large_packets() -> i32 {
+    var test_ctx = XdpTestContext { packet_size: 1500, interface_id: 1, expected_action: 1 }
+    var result = test(packet_filter, test_ctx)
+    return if (result == 1) { 0 } else { 1 }
+}
+```
+
+**Use Descriptive Test Names:**
+```kernelscript
+@test
+fn test_rate_limiter_blocks_excessive_traffic() -> i32 {
+    var test_ctx = XdpTestContext { packet_size: 100, interface_id: 1, expected_action: 1 }
+    var result = test(rate_limiting_filter, test_ctx)
+    return if (result == 1) { 0 } else { 1 }
+}
+```
+
+**Test Edge Cases:**
+```kernelscript
+@test
+fn test_zero_length_packet() -> i32 {
+    var test_ctx = XdpTestContext { packet_size: 0, interface_id: 1, expected_action: 1 }
+    var result = test(packet_validator, test_ctx)
+    return if (result == 1) { 0 } else { 1 }
+}
+```
+
+## 13. Standard Library
+
+### 13.1 Core Library Functions
 ```kernelscript
 // Network utilities
 mod net {
@@ -3483,11 +3644,31 @@ mod program {
     // Register struct_ops impl blocks
     pub fn register(ops) -> i32
 }
+
+// Testing utilities (only available in @test functions)
+mod test {
+    // Run an eBPF program function in a controlled test environment
+    // This builtin function can ONLY be called from functions marked with @test attribute
+    // Calling test() from regular functions, @helper functions, or eBPF program functions
+    // will result in a compilation error
+    // 
+    // Usage:
+    //   test(program_function, test_context) -> return_value
+    //   var result = test(packet_filter, xdp_test_ctx)  // Returns XDP action
+    //   var retval = test(kprobe_handler, kprobe_test_ctx)  // Returns kprobe return value
+    // 
+    // The test context struct must match the program type being tested:
+    //   - XdpTestContext for @xdp programs
+    //   - TcTestContext for @tc programs  
+    //   - KprobeTestContext for @kprobe programs
+    //   - etc.
+    pub fn test(program_function: FunctionRef, test_context: TestContext) -> i32
+}
 ```
 
-## 13. Example Programs
+## 14. Example Programs
 
-### 13.1 Simple Packet Filter
+### 14.1 Simple Packet Filter
 ```kernelscript
 // Named configuration for packet filtering
 config filtering {
@@ -3643,7 +3824,7 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 13.2 Global Variables Example
+### 14.2 Global Variables Example
 ```kernelscript
 // Global variables - shared between kernel and userspace
 var packet_count: u64 = 0
@@ -3750,7 +3931,7 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 13.3 Performance Monitoring
+### 14.3 Performance Monitoring
 ```kernelscript
 // Global maps for performance data
 map<u32, CallInfo> active_calls : HashMap(1024)
@@ -3898,7 +4079,7 @@ fn print_summary_stats() {
 }
 ```
 
-## 14. Complete Formal Grammar (EBNF)
+## 15. Complete Formal Grammar (EBNF)
 
 ```ebnf
 (* KernelScript Complete Grammar *)
@@ -3925,7 +4106,7 @@ flag_expression = identifier | ( identifier { "|" identifier } )
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
 attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kfunc" | "helper" | "private"
+                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kfunc" | "helper" | "private" | "test"
 attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)

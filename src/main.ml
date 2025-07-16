@@ -22,7 +22,7 @@ open Printf
 (** Subcommand types *)
 type subcommand = 
   | Init of { prog_type: string; project_name: string; btf_path: string option }
-  | Compile of { input_file: string; output_dir: string option; verbose: bool; generate_makefile: bool; btf_vmlinux_path: string option }
+  | Compile of { input_file: string; output_dir: string option; verbose: bool; generate_makefile: bool; btf_vmlinux_path: string option; test_mode: bool }
 
 (** Parse command line arguments *)
 let rec parse_args () =
@@ -43,6 +43,7 @@ let rec parse_args () =
       printf "    -o, --output <dir>            Specify output directory\n";
       printf "    -v, --verbose                 Enable verbose output\n";
       printf "    --no-makefile                 Don't generate Makefile\n";
+      printf "    --test                        Compile in test mode (only @test functions become main)\n";
       printf "    --builtin-path <path>         Specify path to builtin KernelScript files\n";
       printf "    --btf-vmlinux-path <path>     Specify path to BTF vmlinux file\n";
       exit 0
@@ -87,29 +88,31 @@ and parse_init_args args =
   parse_aux None None None args
 
 and parse_compile_args args =
-  let rec parse_aux input_file_opt output_dir verbose generate_makefile btf_path = function
+  let rec parse_aux input_file_opt output_dir verbose generate_makefile btf_path test_mode = function
     | [] ->
                  (match input_file_opt with
           | Some input_file ->
-              Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path = btf_path }
+              Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path = btf_path; test_mode }
          | None ->
              printf "Error: No input file specified for compile command\n";
              exit 1)
     | "-o" :: output :: rest ->
-        parse_aux input_file_opt (Some output) verbose generate_makefile btf_path rest
+        parse_aux input_file_opt (Some output) verbose generate_makefile btf_path test_mode rest
     | "--output" :: output :: rest ->
-        parse_aux input_file_opt (Some output) verbose generate_makefile btf_path rest
+        parse_aux input_file_opt (Some output) verbose generate_makefile btf_path test_mode rest
     | "-v" :: rest ->
-        parse_aux input_file_opt output_dir true generate_makefile btf_path rest
+        parse_aux input_file_opt output_dir true generate_makefile btf_path test_mode rest
     | "--verbose" :: rest ->
-        parse_aux input_file_opt output_dir true generate_makefile btf_path rest
+        parse_aux input_file_opt output_dir true generate_makefile btf_path test_mode rest
     | "--no-makefile" :: rest ->
-        parse_aux input_file_opt output_dir verbose false btf_path rest
+        parse_aux input_file_opt output_dir verbose false btf_path test_mode rest
+    | "--test" :: rest ->
+        parse_aux input_file_opt output_dir verbose generate_makefile btf_path true rest
     | "--btf-vmlinux-path" :: path :: rest ->
-        parse_aux input_file_opt output_dir verbose generate_makefile (Some path) rest
+        parse_aux input_file_opt output_dir verbose generate_makefile (Some path) test_mode rest
     | arg :: rest when not (String.starts_with ~prefix:"-" arg) ->
         (match input_file_opt with
-         | None -> parse_aux (Some arg) output_dir verbose generate_makefile btf_path rest
+         | None -> parse_aux (Some arg) output_dir verbose generate_makefile btf_path test_mode rest
          | Some _ ->
              printf "Error: Multiple input files specified\n";
              exit 1)
@@ -117,7 +120,7 @@ and parse_compile_args args =
         printf "Error: Unknown option '%s' for compile command\n" unknown;
         exit 1
   in
-  parse_aux None None false true None args
+  parse_aux None None false true None false args
 
 (** Initialize a new KernelScript project *)
 let init_project prog_type_or_struct_ops project_name btf_path =
@@ -272,7 +275,7 @@ cd %s && make run
   )
 
 (** Compile KernelScript source (existing functionality) *)
-let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_path =
+let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_path test_mode =
   let current_phase = ref "Parsing" in
   
   (* Initialize context code generators *)
@@ -307,6 +310,17 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     in
     Printf.printf "✅ Successfully parsed %d declarations\n\n" (List.length ast);
     
+    (* Store original AST before any filtering *)
+    let original_ast = ast in
+    
+    (* Test mode: Filter AST for @test functions *)
+      let filtered_ast = if test_mode then
+    Test_codegen.filter_ast_for_testing ast input_file
+    else original_ast in
+    
+    (* For regular eBPF compilation, always use original AST *)
+    let compilation_ast = original_ast in
+    
     (* Extract base name for project name *)
     let base_name = Filename.remove_extension (Filename.basename input_file) in
     
@@ -314,7 +328,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     current_phase := "Symbol Analysis";
     Printf.printf "Phase 2: %s\n" !current_phase;
     
-    (* Extract struct_ops from AST for BTF verification *)
+    (* Extract struct_ops from compilation AST for BTF verification *)
     let struct_ops_to_verify = List.filter_map (function
       | Ast.StructDecl struct_def ->
           List.fold_left (fun acc attr ->
@@ -323,7 +337,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
             | _ -> acc
           ) None struct_def.struct_attributes
       | _ -> None
-    ) ast in
+    ) compilation_ast in
     
     (* Verify struct_ops definitions against BTF if BTF path is provided *)
     (match btf_vmlinux_path with
@@ -344,7 +358,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Load BTF types for eBPF context types and action constants *)
     let btf_types = try
-      let program_types = Multi_program_analyzer.get_program_types_from_ast ast in
+      let program_types = Multi_program_analyzer.get_program_types_from_ast compilation_ast in
       List.fold_left (fun acc prog_type ->
         let prog_type_str = match prog_type with
           | Ast.Xdp -> "xdp"
@@ -386,7 +400,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
         (* Context codegens already initialized at the start - don't register again *)
         
         (* Get context types from AST *)
-        let program_types = Multi_program_analyzer.get_program_types_from_ast ast in
+        let program_types = Multi_program_analyzer.get_program_types_from_ast compilation_ast in
         List.fold_left (fun acc prog_type ->
           match prog_type with
           | Ast.Xdp -> 
@@ -458,7 +472,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
         | Ast.TypeDef (Ast.StructDef (struct_name, _, _)) -> struct_name :: acc
         | Ast.TypeDef (Ast.TypeAlias (alias_name, _)) -> alias_name :: acc
         | _ -> acc
-      ) [] ast in
+      ) [] compilation_ast in
       
       let filtered_btf_declarations = List.filter (fun btf_decl ->
         match btf_decl with
@@ -488,32 +502,57 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       Printf.printf "🔧 Using %d BTF types after filtering (skipped %d user-defined)\n" 
         (List.length filtered_btf_declarations) 
         (List.length btf_declarations - List.length filtered_btf_declarations);
+
+      let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[filtered_btf_declarations] compilation_ast in
       
-      let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[filtered_btf_declarations] ast in
     Printf.printf "✅ Symbol table created successfully with BTF types\n\n";
     
     (* Phase 3: Multi-program analysis *)
     current_phase := "Multi-Program Analysis";
     Printf.printf "Phase 3: %s\n" !current_phase;
-    let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system ast in
+    let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system compilation_ast in
     
     (* Extract config declarations *)
     let config_declarations = List.filter_map (function
       | Ast.ConfigDecl config -> Some config
       | _ -> None
-    ) ast in
+    ) compilation_ast in
     Printf.printf "📋 Found %d config declarations\n" (List.length config_declarations);
     
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := "Type Checking";
     Printf.printf "Phase 4: %s\n" !current_phase;
-    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) compilation_ast in
     Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
     
-    (* Phase 5: Multi-program IR optimization *)
+    (* Phase 5: IR Optimization *)
     current_phase := "IR Optimization";
     Printf.printf "Phase 5: %s\n" !current_phase;
-    let optimized_ir = Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table input_file in
+    
+    (* Generate test file in test mode *)
+    let test_file_generated = if test_mode then (
+      let test_output_dir = match output_dir with
+        | Some dir -> dir
+        | None -> base_name
+      in
+      
+      (try Unix.mkdir test_output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+      
+      let filtered_symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[filtered_btf_declarations] filtered_ast in
+      let (filtered_annotated_ast, _) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some filtered_symbol_table) filtered_ast in
+      let test_c_code = Test_codegen.generate_test_program filtered_annotated_ast base_name in
+      
+      let test_c_file = test_output_dir ^ "/" ^ base_name ^ ".test.c" in
+      let test_out = open_out test_c_file in
+      output_string test_out test_c_code;
+      close_out test_out;
+      
+      Some test_c_file
+    ) else None in
+    
+    (* Continue with regular eBPF compilation using the appropriate AST *)
+    (
+      let optimized_ir = Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table input_file in
     
     (* Phase 6: Advanced multi-target code generation *)
     current_phase := "Code Generation";
@@ -739,6 +778,8 @@ help:
 %s	@echo "  ebpf-only      - Build just the eBPF object file"
 	@echo "  clean          - Clean all generated files"
 	@echo "  run            - Run the userspace program (requires sudo)"
+%s%s
+
 %s
 
 .PHONY: all all-with-load clean run ebpf-only help%s
@@ -752,8 +793,15 @@ help:
        (if has_kfuncs then " clean-kmod" else "")
        (if has_kfuncs then "" else "")
        (if has_kfuncs then "\n\t@echo \"  load-kmod      - Load the kernel module (requires sudo)\"\n\t@echo \"  unload-kmod    - Unload the kernel module (requires sudo)\"\n\t@echo \"  check-kmod     - Check if kernel module is loaded\"\n" else "")
-       (if has_kfuncs then "\n\t@echo \"\"\n\t@echo \"For kfunc programs, you need to load the kernel module first:\"\n\t@echo \"  make load-kmod && make all\"\n\t@echo \"Or use: make all-with-load\"" else "")
-       (if has_kfuncs then " load-kmod unload-kmod clean-kmod check-kmod" else "") in
+              (if has_kfuncs then "\n\t@echo \"\"\n\t@echo \"For kfunc programs, you need to load the kernel module first:\"\n\t@echo \"  make load-kmod && make all\"\n\t@echo \"Or use: make all-with-load\"" else "")
+       (* Test target help *)
+       (match test_file_generated with Some _ -> "\n\t@echo \"  test           - Build test functions\"\n\t@echo \"  run-test       - Build and run test functions\"" | None -> "")
+       (* Test target content *)
+       (match test_file_generated with 
+        | Some _ -> Printf.sprintf "# Test target (compile tests only)\ntest: %s.test.c\n\t$(CC) $(CFLAGS) -o %s_test %s.test.c $(LIBS)\n\n# Run test target (compile and run tests)\nrun-test: test\n\t./%s_test" base_name base_name base_name base_name
+        | None -> "")
+       (* Test target in .PHONY and kfunc targets *)
+       (match test_file_generated with Some _ -> " test run-test" | None -> "") ^ (if has_kfuncs then " load-kmod unload-kmod clean-kmod check-kmod" else "") in
       
       let makefile_path = output_dir ^ "/Makefile" in
       let oc = open_out makefile_path in
@@ -763,9 +811,13 @@ help:
       Printf.printf "📄 Generated Makefile: %s/Makefile\n" output_dir
     );
     
-    Printf.printf "\n✨ Compilation completed successfully!\n";
-    Printf.printf "📁 Output directory: %s/\n" output_dir;
-    Printf.printf "🔨 To build: cd %s && make\n" output_dir;
+      Printf.printf "\n✨ Compilation completed successfully!\n";
+      Printf.printf "📁 Output directory: %s/\n" output_dir;
+      Printf.printf "🔨 To build: cd %s && make\n" output_dir;
+      (match test_file_generated with 
+       | Some _ -> Printf.printf "🧪 To build tests: cd %s && make test\n🧪 To run tests: cd %s && make run-test\n" output_dir output_dir
+       | None -> ());
+    )  (* Close the compilation block *)
     
   with
   | Failure msg when msg = "Parse error" ->
@@ -785,5 +837,5 @@ let () =
   match parse_args () with
   | Init { prog_type; project_name; btf_path } ->
       init_project prog_type project_name btf_path
-  | Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path } ->
-      compile_source input_file output_dir verbose generate_makefile btf_vmlinux_path 
+  | Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path; test_mode } ->
+      compile_source input_file output_dir verbose generate_makefile btf_vmlinux_path test_mode 

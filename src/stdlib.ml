@@ -128,6 +128,18 @@ let builtin_functions = [
     kernel_impl = "";
     validate = Some validate_register_function;
   };
+  {
+    name = "test";
+    param_types = []; (* Use custom validation for flexible type checking *)
+    return_type = U32; (* Returns program return value *)
+    description = "Execute eBPF program with test data and return result";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "bpf_prog_test_run";
+    kernel_impl = "";
+    validate = None; (* Accept any two arguments - validate during compilation *)
+  };
+
 ]
 
 (** Get built-in function definition by name *)

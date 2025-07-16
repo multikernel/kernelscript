@@ -4,6 +4,11 @@
  (libraries kernelscript))
 
 (executable
+ (name test_test_attribute)
+ (modules test_test_attribute)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_btf_binary_parser)
  (modules test_btf_binary_parser)
  (libraries kernelscript alcotest))
@@ -576,6 +581,10 @@
  (alias runtest_context_field_types)
  (action (run ./test_context_field_types.exe)))
 
+(rule
+ (alias runtest_test_attribute)
+ (action (run ./test_test_attribute.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -663,7 +672,8 @@
   test_struct_ops.exe
   test_pointer_syntax.exe
   test_address_of_user_types.exe
-  test_match.exe)
+  test_match.exe
+  test_test_attribute.exe)
  (action
   (progn
    (run ./test_btf_binary_parser.exe)
@@ -703,7 +713,8 @@
    (run ./test_struct_ops.exe)
    (run ./test_pointer_syntax.exe)
    (run ./test_address_of_user_types.exe)
-   (run ./test_match.exe))))
+   (run ./test_match.exe)
+   (run ./test_test_attribute.exe))))
 
 (rule
  (alias ir-tests)

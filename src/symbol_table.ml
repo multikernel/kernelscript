@@ -376,7 +376,9 @@ let rec build_symbol_table ?(project_name = "kernelscript") ?builtin_asts ast =
    | Some builtins -> List.iter (List.iter (process_declaration table)) builtins
    | None -> ());
   
+  (* Process all declarations in a single pass *)
   List.iter (process_declaration table) ast;
+  
   table
 
 and process_declaration_accumulate table declaration =

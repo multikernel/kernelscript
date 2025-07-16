@@ -307,6 +307,9 @@ kernelscript my_project/my_project.ks --verbose
 # Don't generate Makefile
 kernelscript my_project/my_project.ks --no-makefile
 
+# Also generates tests and only @test functions become main
+kernelscript compile --test my_project/my_project.ks
+
 # Custom BTF path
 kernelscript my_project/my_project.ks --btf-vmlinux-path /custom/path/vmlinux
 ```

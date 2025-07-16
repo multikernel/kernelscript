@@ -34,6 +34,7 @@ type context = {
   functions: (string, bpf_type list * bpf_type) Hashtbl.t;
   function_scopes: (string, Ast.function_scope) Hashtbl.t;
   helper_functions: (string, unit) Hashtbl.t; (* Track @helper functions *)
+  test_functions: (string, unit) Hashtbl.t; (* Track @test functions *)
   maps: (string, Ast.map_declaration) Hashtbl.t;
   configs: (string, Ast.config_declaration) Hashtbl.t;
   attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
@@ -129,6 +130,7 @@ let create_context symbol_table ast =
   let functions = Hashtbl.create 16 in
   let function_scopes = Hashtbl.create 16 in
   let helper_functions = Hashtbl.create 16 in
+  let test_functions = Hashtbl.create 16 in
   let attributed_functions = Hashtbl.create 16 in
   let types = Hashtbl.create 16 in
   let maps = Hashtbl.create 16 in
@@ -166,6 +168,7 @@ let create_context symbol_table ast =
     functions = functions;
     function_scopes = function_scopes;
     helper_functions = helper_functions;
+    test_functions = test_functions;
     attributed_functions = attributed_functions;
     types = types;
     maps = maps;
@@ -563,7 +566,17 @@ let make_typed_identifier name pos =
   { texpr_desc = TIdentifier name; texpr_type = U32; texpr_pos = pos }
 
 (** Type check a builtin function call *)
-let type_check_builtin_call _ctx name typed_args arg_types pos =
+let type_check_builtin_call ctx name typed_args arg_types pos =
+  (* Check if test() is only called from @test functions *)
+  if name = "test" then (
+    match ctx.current_function with
+    | Some current_func_name ->
+        if not (Hashtbl.mem ctx.test_functions current_func_name) then
+          type_error ("test() builtin can only be called from functions with @test attribute") pos
+    | None ->
+        type_error ("test() builtin can only be called from functions with @test attribute") pos
+  );
+  
   match Stdlib.get_builtin_function_signature name with
   | Some (expected_params, return_type) ->
       (match Stdlib.get_builtin_function name with
@@ -572,7 +585,7 @@ let type_check_builtin_call _ctx name typed_args arg_types pos =
            Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
          | Some _ ->
              (* Check if this function has custom validation *)
-             let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types _ctx.ast_context pos in
+             let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types ctx.ast_context pos in
              if not validation_ok then
                (match validation_error with
                 | Some error_msg -> type_error error_msg pos
@@ -2379,6 +2392,14 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
           | SimpleAttribute "helper" -> true
           | _ -> false
         ) attr_func.attr_list in
+        let is_test = List.exists (function
+          | SimpleAttribute "test" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        
+        (* Track @test functions separately *)
+        if is_test then
+          Hashtbl.add ctx.test_functions attr_func.attr_function.func_name ();
         
         (* Extract program type from attribute for context *)
         let prog_type = match attr_func.attr_list with
@@ -2394,6 +2415,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
                | "kfunc" -> None  (* kfuncs don't have program types *)
                | "private" -> None  (* private functions don't have program types *)
                | "helper" -> None  (* helper functions don't have program types *)
+               | "test" -> None  (* test functions don't have program types *)
                | _ -> None)
           | _ -> None
         in
@@ -2407,6 +2429,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
           ()
         else if is_helper then
           (* For helper functions, we don't enforce specific context types - any valid eBPF types are allowed *)
+          ()
+        else if is_test then
+          (* For test functions, we don't enforce specific context types - any valid userspace types are allowed *)
           ()
         else
           (match prog_type with
@@ -2454,12 +2479,12 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         
-        (* Track this as an attributed function that cannot be called directly, but exclude kfuncs, private, and helper functions *)
-        if not is_kfunc && not is_private && not is_helper then
+        (* Track this as an attributed function that cannot be called directly, but exclude kfuncs, private, helper, and test functions *)
+        if not is_kfunc && not is_private && not is_helper && not is_test then
           Hashtbl.add ctx.attributed_functions attr_func.attr_function.func_name ();
         
-        (* Add to attributed function map for tail call detection (exclude kfuncs, private, and helper functions) *)
-        if not is_kfunc && not is_private && not is_helper then
+        (* Add to attributed function map for tail call detection (exclude kfuncs, private, helper, and test functions) *)
+        if not is_kfunc && not is_private && not is_helper && not is_test then
           Hashtbl.replace ctx.attributed_function_map attr_func.attr_function.func_name attr_func;
         
         (* Set current program type for context *)

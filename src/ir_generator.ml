@@ -2422,6 +2422,7 @@ let lower_multi_program ast symbol_table source_name =
               | "kfunc" -> None  (* Skip kfunc functions - they're not eBPF programs *)
               | "private" -> None  (* Skip private functions - they're not eBPF programs *)
               | "helper" -> None  (* Skip helper functions - they're shared eBPF functions, not individual programs *)
+              | "test" -> None  (* Skip test functions - they're userspace test functions, not eBPF programs *)
               | _ ->
                   let prog_type = match prog_type_str with
                     | "xdp" -> Ast.Xdp
