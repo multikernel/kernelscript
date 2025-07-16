@@ -275,18 +275,6 @@ my_project/
 - `bpf_struct_ops_test` - Test struct operations
 - Custom struct_ops names
 
-### Project Structure
-
-After compilation, you get a complete project:
-
-```
-my_project/
-├── my_project.ks          # KernelScript source
-├── my_project.c           # Generated userspace program
-├── my_project.ebpf.c      # Generated eBPF C code
-├── Makefile               # Build system
-└── README.md              # Usage instructions
-```
 
 ### Compile KernelScript Programs
 
@@ -297,21 +285,36 @@ Compile `.ks` files to eBPF C code and userspace programs:
 kernelscript compile my_project/my_project.ks
 
 # Specify output directory
-kernelscript my_project/my_project.ks -o my_output_dir
-kernelscript my_project/my_project.ks --output my_output_dir
+kernelscript compile my_project/my_project.ks -o my_output_dir
+kernelscript compile my_project/my_project.ks --output my_output_dir
 
 # Verbose compilation
-kernelscript my_project/my_project.ks -v
-kernelscript my_project/my_project.ks --verbose
+kernelscript compile my_project/my_project.ks -v
+kernelscript compile my_project/my_project.ks --verbose
 
 # Don't generate Makefile
-kernelscript my_project/my_project.ks --no-makefile
+kernelscript compile my_project/my_project.ks --no-makefile
 
 # Also generates tests and only @test functions become main
 kernelscript compile --test my_project/my_project.ks
 
 # Custom BTF path
-kernelscript my_project/my_project.ks --btf-vmlinux-path /custom/path/vmlinux
+kernelscript compile my_project/my_project.ks --btf-vmlinux-path /custom/path/vmlinux
+```
+
+### Complete Project Structure
+
+After compilation, you get a complete project:
+
+```
+my_project/
+├── my_project.ks          # KernelScript source
+├── my_project.c           # Generated userspace program
+├── my_project.ebpf.c      # Generated eBPF C code
+├── my_project.mod.c       # Generated kernel module (when any kfunc exists)
+├── my_project.test.c      # Generated test run code (when using --test mode)
+├── Makefile               # Build system
+└── README.md              # Usage instructions
 ```
 
 ### Build and Run
