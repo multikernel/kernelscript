@@ -17,6 +17,7 @@
 open Kernelscript.Ast
 open Kernelscript.Symbol_table
 open Kernelscript.Type_checker
+open Kernelscript.Parse
 open Alcotest
 
 let dummy_pos = { line = 1; column = 1; filename = "test_enum.ml" }
@@ -416,6 +417,129 @@ let test_userspace_enum_preservation () =
   check string "userspace C code uses constant name" "HTTP" c_code;
   check bool "userspace C code doesn't use numeric value" true (c_code <> "80")
 
+(** Test negative enum parsing - regression test for negative integer parsing bug *)
+let test_negative_enum_parsing () =
+  let source = {|
+enum test_enum {
+    NEGATIVE = -1,
+    ZERO = 0,
+    POSITIVE = 1,
+    LARGE_NEGATIVE = -999
+}
+|} in
+  let ast = parse_string source in
+  let enum_def = match ast with
+    | [TypeDef (EnumDef (name, variants, _))] ->
+        check string "enum name" "test_enum" name;
+        variants
+    | _ -> failwith "Expected single enum declaration"
+  in
+  
+  (* Check that all values are parsed correctly *)
+  let expected = [
+    ("NEGATIVE", Some (-1));
+    ("ZERO", Some 0);
+    ("POSITIVE", Some 1);
+    ("LARGE_NEGATIVE", Some (-999))
+  ] in
+  check (list (pair string (option int))) "enum variants" expected enum_def
+
+let test_mixed_positive_negative_enum () =
+  let source = {|
+enum mixed_values {
+    NEG_FIRST = -5,
+    ZERO = 0,
+    POS_EXPLICIT = 42,
+    NEG_AGAIN = -100,
+    AUTO_ASSIGNED,
+    POSITIVE_AFTER = 200
+}
+|} in
+  let ast = parse_string source in
+  let enum_def = match ast with
+    | [TypeDef (EnumDef (name, variants, _))] ->
+        check string "enum name" "mixed_values" name;
+        variants
+    | _ -> failwith "Expected single enum declaration"
+  in
+  
+  (* Check that negative values are parsed correctly alongside positive values *)
+  let expected = [
+    ("NEG_FIRST", Some (-5));
+    ("ZERO", Some 0);
+    ("POS_EXPLICIT", Some 42);
+    ("NEG_AGAIN", Some (-100));
+    ("AUTO_ASSIGNED", None);  (* Auto-assigned value *)
+    ("POSITIVE_AFTER", Some 200)
+  ] in
+  check (list (pair string (option int))) "mixed enum variants" expected enum_def
+
+let test_tc_action_enum () =
+  let source = {|
+enum tc_action {
+    TC_ACT_UNSPEC = -1,
+    TC_ACT_OK = 0,
+    TC_ACT_RECLASSIFY = 1,
+    TC_ACT_SHOT = 2,
+    TC_ACT_PIPE = 3,
+    TC_ACT_STOLEN = 4,
+    TC_ACT_QUEUED = 5,
+    TC_ACT_REPEAT = 6,
+    TC_ACT_REDIRECT = 7,
+    TC_ACT_TRAP = 8,
+}
+|} in
+  let ast = parse_string source in
+  let enum_def = match ast with
+    | [TypeDef (EnumDef (name, variants, _))] ->
+        check string "enum name" "tc_action" name;
+        variants
+    | _ -> failwith "Expected single enum declaration"
+  in
+  
+  (* Check the specific tc_action enum that was failing *)
+  let expected = [
+    ("TC_ACT_UNSPEC", Some (-1));
+    ("TC_ACT_OK", Some 0);
+    ("TC_ACT_RECLASSIFY", Some 1);
+    ("TC_ACT_SHOT", Some 2);
+    ("TC_ACT_PIPE", Some 3);
+    ("TC_ACT_STOLEN", Some 4);
+    ("TC_ACT_QUEUED", Some 5);
+    ("TC_ACT_REPEAT", Some 6);
+    ("TC_ACT_REDIRECT", Some 7);
+    ("TC_ACT_TRAP", Some 8)
+  ] in
+  check (list (pair string (option int))) "tc_action variants" expected enum_def
+
+let test_edge_case_negative_values () =
+  let source = {|
+enum edge_cases {
+    VERY_NEGATIVE = -2147483648,
+    NEGATIVE_ONE = -1,
+    ZERO = 0,
+    POSITIVE_ONE = 1,
+    VERY_POSITIVE = 2147483647
+}
+|} in
+  let ast = parse_string source in
+  let enum_def = match ast with
+    | [TypeDef (EnumDef (name, variants, _))] ->
+        check string "enum name" "edge_cases" name;
+        variants
+    | _ -> failwith "Expected single enum declaration"
+  in
+  
+  (* Check edge case values including minimum/maximum int32 values *)
+  let expected = [
+    ("VERY_NEGATIVE", Some (-2147483648));
+    ("NEGATIVE_ONE", Some (-1));
+    ("ZERO", Some 0);
+    ("POSITIVE_ONE", Some 1);
+    ("VERY_POSITIVE", Some 2147483647)
+  ] in
+  check (list (pair string (option int))) "edge case variants" expected enum_def
+
 (** Main test suite *)
 let () =
   run "Enum Tests" [
@@ -436,6 +560,12 @@ let () =
     "edge_cases", [
       test_case "enum edge cases" `Quick test_enum_edge_cases;
       test_case "large enum values" `Quick test_enum_large_values;
+    ];
+    "negative_parsing", [
+      test_case "basic negative enum parsing" `Quick test_negative_enum_parsing;
+      test_case "mixed positive and negative enum" `Quick test_mixed_positive_negative_enum;
+      test_case "tc_action enum parsing (regression test)" `Quick test_tc_action_enum;
+      test_case "edge case negative values" `Quick test_edge_case_negative_values;
     ];
     "enum_preservation_bug_fix", [
       test_case "enum constants preserved in IR" `Quick test_enum_ir_preservation;

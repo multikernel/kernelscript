@@ -81,6 +81,7 @@
 %type <(string * int option) list> enum_variants
 %type <(string * int option) list> enum_variant_list
 %type <string * int option> enum_variant
+%type <int> enum_value
 %type <Ast.map_type> map_type
 
 %type <Ast.map_flag list> flag_expression
@@ -557,7 +558,12 @@ enum_variant_list:
 
 enum_variant:
   | IDENTIFIER { ($1, None) }  /* Auto-assigned value */
-  | IDENTIFIER ASSIGN INT { ($1, Some (fst $3)) }  /* Explicit value */
+  | IDENTIFIER ASSIGN enum_value { ($1, Some $3) }  /* Explicit value */
+
+/* Enum values can be positive or negative integers */
+enum_value:
+  | INT { fst $1 }  /* Positive integer */
+  | MINUS INT { -(fst $2) }  /* Negative integer */
 
 /* Type alias declaration: type name = type */
 type_alias_declaration:
