@@ -453,6 +453,69 @@ let test_function_prototype_parsing () =
     printf "⚠️ BTF file not available, skipping function prototype parsing tests\n"
   )
 
+(** Test enum parsing functionality *)
+let test_enum_parsing () =
+  (* Test that enum types like xdp_action are properly parsed with their values *)
+  let btf_path = "/sys/kernel/btf/vmlinux" in
+  if Sys.file_exists btf_path then (
+    printf "🔧 Testing enum parsing functionality...\n";
+    let btf_types = parse_btf_file btf_path ["xdp_action"] in
+    
+    (* Verify xdp_action enum was found *)
+    let xdp_action_types = List.filter (fun t -> t.name = "xdp_action") btf_types in
+    check bool "xdp_action enum should be found in BTF" (List.length xdp_action_types > 0) true;
+    
+    if List.length xdp_action_types > 0 then (
+      let xdp_action_type = List.hd xdp_action_types in
+      
+      (* Verify it's recognized as an enum *)
+      check string "xdp_action should be recognized as enum kind" xdp_action_type.kind "enum";
+      
+      (* Verify it has enum members/values *)
+      match xdp_action_type.members with
+      | Some members ->
+          check bool "xdp_action should have enum values" (List.length members > 0) true;
+          
+          (* Verify expected enum values are present *)
+          let expected_values = ["XDP_ABORTED"; "XDP_DROP"; "XDP_PASS"; "XDP_TX"; "XDP_REDIRECT"] in
+          List.iter (fun expected_name ->
+            let found = List.exists (fun (name, _) -> name = expected_name) members in
+            check bool (sprintf "xdp_action should contain %s" expected_name) found true;
+          ) expected_values;
+          
+          (* Verify enum values are numeric strings *)
+          List.iter (fun (name, value) ->
+            let is_numeric = try ignore (int_of_string value); true with _ -> false in
+            check bool (sprintf "Enum value for %s should be numeric" name) is_numeric true;
+          ) members;
+          
+          (* Verify specific expected values *)
+          let find_value name = 
+            try Some (List.assoc name members) with Not_found -> None in
+          
+          (match find_value "XDP_ABORTED" with
+           | Some value -> check string "XDP_ABORTED should have value 0" value "0"
+           | None -> failwith "XDP_ABORTED not found");
+          
+          (match find_value "XDP_DROP" with
+           | Some value -> check string "XDP_DROP should have value 1" value "1"
+           | None -> failwith "XDP_DROP not found");
+          
+          (match find_value "XDP_PASS" with
+           | Some value -> check string "XDP_PASS should have value 2" value "2"
+           | None -> failwith "XDP_PASS not found");
+          
+          printf "✅ xdp_action enum parsed successfully with %d values:\n" (List.length members);
+          List.iter (fun (name, value) ->
+            printf "  - %s = %s\n" name value
+          ) members
+      | None ->
+          failwith "xdp_action enum should have members"
+    )
+  ) else (
+    printf "⚠️ BTF file not available, skipping enum parsing tests\n"
+  )
+
 (** Test suite for BTF binary parser improvements *)
 let btf_parser_suite =
   [
@@ -463,6 +526,7 @@ let btf_parser_suite =
     ("No unknown regression", `Quick, test_no_unknown_regression);
     ("tcp_congestion_ops function prototypes", `Quick, test_tcp_congestion_ops_function_prototypes);
     ("Function prototype parsing", `Quick, test_function_prototype_parsing);
+    ("Enum parsing functionality", `Quick, test_enum_parsing);
   ]
 
 (** Test suite for __sk_buff BTF parsing *)

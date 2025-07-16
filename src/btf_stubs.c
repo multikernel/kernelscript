@@ -195,8 +195,8 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
     }
     
     int kind = btf_kind(t);
-    if (kind != BTF_KIND_STRUCT && kind != BTF_KIND_UNION) {
-        /* Return empty array for non-struct/union types */
+    if (kind != BTF_KIND_STRUCT && kind != BTF_KIND_UNION && kind != BTF_KIND_ENUM) {
+        /* Return empty array for non-struct/union/enum types */
         CAMLreturn(caml_alloc_tuple(0));
     }
     
@@ -205,18 +205,35 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
         CAMLreturn(caml_alloc_tuple(0));
     }
     
-    const struct btf_member *members = btf_members(t);
     result = caml_alloc_tuple(vlen);
     
-    for (int i = 0; i < vlen; i++) {
-        const char *member_name = btf__name_by_offset(btf, members[i].name_off);
-        if (!member_name) member_name = "";
-        
-        member_tuple = caml_alloc_tuple(2);
-        Store_field(member_tuple, 0, caml_copy_string(member_name));
-        Store_field(member_tuple, 1, Val_int(members[i].type));
-        
-        Store_field(result, i, member_tuple);
+    if (kind == BTF_KIND_ENUM) {
+        /* Handle enum types - extract enum values */
+        const struct btf_enum *enums = btf_enum(t);
+        for (int i = 0; i < vlen; i++) {
+            const char *enum_name = btf__name_by_offset(btf, enums[i].name_off);
+            if (!enum_name) enum_name = "";
+            
+            member_tuple = caml_alloc_tuple(2);
+            Store_field(member_tuple, 0, caml_copy_string(enum_name));
+            /* For enums, store the value instead of type_id */
+            Store_field(member_tuple, 1, Val_int(enums[i].val));
+            
+            Store_field(result, i, member_tuple);
+        }
+    } else {
+        /* Handle struct/union types - extract members */
+        const struct btf_member *members = btf_members(t);
+        for (int i = 0; i < vlen; i++) {
+            const char *member_name = btf__name_by_offset(btf, members[i].name_off);
+            if (!member_name) member_name = "";
+            
+            member_tuple = caml_alloc_tuple(2);
+            Store_field(member_tuple, 0, caml_copy_string(member_name));
+            Store_field(member_tuple, 1, Val_int(members[i].type));
+            
+            Store_field(result, i, member_tuple);
+        }
     }
     
     CAMLreturn(result);

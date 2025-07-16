@@ -187,7 +187,7 @@ fn setup_%s() -> i32 {
     // }
     
     // Register the struct_ops instance
-    // let result = register(my_%s)
+    // var result = register(my_%s)
     // if (result == 0) {
     //     print("%s registered successfully")
     // } else {
@@ -195,6 +195,6 @@ fn setup_%s() -> i32 {
     // }
     
     return 0
-}|} struct_ops_name struct_ops_name struct_ops_name 
+}|} struct_ops_name struct_ops_name struct_ops_name
     struct_ops_name struct_ops_name struct_ops_name
-    struct_ops_name struct_ops_name struct_ops_name 
+    struct_ops_name struct_ops_name struct_ops_name

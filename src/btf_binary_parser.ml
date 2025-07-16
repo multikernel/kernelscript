@@ -65,9 +65,10 @@ let parse_btf_file btf_path target_types =
               | _ -> "unknown"
             in
             
-            (* Get members for struct/union types *)
+            (* Get members for struct/union/enum types *)
             let members = 
               if kind_int = 4 || kind_int = 5 then (
+                (* Struct/Union: resolve member types *)
                 try
                   let member_array = btf_type_get_members btf_handle i in
                   let member_list = Array.to_list member_array in
@@ -81,6 +82,18 @@ let parse_btf_file btf_path target_types =
                         (field_name, "unknown")
                   ) member_list in
                   Some resolved_members
+                with
+                | _ -> None
+              ) else if kind_int = 6 then (
+                (* Enum: extract enum values *)
+                try
+                  let member_array = btf_type_get_members btf_handle i in
+                  let member_list = Array.to_list member_array in
+                  (* For enums, second element is the value, not type_id *)
+                  let enum_values = List.map (fun (enum_name, enum_value) ->
+                    (enum_name, string_of_int enum_value)
+                  ) member_list in
+                  Some enum_values
                 with
                 | _ -> None
               ) else None

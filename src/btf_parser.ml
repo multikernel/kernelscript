@@ -208,17 +208,17 @@ let generate_kernelscript_source template project_name =
 %s
 
 @%s
-fn %s_handler(ctx: %s) -> %s {
+fn %s_handler(ctx: *%s) -> %s {
     // TODO: Implement your %s logic here
     
     return %s
 }
 
 fn main() -> i32 {
-    let prog = load(%s_handler)
+    var prog = load(%s_handler)
     
     // TODO: Update interface name and attachment parameters
-    let result = attach(prog, "eth0", 0)
+    var result = attach(prog, "eth0", 0)
     
     if (result == 0) {
         print("%s program loaded successfully")
@@ -229,4 +229,4 @@ fn main() -> i32 {
     
     return 0
 }
-|} context_comment type_definitions template.program_type project_name template.context_type template.return_type template.program_type sample_return project_name template.program_type template.program_type 
+|} context_comment type_definitions template.program_type project_name template.context_type template.return_type template.program_type sample_return project_name template.program_type template.program_type
