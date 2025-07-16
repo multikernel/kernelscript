@@ -51,6 +51,26 @@ let parse_btf_file btf_path target_types =
       let nr_types = btf_get_nr_types btf_handle in
       let results = ref [] in
       
+      (* Helper function to extract union members *)
+      let extract_union_members btf_handle union_type_id =
+        try
+          let member_array = btf_type_get_members btf_handle union_type_id in
+          let member_list = Array.to_list member_array in
+          List.fold_left (fun acc (field_name, field_type_id) ->
+            if field_name = "" then
+              (* Skip anonymous members within the union to avoid infinite recursion *)
+              acc
+            else
+              try
+                let field_type = btf_resolve_type btf_handle field_type_id in
+                (field_name, field_type) :: acc
+              with
+              | _ -> acc
+          ) [] member_list
+        with
+        | _ -> []
+      in
+      
       (* Iterate through all BTF types *)
       for i = 1 to nr_types do
         try
@@ -72,16 +92,29 @@ let parse_btf_file btf_path target_types =
                 try
                   let member_array = btf_type_get_members btf_handle i in
                   let member_list = Array.to_list member_array in
-                  (* Resolve each member's type *)
-                  let resolved_members = List.map (fun (field_name, field_type_id) ->
+                  (* Resolve each member's type and handle anonymous unions *)
+                  let resolved_members = List.fold_left (fun acc (field_name, field_type_id) ->
                     try
                       let field_type = btf_resolve_type btf_handle field_type_id in
-                      (field_name, field_type)
+                      if field_name = "" && field_type = "union" then
+                        (* Anonymous union: extract its members and flatten them *)
+                        let union_members = extract_union_members btf_handle field_type_id in
+                        union_members @ acc
+                      else if field_name = "" then
+                        (* Other anonymous types: skip them to avoid syntax errors *)
+                        acc
+                      else
+                        (* Regular named field *)
+                        (field_name, field_type) :: acc
                     with
                     | _ ->
-                        (field_name, "unknown")
-                  ) member_list in
-                  Some resolved_members
+                        (* If we can't resolve the type, include it as unknown if it has a name *)
+                        if field_name <> "" then
+                          (field_name, "unknown") :: acc
+                        else
+                          acc
+                  ) [] member_list in
+                  Some (List.rev resolved_members)
                 with
                 | _ -> None
               ) else if kind_int = 6 then (

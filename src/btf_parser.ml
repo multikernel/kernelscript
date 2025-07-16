@@ -39,13 +39,33 @@ type program_template = {
 (** Check if a type name is a well-known kernel type *)
 let is_well_known_kernel_type = Kernel_types.is_well_known_ebpf_type
 
+(** Create hardcoded enum definitions for constants that can't be extracted from BTF *)
+let create_hardcoded_tc_action_enum () = {
+  name = "tc_action";
+  kind = "enum";
+  size = Some 4;
+  members = Some [
+    ("TC_ACT_UNSPEC", "-1");
+    ("TC_ACT_OK", "0");
+    ("TC_ACT_RECLASSIFY", "1");
+    ("TC_ACT_SHOT", "2");
+    ("TC_ACT_PIPE", "3");
+    ("TC_ACT_STOLEN", "4");
+    ("TC_ACT_QUEUED", "5");
+    ("TC_ACT_REPEAT", "6");
+    ("TC_ACT_REDIRECT", "7");
+    ("TC_ACT_TRAP", "8");
+  ];
+  kernel_defined = true;
+}
+
 (** Get program template based on eBPF program type *)
 let rec get_program_template prog_type btf_path = 
   let (context_type, return_type, common_types) = match prog_type with
     | "xdp" -> ("xdp_md", "xdp_action", [
         "xdp_md"; "xdp_action"
       ])
-    | "tc" -> ("__sk_buff", "int", [
+    | "tc" -> ("__sk_buff", "i32", [
         "__sk_buff"
       ])
     | "kprobe" -> ("pt_regs", "i32", [
@@ -78,12 +98,20 @@ let rec get_program_template prog_type btf_path =
   (* No need to filter types since builtin files were removed *)
   let filtered_types = final_types in
   
+  (* Add hardcoded enum definitions for macro constants that can't be extracted from BTF *)
+  let hardcoded_types = match prog_type with
+    | "tc" -> [create_hardcoded_tc_action_enum ()]
+    | _ -> []
+  in
+  
+  let all_types = filtered_types @ hardcoded_types in
+  
   {
     program_type = prog_type;
     context_type = context_type;
     return_type = return_type;
     includes = ["linux/bpf.h"; "linux/pkt_cls.h"; "linux/if_ether.h"; "linux/ip.h"; "linux/tcp.h"; "linux/udp.h"];
-    types = filtered_types;
+    types = all_types;
   }
 
 (** Extract specific types from BTF file using binary parser *)
