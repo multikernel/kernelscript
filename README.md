@@ -1,5 +1,8 @@
 # KernelScript
 
+> **⚠️ Beta Version Notice**
+> KernelScript is currently in beta development. The language syntax, APIs, and features are subject to change at any time without backward compatibility guarantees. This software is intended for experimental use and early feedback. Production use is not recommended at this time.
+
 **A Domain-Specific Programming Language for eBPF-Centric Development**
 
 KernelScript is a modern, type-safe, domain-specific programming language that unifies eBPF, userspace, and kernelspace development in a single codebase. Built with an eBPF-centric approach, it provides a clean, readable syntax while generating efficient C code for eBPF programs, coordinated userspace programs, and seamless kernel module (kfunc) integration.
