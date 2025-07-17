@@ -4,6 +4,8 @@
 
 KernelScript is a modern, type-safe, domain-specific programming language that unifies eBPF, userspace, and kernelspace development in a single codebase. Built with an eBPF-centric approach, it provides a clean, readable syntax while generating efficient C code for eBPF programs, coordinated userspace programs, and seamless kernel module (kfunc) integration.
 
+KernelScript aims to become the programming language for Linux kernel customization and application-specific optimization. By leveraging kfunc and eBPF capabilities, it provides a modern alternative to traditional kernel module interfaces such as procfs and debugfs.
+
 ## Why KernelScript?
 
 ### The Problem with Current eBPF Development
