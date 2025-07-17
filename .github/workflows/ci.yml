@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+        ocaml-compiler:
+          - "4.13.x"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout tree
+      uses: actions/checkout@v4
+
+    - name: Set-up OCaml ${{ matrix.ocaml-compiler }}
+      uses: ocaml/setup-ocaml@v3
+      with:
+        ocaml-compiler: ${{ matrix.ocaml-compiler }}
+        opam-repositories: |
+          default: https://github.com/ocaml/opam-repository.git
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libelf-dev zlib1g-dev libbpf-dev
+
+    - name: Install dependencies
+      run: |
+        opam install dune menhir alcotest
+        opam install . --deps-only
+
+    - name: Build project
+      run: eval $(opam env) && dune build
+
+    - name: Run tests
+      run: eval $(opam env) && dune build @tests
+
+    - name: Run example tests
+      run: eval $(opam env) && bash tests/test_all_examples.sh || true
+      continue-on-error: true
