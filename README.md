@@ -1,3 +1,5 @@
+![KernelScript Logo](logo.png)
+
 # KernelScript
 
 > **⚠️ Beta Version Notice**
