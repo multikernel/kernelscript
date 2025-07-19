@@ -715,9 +715,11 @@ and type_check_function_pointer_call ctx typed_callee typed_args arg_types pos =
 and type_check_array_access ctx arr idx pos =
   let typed_idx = type_check_expression ctx idx in
   
-  (* Index must be integer type *)
-  (match typed_idx.texpr_type with
+  (* Index must be integer type, enum *)
+  let resolved_idx_type = resolve_user_type ctx typed_idx.texpr_type in
+  (match resolved_idx_type with
    | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 -> ()
+   | Enum _ -> ()  (* Enums are compatible with integers for array indexing *)
    | _ -> type_error "Array index must be integer type" pos);
   
   (* Check if this is map access first *)

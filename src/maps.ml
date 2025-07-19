@@ -139,8 +139,10 @@ let rec get_type_size = function
 let validate_key_type map_type key_type =
   match map_type, key_type with
   | Array, U32 -> Valid
+  | Array, Enum _ -> Valid  (* Enums are compatible with u32 for array indexing *)
   | Array, _ -> InvalidKeyType "Array maps require u32 keys"
   | PercpuArray, U32 -> Valid
+  | PercpuArray, Enum _ -> Valid  (* Enums are compatible with u32 for array indexing *)
   | PercpuArray, _ -> InvalidKeyType "Per-CPU array maps require u32 keys"
   | HashMap, (U8|U16|U32|U64|I8|I16|I32|I64) -> Valid
   | HashMap, Struct _ -> Valid

@@ -327,7 +327,7 @@
 (executable
  (name test_enum)
  (modules test_enum)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_nested_if_codegen)

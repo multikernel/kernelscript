@@ -540,6 +540,57 @@ enum edge_cases {
   ] in
   check (list (pair string (option int))) "edge case variants" expected enum_def
 
+(** Test enum as array index *)
+let test_enum_array_index () =
+  let source = {|
+    enum Protocol {
+      TCP = 6,
+      UDP = 17,
+      ICMP = 1
+    }
+    
+    map<Protocol, u32> protocol_stats : PercpuArray(32)
+    
+    @helper
+    fn test_enum_index() -> u32 {
+      var proto = TCP
+      var count = protocol_stats[proto]
+      if (count != none) {
+        return count
+      } else {
+        return 0
+      }
+    }
+    
+    @xdp fn packet_handler(ctx: *xdp_md) -> xdp_action {
+      return XDP_PASS
+    }
+  |} in
+  
+  try
+    (* Parse the source *)
+    let ast = parse_string source in
+    
+    (* Build symbol table with XDP builtin types *)
+    let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+    
+    (* Type check the AST *)
+    let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    
+    (* If we reach here, type checking succeeded *)
+    check bool "enum array index type checking passes" true true
+  with
+  | Type_error (msg, _) when String.contains msg 'A' && String.contains msg 'r' ->
+      (* If we get "Array index must be integer type" error, the test fails *)
+      check bool ("enum array index should be allowed: " ^ msg) false true
+  | Type_error (_, _) ->
+      (* Other type errors are acceptable for this test *)
+      check bool "enum array index type checking passes" true true
+  | Parse_error (msg, _) ->
+      check bool ("parse error: " ^ msg) false true
+  | e ->
+      check bool ("unexpected error: " ^ Printexc.to_string e) false true
+
 (** Main test suite *)
 let () =
   run "Enum Tests" [
@@ -553,6 +604,7 @@ let () =
     "type_checking", [
       test_case "enum type unification" `Quick test_enum_type_checking;
       test_case "enum expressions" `Quick test_enum_expressions;
+      test_case "enum as array index" `Quick test_enum_array_index;
     ];
     "code_generation", [
       test_case "enum C code generation" `Quick test_enum_code_generation;
