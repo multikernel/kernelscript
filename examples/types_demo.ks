@@ -139,11 +139,7 @@ fn update_stats(info: PacketInfo) {
     return match (action) {
       FILTER_ACTION_ALLOW: XDP_PASS,
       FILTER_ACTION_BLOCK: XDP_DROP,
-      FILTER_ACTION_LOG: {
-        // Log packet and allow
-        ctx->log_packet(*packet_info)
-        XDP_PASS
-      },
+      FILTER_ACTION_LOG: XDP_PASS,
       FILTER_ACTION_REDIRECT: XDP_REDIRECT
     }
   } else {
