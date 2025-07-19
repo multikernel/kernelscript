@@ -990,9 +990,9 @@ and resolve_type_alias ctx reg ast_type =
                 Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
                 (* Create IRTypeAlias to preserve the alias name *)
                 IRTypeAlias (alias_name, underlying_ir_type)
-            | _ -> ast_type_to_ir_type ast_type)
-        | None -> ast_type_to_ir_type ast_type)
-  | _ -> ast_type_to_ir_type ast_type
+            | _ -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
+        | None -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
+  | _ -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
 
 (** Helper function to calculate stack usage for a type *)
 and calculate_stack_usage = function

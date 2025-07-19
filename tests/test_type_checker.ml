@@ -1221,6 +1221,75 @@ let test_tail_call_cross_program_type_restriction _ =
               true (contains_substr msg "incompatible program type")
    | _ -> failwith "Expected TypeError for cross-program-type tail call")
 
+(** Test map index type resolution bug fix - structs, enums, and type aliases as map keys *)
+let test_map_index_type_resolution_bug_fix _ =
+  let source_code = {|
+    // Type alias 
+    type IpAddress = u32
+    type Counter = u64
+    
+    // Enum type
+    enum Protocol {
+      TCP = 6,
+      UDP = 17,
+      ICMP = 1
+    }
+    
+    // Struct type
+    struct PacketInfo {
+      src_ip: IpAddress,
+      dst_ip: IpAddress,
+      protocol: u8
+    }
+    
+    // Maps using different key types
+    map<IpAddress, Counter> connection_count : HashMap(1024)      // Type alias key
+    map<Protocol, Counter> protocol_stats : PercpuArray(32)       // Enum key  
+    map<PacketInfo, u32> packet_filter : LruHash(512)             // Struct key
+    
+    @helper
+    fn test_indexing() -> u32 {
+      // Create test values
+      var ip: IpAddress = 0xC0A80001
+      var proto = TCP
+      var info = PacketInfo { src_ip: ip, dst_ip: ip, protocol: 6 }
+      
+      // These should all work without "Array index must be integer type" error
+      var count1 = connection_count[ip]        // Type alias as key
+      var count2 = protocol_stats[proto]       // Enum as key  
+      var result = packet_filter[info]         // Struct as key
+      
+      if (count1 != none && count2 != none && result != none) {
+        return count1 + count2 + result
+      } else {
+        return 0
+      }
+    }
+    
+    @xdp fn packet_handler(ctx: *xdp_md) -> xdp_action {
+      return XDP_PASS
+    }
+  |} in
+  
+  try
+    let ast = parse_string source_code in
+    let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+    let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    
+    (* If we reach here, type checking succeeded *)
+    check bool "map index type resolution works for structs, enums, and type aliases" true true
+  with
+  | Type_error (msg, _) when String.contains msg 'A' && String.contains msg 'r' && String.contains msg 'i' ->
+      (* If we get "Array index must be integer type" error, the test fails *)
+      fail ("Bug regression - map indexing should work with user types: " ^ msg)
+  | Type_error (msg, _) ->
+      (* Other type errors might be valid (e.g., map key type mismatches) *)
+      fail ("Unexpected type error: " ^ msg)
+  | Parse_error (msg, _) ->
+      fail ("Parse error: " ^ msg)
+  | e ->
+      fail ("Unexpected error: " ^ Printexc.to_string e)
+
 let type_checker_tests = [
   "type_unification", `Quick, test_type_unification;
   "basic_type_inference", `Quick, test_basic_type_inference;
@@ -1258,6 +1327,7 @@ let type_checker_tests = [
   "kernel_to_kernel_function_calls", `Quick, test_kernel_to_kernel_function_calls;
   "function_call_user_type_resolution", `Quick, test_function_call_user_type_resolution;
   "tail_call_cross_program_type_restriction", `Quick, test_tail_call_cross_program_type_restriction;
+  "map_index_type_resolution_bug_fix", `Quick, test_map_index_type_resolution_bug_fix;
 ]
 
 let () =
