@@ -1323,32 +1323,55 @@ and lower_statement ctx stmt =
                               let ret_val = lower_expression ctx expr in
                               IRReturnValue ret_val)
                      | Block stmts ->
-                         (* For block arms, look for the return statement *)
-                         let rec find_return_action = function
-                           | [] -> failwith "Block arm must have a return statement"
-                           | stmt :: rest ->
-                               (match stmt.stmt_desc with
-                                | Ast.Return (Some return_expr) ->
-                                    (match return_expr.expr_desc with
-                                     | Ast.Call (callee_expr, args) ->
-                                         (* Check if this is a simple function call that could be a tail call *)
-                                         (match callee_expr.expr_desc with
-                                          | Ast.Identifier name ->
-                                              let arg_vals = List.map (lower_expression ctx) args in
-                                              IRReturnCall (name, arg_vals)
-                                          | _ ->
-                                              (* Function pointer call - treat as regular return *)
-                                              let ret_val = lower_expression ctx return_expr in
-                                              IRReturnValue ret_val)
-                                     | Ast.TailCall (name, args) ->
+                         (* For block arms, extract return action from the last statement *)
+                         let rec extract_return_action_from_stmt stmt =
+                           match stmt.stmt_desc with
+                           | Ast.Return (Some return_expr) ->
+                               (match return_expr.expr_desc with
+                                | Ast.Call (callee_expr, args) ->
+                                    (* Check if this is a simple function call that could be a tail call *)
+                                    (match callee_expr.expr_desc with
+                                     | Ast.Identifier name ->
                                          let arg_vals = List.map (lower_expression ctx) args in
-                                         IRReturnTailCall (name, arg_vals, 0)
+                                         IRReturnCall (name, arg_vals)
                                      | _ ->
+                                         (* Function pointer call - treat as regular return *)
                                          let ret_val = lower_expression ctx return_expr in
                                          IRReturnValue ret_val)
-                                | _ -> find_return_action rest)
+                                | Ast.TailCall (name, args) ->
+                                    let arg_vals = List.map (lower_expression ctx) args in
+                                    IRReturnTailCall (name, arg_vals, 0)
+                                | _ ->
+                                    let ret_val = lower_expression ctx return_expr in
+                                    IRReturnValue ret_val)
+                           | Ast.ExprStmt expr ->
+                               (* Handle implicit return from expression statement *)
+                               (match expr.expr_desc with
+                                | Ast.Call (callee_expr, args) ->
+                                    (match callee_expr.expr_desc with
+                                     | Ast.Identifier name ->
+                                         let arg_vals = List.map (lower_expression ctx) args in
+                                         IRReturnCall (name, arg_vals)
+                                     | _ ->
+                                         let ret_val = lower_expression ctx expr in
+                                         IRReturnValue ret_val)
+                                | Ast.TailCall (name, args) ->
+                                    let arg_vals = List.map (lower_expression ctx) args in
+                                    IRReturnTailCall (name, arg_vals, 0)
+                                | _ ->
+                                    let ret_val = lower_expression ctx expr in
+                                    IRReturnValue ret_val)
+                           | Ast.If (_, then_stmts, Some _) ->
+                               (* For if-else statements, we'll use the then branch action (both should be compatible) *)
+                               extract_return_action_from_block then_stmts
+                           | _ ->
+                               failwith "Block arm must end with a return statement, expression, or if-else statement"
+                         and extract_return_action_from_block stmts =
+                           match List.rev stmts with
+                           | last_stmt :: _ -> extract_return_action_from_stmt last_stmt
+                           | [] -> failwith "Empty block in match arm"
                          in
-                         find_return_action stmts
+                         extract_return_action_from_block stmts
                    in
                    
                    { match_pattern = ir_pattern; return_action = return_action; arm_pos = arm.arm_pos }

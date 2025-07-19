@@ -461,6 +461,89 @@ let test_nested_match_structures () =
   
   check bool "nested match should generate nested conditional structures" true has_conditional_structure
 
+(** Test match arms with implicit returns from block expressions - bug fix test *)
+let test_match_block_implicit_returns () =
+  let input = {|
+    enum Decision {
+      Accept = 0,
+      Reject = 1,
+      Review = 2
+    }
+    
+    fn process_value(value: u32) -> Decision {
+      return match (value) {
+        1: Accept,
+        2: {
+          if (value > 10) {
+            Reject
+          } else {
+            Review  
+          }
+        },
+        3: {
+          Review
+        },
+        default: Reject
+      }
+    }
+  |} in
+  
+  let ast = Parse.parse_string input in
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  
+  (* The main test: Type checking should succeed (this would fail before the bug fix) *)
+  (try 
+    let (_typed_ast, _typed_functions) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "type checking should succeed for match arms with implicit returns" true true
+  with
+  | Failure msg when msg = "Block arms must end with a return statement" ->
+      fail "Bug regression: type checker still requires explicit returns in match arm blocks"
+  | Failure msg -> 
+      failwith ("Type checking failed with different error: " ^ msg)
+  | exn ->
+      failwith ("Unexpected type checking error: " ^ (Printexc.to_string exn)));
+  
+  (* Verify the structure was parsed correctly *)
+  let func = match List.find (function 
+    | GlobalFunction f when f.func_name = "process_value" -> true 
+    | _ -> false) ast with
+    | GlobalFunction f -> f
+    | _ -> failwith "Expected process_value function"
+  in
+  
+  let return_stmt = List.hd func.func_body in
+  let match_expr = match return_stmt.stmt_desc with
+    | Return (Some expr) -> (match expr.expr_desc with
+        | Match (_, arms) -> arms
+        | _ -> failwith "Expected match expression")
+    | _ -> failwith "Expected return statement with match"
+  in
+  
+  (* Verify we have the expected structure *)
+  check int "should have 4 match arms" 4 (List.length match_expr);
+  
+  (* Verify the second arm has a block with if-else (implicit return) *)
+  let second_arm = List.nth match_expr 1 in
+  (match second_arm.arm_body with
+   | Block stmts -> 
+       check bool "second arm should have statements" true (List.length stmts > 0);
+       (* Verify it's an if statement (implicit return, no explicit return needed) *)
+       (match (List.hd stmts).stmt_desc with
+        | If (_, _, Some _) -> () (* if-else statement - good *)
+        | _ -> failwith "Expected if-else statement in second arm")
+   | _ -> failwith "Expected block in second arm");
+   
+  (* Verify the third arm has a block with expression (implicit return) *)
+  let third_arm = List.nth match_expr 2 in
+  (match third_arm.arm_body with
+   | Block stmts -> 
+       check bool "third arm should have statements" true (List.length stmts > 0);
+       (* Verify it's an expression statement (implicit return) *)
+       (match (List.hd stmts).stmt_desc with
+        | ExprStmt _ -> () (* expression statement - good *)
+        | _ -> failwith "Expected expression statement in third arm")
+   | _ -> failwith "Expected block in third arm")
+
 let suite = [
   "test_basic_match_parsing", `Quick, test_basic_match_parsing;
   "test_match_with_enums", `Quick, test_match_with_enums;
@@ -471,6 +554,7 @@ let suite = [
   "test_match_conditional_control_flow", `Quick, test_match_conditional_control_flow;
   "test_match_no_premature_execution", `Quick, test_match_no_premature_execution;
   "test_nested_match_structures", `Quick, test_nested_match_structures;
+  "test_match_block_implicit_returns", `Quick, test_match_block_implicit_returns;
 ]
 
 let () = run "Match Construct Tests" [

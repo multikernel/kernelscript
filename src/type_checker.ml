@@ -618,6 +618,31 @@ let is_truthy_type bpf_type =
   | Enum _ -> true                                        (* enums: based on numeric value *)
   | _ -> false                                            (* other types not allowed in boolean context *)
 
+(** Helper function to extract return type from a block of statements *)
+let rec extract_block_return_type stmts arm_pos =
+  let extract_type_from_stmt stmt =
+    match stmt.tstmt_desc with
+    | TReturn (Some return_expr) -> return_expr.texpr_type
+    | TExprStmt expr -> expr.texpr_type
+    | TIf (_, then_stmts, Some else_stmts) ->
+        (* For if-else statements, both branches must return compatible types *)
+        let then_type = extract_block_return_type then_stmts arm_pos in
+        let else_type = extract_block_return_type else_stmts arm_pos in
+        (match unify_types then_type else_type with
+         | Some unified_type -> unified_type
+         | None -> type_error ("If-else branches have incompatible types: " ^ 
+                               string_of_bpf_type then_type ^ " vs " ^ 
+                               string_of_bpf_type else_type) arm_pos)
+    | TIf (_, _, None) ->
+        (* If without else - this doesn't work as a return value *)
+        type_error "If statement without else cannot be used as return value in match arm" arm_pos
+    | _ -> 
+        type_error "Block arms must end with a return statement, expression, or if-else statement" arm_pos
+  in
+  match List.rev stmts with
+  | last_stmt :: _ -> extract_type_from_stmt last_stmt
+  | [] -> type_error "Empty block in match arm" arm_pos
+
 (** Type check a user function call *)
 let rec type_check_user_function_call ctx name typed_args arg_types pos =
   try
@@ -1197,19 +1222,13 @@ and type_check_expression ctx expr =
             let first_type = match first_arm.tarm_body with
               | TSingleExpr expr -> expr.texpr_type
               | TBlock stmts -> 
-                  (* For block arms, we need to find the return type from the last statement *)
-                  match List.rev stmts with
-                  | { tstmt_desc = TReturn (Some return_expr); _ } :: _ -> return_expr.texpr_type
-                  | _ -> type_error "Block arms must end with a return statement" first_arm.tarm_pos
+                  extract_block_return_type stmts first_arm.tarm_pos
             in
             List.iter (fun arm ->
               let arm_type = match arm.tarm_body with
                 | TSingleExpr expr -> expr.texpr_type
                 | TBlock stmts -> 
-                    (* For block arms, we need to find the return type from the last statement *)
-                    match List.rev stmts with
-                    | { tstmt_desc = TReturn (Some return_expr); _ } :: _ -> return_expr.texpr_type
-                    | _ -> type_error "Block arms must end with a return statement" arm.tarm_pos
+                    extract_block_return_type stmts arm.tarm_pos
               in
               match unify_types first_type arm_type with
               | Some _ -> () (* Compatible *)

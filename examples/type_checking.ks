@@ -72,7 +72,7 @@ fn extract_header(ctx: *xdp_md) -> *PacketHeader {
 @helper
 fn classify_protocol(proto: u8) -> ProtocolType {
   // Type checker validates enum constant access
-  match (proto) {
+  return match (proto) {
     6: TCP,
     17: UDP,  
     1: ICMP,
@@ -99,7 +99,7 @@ fn make_decision(header: PacketHeader) -> FilterDecision {
   // Type checker validates function call signatures
   var proto_type = classify_protocol(header.protocol)
   
-  match (proto_type) {
+  return match (proto_type) {
     TCP: {
       // Type checker validates field access on struct types
       if (header.length > 1500) {
@@ -128,7 +128,7 @@ fn make_decision(header: PacketHeader) -> FilterDecision {
   var decision = make_decision(*packet_header)
   
   // Type checker validates match expressions and enum types
-  match (decision) {
+  return match (decision) {
     Allow: XDP_PASS,
     Block: XDP_DROP,
     Log: {
