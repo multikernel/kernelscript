@@ -1044,6 +1044,11 @@ let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
 (** Generate standard eBPF includes *)
 
 let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) () =
+  (* Essential kernel types must come first *)
+  let base_type_includes = [
+    "#include <linux/types.h>";
+  ] in
+  
   let standard_includes = [
     "#include <linux/bpf.h>";
     "#include <bpf/bpf_helpers.h>";
@@ -1051,7 +1056,6 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     "#include <linux/ip.h>";
     "#include <linux/in.h>";
     "#include <linux/if_xdp.h>";
-    "#include <linux/types.h>";
   ] in
   
   (* Get context-specific includes *)
@@ -1069,9 +1073,10 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     | None -> acc
   ) [] program_types in
   
-  (* Remove duplicates between standard and context includes *)
+  (* Remove duplicates between all include sets *)
+  let all_base_includes = base_type_includes @ standard_includes in
   let unique_context_includes = List.filter (fun inc -> 
-    not (List.mem inc standard_includes)) context_includes in
+    not (List.mem inc all_base_includes)) context_includes in
   
   (* Only add builtin headers if explicitly requested (for debugging/testing) *)
   let builtin_includes = if include_builtin_headers then
@@ -1086,7 +1091,7 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     [] (* Skip builtin headers - enum constants come from system headers *)
   in
   
-  let all_includes = standard_includes @ unique_context_includes @ (List.rev builtin_includes) in
+  let all_includes = (List.rev builtin_includes) @ standard_includes @ unique_context_includes @ base_type_includes in
   List.iter (fun inc -> ctx.output_lines <- inc :: ctx.output_lines) (List.rev all_includes);
   emit_blank_line ctx
 

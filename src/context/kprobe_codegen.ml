@@ -96,10 +96,11 @@ let kprobe_field_mappings = [
 
 (** Generate kprobe-specific includes *)
 let generate_kprobe_includes () = [
+  "#include <linux/types.h>";
   "#include <linux/bpf.h>";
-  "#include <bpf/bpf_helpers.h>";
   "#include <linux/ptrace.h>";
   "#include <bpf/bpf_tracing.h>";
+  "#include <bpf/bpf_helpers.h>";
 ]
 
 (** Generate field access for kprobe context *)
