@@ -38,7 +38,11 @@ config network {
   var src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
     
   // Update the count
-  packet_counts[src_ip] += 1
+  if (packet_counts[src_ip] != none) {
+    packet_counts[src_ip] += 1
+  } else {
+    packet_counts[src_ip] = 0
+  }
   
   // Rate limiting: drop if too many packets
   if (packet_counts[src_ip] > network.limit) {
