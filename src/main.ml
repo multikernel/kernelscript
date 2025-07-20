@@ -537,12 +537,19 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       | _ -> acc
     ) [] compilation_ast in
     
+    (* Extract map declarations from the AST for safety analysis *)
+    let all_maps = List.fold_left (fun acc decl ->
+      match decl with
+      | Ast.MapDecl map_decl -> map_decl :: acc
+      | _ -> acc
+    ) [] compilation_ast in
+    
     (* Create a program structure for safety analysis *)
     let safety_program = {
       Ast.prog_name = base_name;
       prog_type = Xdp; (* Default - not used by safety checker *)
       prog_functions = all_functions;
-      prog_maps = [];
+      prog_maps = all_maps;
       prog_structs = [];
       prog_pos = Ast.make_position 1 1 input_file;
     } in

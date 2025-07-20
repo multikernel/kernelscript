@@ -145,23 +145,45 @@ let analyze_function_stack_usage func =
 (** Bounds checking analysis *)
 
 (** Check array access bounds *)
-let check_array_bounds expr =
+let check_array_bounds ?(known_maps : Ast.map_declaration list = []) expr =
   let rec check_expr e errors =
     match e.expr_desc with
     | ArrayAccess (arr_expr, idx_expr) ->
         (match arr_expr.expr_desc, idx_expr.expr_desc with
          | Identifier arr_name, Literal (IntLit (idx, _)) ->
-             (* Check if we can determine array size from type *)
-             (match arr_expr.expr_type with
-              | Some (Ast.Array (_, size)) ->
-                  if idx >= size || idx < 0 then
-                    ArrayOutOfBounds (arr_name, idx, size) :: errors
-                  else
+             (* First check if this is a known map *)
+             if List.exists (fun (map_decl : Ast.map_declaration) -> map_decl.name = arr_name) known_maps then
+               (* Map access - inherently safe, skip bounds checking *)
+               errors
+             else
+               (* Check if we can determine array size from type *)
+               (match arr_expr.expr_type with
+                | Some (Ast.Array (_, size)) ->
+                    if idx >= size || idx < 0 then
+                      ArrayOutOfBounds (arr_name, idx, size) :: errors
+                    else
+                      errors
+                | Some (Ast.Map (_, _, _)) ->
+                    (* Map access - inherently safe, skip bounds checking *)
                     errors
-              | _ -> UnknownBounds arr_name :: errors)
+                | _ -> UnknownBounds arr_name :: errors)
          | Identifier arr_name, _ ->
-             (* Runtime bounds check needed *)
-             UnknownBounds arr_name :: errors
+             (* First check if this is a known map *)
+             if List.exists (fun (map_decl : Ast.map_declaration) -> map_decl.name = arr_name) known_maps then
+               (* Map access with dynamic key - inherently safe *)
+               errors
+             else
+               (* Check if this is a map access - maps are safe *)
+               (match arr_expr.expr_type with
+                | Some (Ast.Map (_, _, _)) ->
+                    (* Map access with dynamic key - inherently safe *)
+                    errors
+                | Some (Ast.Array (_, _)) ->
+                    (* Array access with dynamic index - runtime bounds check needed *)
+                    UnknownBounds arr_name :: errors
+                | _ ->
+                    (* Unknown type - could be array, so flag for safety *)
+                    UnknownBounds arr_name :: errors)
          | FieldAccess (_, "data"), Literal (IntLit (idx, _)) when idx >= 1500 ->
              (* Unsafe packet access - large index into packet data *)
              PointerOutOfBounds ("packet_data") :: errors
@@ -198,7 +220,7 @@ let check_array_declaration name typ =
   | _ -> []
 
 (** Analyze bounds checking in statements *)
-let analyze_statement_bounds stmt =
+let analyze_statement_bounds ?(known_maps : Ast.map_declaration list = []) stmt =
   let errors = ref [] in
   
   let rec check_stmt s =
@@ -206,34 +228,34 @@ let analyze_statement_bounds stmt =
     | Declaration (name, Some typ, expr_opt) ->
         errors := check_array_declaration name typ @ !errors;
         (match expr_opt with
-         | Some expr -> errors := check_array_bounds expr @ !errors
+         | Some expr -> errors := check_array_bounds ~known_maps expr @ !errors
          | None -> ())
     | ExprStmt expr | Assignment (_, expr) ->
-        errors := check_array_bounds expr @ !errors
+        errors := check_array_bounds ~known_maps expr @ !errors
     | CompoundAssignment (_, _, expr) ->
-        errors := check_array_bounds expr @ !errors
+        errors := check_array_bounds ~known_maps expr @ !errors
     | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
-        errors := check_array_bounds map_expr @ !errors;
-        errors := check_array_bounds key_expr @ !errors;
-        errors := check_array_bounds value_expr @ !errors
+        errors := check_array_bounds ~known_maps map_expr @ !errors;
+        errors := check_array_bounds ~known_maps key_expr @ !errors;
+        errors := check_array_bounds ~known_maps value_expr @ !errors
     | FieldAssignment (obj_expr, _, value_expr) ->
-        errors := check_array_bounds obj_expr @ !errors;
-        errors := check_array_bounds value_expr @ !errors
+        errors := check_array_bounds ~known_maps obj_expr @ !errors;
+        errors := check_array_bounds ~known_maps value_expr @ !errors
     | If (cond, then_stmts, else_opt) ->
-        errors := check_array_bounds cond @ !errors;
+        errors := check_array_bounds ~known_maps cond @ !errors;
         List.iter check_stmt then_stmts;
         (match else_opt with
          | None -> ()
          | Some else_stmts -> List.iter check_stmt else_stmts)
     | For (_, start, end_, body) ->
-        errors := check_array_bounds start @ !errors;
-        errors := check_array_bounds end_ @ !errors;
+        errors := check_array_bounds ~known_maps start @ !errors;
+        errors := check_array_bounds ~known_maps end_ @ !errors;
         List.iter check_stmt body
     | While (cond, body) ->
-        errors := check_array_bounds cond @ !errors;
+        errors := check_array_bounds ~known_maps cond @ !errors;
         List.iter check_stmt body
     | Return (Some expr) ->
-        errors := check_array_bounds expr @ !errors
+        errors := check_array_bounds ~known_maps expr @ !errors
     | _ -> ()
   in
   
@@ -364,10 +386,12 @@ let analyze_stack_usage program =
 (** Perform bounds checking analysis *)
 let analyze_bounds_safety program =
   let all_errors = ref [] in
+  (* Collect map declarations for bounds checking context *)
+  let known_maps = program.prog_maps in
   
   List.iter (fun func ->
     List.iter (fun stmt ->
-      let errors = analyze_statement_bounds stmt in
+      let errors = analyze_statement_bounds ~known_maps stmt in
       all_errors := errors @ !all_errors
     ) func.func_body
   ) program.prog_functions;
