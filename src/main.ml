@@ -529,20 +529,20 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     current_phase := "Safety Analysis";
     Printf.printf "Phase 4.5: %s\n" !current_phase;
     
-    (* Extract all functions from the AST for safety analysis *)
+    (* Extract all functions from the TYPE-ANNOTATED AST for safety analysis *)
     let all_functions = List.fold_left (fun acc decl ->
       match decl with
       | Ast.AttributedFunction attr_func -> attr_func.attr_function :: acc
       | Ast.GlobalFunction func -> func :: acc
       | _ -> acc
-    ) [] compilation_ast in
+    ) [] annotated_ast in
     
-    (* Extract map declarations from the AST for safety analysis *)
+    (* Extract map declarations from the TYPE-ANNOTATED AST for safety analysis *)
     let all_maps = List.fold_left (fun acc decl ->
       match decl with
       | Ast.MapDecl map_decl -> map_decl :: acc
       | _ -> acc
-    ) [] compilation_ast in
+    ) [] annotated_ast in
     
     (* Create a program structure for safety analysis *)
     let safety_program = {
