@@ -49,6 +49,7 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | [(_, IRContext _)] -> ()
     | [(_, IRPointer (IRContext _, _))] -> ()
     | [(_, IRPointer (IRStruct ("__sk_buff", _, _), _))] -> ()  (* Also recognize __sk_buff as TC context *)
+    | [(_, IRPointer (IRStruct ("pt_regs", _, _), _))] -> ()  (* Also recognize pt_regs as kprobe context *)
     | _ -> errors := "Main function parameter must be a context type" :: !errors;
     
     (* Check return type based on context type *)
@@ -59,12 +60,18 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
       | _ -> false
     in
     
+    let is_kprobe_program = match ir_func.parameters with
+      | [(_, IRPointer (IRStruct ("pt_regs", _, _), _))] -> true  (* Recognize pt_regs as kprobe *)
+      | _ -> false
+    in
+    
     match ir_func.return_type with
-    | Some (IRAction _) when not is_tc_program -> ()  (* Action types for non-TC programs *)
-    | Some (IRI32) when is_tc_program -> ()  (* int return type for TC programs *)
-    | Some (IRU32) when is_tc_program -> ()  (* Allow u32/int for TC programs *)
+    | Some (IRAction _) when not is_tc_program && not is_kprobe_program -> ()  (* Action types for programs that use actions *)
+    | Some (IRI32) when is_tc_program || is_kprobe_program -> ()  (* int return type for TC and kprobe programs *)
+    | Some (IRU32) when is_tc_program || is_kprobe_program -> ()  (* Allow u32/int for TC and kprobe programs *)
     | Some _ when is_tc_program -> errors := "TC programs must return int (i32)" :: !errors;
-    | Some _ -> errors := "Main function must return an action type (or int for TC programs)" :: !errors;
+    | Some _ when is_kprobe_program -> errors := "Kprobe programs must return int (i32)" :: !errors;
+    | Some _ -> errors := "Main function must return an action type (or int for TC/kprobe programs)" :: !errors;
     | None -> errors := "Main function must have a return type" :: !errors
   );
   

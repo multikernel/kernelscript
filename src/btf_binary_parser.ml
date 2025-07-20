@@ -37,6 +37,7 @@ external btf_type_by_id : btf_handle -> int -> (int * string * int * int * int) 
 
 external btf_type_get_members : btf_handle -> int -> (string * int) array = "btf_type_get_members_stub"
 external btf_resolve_type : btf_handle -> int -> string = "btf_resolve_type_stub"
+external btf_extract_function_signatures : btf_handle -> string list -> (string * string) list = "btf_extract_function_signatures_stub"
 external btf_free : btf_handle -> unit = "btf_free_stub"
 
 (** Parse BTF file and extract requested types using libbpf *)
@@ -152,4 +153,31 @@ let parse_btf_file btf_path target_types =
   with
   | exn ->
       printf "Error parsing BTF file %s: %s\n" btf_path (Printexc.to_string exn);
+      []
+
+(** Extract kernel function signatures for kprobe targets *)
+let extract_kernel_function_signatures btf_path function_names =
+  try
+    printf "Extracting function signatures from BTF file: %s\n" btf_path;
+    printf "Target functions: %s\n" (String.concat ", " function_names);
+    
+    match btf_new_from_file btf_path with
+    | None -> (
+      printf "Error: Failed to open BTF file %s\n" btf_path;
+      []
+    )
+    | Some btf_handle -> (
+      let signatures = btf_extract_function_signatures btf_handle function_names in
+      btf_free btf_handle;
+      
+      printf "Successfully extracted %d function signatures\n" (List.length signatures);
+      List.iter (fun (name, sig_str) ->
+        printf "  Function: %s -> %s\n" name sig_str
+      ) signatures;
+      
+      signatures
+    )
+  with
+  | exn ->
+      printf "Error extracting function signatures from BTF file %s: %s\n" btf_path (Printexc.to_string exn);
       [] 

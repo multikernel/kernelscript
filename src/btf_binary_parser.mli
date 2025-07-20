@@ -28,4 +28,10 @@ type btf_type_info = {
     @param btf_path Path to the binary BTF file
     @param target_types List of type names to extract
     @return List of extracted type definitions in KernelScript format *)
-val parse_btf_file : string -> string list -> btf_type_info list 
+val parse_btf_file : string -> string list -> btf_type_info list
+
+(** Extract kernel function signatures for kprobe targets.
+    @param btf_path Path to the binary BTF file
+    @param function_names List of kernel function names to extract signatures for
+    @return List of (function_name, signature) pairs *)
+val extract_kernel_function_signatures : string -> string list -> (string * string) list 

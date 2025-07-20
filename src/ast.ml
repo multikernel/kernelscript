@@ -74,7 +74,7 @@ and bpf_type =
   | Function of bpf_type list * bpf_type
   | Map of bpf_type * bpf_type * map_type
   (* Built-in context types *)
-  | Xdp_md | KprobeContext | UprobeContext 
+  | Xdp_md | UprobeContext 
   | TracepointContext | LsmContext | CgroupSkbContext
   | Xdp_action
   (* Program reference types *)
@@ -527,7 +527,6 @@ let rec string_of_bpf_type = function
         (string_of_bpf_type value_type)
         (string_of_map_type map_type)
   | Xdp_md -> "xdp_md"
-  | KprobeContext -> "KprobeContext"
   | UprobeContext -> "UprobeContext"
   | TracepointContext -> "TracepointContext"
   | LsmContext -> "LsmContext"

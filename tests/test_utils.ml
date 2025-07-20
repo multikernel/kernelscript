@@ -113,24 +113,11 @@ module Kprobe = struct
     ("KPROBE_FAULT", Some 1);
   ]
   
-  (** Kprobe context struct fields *)
-  let context_fields = [
-    ("regs", Array (U64, 21));
-    ("ip", U64);
-    ("cs", U64);
-    ("flags", U64);
-    ("sp", U64);
-    ("ss", U64);
-  ]
-  
   (** Create Kprobe action enum AST *)
   let action_enum = TypeDef (EnumDef ("KprobeAction", action_constants, true))
   
-  (** Create Kprobe context struct AST *)
-  let context_struct = TypeDef (StructDef ("KprobeContext", context_fields, true))
-  
   (** All Kprobe builtin AST declarations *)
-  let builtin_ast = [action_enum; context_struct]
+  let builtin_ast = [action_enum]
 end
 
 (** Struct_ops-related test types and constants *)

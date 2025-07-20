@@ -500,6 +500,83 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
     CAMLreturn(caml_copy_string("unknown"));
 }
 
+/* Extract kernel function signatures for kprobe targets */
+value btf_extract_function_signatures_stub(value btf_handle, value function_names) {
+    CAMLparam2(btf_handle, function_names);
+    CAMLlocal3(result_list, current, tuple);
+    
+    struct btf *btf = btf_of_value(btf_handle);
+    if (!btf) {
+        CAMLreturn(Val_emptylist);
+    }
+    
+    result_list = Val_emptylist;
+    
+    /* Convert OCaml list to C array */
+    int func_count = 0;
+    value temp = function_names;
+    while (temp != Val_emptylist) {
+        func_count++;
+        temp = Field(temp, 1);
+    }
+    
+    char **target_functions = malloc(func_count * sizeof(char*));
+    temp = function_names;
+    for (int i = 0; i < func_count; i++) {
+        target_functions[i] = String_val(Field(temp, 0));
+        temp = Field(temp, 1);
+    }
+    
+    int nr_types = btf__type_cnt(btf);
+    
+    /* Search for function prototypes */
+    for (int i = 1; i < nr_types; i++) {
+        const struct btf_type *t = btf__type_by_id(btf, i);
+        if (!t) continue;
+        
+        int kind = btf_kind(t);
+        
+        if (kind == BTF_KIND_FUNC) {
+            const char *func_name = btf__name_by_offset(btf, t->name_off);
+            if (!func_name) continue;
+            
+            /* Check if this is one of our target functions */
+            int is_target = 0;
+            for (int j = 0; j < func_count; j++) {
+                if (strcmp(func_name, target_functions[j]) == 0) {
+                    is_target = 1;
+                    break;
+                }
+            }
+            
+            if (is_target) {
+                /* Get the function prototype */
+                const struct btf_type *func_proto = btf__type_by_id(btf, t->type);
+                if (func_proto && btf_kind(func_proto) == BTF_KIND_FUNC_PROTO) {
+                    /* Extract function signature */
+                    char *signature = format_function_prototype(btf, func_proto);
+                    
+                    /* Create tuple (function_name, signature) */
+                    tuple = caml_alloc_tuple(2);
+                    Store_field(tuple, 0, caml_copy_string(func_name));
+                    Store_field(tuple, 1, caml_copy_string(signature));
+                    
+                    /* Add to result list */
+                    current = caml_alloc(2, 0);
+                    Store_field(current, 0, tuple);
+                    Store_field(current, 1, result_list);
+                    result_list = current;
+                    
+                    free(signature);
+                }
+            }
+        }
+    }
+    
+    free(target_functions);
+    CAMLreturn(result_list);
+}
+
 /* Free BTF handle */
 value btf_free_stub(value btf_handle) {
     CAMLparam1(btf_handle);

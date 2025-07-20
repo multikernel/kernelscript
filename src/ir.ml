@@ -665,7 +665,6 @@ let rec ast_type_to_ir_type = function
       IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
   | Xdp_md -> IRContext XdpCtx
-  | KprobeContext -> IRContext KprobeCtx
   | UprobeContext -> IRContext UprobeCtx
   | TracepointContext -> IRContext TracepointCtx
   | LsmContext -> IRContext LsmCtx

@@ -47,7 +47,7 @@ fn main() -> i32 {
 (** Test program reference with different program types *)
 let test_different_program_types () =
   let program_text = {|
-@kprobe fn kprobe_tracer(ctx: KprobeContext) -> u32 {
+@kprobe fn kprobe_tracer(ctx: *pt_regs) -> i32 {
   return 0
 }
 

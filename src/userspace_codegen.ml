@@ -2542,6 +2542,22 @@ void cleanup_bpf_maps(void) {
             
             return 0;
         }
+        case BPF_PROG_TYPE_KPROBE: {
+            // For kprobe programs, target should be the kernel function name (e.g., "sys_read")
+            // Use bpf_raw_tracepoint_open which works for kprobes
+            
+            int raw_tp_fd = bpf_raw_tracepoint_open(target, prog_fd);
+            if (raw_tp_fd < 0) {
+                fprintf(stderr, "Failed to attach kprobe to function '%s': %s\n", target, strerror(errno));
+                return -1;
+            }
+            
+            // For now, close immediately - in a production system you'd store this for cleanup
+            close(raw_tp_fd);
+            printf("✅ Kprobe attached to function: %s\n", target);
+            
+            return 0;
+        }
         default:
             fprintf(stderr, "Unsupported program type for attachment: %d\n", info.type);
             return -1;

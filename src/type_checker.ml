@@ -192,7 +192,6 @@ let type_error msg pos = raise (Type_error (msg, pos))
 (** Resolve user types to built-in types and type aliases *)
 let rec resolve_user_type ctx = function
   | UserType "xdp_md" -> Xdp_md
-  | UserType "KprobeContext" -> KprobeContext
   | UserType "UprobeContext" -> UprobeContext
   | UserType "TracepointContext" -> TracepointContext
   | UserType "LsmContext" -> LsmContext
@@ -830,7 +829,6 @@ and type_check_arrow_access ctx obj field pos =
     | Pointer (Struct name) | Pointer (UserType name) -> name
     (* Map context types to their corresponding struct names *)
     | Pointer Xdp_md -> "xdp_md"
-    | Pointer KprobeContext -> "pt_regs"
     | Pointer UprobeContext -> "pt_regs"
     | Pointer TracepointContext -> "trace_entry"
     | Pointer LsmContext -> "task_struct"
@@ -2492,10 +2490,20 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              
+             (* Accept either *pt_regs or pt_regs for kprobe context *)
+             let valid_context_type = match resolved_param_type with
+               | Pointer (UserType "pt_regs") -> true
+               | UserType "pt_regs" -> true
+               | Pointer (Struct "pt_regs") -> true
+               | Struct "pt_regs" -> true
+               | _ -> false
+             in
+
+             
              if List.length params <> 1 ||
-                resolved_param_type <> KprobeContext ||
-                resolved_return_type <> Some U32 then
-               type_error ("@kprobe attributed function must have signature (ctx: KprobeContext) -> u32") attr_func.attr_pos
+                not valid_context_type ||
+                resolved_return_type <> Some I32 then
+               type_error ("@kprobe attributed function must have signature (ctx: *pt_regs) -> i32") attr_func.attr_pos
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         

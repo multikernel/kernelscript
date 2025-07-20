@@ -34,7 +34,8 @@ let rec parse_args () =
       printf "Subcommands:\n";
       printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>]\n";
       printf "    Initialize a new KernelScript project\n";
-      printf "    prog_type: xdp | tc | kprobe | uprobe | tracepoint | lsm | cgroup_skb\n";
+      printf "    prog_type: xdp | tc | kprobe/target_function | uprobe | tracepoint | lsm | cgroup_skb\n";
+      printf "    Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
       printf "    struct_ops: tcp_congestion_ops | bpf_iter_ops | bpf_struct_ops_test | custom_name\n";
       printf "    project_name: Name of the project directory to create\n";
       printf "    --btf-vmlinux-path: Path to BTF vmlinux file for type/struct_ops extraction\n\n";
@@ -127,13 +128,33 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   printf "🚀 Initializing KernelScript project: %s\n" project_name;
   printf "📋 Type: %s\n" prog_type_or_struct_ops;
   
+  (* Parse program type and target function for kprobe *)
+  let (prog_type, target_function) = 
+    if String.contains prog_type_or_struct_ops '/' then
+      let parts = String.split_on_char '/' prog_type_or_struct_ops in
+      match parts with
+      | [prog; func] -> (prog, Some func)
+      | _ -> 
+          printf "❌ Error: Invalid kprobe syntax '%s'. Use kprobe/function_name\n" prog_type_or_struct_ops;
+          exit 1
+    else
+      (prog_type_or_struct_ops, None)
+  in
+  
   (* Check if this is a struct_ops or a regular program type *)
   let valid_program_types = ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] in
-  let is_struct_ops = Struct_ops_registry.is_known_struct_ops prog_type_or_struct_ops in
-  let is_program_type = List.mem prog_type_or_struct_ops valid_program_types in
+  let is_struct_ops = Struct_ops_registry.is_known_struct_ops prog_type in
+  let is_program_type = List.mem prog_type valid_program_types in
+  
+  (* Validate kprobe target function *)
+  if prog_type = "kprobe" && target_function = None then (
+    printf "❌ Error: kprobe requires target function. Use kprobe/function_name\n";
+    printf "Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
+    exit 1
+  );
   
   if not is_struct_ops && not is_program_type then (
-    printf "❌ Error: Invalid type '%s'\n" prog_type_or_struct_ops;
+    printf "❌ Error: Invalid type '%s'\n" prog_type;
     printf "Valid program types: %s\n" (String.concat ", " valid_program_types);
     printf "Known struct_ops: %s\n" (String.concat ", " (Struct_ops_registry.get_all_known_struct_ops ()));
     exit 1
@@ -154,15 +175,25 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   (* Generate template based on type *)
   let source_content = 
     if is_struct_ops then (
-      printf "🔧 Extracting struct_ops definition for %s...\n" prog_type_or_struct_ops;
-      let content = Btf_parser.generate_struct_ops_template btf_path [prog_type_or_struct_ops] project_name in
+      printf "🔧 Extracting struct_ops definition for %s...\n" prog_type;
+      let content = Btf_parser.generate_struct_ops_template btf_path [prog_type] project_name in
       printf "✅ Generated struct_ops template\n";
       content
     ) else (
-      printf "🔧 Extracting types for %s program...\n" prog_type_or_struct_ops;
-      let template = Btf_parser.get_program_template prog_type_or_struct_ops btf_path in
-      printf "✅ Found %d type definitions\n" (List.length template.types);
-      Btf_parser.generate_kernelscript_source template project_name
+      match prog_type with
+      | "kprobe" ->
+          (match target_function with
+           | Some func_name ->
+               printf "🔧 Extracting types for %s program targeting %s...\n" prog_type func_name;
+               let template = Btf_parser.get_kprobe_program_template func_name btf_path in
+               printf "✅ Found %d type definitions\n" (List.length template.types);
+               Btf_parser.generate_kernelscript_source template project_name
+           | None -> failwith "kprobe requires target function")
+      | _ ->
+          printf "🔧 Extracting types for %s program...\n" prog_type;
+          let template = Btf_parser.get_program_template prog_type btf_path in
+          printf "✅ Found %d type definitions\n" (List.length template.types);
+          Btf_parser.generate_kernelscript_source template project_name
     ) in
   
   let source_filename = project_name ^ "/" ^ project_name ^ ".ks" in
@@ -176,10 +207,10 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   (* Create a simple README *)
   let readme_content = 
     if is_struct_ops then (
-      let struct_ops_info = Struct_ops_registry.get_struct_ops_info prog_type_or_struct_ops in
+      let struct_ops_info = Struct_ops_registry.get_struct_ops_info prog_type in
       let description = match struct_ops_info with
         | Some info -> info.description
-        | None -> sprintf "Custom struct_ops implementation for %s" prog_type_or_struct_ops
+        | None -> sprintf "Custom struct_ops implementation for %s" prog_type
       in
       sprintf {|# %s
 
@@ -212,7 +243,7 @@ cd %s && make run
 This project uses BTF (BPF Type Format) to extract the exact kernel definition of `%s`.
 If you provided --btf-vmlinux-path during initialization, the struct definition matches the kernel.
 During compilation, the definition is verified against BTF to ensure compatibility.
-|} project_name description project_name project_name project_name project_name project_name prog_type_or_struct_ops description prog_type_or_struct_ops
+|} project_name description project_name project_name project_name project_name project_name prog_type description prog_type
     ) else (
       sprintf {|# %s
 
@@ -239,7 +270,7 @@ cd %s && make run
 ## Program Type: %s
 
 %s
-|} project_name prog_type_or_struct_ops project_name project_name project_name project_name project_name prog_type_or_struct_ops (match prog_type_or_struct_ops with
+|} project_name prog_type project_name project_name project_name project_name project_name prog_type (match prog_type with
         | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
         | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
         | "kprobe" -> "Kprobe programs allow dynamic tracing of kernel functions."
@@ -265,7 +296,7 @@ cd %s && make run
   printf "\n🚀 Next steps:\n";
   if is_struct_ops then (
     printf "   1. Edit %s/%s.ks to implement your struct_ops fields\n" project_name project_name;
-    printf "   2. Refer to kernel documentation for %s implementation details\n" prog_type_or_struct_ops;
+    printf "   2. Refer to kernel documentation for %s implementation details\n" prog_type;
     printf "   3. Run 'kernelscript compile %s/%s.ks' to compile with BTF verification\n" project_name project_name;
     printf "   4. Run 'cd %s && make' to build the generated C code\n" project_name
   ) else (
@@ -281,6 +312,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
   (* Initialize context code generators *)
   Kernelscript_context.Xdp_codegen.register ();
   Kernelscript_context.Tc_codegen.register ();
+  Kernelscript_context.Kprobe_codegen.register ();
   
   try
     Printf.printf "\n🔥 KernelScript Compiler\n";
@@ -387,6 +419,9 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
             | "__sk_buff" ->
                 Printf.printf "🔧 Integrating BTF __sk_buff structure with context codegen\n";
                 Kernelscript_context.Context_codegen.update_context_codegen_with_btf "tc" context_btf_type
+            | "pt_regs" ->
+                Printf.printf "🔧 Integrating BTF pt_regs structure with context codegen\n";
+                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "kprobe" context_btf_type
             | _ -> ()
           ) template.types;
           
