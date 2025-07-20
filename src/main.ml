@@ -525,6 +525,69 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) compilation_ast in
     Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
     
+    (* Phase 4.5: Safety Analysis *)
+    current_phase := "Safety Analysis";
+    Printf.printf "Phase 4.5: %s\n" !current_phase;
+    
+    (* Extract all functions from the AST for safety analysis *)
+    let all_functions = List.fold_left (fun acc decl ->
+      match decl with
+      | Ast.AttributedFunction attr_func -> attr_func.attr_function :: acc
+      | Ast.GlobalFunction func -> func :: acc
+      | _ -> acc
+    ) [] compilation_ast in
+    
+    (* Create a program structure for safety analysis *)
+    let safety_program = {
+      Ast.prog_name = base_name;
+      prog_type = Xdp; (* Default - not used by safety checker *)
+      prog_functions = all_functions;
+      prog_maps = [];
+      prog_structs = [];
+      prog_pos = Ast.make_position 1 1 input_file;
+    } in
+    
+    (* Run safety analysis *)
+    let safety_analysis = Safety_checker.analyze_safety safety_program in
+    
+    (* Check for safety violations and report them *)
+    if not safety_analysis.overall_safe then (
+      Printf.eprintf "⚠️  Safety Analysis Issues:\n";
+      
+      (* Report stack overflow issues *)
+      if safety_analysis.stack_analysis.potential_overflow then (
+        Printf.eprintf "❌ Stack overflow detected: %d bytes exceeds eBPF limit of %d bytes\n"
+          safety_analysis.stack_analysis.max_stack_usage
+          Safety_checker.EbpfConstraints.max_stack_size;
+        List.iter (fun warning -> Printf.eprintf "   %s\n" warning) safety_analysis.stack_analysis.warnings;
+        Printf.eprintf "   Suggestion: Use BPF per-cpu array maps for large data structures\n";
+      );
+      
+      (* Report bounds errors *)
+      if safety_analysis.bounds_errors <> [] then (
+        Printf.eprintf "❌ Bounds checking errors:\n";
+        List.iter (fun error -> 
+          Printf.eprintf "   %s\n" (Safety_checker.string_of_bounds_error error)
+        ) safety_analysis.bounds_errors;
+      );
+      
+      (* Report pointer safety issues *)
+      if safety_analysis.pointer_safety.invalid_pointers <> [] then (
+        Printf.eprintf "❌ Pointer safety issues:\n";
+        List.iter (fun (ptr, reason) -> 
+          Printf.eprintf "   %s: %s\n" ptr reason
+        ) safety_analysis.pointer_safety.invalid_pointers;
+      );
+      
+      Printf.eprintf "\n❌ Compilation halted due to safety violations\n";
+      exit 1
+    ) else (
+      Printf.printf "✅ Safety analysis passed - %s stack usage: %d/%d bytes\n\n" 
+        base_name 
+        safety_analysis.stack_analysis.max_stack_usage 
+        Safety_checker.EbpfConstraints.max_stack_size
+    );
+    
     (* Phase 5: IR Optimization *)
     current_phase := "IR Optimization";
     Printf.printf "Phase 5: %s\n" !current_phase;
