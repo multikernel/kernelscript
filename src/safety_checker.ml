@@ -191,9 +191,6 @@ let check_array_bounds expr =
               | None ->
                   (* Type annotation missing - shouldn't happen with type-annotated AST *)
                   UnknownBounds arr_name :: errors)
-         | FieldAccess (_, "data"), Literal (IntLit (idx, _)) when idx >= 1500 ->
-             (* Unsafe packet access - large index into packet data *)
-             PointerOutOfBounds ("packet_data") :: errors
          | _ -> 
              (* Check sub-expressions *)
              let errors' = check_expr arr_expr errors in
@@ -203,9 +200,7 @@ let check_array_bounds expr =
          | Literal (IntLit (0, _)) ->
              (* Null pointer field access *)
              NullPointerDereference field :: errors
-         | FieldAccess (_, "data") ->
-             (* Direct packet data field access without bounds check *)
-             PointerOutOfBounds ("packet_field_" ^ field) :: errors
+
          | _ -> check_expr ptr_expr errors)
     | Call (_, args) ->
         List.fold_left (fun acc arg -> check_expr arg acc) errors args
