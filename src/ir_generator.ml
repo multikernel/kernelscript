@@ -1307,10 +1307,47 @@ and lower_statement ctx stmt =
       
   | Ast.Declaration (name, typ_opt, expr_opt) ->
       let reg = get_variable_register ctx name in
-      let (target_type, init_value_opt) = 
-        resolve_declaration_type_and_init ctx reg typ_opt expr_opt in
       
-      declare_variable ctx name reg target_type init_value_opt stmt.stmt_pos
+      (* Handle function call declarations elegantly by proper instruction ordering *)
+      (match expr_opt with
+       | Some expr when (match expr.Ast.expr_desc with Ast.Call _ -> true | _ -> false) ->
+           (* For function calls: emit declaration first, then call with assignment *)
+           let target_type = match typ_opt with
+             | Some ast_type -> resolve_type_alias ctx reg ast_type
+             | None ->
+                 (* Infer type from function call if no explicit type *)
+                 (match expr.expr_type with
+                  | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+                  | None -> IRU32)
+           in
+           
+           (* Emit declaration first *)
+           declare_variable ctx name reg target_type None stmt.stmt_pos;
+           
+           (* Then emit function call as assignment *)
+           (match expr.Ast.expr_desc with
+            | Ast.Call (callee_expr, args) ->
+                let arg_vals = List.map (lower_expression ctx) args in
+                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let call_target = match callee_expr.Ast.expr_desc with
+                  | Ast.Identifier name ->
+                      if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                        let callee_val = lower_expression ctx callee_expr in
+                        FunctionPointerCall callee_val
+                      else
+                        DirectCall name
+                  | _ ->
+                      let callee_val = lower_expression ctx callee_expr in
+                      FunctionPointerCall callee_val
+                in
+                let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+                emit_instruction ctx instr
+            | _ -> ()) (* Shouldn't happen due to our guard *)
+       | _ ->
+           (* Non-function call declarations: use existing logic *)
+           let (target_type, init_value_opt) = 
+             resolve_declaration_type_and_init ctx reg typ_opt expr_opt in
+           declare_variable ctx name reg target_type init_value_opt stmt.stmt_pos)
       
   | Ast.ConstDeclaration (name, typ_opt, expr) ->
       let reg = get_variable_register ctx name in
