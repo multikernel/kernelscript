@@ -925,6 +925,31 @@ let test_map_field_access_pointer_fix () =
   check bool "dot notation used for regular struct field access" true (contains_substr regular_result "my_struct.size");
   ()
 
+(** Test variable declaration with function call initialization *)
+let test_variable_function_call_declaration () =
+  let ctx = create_c_context () in
+  ctx.indent_level <- 1; (* Set valid indent level *)
+  
+  (* Create a function call that returns to a register *)
+  let result_reg = 0 in
+  let result_val = make_ir_value (IRRegister result_reg) IRU32 test_pos in
+  let call_instr = make_ir_instruction (IRCall (DirectCall "helper_function", [make_ir_value (IRLiteral (IntLit (5, None))) IRU32 test_pos], Some result_val)) test_pos in
+  
+  (* Create a variable declaration for the same register with no initialization *)
+  let decl_instr = make_ir_instruction (IRDeclareVariable (result_val, IRU32, None)) test_pos in
+  
+  (* Test the optimization that combines these into a single declaration *)
+  let ir_block = make_ir_basic_block "test" [call_instr; decl_instr] 0 in
+  generate_c_basic_block ctx ir_block;
+  
+  let output = String.concat "\n" ctx.output_lines in
+  
+  (* Should generate: __u32 val_0 = helper_function(5); *)
+  check bool "combined declaration with function call" true (contains_substr output "val_0 = helper_function(5)");
+  
+  (* Should NOT generate separate variable declaration without initialization *)
+  check bool "no uninitialized declaration" false (contains_substr output "__u32 val_0;")
+
 (** Test suite definition *)
 let suite =
   [
@@ -962,6 +987,7 @@ let suite =
     ("String size collection from userspace structs", `Quick, test_string_size_collection_from_userspace_structs);
     ("Declaration ordering fix", `Quick, test_declaration_ordering_fix);
     ("BPF printk string literal fix", `Quick, test_bpf_printk_string_literal_fix);
+    ("Variable function call declaration", `Quick, test_variable_function_call_declaration);
   ]
 
 (** Run all tests *)

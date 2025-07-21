@@ -208,6 +208,76 @@ let test_userspace_binding_generation () =
   | None ->
       fail "No C bindings found"
 
+let test_variable_function_call_initialization () =
+  (* Test for the bug where function calls in variable initializers 
+     return to wrong registers, causing uninitialized variable usage *)
+  let input = {|
+@xdp fn test_handler(ctx: *xdp_md) -> xdp_action {
+    return 2  // XDP_PASS
+}
+
+fn main() -> i32 {
+    var prog = load(test_handler)  // Should assign to same register as 'prog'
+    var result = attach(prog, "eth0", 0)  // Should use 'prog' register correctly
+    return result
+}
+|} in
+
+  try
+    let ast = Kernelscript.Parse.parse_string input in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir_multi_prog = generate_ir typed_ast symbol_table "test_var_func_init" in
+    
+    (* Extract the main function from userspace program *)
+    let userspace_program = match ir_multi_prog.userspace_program with
+      | Some prog -> prog
+      | None -> failwith "No userspace program found"
+    in
+    let main_func = List.find (fun func -> func.func_name = "main") userspace_program.userspace_functions in
+    
+    (* Collect all instructions from all basic blocks *)
+    let all_instructions = List.flatten (List.map (fun block -> block.instructions) main_func.basic_blocks) in
+    
+    (* Find variable declarations and function calls *)
+    let declarations = List.filter_map (fun instr ->
+      match instr.instr_desc with
+      | IRDeclareVariable (dest_val, _, _) -> Some dest_val
+      | _ -> None
+    ) all_instructions in
+    
+    let function_calls = List.filter_map (fun instr ->
+      match instr.instr_desc with
+      | IRCall (_, _, Some result_val) -> Some result_val
+      | _ -> None
+    ) all_instructions in
+    
+    (* Verify we have the expected number of declarations and calls *)
+    check int "Should have variable declarations" 2 (List.length declarations);
+    check int "Should have function calls" 2 (List.length function_calls);
+    
+    (* The key test: verify that function call returns go to the same registers as variable declarations *)
+    let get_register_from_value val_desc = match val_desc with
+      | IRRegister reg -> Some reg
+      | _ -> None
+    in
+    
+    let declaration_registers = List.filter_map (fun val_desc -> get_register_from_value val_desc.value_desc) declarations in
+    let call_result_registers = List.filter_map (fun val_desc -> get_register_from_value val_desc.value_desc) function_calls in
+    
+    (* Verify that function call results use the same registers as variable declarations *)
+    (* This catches the bug where function calls returned to different registers *)
+    check bool "Function call results should use declaration registers" true 
+      (List.for_all (fun reg -> List.mem reg declaration_registers) call_result_registers);
+    
+    (* Verify register consistency - each variable should map to exactly one register *)
+    let sorted_decl_regs = List.sort compare declaration_registers in
+    let sorted_call_regs = List.sort compare call_result_registers in
+    check (list int) "Declaration and call registers should match" sorted_decl_regs sorted_call_regs
+    
+  with
+  | e -> failwith (Printf.sprintf "Variable function call initialization test failed: %s" (Printexc.to_string e))
+
 let ir_tests = [
   "program_lowering", `Quick, test_program_lowering;
   "context_access_lowering", `Quick, test_context_access_lowering;
@@ -215,6 +285,7 @@ let ir_tests = [
   "bounds_check_insertion", `Quick, test_bounds_check_insertion;
   "stack_usage_tracking", `Quick, test_stack_usage_tracking;
   "userspace_binding_generation", `Quick, test_userspace_binding_generation;
+  "variable_function_call_initialization", `Quick, test_variable_function_call_initialization;
 ]
 
 let () =

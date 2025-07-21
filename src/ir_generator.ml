@@ -1017,20 +1017,67 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
   | Some ast_type, Some expr ->
       (* Use explicitly declared type, but process initialization expression *)
       let target_type = resolve_type_alias ctx reg ast_type in
-      let value = lower_expression ctx expr in
-      (target_type, Some value)
+      (* For function calls, manually handle them to use the target register *)
+      (match expr.Ast.expr_desc with
+       | Ast.Call (callee_expr, args) ->
+           (* Handle function call that should return to the target register *)
+           let arg_vals = List.map (lower_expression ctx) args in
+           let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+           let call_target = match callee_expr.Ast.expr_desc with
+             | Ast.Identifier name ->
+                 if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                   let callee_val = lower_expression ctx callee_expr in
+                   FunctionPointerCall callee_val
+                 else
+                   DirectCall name
+             | _ ->
+                 let callee_val = lower_expression ctx callee_expr in
+                 FunctionPointerCall callee_val
+           in
+           let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+           emit_instruction ctx instr;
+           (target_type, None)
+       | _ ->
+           (* Non-function call - use normal processing *)
+           let value = lower_expression ctx expr in
+           (target_type, Some value))
   | None, Some expr ->
       (* No declared type - use type checker annotation if available, otherwise infer from expression *)
-      let value = lower_expression ctx expr in
-      let inferred_type = match expr.expr_type with
-        | Some ast_type -> 
-            (* Prioritize type checker annotation as single source of truth *)
-            ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-        | None -> 
-            (* Fallback to IR type inference only when type checker didn't provide annotation *)
-            value.val_type
-      in
-      (inferred_type, Some value)
+      (match expr.Ast.expr_desc with
+       | Ast.Call (callee_expr, args) ->
+           (* Handle function call in type inference *)
+           let inferred_type = match expr.Ast.expr_type with
+             | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+             | None -> IRU32 (* Default fallback *)
+           in
+           let arg_vals = List.map (lower_expression ctx) args in
+           let result_val = make_ir_value (IRRegister reg) inferred_type expr.Ast.expr_pos in
+           let call_target = match callee_expr.Ast.expr_desc with
+             | Ast.Identifier name ->
+                 if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                   let callee_val = lower_expression ctx callee_expr in
+                   FunctionPointerCall callee_val
+                 else
+                   DirectCall name
+             | _ ->
+                 let callee_val = lower_expression ctx callee_expr in
+                 FunctionPointerCall callee_val
+           in
+           let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+           emit_instruction ctx instr;
+           (inferred_type, None)
+       | _ ->
+           (* Non-function call - use normal processing *)
+           let value = lower_expression ctx expr in
+           let inferred_type = match expr.Ast.expr_type with
+             | Some ast_type -> 
+                 (* Prioritize type checker annotation as single source of truth *)
+                 ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+             | None -> 
+                 (* Fallback to IR type inference only when type checker didn't provide annotation *)
+                 value.val_type
+           in
+           (inferred_type, Some value))
   | Some ast_type, None ->
       (* Declared type, no initialization *)
       let target_type = resolve_type_alias ctx reg ast_type in
