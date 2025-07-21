@@ -2451,6 +2451,9 @@ let rec generate_c_instruction ctx ir_instr =
                 (match Kernelscript_context.Context_codegen.map_context_action_constant "tc" i with
                  | Some action -> action
                  | None -> string_of_int i)
+            | IRMapAccess (_, _, _) ->
+                (* For map access in return position, auto-dereference to return the value *)
+                generate_c_value ~auto_deref_map_access:true ctx ret_val
             | _ -> generate_c_value ctx ret_val
           in
           

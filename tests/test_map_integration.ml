@@ -406,6 +406,48 @@ map<u32, u64> tc_stats : HashMap(1024)
     | exn -> fail ("Error in " ^ prog_type ^ " test: " ^ Printexc.to_string exn)
   ) programs
 
+(** Test the fix for map access return bug *)
+let test_map_access_return_bug_fix () =
+  let source = {|
+enum TestEnum {
+  VALUE_A = 1,
+  VALUE_B = 2
+}
+
+map<u32, TestEnum> test_map : HashMap(64)
+
+@helper
+fn get_value(key: u32) -> TestEnum {
+  var result = test_map[key]
+  if (result != none) {
+    return result  // This should return the dereferenced value, not pointer
+  } else {
+    return VALUE_A
+  }
+}
+
+@xdp fn test_program(ctx: *xdp_md) -> xdp_action {
+  var value = get_value(42)
+  return 2
+}
+|} in
+  
+  (* Parse and compile *)
+  let ast = parse_string source in
+  
+  match compile_to_c_code ast with
+  | Some c_code ->
+      (* Check that the generated code contains the correct dereferencing pattern *)
+      let has_deref_pattern = string_contains_substring c_code "__val" &&
+                             string_contains_substring c_code "*(ptr_" in
+      let has_bad_pointer_return = string_contains_substring c_code "return ptr_" in
+      
+      (* Verify the fix is applied: should have dereferencing but not direct pointer returns *)
+      check bool "Map access return should be dereferenced" true has_deref_pattern;
+      check bool "Should not return raw pointers" false has_bad_pointer_return
+  | None ->
+      fail "Failed to compile map access return test"
+
 let map_integration_tests = [
   "complete_map_compilation", `Quick, test_complete_map_compilation;
   "multiple_map_types", `Quick, test_multiple_map_types;
@@ -414,6 +456,7 @@ let map_integration_tests = [
   "map_operations_in_conditionals", `Quick, test_map_operations_in_conditionals;
   "memory_safety", `Quick, test_memory_safety;
   "different_context_types", `Quick, test_different_context_types;
+  "map_access_return_bug_fix", `Quick, test_map_access_return_bug_fix;
 ]
 
 let () =
