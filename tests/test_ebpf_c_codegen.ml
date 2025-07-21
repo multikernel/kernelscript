@@ -50,7 +50,7 @@ let test_map_definition () =
   let ctx = create_c_context () in
   generate_map_definition ctx map_def;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   check bool "output contains opening brace" true (String.contains output '{');
   check bool "output contains closing brace" true (String.contains output '}');
   check bool "output contains map name" true (contains_substr output "test_map");
@@ -100,7 +100,7 @@ let test_bounds_checking () =
   let index_val = make_ir_value (IRLiteral (IntLit (5, None))) IRU32 test_pos in
   generate_bounds_check ctx index_val 0 9;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   check bool "bounds check contains if statement" true (contains_substr output "if");
   check bool "bounds check contains XDP_DROP" true (contains_substr output "return XDP_DROP")
 
@@ -115,7 +115,7 @@ let test_map_operations () =
   
   generate_map_load ctx map_val key_val dest_val MapLookup;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   check bool "map lookup contains bpf_map_lookup_elem" true (contains_substr output "bpf_map_lookup_elem");
   check bool "map lookup contains map name" true (contains_substr output "test_map")
 
@@ -130,7 +130,7 @@ let test_literal_map_operations () =
   
   generate_map_store ctx map_val literal_key literal_value MapUpdate;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Verify that temporary variables are created for literals *)
   check bool "key temp variable created" true (contains_substr output "__u32 key_");
@@ -150,7 +150,7 @@ let test_literal_map_operations () =
   
   generate_map_load ctx2 map_val literal_key dest_val MapLookup;
   
-  let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
+  let output2 = String.concat "\n" ctx2.output_lines in
   
   (* Verify key temp variable for lookup *)
   check bool "lookup key temp variable created" true (contains_substr output2 "__u32 key_");
@@ -164,7 +164,7 @@ let test_literal_map_operations () =
   let delete_instr = make_ir_instruction (IRMapDelete (map_val, literal_key)) test_pos in
   generate_c_instruction ctx3 delete_instr;
   
-  let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
+  let output3 = String.concat "\n" ctx3.output_lines in
   
   (* Verify key temp variable for delete *)
   check bool "delete key temp variable created" true (contains_substr output3 "__u32 key_");
@@ -179,7 +179,7 @@ let test_literal_map_operations () =
   
   generate_map_store ctx4 map_val var_key var_value MapUpdate;
   
-  let output4 = String.concat "\n" (List.rev ctx4.output_lines) in
+  let output4 = String.concat "\n" ctx4.output_lines in
   
   (* Verify variables are used directly without temp vars *)
   check bool "variable key used directly" true (contains_substr output4 "bpf_map_update_elem(&test_map, &my_key, &my_value");
@@ -201,7 +201,7 @@ let test_function_generation () =
   
   generate_c_function ctx main_func;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   check bool "function contains SEC annotation" true (contains_substr output "SEC(\"xdp\")");
   check bool "function contains function name" true (contains_substr output "test_main");
   check bool "function contains parameter" true (contains_substr output "struct xdp_md* ctx");
@@ -245,7 +245,7 @@ let test_builtin_print_calls () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   check bool "print call uses bpf_printk" true (contains_substr output "bpf_printk");
   check bool "print call has string literal" true (contains_substr output "\"Hello eBPF\"")
 
@@ -259,7 +259,7 @@ let test_control_flow () =
   
   generate_c_instruction ctx cond_jump;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   check bool "control flow contains if statement" true (contains_substr output "if (1)");
   check bool "control flow contains true branch goto" true (contains_substr output "goto true_branch");
   check bool "control flow contains false branch goto" true (contains_substr output "goto false_branch")
@@ -297,7 +297,7 @@ let test_string_literal_generation () =
   let hello_world_val = make_ir_value (IRLiteral (StringLit "Hello world")) (IRStr 11) test_pos in
   let result = generate_c_value ctx hello_world_val in
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Verify the string is not truncated *)
   check bool "string literal contains full text" true (contains_substr output "\"Hello world\"");
@@ -318,7 +318,7 @@ let test_string_literal_edge_cases () =
   (* Test empty string *)
   let empty_val = make_ir_value (IRLiteral (StringLit "")) (IRStr 1) test_pos in
   let _ = generate_c_value ctx empty_val in
-  let output1 = String.concat "\n" (List.rev ctx.output_lines) in
+  let output1 = String.concat "\n" ctx.output_lines in
   check bool "empty string has zero length" true (contains_substr output1 ".len = 0");
   check bool "empty string has empty data" true (contains_substr output1 ".data = \"\"");
   
@@ -326,7 +326,7 @@ let test_string_literal_edge_cases () =
   let ctx2 = create_c_context () in
   let single_val = make_ir_value (IRLiteral (StringLit "X")) (IRStr 1) test_pos in
   let _ = generate_c_value ctx2 single_val in
-  let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
+  let output2 = String.concat "\n" ctx2.output_lines in
   check bool "single char has length 1" true (contains_substr output2 ".len = 1");
   check bool "single char has correct data" true (contains_substr output2 ".data = \"X\"");
   
@@ -334,7 +334,7 @@ let test_string_literal_edge_cases () =
   let ctx3 = create_c_context () in
   let exact_val = make_ir_value (IRLiteral (StringLit "12345")) (IRStr 5) test_pos in
   let _ = generate_c_value ctx3 exact_val in
-  let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
+  let output3 = String.concat "\n" ctx3.output_lines in
   check bool "exact fit has correct length" true (contains_substr output3 ".len = 5");
   check bool "exact fit has full string" true (contains_substr output3 ".data = \"12345\"")
 
@@ -345,7 +345,7 @@ let test_string_literal_truncation () =
   (* Test string longer than allocated buffer - should be truncated *)
   let long_val = make_ir_value (IRLiteral (StringLit "This is too long")) (IRStr 8) test_pos in
   let _ = generate_c_value ctx long_val in
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Should be truncated to first 8 characters *)
   check bool "long string is truncated" true (contains_substr output ".data = \"This is \"");
@@ -363,7 +363,7 @@ let test_string_literal_in_function_calls () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Critical fix: should use string literal directly, not .data field *)
   check bool "function call uses string literal directly" true (contains_substr output "\"Debug message\"");
@@ -387,7 +387,7 @@ let test_string_literal_multi_arg_calls () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val; int_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Should use string literal directly in multi-arg context *)
   check bool "multi-arg uses string literal directly" true (contains_substr output "\"Test: %d\"");
@@ -403,7 +403,7 @@ let test_string_typedef_generation () =
   (* Generate string literal - this should create str_5_t variable *)
   let string_val = make_ir_value (IRLiteral (StringLit "test")) (IRStr 5) test_pos in
   let result = generate_c_value ctx string_val in
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Should generate str_5_t variable reference *)
   check bool "generates str_5_t variable" true (contains_substr result "str_lit_");
@@ -419,7 +419,7 @@ let test_string_literal_special_chars () =
   (* Test string with newlines and quotes (simpler test to avoid escaping complexity) *)
   let special_val = make_ir_value (IRLiteral (StringLit "Hello World")) (IRStr 11) test_pos in
   let _ = generate_c_value ctx special_val in
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Basic test - ensure string is properly generated *)
   check bool "generates string literal" true (contains_substr output "str_lit_");
@@ -437,7 +437,7 @@ let test_string_assignment_vs_literal () =
   
   generate_c_instruction ctx assign_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Should generate both the literal and the assignment *)
   check bool "generates string literal" true (contains_substr output "str_lit_");
@@ -619,7 +619,7 @@ let test_hex_literal_addressing_fix () =
   (* Test map store with hex literals *)
   generate_map_store ctx map_val hex_key hex_value MapUpdate;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Verify that hex literals create temporary variables and don't try to take addresses directly *)
   check bool "hex key temp variable created" true (contains_substr output "__u32 key_");
@@ -639,7 +639,7 @@ let test_hex_literal_addressing_fix () =
   
   generate_map_load ctx2 map_val hex_key dest_val MapLookup;
   
-  let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
+  let output2 = String.concat "\n" ctx2.output_lines in
   
   (* Verify hex literal handling in map lookup *)
   check bool "lookup hex key temp variable created" true (contains_substr output2 "__u32 key_");
@@ -653,7 +653,7 @@ let test_hex_literal_addressing_fix () =
   let delete_instr = make_ir_instruction (IRMapDelete (map_val, hex_key)) test_pos in
   generate_c_instruction ctx3 delete_instr;
   
-  let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
+  let output3 = String.concat "\n" ctx3.output_lines in
   
   (* Verify hex literal handling in map delete *)
   check bool "delete hex key temp variable created" true (contains_substr output3 "__u32 key_");

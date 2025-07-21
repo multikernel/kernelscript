@@ -94,22 +94,59 @@ let kprobe_field_mappings = [
   });
 ]
 
-(** Generate kprobe-specific includes *)
+(** Dynamic kprobe parameter mappings - populated during compilation based on function signature *)
+let kprobe_parameter_mappings = ref []
+
+(** Register kprobe parameter mappings for a specific function *)
+let register_kprobe_parameter_mappings func_name parameters =
+  let param_mappings = List.mapi (fun i (param_name, param_type) ->
+    let parm_macro = match i with
+      | 0 -> "PT_REGS_PARM1"
+      | 1 -> "PT_REGS_PARM2" 
+      | 2 -> "PT_REGS_PARM3"
+      | 3 -> "PT_REGS_PARM4"
+      | 4 -> "PT_REGS_PARM5"
+      | 5 -> "PT_REGS_PARM6"
+      | _ -> failwith (sprintf "Too many parameters for kprobe function %s (max 6)" func_name)
+    in
+    (param_name, {
+      field_name = param_name;
+      c_expression = (fun ctx_var -> sprintf "%s(%s)" parm_macro ctx_var);
+      requires_cast = false;
+      field_type = param_type;
+    })
+  ) parameters in
+  kprobe_parameter_mappings := param_mappings
+
+(** Clear kprobe parameter mappings *)
+let clear_kprobe_parameter_mappings () =
+  kprobe_parameter_mappings := []
+
+(** Generate kprobe-specific includes with architecture definition at the top *)
 let generate_kprobe_includes () = [
+  "/* Target architecture definition required for PT_REGS_PARM* macros */";
+  "#ifndef __TARGET_ARCH_x86";
+  "#define __TARGET_ARCH_x86";
+  "#endif";
+  "";
   "#include <linux/types.h>";
-  "#include <linux/bpf.h>";
-  "#include <linux/ptrace.h>";
   "#include <bpf/bpf_tracing.h>";
-  "#include <bpf/bpf_helpers.h>";
+  "#include <linux/ptrace.h>";
 ]
 
 (** Generate field access for kprobe context *)
 let generate_kprobe_field_access ctx_var field_name =
   try
-    let (_, field_access) = List.find (fun (name, _) -> name = field_name) kprobe_field_mappings in
+    (* First check dynamic parameter mappings *)
+    let (_, field_access) = List.find (fun (name, _) -> name = field_name) !kprobe_parameter_mappings in
     field_access.c_expression ctx_var
   with Not_found ->
-    failwith ("Unknown kprobe context field: " ^ field_name)
+    try
+      (* Fallback to static register mappings *)
+      let (_, field_access) = List.find (fun (name, _) -> name = field_name) kprobe_field_mappings in
+      field_access.c_expression ctx_var
+    with Not_found ->
+      failwith ("Unknown kprobe context field: " ^ field_name)
 
 (** Map kprobe return constants *)
 let map_kprobe_action_constant = function

@@ -2483,27 +2483,26 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
              )
          | Some Kprobe ->
              let params = attr_func.attr_function.func_params in
-             let resolved_param_type = if List.length params = 1 then 
-               resolve_user_type ctx (snd (List.hd params)) 
-             else UserType "invalid" in
              let resolved_return_type = match attr_func.attr_function.func_return_type with
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              
-             (* Accept either *pt_regs or pt_regs for kprobe context *)
-             let valid_context_type = match resolved_param_type with
-               | Pointer (UserType "pt_regs") -> true
-               | UserType "pt_regs" -> true
-               | Pointer (Struct "pt_regs") -> true
-               | Struct "pt_regs" -> true
-               | _ -> false
+             (* For kprobe functions, accept only the new function signature format with actual kernel function parameters *)
+             let valid_signature = 
+               (* Accept any number of parameters for new format (kernel function signature) *)
+               List.length params >= 0 && List.length params <= 6  (* x86_64 supports max 6 function parameters *)
              in
 
+             (* Allow both i32 (standard eBPF kprobe return) and void (matching kernel function signature) *)
+             let valid_return_type = match resolved_return_type with
+               | Some I32 -> true   (* Standard eBPF kprobe return type *)
+               | Some Void -> true  (* Allow void to match kernel function signatures *)
+               | Some U32 -> true   (* Allow u32 as alternative to i32 *)
+               | _ -> false
+             in
              
-             if List.length params <> 1 ||
-                not valid_context_type ||
-                resolved_return_type <> Some I32 then
-               type_error ("@kprobe attributed function must have signature (ctx: *pt_regs) -> i32") attr_func.attr_pos
+             if not valid_signature || not valid_return_type then
+               type_error ("@kprobe attributed function must have valid signature (max 6 params) with return type -> i32, u32, or void") attr_func.attr_pos
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         

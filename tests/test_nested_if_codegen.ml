@@ -45,7 +45,7 @@ let test_irif_structured_generation () =
   
   (* Generate C code *)
   generate_c_instruction ctx outer_if;
-  let generated_c = String.concat "\n" (List.rev ctx.output_lines) in
+  let generated_c = String.concat "\n" ctx.output_lines in
   
   (* Test assertions *)
   check bool "No goto statements" false (contains_substr generated_c "goto");
@@ -117,7 +117,7 @@ let test_deep_nesting () =
   
   (* Generate C code *)
   generate_c_instruction ctx outer_if;
-  let generated_c = String.concat "\n" (List.rev ctx.output_lines) in
+  let generated_c = String.concat "\n" ctx.output_lines in
   
   (* Test assertions *)
   check bool "No goto in deep nesting" false (contains_substr generated_c "goto");
@@ -139,7 +139,7 @@ let test_if_else () =
   
   (* Generate C code *)
   generate_c_instruction ctx main_if;
-  let generated_c = String.concat "\n" (List.rev ctx.output_lines) in
+  let generated_c = String.concat "\n" ctx.output_lines in
   
   (* Test assertions *)
   check bool "No goto in if-else" false (contains_substr generated_c "goto");

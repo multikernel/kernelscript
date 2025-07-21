@@ -66,7 +66,7 @@ let test_forward_declaration_placement () =
   generate_c_function ctx callback_func;
   generate_c_function ctx main_func;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Check that callback appears before main function *)
   let callback_pos = find_substr_pos output callback_name in
@@ -92,7 +92,7 @@ let test_variable_redefinition_prevention () =
   generate_c_instruction ctx declare_instr1;
   generate_c_instruction ctx declare_instr2;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Count occurrences of variable declaration *)
   let count_occurrences str pattern =
@@ -120,7 +120,7 @@ let test_variable_naming_consistency () =
   
   generate_c_instruction ctx declare_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Check that a variable declaration was generated *)
   let has_variable_declaration = contains_substr output "__u32" in
@@ -139,7 +139,7 @@ let test_missing_variable_declarations () =
   
   generate_c_instruction ctx declare_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Check that variable declaration is generated *)
   let has_declaration = contains_substr output "__u32" in
@@ -159,7 +159,7 @@ let test_callback_signature_consistency () =
   
   generate_c_function ctx callback_func;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Check that a function was generated *)
   let has_function = contains_substr output callback_name in
@@ -178,7 +178,7 @@ let test_register_collection_completeness () =
   
   generate_c_instruction ctx instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* Check that instruction is handled *)
   let has_declaration = contains_substr output "__u32" in

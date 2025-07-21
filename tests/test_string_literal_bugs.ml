@@ -43,7 +43,7 @@ let test_hello_world_truncation_bug () =
   (* Test the exact case that was failing: "Hello world" in str(11) *)
   let hello_world_val = make_ir_value (IRLiteral (StringLit "Hello world")) (IRStr 11) test_pos in
   let _ = generate_c_value ctx hello_world_val in
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* REGRESSION TEST: Ensure "Hello world" is NOT truncated *)
   Alcotest.(check bool) "Hello world is NOT truncated to Hello worl" 
@@ -76,7 +76,7 @@ let test_bpf_printk_data_field_bug () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [debug_msg_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* POSITIVE TEST: Ensure string literal is passed directly to bpf_printk (the fix) *)
   Alcotest.(check bool) "Function call uses string literal directly" 
@@ -106,7 +106,7 @@ let test_multi_arg_printk_data_field_bug () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [format_val; count_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* POSITIVE TEST: Ensure string literal is passed directly in multi-arg context *)
   Alcotest.(check bool) "Multi-arg call uses string literal directly" 
@@ -133,7 +133,7 @@ let test_combined_bugs_integration () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [hello_world_val], None)) test_pos in
   generate_c_instruction ctx print_instr;
   
-  let output = String.concat "\n" (List.rev ctx.output_lines) in
+  let output = String.concat "\n" ctx.output_lines in
   
   (* REGRESSION TEST: String should not be truncated *)
   Alcotest.(check bool) "Integration: No truncation" 
@@ -310,7 +310,7 @@ let test_edge_cases_for_bugs () =
   let ctx1 = create_c_context () in
   let exact_fit_val = make_ir_value (IRLiteral (StringLit "exact")) (IRStr 5) test_pos in
   let _ = generate_c_value ctx1 exact_fit_val in
-  let output1 = String.concat "\n" (List.rev ctx1.output_lines) in
+  let output1 = String.concat "\n" ctx1.output_lines in
   
   Alcotest.(check bool) "Exact fit: Full string" 
     true (contains_substr output1 "\"exact\"");
@@ -322,7 +322,7 @@ let test_edge_cases_for_bugs () =
   let single_char_val = make_ir_value (IRLiteral (StringLit "x")) (IRStr 1) test_pos in
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [single_char_val], None)) test_pos in
   generate_c_instruction ctx2 print_instr;
-  let output2 = String.concat "\n" (List.rev ctx2.output_lines) in
+  let output2 = String.concat "\n" ctx2.output_lines in
   
   Alcotest.(check bool) "Single char: Uses string literal directly in print" 
     true (contains_substr output2 "bpf_printk(\"x\")");
@@ -334,7 +334,7 @@ let test_edge_cases_for_bugs () =
   let empty_val = make_ir_value (IRLiteral (StringLit "")) (IRStr 1) test_pos in
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [empty_val], None)) test_pos in
   generate_c_instruction ctx3 print_instr;
-  let output3 = String.concat "\n" (List.rev ctx3.output_lines) in
+  let output3 = String.concat "\n" ctx3.output_lines in
   
   Alcotest.(check bool) "Empty string: Uses string literal directly in print" 
     true (contains_substr output3 "bpf_printk(\"\")");

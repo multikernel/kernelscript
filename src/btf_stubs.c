@@ -256,7 +256,7 @@ static char* resolve_type_to_string(struct btf *btf, int type_id) {
         if (kind == BTF_KIND_PTR) {
             const struct btf_type *target = btf__type_by_id(btf, t->type);
             if (target && btf_kind(target) == BTF_KIND_INT && target->size == 1) {
-                return strdup("str");
+                return strdup("*u8");  /* Use *u8 for char* to avoid str parsing issues */
             }
             return strdup("*u8");
         }
@@ -371,7 +371,7 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             }
             /* Check if this points to char (string) */
             if (target && btf_kind(target) == BTF_KIND_INT && target->size == 1) {
-                CAMLreturn(caml_copy_string("str"));
+                CAMLreturn(caml_copy_string("*u8"));  /* Use *u8 for char* to avoid str parsing issues */
             }
             /* Other pointer types */
             CAMLreturn(caml_copy_string("*u8"));
@@ -520,7 +520,7 @@ value btf_extract_function_signatures_stub(value btf_handle, value function_name
         temp = Field(temp, 1);
     }
     
-    char **target_functions = malloc(func_count * sizeof(char*));
+    const char **target_functions = malloc(func_count * sizeof(const char*));
     temp = function_names;
     for (int i = 0; i < func_count; i++) {
         target_functions[i] = String_val(Field(temp, 0));

@@ -181,10 +181,10 @@ let create_c_context () = {
 let indent ctx = String.make (ctx.indent_level * 4) ' '
 
 let emit_line ctx line =
-  ctx.output_lines <- (indent ctx ^ line) :: ctx.output_lines
+  ctx.output_lines <- ctx.output_lines @ [(indent ctx ^ line)]
 
 let emit_blank_line ctx =
-  ctx.output_lines <- "" :: ctx.output_lines
+  ctx.output_lines <- ctx.output_lines @ [""]
 
 let increase_indent ctx = ctx.indent_level <- ctx.indent_level + 1
 
@@ -1032,8 +1032,8 @@ let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
     List.iter (emit_line ctx) ctx.pending_callbacks;
     ctx.pending_callbacks <- [];
     emit_blank_line ctx;
-    (* Reverse and prepend current output *)
-    ctx.output_lines <- (List.rev current_output) @ ctx.output_lines;
+    (* Prepend current output *)
+    ctx.output_lines <- current_output @ ctx.output_lines;
   );
   
   (* With attributed functions, each program has only the entry function - no nested functions *)
@@ -1091,9 +1091,34 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     [] (* Skip builtin headers - enum constants come from system headers *)
   in
   
-  let all_includes = (List.rev builtin_includes) @ standard_includes @ unique_context_includes @ base_type_includes in
-  List.iter (fun inc -> ctx.output_lines <- inc :: ctx.output_lines) (List.rev all_includes);
-  emit_blank_line ctx
+  (* For kprobe programs, only emit kprobe includes which contain everything needed *)
+  let has_kprobe = List.exists (function Ast.Kprobe -> true | _ -> false) program_types in
+  if has_kprobe then (
+    (* Emit ONLY kprobe includes which contain architecture definition and all needed headers *)
+    let kprobe_includes = Kernelscript_context.Context_codegen.get_context_includes "kprobe" in
+    List.iter (emit_line ctx) kprobe_includes;
+    emit_blank_line ctx;
+    
+    (* Add additional standard includes that aren't in kprobe includes *)
+    let all_additional_includes = [
+      "#include <linux/types.h>";
+      "#include <linux/bpf.h>";
+      "#include <bpf/bpf_helpers.h>";
+      "#include <linux/if_ether.h>";
+      "#include <linux/ip.h>";
+      "#include <linux/in.h>";
+      "#include <linux/if_xdp.h>";
+    ] in
+    let additional_includes = List.filter (fun inc -> 
+      not (List.mem inc kprobe_includes)) all_additional_includes in
+    List.iter (emit_line ctx) additional_includes;
+    emit_blank_line ctx
+  ) else (
+    (* For non-kprobe programs, use standard processing *)
+    let all_includes = builtin_includes @ standard_includes @ unique_context_includes @ base_type_includes in
+    List.iter (emit_line ctx) all_includes;
+    emit_blank_line ctx
+  )
 
 (** Generate map definitions *)
 
@@ -1331,6 +1356,14 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
             sprintf "({ struct %s_config *cfg = get_%s_config(); cfg ? cfg->%s : 0; })" 
               config_name config_name field_name
         | _ -> name
+      (* Check if this is a kprobe function parameter in new format *)
+      else if ctx.current_function_context_type = Some "kprobe" then
+        (try
+          (* Try to use kprobe parameter mapping to generate PT_REGS_PARM* access *)
+          Kernelscript_context.Context_codegen.generate_context_field_access "kprobe" "ctx" name
+        with Failure _ ->
+          (* If parameter mapping fails, use name directly (for non-parameter variables) *)
+          name)
       else
         name  (* Function parameters and regular variables use their names directly *)
   | IRRegister reg -> 
@@ -2641,7 +2674,7 @@ let rec generate_c_instruction ctx ir_instr =
       
       (* Store forward declaration and callback for top-level emission *)
       let forward_decl = sprintf "static long %s(__u32 index, void *ctx_ptr);" callback_name in
-      let callback_lines = List.rev callback_ctx.output_lines in
+      let callback_lines = callback_ctx.output_lines in
       ctx.pending_callbacks <- forward_decl :: "" :: callback_lines @ [""] @ ctx.pending_callbacks;
       
       (* Generate the actual bpf_loop() call *)
@@ -2975,36 +3008,58 @@ let generate_c_function ctx ir_func =
   Hashtbl.clear ctx.register_name_hints;
   Hashtbl.clear ctx.inlinable_registers;
   
-  (* Determine current function's context type from first parameter *)
+  (* Determine current function's context type from first parameter or program type *)
   ctx.current_function_context_type <- 
-    (match ir_func.parameters with
-     | (_, IRContext XdpCtx) :: _ -> Some "xdp"
-     | (_, IRContext TcCtx) :: _ -> Some "tc"
-     | (_, IRContext KprobeCtx) :: _ -> Some "kprobe"
-     | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
-     | (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
-     | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
-     | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
-     | (_, IRPointer (IRStruct ("xdp_md", _, _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
-     | _ -> None);
+    (match ir_func.func_program_type with
+     | Some Ast.Kprobe -> Some "kprobe"  (* Always kprobe for kprobe functions *)
+     | _ ->
+         (* Fall back to parameter-based detection *)
+         (match ir_func.parameters with
+          | (_, IRContext XdpCtx) :: _ -> Some "xdp"
+          | (_, IRContext TcCtx) :: _ -> Some "tc"
+          | (_, IRContext KprobeCtx) :: _ -> Some "kprobe"
+          | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
+          | (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
+          | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
+          | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
+          | (_, IRPointer (IRStruct ("xdp_md", _, _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
+          | _ -> None));
   
-  let return_type_str = match ir_func.return_type with
-    | Some ret_type -> ebpf_type_from_ir_type ret_type
-    | None -> "void"
+  let return_type_str = 
+    (* Special handling for kprobe functions: always use int return type for eBPF compatibility *)
+    match ir_func.func_program_type with
+    | Some Ast.Kprobe -> "__s32"  (* eBPF kprobe programs must return int *)
+    | _ ->
+        match ir_func.return_type with
+        | Some ret_type -> ebpf_type_from_ir_type ret_type
+        | None -> "void"
   in
   
-  let params_str = String.concat ", " 
-    (List.map (fun (name, param_type) ->
-       sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
-     ) ir_func.parameters)
+  let params_str = 
+    (* Special handling for kprobe functions with new signature format *)
+    match ir_func.func_program_type with
+    | Some Ast.Kprobe when not (List.exists (fun (_, param_type) -> 
+        match param_type with
+        | IRPointer (IRStruct ("pt_regs", _, _), _) -> true
+        | _ -> false
+      ) ir_func.parameters) ->
+        (* New kprobe format: always use struct pt_regs *ctx parameter *)
+        "struct pt_regs *ctx"
+    | _ ->
+        (* Traditional format: use parameters as-is *)
+        String.concat ", " 
+          (List.map (fun (name, param_type) ->
+             sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
+           ) ir_func.parameters)
   in
   
   let section_attr = 
     (* Check if this is a struct_ops function first *)
     match ir_func.func_program_type with
     | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
+    | Some Ast.Kprobe when ir_func.is_main -> "SEC(\"kprobe\")"  (* Always use kprobe section for kprobe functions *)
     | _ ->
-        (* For non-struct_ops functions, only generate SEC if it's a main function *)
+        (* For non-struct_ops and non-kprobe functions, only generate SEC if it's a main function *)
         if ir_func.is_main then
           match ir_func.parameters with
           | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
@@ -3150,8 +3205,8 @@ let generate_c_program ?_config_declarations ir_prog =
     List.iter (emit_line ctx) ctx.pending_callbacks;
     ctx.pending_callbacks <- [];
     emit_blank_line ctx;
-    (* Reverse and prepend current output *)
-    ctx.output_lines <- (List.rev current_output) @ ctx.output_lines;
+    (* Prepend current output *)
+    ctx.output_lines <- current_output @ ctx.output_lines;
   );
   
   (* With attributed functions, each program has only the entry function - no nested functions *)
@@ -3160,7 +3215,7 @@ let generate_c_program ?_config_declarations ir_prog =
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
   
   (* Return generated code *)
-  String.concat "\n" (List.rev ctx.output_lines)
+  String.concat "\n" ctx.output_lines
 
 (** Generate complete C program from multiple IR programs *)
 
@@ -3232,7 +3287,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
   
   (* Return generated code *)
-  String.concat "\n" (List.rev ctx.output_lines)
+  String.concat "\n" ctx.output_lines
 
 
 
@@ -3434,7 +3489,10 @@ let compile_multi_to_c_with_tail_calls
       }
   in
   
-  (String.concat "\n" (List.rev ctx.output_lines), final_tail_call_analysis)
+  (* Assemble final output *)
+  let final_output = String.concat "\n" ctx.output_lines in
+  
+  (final_output, final_tail_call_analysis)
 
 (** Multi-program compilation entry point with automatic tail call handling *)
 

@@ -2062,6 +2062,24 @@ let lower_function ctx prog_name ?(program_type = None) (func_def : Ast.function
   ctx.blocks <- [];
   ctx.stack_usage <- 0;
   
+  (* Register kprobe parameter mappings before processing the function *)
+  (match program_type with
+  | Some Ast.Kprobe ->
+      let parameters = List.map (fun (param_name, param_type) ->
+        let param_type_str = match param_type with
+          | Ast.U8 -> "u8" | Ast.U16 -> "u16" | Ast.U32 -> "u32" | Ast.U64 -> "u64"
+          | Ast.I8 -> "i8" | Ast.I16 -> "i16" | Ast.I32 -> "i32" | Ast.I64 -> "i64"
+          | Ast.Bool -> "bool" | Ast.Char -> "char" | Ast.Void -> "void"
+          | Ast.Pointer Ast.U8 -> "*u8"
+          | Ast.Pointer _ -> "*u8"  (* Simplified pointer handling *)
+          | Ast.UserType name -> name
+          | _ -> "unknown"
+        in
+        (param_name, param_type_str)
+      ) func_def.func_params in
+      Kernelscript_context.Kprobe_codegen.register_kprobe_parameter_mappings func_def.func_name parameters
+  | _ -> ());
+
   (* Store function parameters (don't allocate registers for them) *)
   let ir_params = List.map (fun (name, ast_type) ->
     let ir_type = ast_type_to_ir_type_with_context ctx.symbol_table ast_type in

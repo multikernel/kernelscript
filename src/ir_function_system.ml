@@ -42,7 +42,19 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | _ -> false
   in
   
-  if ir_func.is_main && not is_struct_ops_function then (
+  (* Check if this is a kprobe function with new signature format *)
+  let is_kprobe_new_format = match ir_func.func_program_type with
+    | Some Ast.Kprobe -> 
+        (* New format: parameters don't include pt_regs context *)
+        not (List.exists (fun (_, param_type) -> 
+          match param_type with
+          | IRPointer (IRStruct ("pt_regs", _, _), _) -> true
+          | _ -> false
+        ) ir_func.parameters)
+    | _ -> false
+  in
+  
+  if ir_func.is_main && not is_struct_ops_function && not is_kprobe_new_format then (
     if param_count <> 1 then
       errors := "Main function must have exactly one parameter (context)" :: !errors;
     match ir_func.parameters with
@@ -73,6 +85,21 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | Some _ when is_kprobe_program -> errors := "Kprobe programs must return int (i32)" :: !errors;
     | Some _ -> errors := "Main function must return an action type (or int for TC/kprobe programs)" :: !errors;
     | None -> errors := "Main function must have a return type" :: !errors
+  );
+  
+  (* Special validation for kprobe functions with new signature format *)
+  if ir_func.is_main && is_kprobe_new_format then (
+    (* Allow flexible parameter count for new kprobe format *)
+    if param_count > 6 then
+      errors := "Kprobe functions support maximum 6 parameters" :: !errors;
+    
+    (* Validate return type for new kprobe format *)
+    match ir_func.return_type with
+    | Some (IRI32) -> ()  (* Standard kprobe return type *)
+    | Some (IRU32) -> ()  (* Allow u32 as well *)
+    | Some (IRVoid) -> () (* Allow void return type for some kprobes *)
+    | Some _ -> errors := "Kprobe programs must return int (i32), u32, or void" :: !errors;
+    | None -> errors := "Kprobe functions must have a return type" :: !errors
   );
   
   (* For struct_ops functions, we have different validation rules *)
