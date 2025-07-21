@@ -59,7 +59,6 @@
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
 %right UMINUS /* Precedence for unary minus - higher than binary ops */
-%left DOT ARROW
 %left LBRACKET
 
 /* Type declarations for non-terminals */
