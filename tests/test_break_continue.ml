@@ -17,6 +17,12 @@
 open Alcotest
 open Kernelscript.Parse
 open Kernelscript.Type_checker
+open Kernelscript.Ir
+open Kernelscript.Ebpf_c_codegen
+open Kernelscript.Ast
+
+(** Common test position for IR/codegen tests *)
+let test_pos = make_position 1 1 "test.ks"
 
 (** Helper function to parse and evaluate a program with break/continue *)
 let parse_and_check_break_continue program_text =
@@ -196,6 +202,118 @@ let test_break_evaluation () =
   with
   | e -> fail ("Failed break evaluation test: " ^ Printexc.to_string e)
 
+(** Test that verifies the fix for break/continue in unbound loops
+    This test ensures that callback functions have consistent variable naming
+    between declarations and usage. Previously, variables were declared as
+    tmp_X but referenced as val_X, causing compilation errors.
+*)
+let test_break_continue_unbound_variable_naming () =
+  let ctx = create_c_context () in
+  
+  (* Create registers for variables that would be used in break/continue logic *)
+  let counter_reg = 1 in
+  let condition_reg = 2 in
+  let temp_reg = 3 in
+  
+  (* Create IR values representing loop variables *)
+  let counter_val = make_ir_value (IRRegister counter_reg) IRU32 test_pos in
+  let condition_val = make_ir_value (IRRegister condition_reg) IRBool test_pos in
+  let temp_val = make_ir_value (IRRegister temp_reg) IRU32 test_pos in
+  
+  (* Create a modulo operation and comparison (similar to the original failing case) *)
+  let two_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
+  let zero_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 test_pos in
+  
+  (* Create IR instructions that would be in a bpf_loop callback *)
+  let mod_expr = make_ir_expr (IRBinOp (counter_val, IRMod, two_val)) IRU32 test_pos in
+  let mod_assign = make_ir_instruction (IRAssign (temp_val, mod_expr)) test_pos in
+  
+  let eq_expr = make_ir_expr (IRBinOp (temp_val, IREq, zero_val)) IRBool test_pos in
+  let eq_assign = make_ir_instruction (IRAssign (condition_val, eq_expr)) test_pos in
+  
+  (* Create the bpf_loop instruction with these body instructions *)
+  let start_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 test_pos in
+  let end_val = make_ir_value (IRLiteral (IntLit (1000, None))) IRU32 test_pos in
+  let ctx_val = make_ir_value (IRRegister 10) (IRPointer (IRU8, make_bounds_info ())) test_pos in
+  let body_instructions = [mod_assign; eq_assign] in
+  
+  let bpf_loop_instr = make_ir_instruction 
+    (IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions))
+    test_pos in
+  
+  (* Generate C code for the bpf_loop instruction *)
+  generate_c_instruction ctx bpf_loop_instr;
+  
+  (* Get the generated code *)
+  let _output = String.concat "\n" ctx.output_lines in
+  
+  (* Extract any pending callbacks (this is where the fix matters) *)
+  let callback_code = String.concat "\n" ctx.pending_callbacks in
+  
+  (* Verify that the callback code doesn't contain inconsistent variable naming *)
+  let has_consistent_naming = 
+    (* Check that if variables are declared as tmp_X, they're also used as tmp_X *)
+    let tmp_declarations = Str.split (Str.regexp "tmp_[0-9]+") callback_code in
+    let val_usage = Str.split (Str.regexp "val_[0-9]+") callback_code in
+    (* If there are tmp declarations, there shouldn't be val usage in the same callback *)
+    if List.length tmp_declarations > 1 then
+      List.length val_usage <= 1 (* Only the split creates one extra element *)
+    else
+      true
+  in
+  
+  check bool "Variable naming is consistent in callback" true has_consistent_naming;
+  
+  (* Also verify that the generated code contains a callback function *)
+  let has_callback = String.length callback_code > 0 in
+  check bool "Callback function was generated" true has_callback;
+  
+  (* Additional check: verify no undeclared variable usage *)
+  let lines = String.split_on_char '\n' callback_code in
+  let has_undeclared_usage = List.exists (fun line ->
+    (* Look for patterns like "val_X = " where val_X wasn't declared *)
+    Str.string_match (Str.regexp ".*val_[0-9]+ =.*") line 0 &&
+    not (Str.string_match (Str.regexp ".*__u32 val_[0-9]+.*") line 0)
+  ) lines in
+  
+  check bool "No undeclared variable usage" false has_undeclared_usage
+
+let test_register_hints_respected_in_callbacks () =
+  let ctx = create_c_context () in
+  
+  (* Set register hints to use "tmp" prefix *)
+  Hashtbl.replace ctx.register_name_hints 1 "tmp";
+  Hashtbl.replace ctx.register_name_hints 2 "tmp";
+  
+  (* Create variables with types that would normally use "val" prefix *)
+  let _val1 = make_ir_value (IRRegister 1) IRU32 test_pos in
+  let _val2 = make_ir_value (IRRegister 2) IRU32 test_pos in
+  
+  (* Generate variable names *)
+  let name1 = get_meaningful_var_name ctx 1 IRU32 in
+  let name2 = get_meaningful_var_name ctx 2 IRU32 in
+  
+  (* With the fix, these should respect the hints and use "tmp" not "val" *)
+  check string "Register 1 uses hint prefix" "tmp_1" name1;
+  check string "Register 2 uses hint prefix" "tmp_2" name2
+
+let test_no_hints_uses_type_based_naming () =
+  let ctx = create_c_context () in
+  
+  (* Don't set any register hints *)
+  
+  (* Create variables with types that should use "val" prefix when no hints *)
+  let _val1 = make_ir_value (IRRegister 1) IRU32 test_pos in
+  let _val2 = make_ir_value (IRRegister 2) IRBool test_pos in
+  
+  (* Generate variable names *)
+  let name1 = get_meaningful_var_name ctx 1 IRU32 in
+  let name2 = get_meaningful_var_name ctx 2 IRBool in
+  
+  (* Without hints, should use type-based naming *)
+  check string "U32 without hints uses val prefix" "val_1" name1;
+  check string "Bool without hints uses cond prefix" "cond_2" name2
+
 let break_continue_tests = [
   "break_statement_parsing", `Quick, test_break_statement_parsing;
   "continue_statement_parsing", `Quick, test_continue_statement_parsing;
@@ -206,6 +324,9 @@ let break_continue_tests = [
   "break_continue_in_nested_conditional", `Quick, test_break_continue_in_nested_conditional;
   "multiple_break_continue_statements", `Quick, test_multiple_break_continue_statements;
   "break_evaluation", `Quick, test_break_evaluation;
+  "break_continue_unbound_variable_naming", `Quick, test_break_continue_unbound_variable_naming;
+  "register_hints_respected_in_callbacks", `Quick, test_register_hints_respected_in_callbacks;
+  "no_hints_uses_type_based_naming", `Quick, test_no_hints_uses_type_based_naming;
 ]
 
 let () =

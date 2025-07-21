@@ -220,17 +220,18 @@ let mark_register_inlinable ctx reg expr =
 (** Optimization: Generate meaningful variable names *)
 let get_meaningful_var_name ctx reg ir_type =
   if ctx.enable_temp_var_optimization then
-    (* For return-like types, always use consistent naming *)
-    let should_use_val_prefix = match ir_type with
-      | IRU32 | IRI32 | IRU64 | IRI64 -> true
-      | _ -> false
-    in
-    if should_use_val_prefix then
-      sprintf "val_%d" reg
-    else
-      match Hashtbl.find_opt ctx.register_name_hints reg with
-      | Some hint -> sprintf "%s_%d" hint reg
-      | None -> 
+    (* First check if there are explicit register hints - these take precedence *)
+    match Hashtbl.find_opt ctx.register_name_hints reg with
+    | Some hint -> sprintf "%s_%d" hint reg
+    | None ->
+        (* For return-like types, use consistent naming when no explicit hints exist *)
+        let should_use_val_prefix = match ir_type with
+          | IRU32 | IRI32 | IRU64 | IRI64 -> true
+          | _ -> false
+        in
+        if should_use_val_prefix then
+          sprintf "val_%d" reg
+        else
           let type_hint = match ir_type with
             | IRBool -> "cond"
             | IRStr _ -> "str"
