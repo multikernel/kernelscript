@@ -905,8 +905,9 @@ help:
        (match test_file_generated with 
         | Some _ -> Printf.sprintf "# Test target (compile tests only)\ntest: %s.test.c\n\t$(CC) $(CFLAGS) -o %s_test %s.test.c $(LIBS)\n\n# Run test target (compile and run tests)\nrun-test: test\n\t./%s_test" base_name base_name base_name base_name
         | None -> "")
-       (* Test target in .PHONY and kfunc targets *)
-       (match test_file_generated with Some _ -> " test run-test" | None -> "") ^ (if has_kfuncs then " load-kmod unload-kmod clean-kmod check-kmod" else "") in
+       (* .PHONY targets - ensure no newlines by cleaning the string *)
+       (let phony_targets = (match test_file_generated with Some _ -> " test run-test" | None -> "") ^ (if has_kfuncs then " load-kmod unload-kmod clean-kmod check-kmod" else "") in
+        String.map (function '\n' -> ' ' | c -> c) phony_targets) in
       
       let makefile_path = output_dir ^ "/Makefile" in
       let oc = open_out makefile_path in
