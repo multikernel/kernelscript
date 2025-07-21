@@ -21,79 +21,6 @@
 open Printf
 open Context_codegen
 
-(** Kprobe field mappings from KernelScript to kernel struct pt_regs *)
-let kprobe_field_mappings = [
-  ("regs", {
-    field_name = "regs";
-    c_expression = (fun ctx_var -> sprintf "%s" ctx_var);
-    requires_cast = false;
-    field_type = "struct pt_regs*";
-  });
-  
-  ("ip", {
-    field_name = "ip";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_IP(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("sp", {
-    field_name = "sp";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_SP(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("ax", {
-    field_name = "ax";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_PARM1(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("bx", {
-    field_name = "bx";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_PARM2(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("cx", {
-    field_name = "cx";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_PARM3(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("dx", {
-    field_name = "dx";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_PARM4(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("si", {
-    field_name = "si";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_PARM5(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("di", {
-    field_name = "di";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_PARM6(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-  
-  ("ret", {
-    field_name = "ret";
-    c_expression = (fun ctx_var -> sprintf "PT_REGS_RC(%s)" ctx_var);
-    requires_cast = false;
-    field_type = "unsigned long";
-  });
-]
-
 (** Dynamic kprobe parameter mappings - populated during compilation based on function signature *)
 let kprobe_parameter_mappings = ref []
 
@@ -137,16 +64,11 @@ let generate_kprobe_includes () = [
 (** Generate field access for kprobe context *)
 let generate_kprobe_field_access ctx_var field_name =
   try
-    (* First check dynamic parameter mappings *)
+    (* Use dynamic parameter mappings based on kernel function signature *)
     let (_, field_access) = List.find (fun (name, _) -> name = field_name) !kprobe_parameter_mappings in
     field_access.c_expression ctx_var
   with Not_found ->
-    try
-      (* Fallback to static register mappings *)
-      let (_, field_access) = List.find (fun (name, _) -> name = field_name) kprobe_field_mappings in
-      field_access.c_expression ctx_var
-    with Not_found ->
-      failwith ("Unknown kprobe context field: " ^ field_name)
+    failwith ("Unknown kprobe parameter: " ^ field_name ^ ". Make sure the kernel function signature is properly extracted from BTF.")
 
 (** Map kprobe return constants *)
 let map_kprobe_action_constant = function
@@ -159,7 +81,7 @@ let create () = {
   name = "Kprobe";
   c_type = "struct pt_regs*";
   section_prefix = "kprobe";
-  field_mappings = kprobe_field_mappings;
+  field_mappings = []; (* No static field mappings - use dynamic parameter mappings *)
   generate_includes = generate_kprobe_includes;
   generate_field_access = generate_kprobe_field_access;
   map_action_constant = map_kprobe_action_constant;
