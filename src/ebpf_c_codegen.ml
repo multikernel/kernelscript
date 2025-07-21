@@ -2809,8 +2809,37 @@ let generate_c_basic_block ctx ir_block =
     increase_indent ctx
   );
   
-  (* Generate C code for each IR instruction *)
-  List.iter (generate_c_instruction ctx) ir_block.instructions
+  (* Optimize function call + variable declaration patterns *)
+  let rec optimize_instructions instrs =
+    match instrs with
+    | call_instr :: decl_instr :: rest ->
+        (match call_instr.instr_desc, decl_instr.instr_desc with
+         | IRCall (target, args, Some ret_val), IRDeclareVariable (dest_val, typ, None) 
+           when ret_val.value_desc = dest_val.value_desc ->
+             (* Combine function call with variable declaration *)
+             let var_name = get_meaningful_var_name ctx 
+               (match dest_val.value_desc with 
+                | IRRegister reg -> reg 
+                | _ -> failwith "IRDeclareVariable target must be a register") 
+               typ in
+             let type_str = ebpf_type_from_ir_type typ in
+             let call_str = match target with
+               | DirectCall name ->
+                   let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
+                   sprintf "%s(%s)" name args_str
+               | _ -> "/* complex call */" in
+             emit_line ctx (sprintf "%s %s = %s;" type_str var_name call_str);
+             optimize_instructions rest
+         | _ ->
+             generate_c_instruction ctx call_instr;
+             optimize_instructions (decl_instr :: rest))
+    | instr :: rest ->
+        generate_c_instruction ctx instr;
+        optimize_instructions rest
+    | [] -> ()
+  in
+  
+  optimize_instructions ir_block.instructions
 
 (** Collect mapping from registers to variable names *)
 let collect_register_variable_mapping ir_func =
