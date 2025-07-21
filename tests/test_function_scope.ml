@@ -251,7 +251,7 @@ fn validate_packet(size: u32) -> bool {
   match helper_func with
   | Some func ->
       check bool "helper function scope preserved" true (func.func_scope = Kernelscript.Ast.Kernel);
-      check bool "helper function return type correct" true (func.func_return_type = Some Kernelscript.Ast.Bool)
+      check bool "helper function return type correct" true (func.func_return_type = Some (Kernelscript.Ast.make_unnamed_return Kernelscript.Ast.Bool))
   | None -> failwith "Helper function not found after type checking"
 
 (** Test 7: Kernel functions with complex types *)

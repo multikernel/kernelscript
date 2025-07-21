@@ -76,7 +76,7 @@ let kernelscript_type_to_c_type = function
 
 (** Generate function signature for regular kernel module functions *)
 let generate_function_signature func_def =
-  let return_type = match func_def.func_return_type with
+  let return_type = match get_return_type func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
     | None -> "void"
   in
@@ -88,7 +88,7 @@ let generate_function_signature func_def =
 
 (** Generate function signature for kfunc kernel module functions with proper annotations *)
 let generate_kfunc_signature func_def =
-  let return_type = match func_def.func_return_type with
+  let return_type = match get_return_type func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
     | None -> "void"
   in
@@ -100,7 +100,7 @@ let generate_kfunc_signature func_def =
 
 (** Generate function prototype for regular kernel module functions *)
 let generate_function_prototype func_def =
-  let return_type = match func_def.func_return_type with
+  let return_type = match get_return_type func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
     | None -> "void"
   in
@@ -112,7 +112,7 @@ let generate_function_prototype func_def =
 
 (** Generate function prototype for kfunc kernel module functions with proper annotations *)
 let generate_kfunc_prototype func_def =
-  let return_type = match func_def.func_return_type with
+  let return_type = match get_return_type func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
     | None -> "void"
   in
@@ -281,7 +281,7 @@ let generate_btf_info func_def =
   let param_types = List.map (fun (_, param_type) ->
     kernelscript_type_to_c_type param_type
   ) func_def.func_params in
-  let return_type = match func_def.func_return_type with
+  let return_type = match get_return_type func_def.func_return_type with
     | Some ret_type -> kernelscript_type_to_c_type ret_type
     | None -> "void"
   in

@@ -220,18 +220,25 @@ let mark_register_inlinable ctx reg expr =
 (** Optimization: Generate meaningful variable names *)
 let get_meaningful_var_name ctx reg ir_type =
   if ctx.enable_temp_var_optimization then
-    match Hashtbl.find_opt ctx.register_name_hints reg with
-    | Some hint -> sprintf "%s_%d" hint reg
-    | None -> 
-        let type_hint = match ir_type with
-          | IRU32 -> "val"
-          | IRBool -> "cond"
-          | IRStr _ -> "str"
-          | IRPointer _ -> "ptr"
-          | IRAction _ -> "action"
-          | _ -> "var"
-        in
-        sprintf "%s_%d" type_hint reg
+    (* For return-like types, always use consistent naming *)
+    let should_use_val_prefix = match ir_type with
+      | IRU32 | IRI32 | IRU64 | IRI64 -> true
+      | _ -> false
+    in
+    if should_use_val_prefix then
+      sprintf "val_%d" reg
+    else
+      match Hashtbl.find_opt ctx.register_name_hints reg with
+      | Some hint -> sprintf "%s_%d" hint reg
+      | None -> 
+          let type_hint = match ir_type with
+            | IRBool -> "cond"
+            | IRStr _ -> "str"
+            | IRPointer _ -> "ptr"
+            | IRAction _ -> "action"
+            | _ -> "var"
+          in
+          sprintf "%s_%d" type_hint reg
   else
     sprintf "tmp_%d" reg
 
@@ -1987,7 +1994,15 @@ and generate_assignment ctx dest_val expr is_const =
               | _ -> false)
          | _ -> false
        in
-       if should_inline then (
+        (* Prevent inlining for registers that might be named return variables *)
+        let might_be_return_var = 
+          (* Low-numbered registers are often used for important variables like return values *)
+          reg <= 15 && 
+          (* Common return value types *)
+          (match dest_val.val_type with
+          | IRU32 | IRI32 | IRU64 | IRI64 | IRBool | IRAction _ | IRStr _ | IRPointer _ -> true
+          | _ -> false) in
+       if should_inline && not might_be_return_var then (
          let expr_str = generate_c_expression ctx expr in
          mark_register_inlinable ctx reg expr_str;
          (* Don't emit assignment - expression will be inlined *)
@@ -3415,7 +3430,7 @@ let compile_multi_to_c_with_tail_calls
       let c_type = ast_type_to_c_type param_type in
       sprintf "%s %s" c_type name
     ) kfunc.Ast.func_params) in
-    let return_type_str = match kfunc.Ast.func_return_type with
+    let return_type_str = match Ast.get_return_type kfunc.Ast.func_return_type with
       | Some ret_type -> ast_type_to_c_type ret_type
       | None -> "void"
     in

@@ -74,7 +74,10 @@ let compatible_signatures caller_params caller_return target_params target_retur
     List.length caller_params = List.length target_params &&
     List.for_all2 (fun (_, t1) (_, t2) -> t1 = t2) caller_params target_params
   in
-  let return_match = caller_return = target_return in
+  (* Compare the actual return types, not the return specifications *)
+  let caller_type = get_return_type caller_return in
+  let target_type = get_return_type target_return in
+  let return_match = caller_type = target_type in
   params_match && return_match
 
 (** Detect tail calls in a return statement *)

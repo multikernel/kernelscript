@@ -2162,7 +2162,7 @@ let lower_function ctx prog_name ?(program_type = None) (func_def : Ast.function
   );
   
   (* Convert return type *)
-  let ir_return_type = match func_def.func_return_type with
+  let ir_return_type = match Ast.get_return_type func_def.func_return_type with
     | Some ast_type -> Some (ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
     | None -> None
   in
@@ -2289,7 +2289,7 @@ let lower_userspace_function ctx func_def =
     in
     
     (* Check return type *)
-    let return_valid = func_def.Ast.func_return_type = expected_return in
+    let return_valid = (Ast.get_return_type func_def.Ast.func_return_type) = expected_return in
     
     if not params_valid then
       failwith (Printf.sprintf 
@@ -2301,7 +2301,7 @@ let lower_userspace_function ctx func_def =
     if not return_valid then
       failwith (Printf.sprintf
         "main() function must return i32, got: %s"
-        (match func_def.Ast.func_return_type with 
+        (match Ast.get_return_type func_def.Ast.func_return_type with 
          | Some t -> Ast.string_of_bpf_type t 
          | None -> "void"));
   );
@@ -2857,7 +2857,7 @@ let lower_multi_program ast symbol_table source_name =
       | Ast.ImplFunction func ->
           (* Create method from function signature *)
           let ir_param_types = List.map (fun (_, param_type) -> ast_type_to_ir_type param_type) func.func_params in
-          let ir_return_type = match func.func_return_type with
+          let ir_return_type = match Ast.get_return_type func.func_return_type with
             | Some ret_type -> ast_type_to_ir_type ret_type
             | None -> IRVoid
           in

@@ -25,7 +25,7 @@ let make_test_program name functions =
 
 let make_test_function name params body =
   let pos = make_position 1 1 "test.ks" in
-  make_function name params (Some U32) body pos
+  make_function name params (Some (make_unnamed_return U32)) body pos
 
 (** Test basic safety checks *)
 let test_basic_safety_checks () =

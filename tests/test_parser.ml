@@ -210,7 +210,7 @@ fn helper(x: u32, y: u32) -> u32 {
     | AttributedFunction attr_func -> 
         check string "helper function name" "helper" attr_func.attr_function.func_name;
         check int "helper parameters" 2 (List.length attr_func.attr_function.func_params);
-        check bool "helper return type" true (attr_func.attr_function.func_return_type = Some U32);
+        check bool "helper return type" true (attr_func.attr_function.func_return_type = Some (make_unnamed_return U32));
         let has_helper_attr = List.exists (function 
           | SimpleAttribute "helper" -> true 
           | _ -> false
@@ -384,7 +384,7 @@ fn process_packet(src_ip: u32) -> u64 {
      | AttributedFunction attr_func -> 
          check string "helper function name" "process_packet" attr_func.attr_function.func_name;
          check int "helper function parameters" 1 (List.length attr_func.attr_function.func_params);
-         check bool "helper function return type" true (attr_func.attr_function.func_return_type = Some U64);
+         check bool "helper function return type" true (attr_func.attr_function.func_return_type = Some (make_unnamed_return U64));
          let has_helper_attr = List.exists (function 
            | SimpleAttribute "helper" -> true 
            | _ -> false

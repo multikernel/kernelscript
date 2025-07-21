@@ -74,7 +74,7 @@ let create_test_main test_function_names filename =
   {
     func_name = "main";
     func_params = [];
-    func_return_type = Some I32;
+    func_return_type = Some (make_unnamed_return I32);
     func_body = main_body;
     func_scope = Userspace;
     func_pos = dummy_pos;
@@ -374,7 +374,7 @@ int test(const char* program_name, void* test_context) {
   
   (* Generate test function implementations *)
   let test_function_code = List.map (fun func ->
-    let return_type = match func.func_return_type with
+    let return_type = match get_return_type func.func_return_type with
       | Some I32 -> "int"
       | Some U32 -> "uint32_t"
       | _ -> "int"

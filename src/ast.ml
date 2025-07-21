@@ -226,11 +226,16 @@ and catch_clause = {
 (** Function scope modifiers *)
 type function_scope = Userspace | Kernel
 
+(** Return type specification - supports both unnamed and named returns *)
+type return_type_spec = 
+  | Unnamed of bpf_type          (* fn() -> u64 *)
+  | Named of string * bpf_type   (* fn() -> result: u64 *)
+
 (** Function definitions *)
 type function_def = {
   func_name: string;
   func_params: (string * bpf_type) list;
-  func_return_type: bpf_type option;
+  func_return_type: return_type_spec option;
   func_body: statement list;
   func_scope: function_scope;
   func_pos: position;
@@ -332,6 +337,24 @@ let make_expr desc pos = {
 }
 
 let make_stmt desc pos = { stmt_desc = desc; stmt_pos = pos }
+
+(** Helper functions for creating return type specifications *)
+let make_unnamed_return typ = Unnamed typ
+let make_named_return name typ = Named (name, typ)
+
+(** Helper functions for extracting information from return type specifications *)
+let get_return_type = function
+  | Some (Unnamed typ) -> Some typ
+  | Some (Named (_, typ)) -> Some typ
+  | None -> None
+
+let get_return_variable_name = function
+  | Some (Named (name, _)) -> Some name
+  | Some (Unnamed _) | None -> None
+
+let is_named_return = function
+  | Some (Named _) -> true
+  | Some (Unnamed _) | None -> false
 
 let make_function name params return_type body ?(scope=Userspace) pos = {
   func_name = name;
@@ -691,7 +714,8 @@ let string_of_function func =
        Printf.sprintf "%s: %s" name (string_of_bpf_type typ)) func.func_params) in
   let return_str = match func.func_return_type with
     | None -> ""
-    | Some t -> " -> " ^ string_of_bpf_type t
+    | Some (Unnamed t) -> " -> " ^ string_of_bpf_type t
+    | Some (Named (name, t)) -> " -> " ^ name ^ ": " ^ string_of_bpf_type t
   in
   let body_str = String.concat "\n  " (List.map string_of_stmt func.func_body) in
   Printf.sprintf "fn %s(%s)%s {\n  %s\n}" 

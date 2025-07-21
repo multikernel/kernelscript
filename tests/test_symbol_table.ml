@@ -78,7 +78,7 @@ let create_test_function name params return_type =
   {
     func_name = name;
     func_params = params;
-    func_return_type = Some return_type;
+    func_return_type = Some (make_unnamed_return return_type);
     func_body = [];
     func_scope = Ast.Userspace;
     func_pos = dummy_pos;
@@ -112,7 +112,7 @@ let lookup_function table func_name =
       Some {
         func_name = func_name;
         func_params = params;
-        func_return_type = Some return_type;
+        func_return_type = Some (make_unnamed_return return_type);
         func_body = [];
         func_scope = Ast.Userspace;
         func_pos = {filename = "test.ks"; line = 1; column = 1};
@@ -714,7 +714,8 @@ fn add(a: u32, b: u32) -> u32 {
     | Some func_info -> 
         check int "add function parameter count" 2 (List.length func_info.func_params);
         (match func_info.func_return_type with 
-         | Some ret_type -> check string "add function return type" "u32" (string_of_bpf_type ret_type)
+         | Some (Unnamed ret_type) -> check string "add function return type" "u32" (string_of_bpf_type ret_type)
+         | Some (Named (_, ret_type)) -> check string "add function return type" "u32" (string_of_bpf_type ret_type)
          | None -> fail "add function should have return type")
     | None -> fail "add function should exist"
   with
@@ -849,7 +850,8 @@ fn calculate(x: u32, y: u32) -> u64 {
     match calculate_func with
     | Some func_info ->
         (match func_info.func_return_type with 
-         | Some ret_type -> check string "calculate return type" "u64" (string_of_bpf_type ret_type)
+         | Some (Unnamed ret_type) -> check string "calculate return type" "u64" (string_of_bpf_type ret_type)
+         | Some (Named (_, ret_type)) -> check string "calculate return type" "u64" (string_of_bpf_type ret_type)
          | None -> fail "calculate function should have return type");
         check int "calculate param count" 2 (List.length func_info.func_params)
     | None -> fail "calculate function should exist"

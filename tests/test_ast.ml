@@ -73,28 +73,28 @@ let test_statements () =
 let test_function_definition () =
   let param = ("ctx", Xdp_md) in
   let body = [make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) test_position))) test_position] in
-  let func = make_function "main" [param] (Some Xdp_action) body test_position in
+  let func = make_function "main" [param] (Some (make_unnamed_return Xdp_action)) body test_position in
   
   check string "function name" "main" func.func_name;
   check int "parameter count" 1 (List.length func.func_params);
-  check bool "return type" true (match func.func_return_type with Some Xdp_action -> true | _ -> false);
+  check bool "return type" true (match func.func_return_type with Some (Unnamed Xdp_action) -> true | _ -> false);
   check int "body statements" 1 (List.length func.func_body)
 
 (** Test attributed function definition *)
 let test_attributed_function_definition () =
   let param = ("ctx", Xdp_md) in
-  let func = make_function "packet_filter" [param] (Some Xdp_action) [] test_position in
+  let func = make_function "packet_filter" [param] (Some (make_unnamed_return Xdp_action)) [] test_position in
   let attr_func = make_attributed_function [SimpleAttribute "xdp"] func test_position in
   
   check string "function name" "packet_filter" attr_func.attr_function.func_name;
   check int "parameter count" 1 (List.length attr_func.attr_function.func_params);
-  check bool "return type" true (match attr_func.attr_function.func_return_type with Some Xdp_action -> true | _ -> false);
+  check bool "return type" true (match attr_func.attr_function.func_return_type with Some (Unnamed Xdp_action) -> true | _ -> false);
   check int "attributes" 1 (List.length attr_func.attr_list)
 
 (** Test complete AST *)
 let test_complete_ast () =
   let return_stmt = make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) test_position))) test_position in
-  let func = make_function "packet_filter" [("ctx", Xdp_md)] (Some Xdp_action) [return_stmt] test_position in
+  let func = make_function "packet_filter" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [return_stmt] test_position in
   let attr_func = make_attributed_function [SimpleAttribute "xdp"] func test_position in
   let ast = [AttributedFunction attr_func] in
   

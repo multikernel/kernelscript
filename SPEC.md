@@ -2356,21 +2356,14 @@ value = (value % modulus);                  // From: value %= modulus
 
 ## 7. Functions and Control Flow
 
-### 7.1 Function Declaration
-```ebnf
-function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" [ "->" return_type ] "{" statement_list "}" 
+### 7.1 Function Declaration Overview
 
-attribute_list = attribute { attribute }
-attribute = "@" attribute_name [ "(" attribute_args ")" ]
-attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kfunc"
-attribute_args = string_literal | identifier
+KernelScript functions support both traditional unnamed return types and modern named return values. The complete grammar is defined in Section 15 (Complete Formal Grammar).
 
-visibility = "pub" | "priv" 
-parameter_list = [ parameter { "," parameter } ] 
-parameter = identifier ":" type_annotation 
-return_type = type_annotation 
-```
+Key function types:
+- **eBPF program functions**: Attributed with `@xdp`, `@tc`, etc. - compile to eBPF bytecode
+- **Helper functions**: Attributed with `@helper` - shared across all eBPF programs
+- **Userspace functions**: No attributes - compile to native executable
 
 ### 7.2 eBPF Program Functions
 ```kernelscript
@@ -2387,7 +2380,127 @@ fn simple_xdp(ctx: *xdp_md) -> xdp_action {
 }
 ```
 
-### 7.3 Helper Functions
+### 7.3 Named Return Values
+
+KernelScript supports both unnamed and named return values following Go's syntax pattern:
+
+- **Unnamed returns** (backward compatible): `fn name() -> type`
+- **Named returns** (new): `fn name() -> var_name: type`
+
+Named return values automatically declare a local variable with the specified name and type. This variable can be used throughout the function, and naked returns (`return` without a value) will return the current value of the named variable.
+
+#### 7.3.1 Named Return Syntax Examples
+
+```kernelscript
+// Backward compatible unnamed return (unchanged)
+fn add_numbers(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+// Named return value - 'sum' becomes a local variable
+fn add_numbers_named(a: i32, b: i32) -> sum: i32 {
+    sum = a + b    // Named variable is automatically declared
+    return         // Naked return - returns current value of 'sum'
+}
+
+// Using named return in complex logic
+fn calculate_hash(data: *u8, len: u32) -> hash_value: u64 {
+    hash_value = 0  // Named return variable is available immediately
+    
+    for (i in 0..len) {
+        hash_value = hash_value * 31 + data[i]  // Modify throughout function
+    }
+    
+    return          // Naked return with computed hash_value
+}
+
+// Mixing named variables with explicit returns
+fn validate_packet(data: *u8, len: u32) -> is_valid: bool {
+    is_valid = false  // Start with default value
+    
+    if (len == 0) {
+        return        // Early naked return with is_valid = false
+    }
+    
+    if (data == null) {
+        return false  // Explicit return still works
+    }
+    
+    is_valid = true   // Set to true if all checks pass
+    return            // Final naked return
+}
+```
+
+#### 7.3.2 Named Returns in Different Contexts
+
+Named return values work consistently across all function types:
+
+```kernelscript
+// eBPF helper functions with named returns
+@helper
+fn extract_ip_header(ctx: *xdp_md) -> ip_hdr: *iphdr {
+    var data = ctx->data
+    var data_end = ctx->data_end
+    
+    if (data + 14 + 20 > data_end) {
+        ip_hdr = null
+        return  // Naked return with null
+    }
+    
+    ip_hdr = (iphdr*)(data + 14)
+    return  // Naked return with pointer
+}
+
+// eBPF program functions with named returns
+@xdp
+fn packet_filter(ctx: *xdp_md) -> action: xdp_action {
+    action = XDP_PASS  // Default action
+    
+    var size = ctx->data_end - ctx->data
+    if (size < 64) {
+        action = XDP_DROP
+        return  // Naked return with XDP_DROP
+    }
+    
+    return  // Naked return with XDP_PASS
+}
+
+// Userspace functions with named returns
+fn lookup_counter(ip: u32) -> counter_ptr: *u64 {
+    if (counters[ip] == none) {
+        counters[ip] = 0
+    }
+    counter_ptr = &counters[ip]
+    return  // Naked return
+}
+
+// Function pointer types with named returns
+type HashFunction = fn(*u8, u32) -> hash: u64
+type PacketProcessor = fn(*xdp_md) -> result: xdp_action
+```
+
+#### 7.3.3 Code Generation
+
+Named return values compile to clean, efficient C code with zero runtime overhead:
+
+**KernelScript:**
+```kernelscript
+fn calculate_sum(a: i32, b: i32) -> result: i32 {
+    result = a + b
+    return
+}
+```
+
+**Generated C:**
+```c
+static int calculate_sum(int a, int b) {
+    int result;      // Named return variable declared
+    result = a + b;
+    return result;   // Naked return becomes explicit
+}
+```
+
+### 7.4 Helper Functions
 
 KernelScript supports two types of functions with different scoping rules:
 
@@ -2463,7 +2576,7 @@ fn main() -> i32 {
 }
 ```
 
-### 7.4 eBPF Tail Calls
+### 7.5 eBPF Tail Calls
 
 KernelScript provides transparent eBPF tail call support that automatically converts function calls to tail calls when appropriate. Tail calls enable efficient program chaining without stack overhead and are especially useful for packet processing pipelines.
 
@@ -4149,11 +4262,15 @@ type_alias = type_annotation
 
 (* Function declarations *)
 function_declaration = [ attribute_list ] [ visibility ] [ "kernel" ] "fn" identifier "(" parameter_list ")" 
-                       [ "->" type_annotation ] "{" statement_list "}"
+                       [ return_type_spec ] "{" statement_list "}"
+
+(* Return type specification - supports both unnamed and named return values *)
+return_type_spec = "->" type_annotation                        (* Unnamed: fn() -> u64 *)
+                 | "->" identifier ":" type_annotation          (* Named: fn() -> result: u64 *)
 
 impl_declaration = [ attribute_list ] "impl" identifier "{" impl_body "}"
 impl_body = { impl_function }
-impl_function = "fn" identifier "(" parameter_list ")" [ "->" type_annotation ] "{" statement_list "}" 
+impl_function = "fn" identifier "(" parameter_list ")" [ return_type_spec ] "{" statement_list "}" 
 
 visibility = "pub" | "priv" 
 parameter_list = [ parameter { "," parameter } ] 
@@ -4252,7 +4369,7 @@ string_type = "str" "(" integer_literal ")"
 
 array_type = "[" type_annotation "" integer_literal "]" 
 pointer_type = "*" type_annotation 
-function_type = "fn" "(" [ type_annotation { "," type_annotation } ] ")" [ "->" type_annotation ] 
+function_type = "fn" "(" [ type_annotation { "," type_annotation } ] ")" [ return_type_spec ] 
 
 (* Literals *)
 literal = integer_literal | string_literal | char_literal | boolean_literal | 

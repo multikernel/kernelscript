@@ -1627,7 +1627,60 @@ and type_check_statement ctx stmt =
                        Some (type_check_expression ctx_with_match_return expr)
                    | _ ->
                        Some (type_check_expression ctx expr)))
-        | None -> None
+        | None -> 
+            (* Naked return - check if we have a named return variable *)
+            (match ctx.current_function with
+             | Some func_name ->
+                 (* Find the function definition to check for named return *)
+                 let has_named_return = ref false in
+                 let named_return_var = ref None in
+                 let ast_context = ctx.ast_context in
+                 List.iter (function
+                   | GlobalFunction func when func.func_name = func_name ->
+                       (match get_return_variable_name func.func_return_type with
+                        | Some var_name -> 
+                            has_named_return := true;
+                            named_return_var := Some var_name
+                        | None -> ())
+                   | AttributedFunction attr_func when attr_func.attr_function.func_name = func_name ->
+                       (match get_return_variable_name attr_func.attr_function.func_return_type with
+                        | Some var_name -> 
+                            has_named_return := true;
+                            named_return_var := Some var_name
+                        | None -> ())
+                   | _ -> ()
+                 ) ast_context;
+                 if !has_named_return then
+                   (* Create an identifier expression for the named return variable *)
+                   match !named_return_var with
+                   | Some var_name ->
+                       (* Properly resolve the named return variable type from the function definition *)
+                       let return_type = (match ctx.current_function with
+                         | Some func_name ->
+                             (* Find the function definition to get the return type *)
+                             let found_return_type = ref None in
+                             List.iter (function
+                               | GlobalFunction func when func.func_name = func_name ->
+                                   found_return_type := get_return_type func.func_return_type
+                               | AttributedFunction attr_func when attr_func.attr_function.func_name = func_name ->
+                                   found_return_type := get_return_type attr_func.attr_function.func_return_type
+                               | _ -> ()
+                             ) ctx.ast_context;
+                             !found_return_type
+                         | None -> None) in
+                       let var_expr = { 
+                         expr_desc = Identifier var_name; 
+                         expr_pos = stmt.stmt_pos; 
+                         expr_type = return_type;  (* Provide proper type information *)
+                         type_checked = false; 
+                         program_context = None; 
+                         map_scope = None 
+                       } in
+                       Some (type_check_expression ctx var_expr)
+                   | None -> None
+                 else
+                   None
+             | None -> None)
       in
       { tstmt_desc = TReturn typed_expr_opt; tstmt_pos = stmt.stmt_pos }
   
@@ -1805,11 +1858,21 @@ let type_check_function ?(register_signature=true) ctx func =
     (name, resolved_type)
   ) func.func_params in
   
+  (* Add named return variable to scope if present *)
+  (match get_return_variable_name func.func_return_type with
+   | Some var_name ->
+       let return_type = match get_return_type func.func_return_type with
+         | Some t -> resolve_user_type ctx t
+         | None -> U32
+       in
+       Hashtbl.replace ctx.variables var_name return_type
+   | None -> ());
+  
   (* Type check function body *)
   let typed_body = List.map (type_check_statement ctx) func.func_body in
   
   (* Determine return type *)
-  let return_type = match func.func_return_type with
+  let return_type = match get_return_type func.func_return_type with
     | Some t -> resolve_user_type ctx t
     | None -> U32  (* Default return type *)
   in
@@ -1855,7 +1918,7 @@ let type_check_program ctx prog =
   (* FIRST PASS: Register all function signatures so they can call each other *)
   List.iter (fun func ->
     let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
-    let return_type = match func.func_return_type with
+    let return_type = match get_return_type func.func_return_type with
       | Some t -> resolve_user_type ctx t
       | None -> U32  (* default return type *)
     in
@@ -1941,7 +2004,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
   List.iter (function
     | GlobalFunction func ->
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
-        let return_type = match func.func_return_type with
+        let return_type = match get_return_type func.func_return_type with
           | Some t -> resolve_user_type ctx t
           | None -> U32  (* default return type *)
         in
@@ -1950,7 +2013,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
     | AttributedFunction attr_func ->
         (* Register attributed function signatures, including kfuncs *)
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) attr_func.attr_function.func_params in
-        let return_type = match attr_func.attr_function.func_return_type with
+        let return_type = match get_return_type attr_func.attr_function.func_return_type with
           | Some t -> resolve_user_type ctx t
           | None -> U32  (* default return type *)
         in
@@ -2109,7 +2172,7 @@ and typed_stmt_to_stmt tstmt =
 let typed_function_to_function tfunc =
   { func_name = tfunc.tfunc_name;
     func_params = tfunc.tfunc_params;
-    func_return_type = Some tfunc.tfunc_return_type;
+    func_return_type = Some (make_unnamed_return tfunc.tfunc_return_type);
     func_body = List.map typed_stmt_to_stmt tfunc.tfunc_body;
     func_scope = tfunc.tfunc_scope;
     func_pos = tfunc.tfunc_pos;
@@ -2247,7 +2310,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | AttributedFunction attr_func ->
         (* Register attributed function signature in context *)
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) attr_func.attr_function.func_params in
-        let return_type = match attr_func.attr_function.func_return_type with
+        let return_type = match get_return_type attr_func.attr_function.func_return_type with
           | Some t -> resolve_user_type ctx t
           | None -> U32  (* default return type *)
         in
@@ -2267,7 +2330,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | GlobalFunction func ->
         (* Register global function signature in context *)
         let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
-        let return_type = match func.func_return_type with
+        let return_type = match get_return_type func.func_return_type with
           | Some t -> resolve_user_type ctx t
           | None -> U32  (* default return type *)
         in
@@ -2324,7 +2387,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
                                     ) actual_param_types param_types;
                                   
                                   (* Validate return type *)
-                                  let actual_return = match func.func_return_type with
+                                  let actual_return = match get_return_type func.func_return_type with
                                     | Some ret_type -> resolve_user_type ctx ret_type
                                     | None -> U32  (* Default return type *)
                                   in
@@ -2383,7 +2446,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
         List.iter (function
           | ImplFunction func ->
               let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) func.func_params in
-              let return_type = match func.func_return_type with
+              let return_type = match get_return_type func.func_return_type with
                 | Some t -> resolve_user_type ctx t
                 | None -> U32  (* default return type *)
               in
@@ -2458,7 +2521,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
              let resolved_param_type = if List.length params = 1 then 
                resolve_user_type ctx (snd (List.hd params)) 
              else UserType "invalid" in
-             let resolved_return_type = match attr_func.attr_function.func_return_type with
+             let resolved_return_type = match get_return_type attr_func.attr_function.func_return_type with
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              
@@ -2471,7 +2534,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
              let resolved_param_type = if List.length params = 1 then 
                resolve_user_type ctx (snd (List.hd params)) 
              else UserType "invalid" in
-             let resolved_return_type = match attr_func.attr_function.func_return_type with
+             let resolved_return_type = match get_return_type attr_func.attr_function.func_return_type with
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              
@@ -2483,7 +2546,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
              )
          | Some Kprobe ->
              let params = attr_func.attr_function.func_params in
-             let resolved_return_type = match attr_func.attr_function.func_return_type with
+             let resolved_return_type = match get_return_type attr_func.attr_function.func_return_type with
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              

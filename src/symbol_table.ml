@@ -287,7 +287,7 @@ let add_function table func visibility =
   );
   
   let param_types = List.map snd func.func_params in
-  let return_type = match func.func_return_type with
+  let return_type = match get_return_type func.func_return_type with
     | Some t -> t
     | None -> U32  (* default return type for functions without explicit return *)
   in
@@ -400,6 +400,17 @@ and process_declaration_accumulate table declaration =
       List.iter (fun (param_name, param_type) ->
         add_variable table_with_func param_name param_type func.func_pos
       ) func.func_params;
+      
+      (* Add named return variable to scope if present *)
+      (match get_return_variable_name func.func_return_type with
+       | Some var_name ->
+           let return_type = match get_return_type func.func_return_type with
+             | Some t -> t
+             | None -> U32
+           in
+           add_variable table_with_func var_name return_type func.func_pos
+       | None -> ());
+      
       (* Process function body statements *)
       List.iter (process_statement table_with_func) func.func_body;
       let _ = exit_scope table_with_func in
@@ -419,6 +430,16 @@ and process_declaration_accumulate table declaration =
       List.iter (fun (param_name, param_type) ->
         add_variable table_with_func param_name param_type attr_func.attr_function.func_pos
       ) attr_func.attr_function.func_params;
+      
+      (* Add named return variable to scope if present *)
+      (match get_return_variable_name attr_func.attr_function.func_return_type with
+       | Some var_name ->
+           let return_type = match get_return_type attr_func.attr_function.func_return_type with
+             | Some t -> t
+             | None -> U32
+           in
+           add_variable table_with_func var_name return_type attr_func.attr_function.func_pos
+       | None -> ());
       
       (* Process function body statements *)
       List.iter (process_statement table_with_func) attr_func.attr_function.func_body;
@@ -452,6 +473,17 @@ and process_declaration_accumulate table declaration =
             List.iter (fun (param_name, param_type) ->
               add_variable table_with_func param_name param_type func.func_pos
             ) func.func_params;
+            
+            (* Add named return variable to scope if present *)
+            (match get_return_variable_name func.func_return_type with
+             | Some var_name ->
+                 let return_type = match get_return_type func.func_return_type with
+                   | Some t -> t
+                   | None -> U32
+                 in
+                 add_variable table_with_func var_name return_type func.func_pos
+             | None -> ());
+            
             List.iter (process_statement table_with_func) func.func_body;
             let _ = exit_scope table_with_func in ()
         | Ast.ImplStaticField (_, _) -> ()  (* Static fields don't need symbol table processing *)
@@ -474,6 +506,17 @@ and process_declaration table = function
       List.iter (fun (param_name, param_type) ->
         add_variable table_with_func param_name param_type func.func_pos
       ) func.func_params;
+      
+      (* Add named return variable to scope if present *)
+      (match get_return_variable_name func.func_return_type with
+       | Some var_name ->
+           let return_type = match get_return_type func.func_return_type with
+             | Some t -> t
+             | None -> U32
+           in
+           add_variable table_with_func var_name return_type func.func_pos
+       | None -> ());
+      
       (* Process function body statements *)
       List.iter (process_statement table_with_func) func.func_body;
       let _ = exit_scope table_with_func in ()
@@ -491,6 +534,17 @@ and process_declaration table = function
       List.iter (fun (param_name, param_type) ->
         add_variable table_with_func param_name param_type attr_func.attr_function.func_pos
       ) attr_func.attr_function.func_params;
+      
+      (* Add named return variable to scope if present *)
+      (match get_return_variable_name attr_func.attr_function.func_return_type with
+       | Some var_name ->
+           let return_type = match get_return_type attr_func.attr_function.func_return_type with
+             | Some t -> t
+             | None -> U32
+           in
+           add_variable table_with_func var_name return_type attr_func.attr_function.func_pos
+       | None -> ());
+      
       (* Process function body statements *)
       List.iter (process_statement table_with_func) attr_func.attr_function.func_body;
       let _ = exit_scope table_with_func in ()
@@ -519,6 +573,17 @@ and process_declaration table = function
             List.iter (fun (param_name, param_type) ->
               add_variable table_with_func param_name param_type func.func_pos
             ) func.func_params;
+            
+            (* Add named return variable to scope if present *)
+            (match get_return_variable_name func.func_return_type with
+             | Some var_name ->
+                 let return_type = match get_return_type func.func_return_type with
+                   | Some t -> t
+                   | None -> U32
+                 in
+                 add_variable table_with_func var_name return_type func.func_pos
+             | None -> ());
+            
             List.iter (process_statement table_with_func) func.func_body;
             let _ = exit_scope table_with_func in ()
         | Ast.ImplStaticField (_, _) -> ()  (* Static fields don't need symbol table processing *)
@@ -818,7 +883,7 @@ let lookup_function table func_name =
       Some {
         func_name = func_name;
         func_params = params;
-        func_return_type = Some return_type;
+        func_return_type = Some (make_unnamed_return return_type);
         func_body = [];
         func_scope = Ast.Userspace;
         func_pos = {filename = ""; line = 1; column = 1};

@@ -38,11 +38,11 @@ let make_test_attr_func attrs func =
 
 (** Test tail call detection *)
 let test_tail_call_detection _ =
-  let xdp_func1 = make_test_func "process_http" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let xdp_func1 = make_test_func "process_http" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "log_request") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let xdp_func2 = make_test_func "log_request" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let xdp_func2 = make_test_func "log_request" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -64,11 +64,11 @@ let test_tail_call_detection _ =
 
 (** Test program type compatibility *)
 let test_program_type_compatibility _ =
-  let xdp_func = make_test_func "xdp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let xdp_func = make_test_func "xdp_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "tc_handler") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let tc_func = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some I32) [
+  let tc_func = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some (make_unnamed_return I32)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) make_test_position))) make_test_position
   ] in
   
@@ -83,12 +83,12 @@ let test_program_type_compatibility _ =
 
 (** Test signature compatibility *)
 let test_signature_compatibility _ =
-  let func1 = make_test_func "handler1" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func1 = make_test_func "handler1" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "handler2") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
   (* Different signature - incompatible *)
-  let func2 = make_test_func "handler2" [("ctx", Xdp_md); ("data", U32)] (Some Xdp_action) [
+  let func2 = make_test_func "handler2" [("ctx", Xdp_md); ("data", U32)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -103,15 +103,15 @@ let test_signature_compatibility _ =
 
 (** Test ProgArray index mapping *)
 let test_prog_array_mapping _ =
-  let func1 = make_test_func "main_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func1 = make_test_func "main_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "process_tcp") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let func2 = make_test_func "process_tcp" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func2 = make_test_func "process_tcp" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "log_tcp") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let func3 = make_test_func "log_tcp" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func3 = make_test_func "log_tcp" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -131,15 +131,15 @@ let test_prog_array_mapping _ =
 
 (** Test dependency chain analysis *)
 let test_dependency_chains _ =
-  let func1 = make_test_func "entry" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func1 = make_test_func "entry" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "stage1") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let func2 = make_test_func "stage1" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func2 = make_test_func "stage1" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "stage2") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let func3 = make_test_func "stage2" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func3 = make_test_func "stage2" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -159,7 +159,7 @@ let test_dependency_chains _ =
 
 (** Test no tail calls *)
 let test_no_tail_calls _ =
-  let func1 = make_test_func "simple_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func1 = make_test_func "simple_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
   ] in
   
@@ -173,11 +173,11 @@ let test_no_tail_calls _ =
 
 (** Test validation errors *)
 let test_validation_errors _ =
-  let func1 = make_test_func "xdp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let func1 = make_test_func "xdp_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Call (make_expr (Identifier "tc_handler") make_test_position, [])) make_test_position))) make_test_position
   ] in
   
-  let func2 = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some I32) [
+  let func2 = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some (make_unnamed_return I32)) [
     make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) make_test_position))) make_test_position
   ] in
   
@@ -206,15 +206,15 @@ let test_tail_call_match_expressions _ =
   
   let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
   
-  let tcp_handler = make_test_func "tcp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let tcp_handler = make_test_func "tcp_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
   ] in
   
-  let udp_handler = make_test_func "udp_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let udp_handler = make_test_func "udp_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_DROP") make_test_position))) make_test_position
   ] in
   
-  let packet_processor = make_test_func "packet_processor" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let packet_processor = make_test_func "packet_processor" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (6, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some match_expr)) make_test_position
   ] in
@@ -266,19 +266,19 @@ let test_nested_match_tail_calls _ =
   ] in
   let outer_match = make_expr (Match (value_var, outer_match_arms)) make_test_position in
   
-  let handler_a = make_test_func "handler_a" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let handler_a = make_test_func "handler_a" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
   ] in
   
-  let handler_b = make_test_func "handler_b" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let handler_b = make_test_func "handler_b" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_DROP") make_test_position))) make_test_position
   ] in
   
-  let handler_c = make_test_func "handler_c" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let handler_c = make_test_func "handler_c" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_ABORTED") make_test_position))) make_test_position
   ] in
   
-  let dispatcher = make_test_func "dispatcher" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let dispatcher = make_test_func "dispatcher" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Declaration ("value", Some U32, Some (make_expr (Literal (IntLit (1, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some outer_match)) make_test_position
   ] in
@@ -314,11 +314,11 @@ let test_match_with_mixed_tail_calls _ =
   
   let match_expr = make_expr (Match (value_var, match_arms)) make_test_position in
   
-  let tail_target = make_test_func "tail_target" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let tail_target = make_test_func "tail_target" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
   ] in
   
-  let mixed_dispatcher = make_test_func "mixed_dispatcher" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let mixed_dispatcher = make_test_func "mixed_dispatcher" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Declaration ("value", Some U32, Some (make_expr (Literal (IntLit (1, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some match_expr)) make_test_position
   ] in
@@ -350,13 +350,13 @@ let test_tail_calls_in_if_statements _ =
   let if_stmt = make_stmt (If (condition_expr, [return_stmt], None)) make_test_position in
   let final_return = make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position in
   
-  let packet_filter = make_test_func "packet_filter" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let packet_filter = make_test_func "packet_filter" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Declaration ("size", Some U32, Some (make_expr (Literal (IntLit (128, None))) make_test_position))) make_test_position;
     if_stmt;
     final_return
   ] in
   
-  let drop_handler = make_test_func "drop_handler" [("ctx", Xdp_md)] (Some Xdp_action) [
+  let drop_handler = make_test_func "drop_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
     make_stmt (Return (Some (make_expr (Identifier "XDP_DROP") make_test_position))) make_test_position
   ] in
   

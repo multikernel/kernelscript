@@ -72,7 +72,7 @@ let make_test_main_function () =
   make_function 
     "test_xdp" 
     [("ctx", Xdp_md)] 
-    (Some Xdp_action) 
+    (Some (make_unnamed_return Xdp_action)) 
     [return_stmt] 
     (make_test_position ())
 

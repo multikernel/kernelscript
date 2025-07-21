@@ -87,7 +87,7 @@
 %type <Ast.map_flag> flag_item
 
 %type <Ast.function_def> function_declaration
-%type <Ast.bpf_type option> function_return_type
+%type <Ast.return_type_spec option> function_return_type
 %type <(string * Ast.bpf_type) list> parameter_list
 %type <string * Ast.bpf_type> parameter
 %type <Ast.bpf_type> bpf_type
@@ -198,7 +198,8 @@ function_declaration:
 
 function_return_type:
   | /* empty */ { None }
-  | ARROW bpf_type { Some $2 }
+  | ARROW bpf_type { Some (make_unnamed_return $2) }
+  | ARROW IDENTIFIER COLON bpf_type { Some (make_named_return $2 $4) }
 
 parameter_list:
   | /* empty */ { [] }

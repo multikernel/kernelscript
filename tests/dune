@@ -364,6 +364,11 @@
  (modules test_context_field_types)
  (libraries kernelscript alcotest str))
 
+(executable
+ (name test_named_returns)
+ (modules test_named_returns)
+ (libraries kernelscript alcotest))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -585,6 +590,10 @@
  (alias runtest_test_attribute)
  (action (run ./test_test_attribute.exe)))
 
+(rule
+ (alias runtest_named_returns)
+ (action (run ./test_named_returns.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -673,7 +682,8 @@
   test_pointer_syntax.exe
   test_address_of_user_types.exe
   test_match.exe
-  test_test_attribute.exe)
+  test_test_attribute.exe
+  test_named_returns.exe)
  (action
   (progn
    (run ./test_btf_binary_parser.exe)
@@ -714,7 +724,8 @@
    (run ./test_pointer_syntax.exe)
    (run ./test_address_of_user_types.exe)
    (run ./test_match.exe)
-   (run ./test_test_attribute.exe))))
+   (run ./test_test_attribute.exe)
+   (run ./test_named_returns.exe))))
 
 (rule
  (alias ir-tests)
