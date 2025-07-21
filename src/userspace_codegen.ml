@@ -2544,16 +2544,39 @@ void cleanup_bpf_maps(void) {
         }
         case BPF_PROG_TYPE_KPROBE: {
             // For kprobe programs, target should be the kernel function name (e.g., "sys_read")
-            // Use bpf_raw_tracepoint_open which works for kprobes
+            // Use libbpf high-level API for kprobe attachment
             
-            int raw_tp_fd = bpf_raw_tracepoint_open(target, prog_fd);
-            if (raw_tp_fd < 0) {
+            // Get the bpf_program struct from the object and file descriptor
+            struct bpf_program *prog = NULL;
+            struct bpf_object *obj_iter;
+
+            // Find the program object corresponding to this fd
+            // We need to get the program from the skeleton object
+            if (!obj) {
+                fprintf(stderr, "eBPF skeleton not loaded for kprobe attachment\n");
+                return -1;
+            }
+
+            bpf_object__for_each_program(prog, obj->obj) {
+                if (bpf_program__fd(prog) == prog_fd) {
+                    break;
+                }
+            }
+
+            if (!prog) {
+                fprintf(stderr, "Failed to find bpf_program for fd %d\n", prog_fd);
+                return -1;
+            }
+
+            // Use libbpf's high-level kprobe attachment API
+            struct bpf_link *link = bpf_program__attach_kprobe(prog, false, target);
+            if (!link) {
                 fprintf(stderr, "Failed to attach kprobe to function '%s': %s\n", target, strerror(errno));
                 return -1;
             }
             
             // For now, close immediately - in a production system you'd store this for cleanup
-            close(raw_tp_fd);
+            bpf_link__destroy(link);
             printf("✅ Kprobe attached to function: %s\n", target);
             
             return 0;
