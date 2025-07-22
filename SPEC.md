@@ -144,6 +144,55 @@ return_type = type_annotation
 
 **Note:** eBPF programs are now simple attributed functions. All configuration is done through global named config blocks.
 
+#### 3.1.1 Advanced Kprobe Functions with BTF Signature Extraction
+
+KernelScript automatically extracts kernel function signatures from BTF (BPF Type Format) for kprobe functions, eliminating the need for `KprobeContext` and providing type-safe access to function parameters.
+
+```kernelscript
+@kprobe("sys_read")
+fn new_style(fd: u32, buf: *u8, count: usize) -> i32 {
+    // Direct access to function parameters with correct types
+    // Compiler automatically extracts signature from BTF:
+    // long sys_read(unsigned int fd, char __user *buf, size_t count)
+    
+    print("Reading %d bytes from fd %d", count, fd)
+    return 0
+}
+```
+
+**Key Benefits:**
+- **Type Safety**: Parameters have correct types extracted from kernel BTF information
+- **No Magic Numbers**: Direct parameter access instead of `ctx.arg_*(index)`
+- **Self-Documenting**: Function signature matches the actual kernel function
+- **Compile-Time Validation**: Invalid parameter access caught at compile time
+
+**BTF Signature Mapping:**
+```kernelscript
+// Kernel function: long sys_openat(int dfd, const char __user *filename, int flags, umode_t mode)
+@kprobe("sys_openat")
+fn trace_openat(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
+    // Parameters automatically mapped to PT_REGS_PARM1, PT_REGS_PARM2, etc.
+    print("Opening file with flags %d", flags)
+    return 0
+}
+
+// Kernel function: long sys_write(unsigned int fd, const char __user *buf, size_t count)
+@kprobe("sys_write")
+fn trace_write(fd: u32, buf: *u8, count: usize) -> i32 {
+    // Type-safe parameter access
+    if (count > 1024) {
+        print("Large write detected: %d bytes to fd %d", count, fd)
+    }
+    return 0
+}
+```
+
+**Compiler Implementation:**
+- Automatically queries BTF information for the target kernel function
+- Generates parameter mappings to `PT_REGS_PARM*` macros
+- Validates parameter count (maximum 6 on x86_64)
+- Provides meaningful error messages for unknown functions
+
 ### 3.2 Named Configuration Blocks
 ```kernelscript
 // Named configuration blocks - globally accessible
@@ -1702,21 +1751,20 @@ struct PersonInfo {
     status: ShortString,        // str(32)
 }
 
-// Kernel space usage
-program user_monitor : kprobe("sys_open") {
-    fn main(ctx: KprobeContext) -> i32 {
-        var process_name: ProcessName = get_current_process_name()
-        var file_path: FilePath = get_file_path(ctx)
-        
-        // String operations work the same in kernel space
-        if (process_name == "malware") {
-            var log_msg: LogMessage = "Blocked process: " + process_name
-            print(log_msg)
-            return -1
-        }
-        
-        return 0
+// Kernel space usage - kprobe with BTF-extracted function signature
+@kprobe("sys_open")
+fn user_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
+    var process_name: ProcessName = get_current_process_name()
+    var file_path: FilePath = get_file_path_from_filename(filename)
+    
+    // String operations work the same in kernel space
+    if (process_name == "malware") {
+        var log_msg: LogMessage = "Blocked process: " + process_name
+        print(log_msg)
+        return -1
     }
+    
+    return 0
 }
 
 // Userspace usage
@@ -2147,7 +2195,7 @@ pin map<u32, GlobalCounter> global_counters : Array(256)
 pin map<Event> event_stream : RingBuffer(1024 * 1024)
 
 @kprobe("sys_read")
-fn producer(ctx: KprobeContext) -> i32 {
+fn producer(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
     // Update global counter (accessible by other programs)
@@ -2157,6 +2205,8 @@ fn producer(ctx: KprobeContext) -> i32 {
     var event = Event {
         pid: pid,
         syscall: "read",
+        fd: fd,
+        bytes_requested: count,
         timestamp: bpf_ktime_get_ns(),
     }
     event_stream.submit(event)
@@ -2165,14 +2215,14 @@ fn producer(ctx: KprobeContext) -> i32 {
 }
 
 @kprobe("sys_write")
-fn consumer(ctx: KprobeContext) -> i32 {
+fn consumer(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
     // Access global counter (same map as producer program)
     var read_count = global_counters[pid % 256]
     
-    // Process the read count data
-    process_read_count(read_count)
+    // Process the write count data with actual parameters
+    process_write_count(read_count, fd, count)
     
     return 0
 }
@@ -4075,16 +4125,17 @@ fn analyze_syscall_performance(pid: u32, syscall_nr: u32, bytes: u32, duration: 
 
 // Kernel-shared function for measuring write time
 @helper
-fn measure_write_time(ctx: KprobeContext) -> u64 {
+fn measure_write_time() -> u64 {
     return bpf_ktime_get_ns()
 }
 
 @kprobe("sys_read")
-fn perf_monitor(ctx: KprobeContext) -> i32 {
+fn perf_monitor(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     var call_info = CallInfo {
         start_time: bpf_ktime_get_ns(),
-        bytes_requested: ctx.arg_u32(2),
+        bytes_requested: count,  // Use actual parameter instead of ctx.arg_u32(2)
+        file_descriptor: fd,     // Access file descriptor directly
     }
     
     active_calls[pid] = call_info
@@ -4092,7 +4143,7 @@ fn perf_monitor(ctx: KprobeContext) -> i32 {
 }
 
 @kretprobe("sys_read")
-fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
+fn perf_monitor_return(ret_value: isize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
     var call_info = active_calls[pid]
@@ -4100,8 +4151,13 @@ fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
         var duration = bpf_ktime_get_ns() - call_info.start_time
         read_stats[pid % 1024] += duration
         
-        // Use kfunc for detailed analysis and logging
+        // Use actual return value and kfunc for detailed analysis and logging
         analyze_syscall_performance(pid, __NR_read, call_info.bytes_requested, duration)
+        
+        // Log if the syscall failed (negative return value)
+        if (ret_value < 0) {
+            print("sys_read failed with error: %d", ret_value)
+        }
         
         delete active_calls[pid]
     }
@@ -4110,10 +4166,16 @@ fn perf_monitor_return(ctx: KretprobeContext) -> i32 {
 }
 
 @kprobe("sys_write")
-fn write_monitor(ctx: KprobeContext) -> i32 {
+fn write_monitor(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
-    var duration = measure_write_time(ctx)
+    var duration = measure_write_time()  // No context needed
     write_stats[pid % 1024] += duration
+    
+    // Log write operation with actual parameters
+    if (count > 0) {
+        print("Process %d writing %d bytes to fd %d", pid, count, fd)
+    }
+    
     return 0
 }
 
