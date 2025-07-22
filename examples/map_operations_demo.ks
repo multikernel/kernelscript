@@ -54,31 +54,6 @@ struct trace_entry {
   pid: i32,
 }
 
-// Kprobe context struct (from BTF)
-struct pt_regs {
-  r15: u64,
-  r14: u64,
-  r13: u64,
-  r12: u64,
-  rbp: u64,
-  rbx: u64,
-  r11: u64,
-  r10: u64,
-  r9: u64,
-  r8: u64,
-  rax: u64,
-  rcx: u64,
-  rdx: u64,
-  rsi: u64,
-  rdi: u64,
-  orig_rax: u64,
-  rip: u64,
-  cs: u64,
-  eflags: u64,
-  rsp: u64,
-  ss: u64,
-}
-
 // This example demonstrates comprehensive map operations with multi-program analysis
 // It shows various access patterns and concurrent access scenarios
 
@@ -129,7 +104,7 @@ struct ArrayElement {
     
     // Safe concurrent read access - multiple programs can read simultaneously
     var counter = global_counter[key]
-    if (counter != null) {
+    if (counter != none) {
         // High-frequency lookup pattern - will generate optimization suggestions
         for (i in 0..100) {
             var _ = global_counter[key + i]
@@ -142,7 +117,7 @@ struct ArrayElement {
     // Per-CPU access for maximum performance
     var cpu_id = 0
     var data = percpu_data[cpu_id]
-    if (data != null) {
+    if (data != none) {
         data.local_counter = data.local_counter + 1
         percpu_data[cpu_id] = data
     } else {
@@ -162,7 +137,7 @@ struct ArrayElement {
     
     // Potential write conflict with other programs
     var stats = shared_stats[ifindex]
-    if (stats == null) {
+    if (stats == none) {
         stats = Statistics {
             packet_count: 0,
             byte_count: 0,
@@ -220,11 +195,11 @@ struct ArrayElement {
 }
 
 // Program 4: Sequential access pattern demonstration
-@kprobe fn data_processor(ctx: *pt_regs) -> i32 {
+@kprobe fn data_processor(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
         var element = sequential_data[i]
-        if (element != null) {
+        if (element != none) {
             if (!element.processed) {
                 element.value = element.value * 2
                 element.processed = true
