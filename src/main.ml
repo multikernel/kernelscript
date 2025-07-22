@@ -305,6 +305,159 @@ cd %s && make run
     printf "   3. Run 'cd %s && make' to build the generated C code\n" project_name
   )
 
+(** Convert KernelScript type to C type *)
+let kernelscript_type_to_c_type = function
+  | Ast.U8 -> "uint8_t"
+  | Ast.U16 -> "uint16_t" 
+  | Ast.U32 -> "uint32_t"
+  | Ast.U64 -> "uint64_t"
+  | Ast.I8 -> "int8_t"
+  | Ast.I16 -> "int16_t"
+  | Ast.I32 -> "int32_t"
+  | Ast.I64 -> "int64_t"
+  | Ast.Bool -> "bool"
+  | Ast.Char -> "char"
+  | _ -> "int" (* fallback *)
+
+(** Convert KernelScript expression to C *)
+let kernelscript_expr_to_c expr =
+  match expr.Ast.expr_desc with
+  | Ast.Literal (Ast.IntLit (value, _)) -> string_of_int value
+  | Ast.Literal (Ast.BoolLit true) -> "true"
+  | Ast.Literal (Ast.BoolLit false) -> "false"
+  | Ast.Literal (Ast.StringLit str) -> sprintf "\"%s\"" str
+  | Ast.Identifier name -> name
+  | _ -> "/* TODO: Complex expression */"
+
+(** Convert KernelScript statement to C *)
+let kernelscript_stmt_to_c stmt =
+  match stmt.Ast.stmt_desc with
+  | Ast.Return (Some expr) ->
+      sprintf "return %s;" (kernelscript_expr_to_c expr)
+  | Ast.Return None -> "return;"
+  | Ast.ExprStmt expr ->
+      sprintf "%s;" (kernelscript_expr_to_c expr)
+  | Ast.Assignment (var_name, expr) ->
+      sprintf "%s = %s;" var_name (kernelscript_expr_to_c expr)
+  | _ -> "/* TODO: Complex statement */"
+
+(** Actually compile KernelScript functions to C *)
+let compile_imported_modules resolved_imports output_dir =
+  let ks_imports = List.filter (fun import ->
+    match import.Import_resolver.source_type with
+    | Ast.KernelScript -> true
+    | _ -> false
+  ) resolved_imports in
+  
+  List.iter (fun import ->
+    let source_path = import.Import_resolver.resolved_path in
+    let module_name = import.Import_resolver.module_name in
+    
+    Printf.printf "🔧 Compiling imported module: %s\n" module_name;
+    
+    try
+      (* Read and parse the KernelScript source file *)
+      let ic = open_in source_path in
+      let content = really_input_string ic (in_channel_length ic) in
+      close_in ic;
+      
+      let lexbuf = Lexing.from_string content in
+      let imported_ast = Parser.program Lexer.token lexbuf in
+      
+      (* Extract userspace functions *)
+      let userspace_functions = List.filter_map (function
+        | Ast.GlobalFunction func -> Some func
+        | _ -> None
+      ) imported_ast in
+      
+      if userspace_functions <> [] then (
+        (* Generate actual C functions by compiling the KernelScript code *)
+        let c_functions = List.map (fun func ->
+          let func_name = func.Ast.func_name in
+          let prefixed_name = module_name ^ "_" ^ func_name in
+          
+          (* Get return type *)
+          let return_type = match func.Ast.func_return_type with
+            | Some (Ast.Unnamed t) -> kernelscript_type_to_c_type t
+            | Some (Ast.Named (_, t)) -> kernelscript_type_to_c_type t
+            | None -> "void"
+          in
+          
+          (* Get parameters *)
+          let params = List.map (fun (name, param_type) ->
+            sprintf "%s %s" (kernelscript_type_to_c_type param_type) name
+          ) func.Ast.func_params in
+          let params_str = if params = [] then "void" else String.concat ", " params in
+          
+          (* Compile function body from actual KernelScript statements *)
+          let body_statements = List.map kernelscript_stmt_to_c func.Ast.func_body in
+          let body_str = String.concat "\n    " body_statements in
+          
+          sprintf "%s %s(%s) {\n    %s\n}" return_type prefixed_name params_str body_str
+        ) userspace_functions in
+        
+        let module_c_content = sprintf {|#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+// Generated C code from KernelScript module: %s
+// Source: %s
+
+%s
+|} module_name source_path (String.concat "\n\n" c_functions) in
+        
+        (* Write the C file *)
+        let target_c_file = sprintf "%s/%s.c" output_dir module_name in
+        let oc = open_out target_c_file in
+        output_string oc module_c_content;
+        close_out oc;
+        
+        Printf.printf "✅ Generated C code for module %s: %s (%d functions)\n" 
+          module_name target_c_file (List.length userspace_functions)
+      ) else (
+        Printf.printf "ℹ️ Module %s has no userspace functions to compile\n" module_name
+      )
+    with
+    | exn ->
+        Printf.eprintf "❌ Failed to compile imported module %s: %s\n" module_name (Printexc.to_string exn)
+  ) ks_imports
+
+(** Generate C bridge code for imported modules *)
+let generate_bridge_code_for_imports resolved_imports =
+  let ks_imports = List.filter (fun import ->
+    match import.Import_resolver.source_type with
+    | Ast.KernelScript -> true
+    | _ -> false
+  ) resolved_imports in
+  
+  if ks_imports = [] then ""
+  else
+    let declarations = List.map (fun import ->
+      let module_name = import.Import_resolver.module_name in
+      sprintf "// External functions from %s module" module_name
+    ) ks_imports in
+    
+    let bridge_includes = List.map (fun import ->
+      let module_name = import.Import_resolver.module_name in
+      (* Generate function declarations for each imported module *)
+      let function_decls = List.map (fun symbol ->
+        match symbol.Import_resolver.symbol_type with
+        | Ast.Function (param_types, return_type) ->
+            let c_return_type = kernelscript_type_to_c_type return_type in
+            let c_param_types = List.map kernelscript_type_to_c_type param_types in
+            let params_str = if c_param_types = [] then "void" else String.concat ", " c_param_types in
+            sprintf "extern %s %s_%s(%s);" c_return_type module_name symbol.symbol_name params_str
+        | _ ->
+            sprintf "// %s (non-function symbol)" symbol.symbol_name
+      ) import.ks_symbols in
+      String.concat "\n" function_decls
+    ) ks_imports in
+    
+    sprintf "\n// Bridge code for imported KernelScript modules\n%s\n\n%s\n"
+      (String.concat "\n" declarations)
+      (String.concat "\n\n" bridge_includes)
+
 (** Compile KernelScript source (existing functionality) *)
 let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_path test_mode =
   let current_phase = ref "Parsing" in
@@ -341,6 +494,55 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
           failwith "Parse error"
     in
     Printf.printf "✅ Successfully parsed %d declarations\n\n" (List.length ast);
+    
+    (* Phase 1.5: Import Resolution *)
+    Printf.printf "Phase 1.5: Import Resolution\n";
+    let resolved_imports = Import_resolver.resolve_all_imports ast input_file in
+    Printf.printf "✅ Resolved %d imports\n" (List.length resolved_imports);
+    List.iter (fun import -> 
+      match import.Import_resolver.source_type with
+      | KernelScript -> 
+          Printf.printf "   📦 KernelScript: %s (%d symbols)\n" 
+            import.module_name (List.length import.ks_symbols)
+      | Python -> 
+          Printf.printf "   🐍 Python: %s (generic bridge)\n" import.module_name
+    ) resolved_imports;
+    Printf.printf "\n";
+    
+    (* Determine output directory early *)
+    let actual_output_dir = match output_dir with
+      | Some dir -> dir
+      | None -> Filename.remove_extension (Filename.basename input_file)
+    in
+    
+    (* Create output directory if it doesn't exist *)
+    (try Unix.mkdir actual_output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+    
+    (* Compile imported KernelScript modules to C stubs *)
+    compile_imported_modules resolved_imports actual_output_dir;
+    
+    (* Copy Python files to output directory for runtime access *)
+    let copy_python_files resolved_imports output_dir =
+      List.iter (fun import ->
+        match import.Import_resolver.source_type with
+        | Ast.Python ->
+            let source_path = import.Import_resolver.resolved_path in
+            let filename = Filename.basename source_path in
+            let target_path = Filename.concat output_dir filename in
+            (try
+               let ic = open_in source_path in
+               let content = really_input_string ic (in_channel_length ic) in
+               close_in ic;
+               let oc = open_out target_path in
+               output_string oc content;
+               close_out oc;
+               Printf.printf "📋 Copied Python module: %s -> %s\n" source_path target_path
+             with exn ->
+               Printf.eprintf "⚠️ Failed to copy Python file %s: %s\n" source_path (Printexc.to_string exn))
+        | _ -> ()
+      ) resolved_imports
+    in
+    copy_python_files resolved_imports actual_output_dir;
     
     (* Store original AST before any filtering *)
     let original_ast = ast in
@@ -557,7 +759,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     (* Phase 4: Enhanced type checking with multi-program context *)
     current_phase := "Type Checking";
     Printf.printf "Phase 4: %s\n" !current_phase;
-    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) compilation_ast in
+    let (annotated_ast, _typed_programs) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ~imports:resolved_imports compilation_ast in
     Printf.printf "✅ Type checking completed with multi-program annotations\n\n";
     
     (* Phase 4.5: Safety Analysis *)
@@ -730,12 +932,6 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
       ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table ~tail_call_analysis:(Some tail_call_analysis) updated_optimized_ir in
       
-    (* Determine output directory *)
-    let output_dir = match output_dir with
-      | Some dir -> dir
-      | None -> base_name
-    in
-    
     (* Analyze kfunc dependencies for automatic kernel module loading *)
     let ir_functions = List.map (fun prog -> prog.Ir.entry_function) optimized_ir.programs in
     let kfunc_dependencies = Userspace_codegen.analyze_kfunc_dependencies base_name annotated_ast ir_functions in
@@ -745,81 +941,66 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~symbol_table updated_optimized_ir ~output_dir input_file;
+      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ~symbol_table updated_optimized_ir ~output_dir:actual_output_dir input_file;
     
-    (* Create output directory if it doesn't exist *)
-    (try Unix.mkdir output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+    (* Output directory already created earlier *)
     
     (* Write eBPF C code *)
-    let ebpf_filename = output_dir ^ "/" ^ base_name ^ ".ebpf.c" in
+    let ebpf_filename = actual_output_dir ^ "/" ^ base_name ^ ".ebpf.c" in
     let oc = open_out ebpf_filename in
     output_string oc ebpf_c_code;
     close_out oc;
     
     (* Write kernel module file if kfuncs exist *)
     (match kernel_module_code with
-     | Some module_code ->
-         let module_filename = output_dir ^ "/" ^ base_name ^ ".mod.c" in
-         let oc = open_out module_filename in
-         output_string oc module_code;
-         close_out oc;
-         Printf.printf "✅ Generated kernel module: %s\n" module_filename
-     | None -> 
-         Printf.printf "ℹ️ No kfuncs detected, kernel module not generated\n");
+    | Some module_code ->
+        let module_filename = actual_output_dir ^ "/" ^ base_name ^ ".mod.c" in
+        let oc = open_out module_filename in
+        output_string oc module_code;
+        close_out oc;
+        Printf.printf "✅ Generated kernel module: %s\n" module_filename
+    | None -> 
+        Printf.printf "ℹ️ No kfuncs detected, kernel module not generated\n");
     
     (* Generate Makefile if requested *)
     if generate_makefile then (
-      let kmod_targets = match kernel_module_code with
-        | Some _ -> 
-          let btf_vmlinux_make_var = match btf_vmlinux_path with
-            | Some path -> Printf.sprintf " BTF_VMLINUX_PATH=%s" path
-            | None -> ""
-          in
-          let btf_vmlinux_cflags = match btf_vmlinux_path with
-            | Some path -> Printf.sprintf " -DBTF_VMLINUX_PATH=\\\"%s\\\"" path
-            | None -> ""
-          in
-          Printf.sprintf {|
-# Kernel module targets
-KMOD_SRC = %s.mod.c
-KMOD_OBJ = %s.mod.ko
+      (* Generate shared library rules for imported modules *)
+      let ks_imports = List.filter (fun import ->
+        match import.Import_resolver.source_type with
+        | Ast.KernelScript -> true
+        | _ -> false
+      ) resolved_imports in
+      
+      let shared_lib_rules = if ks_imports = [] then ""
+        else
+          let rules = List.map (fun import ->
+            let module_name = import.Import_resolver.module_name in
+            sprintf {|
+# Shared library for %s module
+%s.so: %s.c
+	$(CC) $(CFLAGS) -shared -fPIC -o $@ $<
 
-# Build kernel module
-$(KMOD_OBJ): $(KMOD_SRC)
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules%s
-
-# Clean kernel module
-clean-kmod:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
-
-# Load kernel module
-load-kmod: $(KMOD_OBJ)
-	sudo insmod $(KMOD_OBJ)
-
-# Unload kernel module
-unload-kmod:
-	sudo rmmod %s
-
-# Check if kernel module is loaded
-check-kmod:
-	@if lsmod | grep -q "^%s"; then \
-		echo "Kernel module %s is loaded"; \
-	else \
-		echo "Kernel module %s is NOT loaded"; \
-		echo "Run 'make load-kmod' to load the module before building eBPF skeleton"; \
-		exit 1; \
-	fi
-
-# Kernel module Makefile for external build
-obj-m := %s.mod.o
-
-# Enable debug info for BTF generation
-KBUILD_CFLAGS += -g -O2%s
-|} base_name base_name btf_vmlinux_make_var base_name base_name base_name base_name base_name btf_vmlinux_cflags
-        | None -> ""
+|} module_name module_name module_name
+          ) ks_imports in
+          String.concat "" rules
       in
       
-      let has_kfuncs = kernel_module_code <> None in
+      let shared_lib_targets = if ks_imports = [] then ""
+        else
+          let targets = List.map (fun import -> import.Import_resolver.module_name ^ ".so") ks_imports in
+          String.concat " " targets
+      in
+      
+      let shared_lib_deps = if shared_lib_targets = "" then "" else " " ^ shared_lib_targets in
+      
+      (* Check if Python imports exist and add Python linking flags *)
+      let has_python_imports = List.exists (fun import ->
+        match import.Import_resolver.source_type with
+        | Ast.Python -> true
+        | _ -> false
+      ) resolved_imports in
+      
+      let python_flags = if has_python_imports then " $(shell python3-config --cflags) $(shell python3-config --libs --embed 2>/dev/null || python3-config --libs)" else "" in
       
       let makefile_content = Printf.sprintf {|# Multi-Program eBPF Makefile
 # Generated by KernelScript compiler
@@ -833,7 +1014,7 @@ BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g
 BPF_INCLUDES = -I/usr/include -I/usr/include/x86_64-linux-gnu
 
 # Userspace compilation flags
-CFLAGS = -Wall -Wextra -O2
+CFLAGS = -Wall -Wextra -O2 -fPIC
 LIBS = -lbpf -lelf -lz
 
 # Object files
@@ -843,27 +1024,25 @@ SKELETON_H = %s.skel.h
 
 # Source files
 BPF_SRC = %s.ebpf.c
-USERSPACE_SRC = %s.c%s
+USERSPACE_SRC = %s.c
 
-# Default target - build kernel module first%s, then check if loaded, then build eBPF parts
-all: %s$(BPF_OBJ) $(SKELETON_H) $(USERSPACE_BIN)
-
-# Alternative target that loads kernel module automatically (requires sudo)
-all-with-load: %s$(BPF_OBJ) $(SKELETON_H) $(USERSPACE_BIN)
+# Default target
+all:%s $(BPF_OBJ) $(SKELETON_H) $(USERSPACE_BIN)
 
 # Compile eBPF C to object file
 $(BPF_OBJ): $(BPF_SRC)
 	$(BPF_CC) $(BPF_CFLAGS) $(BPF_INCLUDES) -c $< -o $@
 
-# Generate skeleton header%s
-$(SKELETON_H): $(BPF_OBJ)%s
+# Generate skeleton header
+$(SKELETON_H): $(BPF_OBJ)
 	@echo "Generating skeleton header..."
-%s	bpftool gen skeleton $< > $@
+	bpftool gen skeleton $< > $@
 
-# Compile userspace program
-$(USERSPACE_BIN): $(USERSPACE_SRC) $(SKELETON_H)
-	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
+# Compile userspace program (link with shared libraries)
+$(USERSPACE_BIN): $(USERSPACE_SRC) $(SKELETON_H)%s
+	$(CC) $(CFLAGS) -o $@ $< $(LIBS)%s%s
 
+%s
 # Clean generated files
 clean:
 	rm -f $(BPF_OBJ) $(SKELETON_H) $(USERSPACE_BIN)%s
@@ -878,50 +1057,32 @@ run: $(USERSPACE_BIN)
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all            - Build kernel module%s, check if loaded, then build eBPF parts"
-	@echo "  all-with-load  - Build kernel module, load it, then build eBPF parts (requires sudo)"
-%s	@echo "  ebpf-only      - Build just the eBPF object file"
+	@echo "  all            - Build eBPF program and userspace coordinator"
+	@echo "  ebpf-only      - Build just the eBPF object file"
 	@echo "  clean          - Clean all generated files"
 	@echo "  run            - Run the userspace program (requires sudo)"
-%s%s
 
-%s
-
-.PHONY: all all-with-load clean run ebpf-only help%s
-|} base_name base_name base_name base_name base_name kmod_targets
-       (if has_kfuncs then " (if present)" else "")
-       (if has_kfuncs then "$(KMOD_OBJ) check-kmod " else "")
-       (if has_kfuncs then "$(KMOD_OBJ) load-kmod " else "")
-       (if has_kfuncs then " (requires kernel module to be loaded for kfunc BTF info)" else "")
-       (if has_kfuncs then " check-kmod" else "")
-       (if has_kfuncs then "\t@echo \"Note: This requires the kernel module to be loaded for kfunc BTF information\"\n" else "")
-       (if has_kfuncs then " clean-kmod" else "")
-       (if has_kfuncs then "" else "")
-       (if has_kfuncs then "\n\t@echo \"  load-kmod      - Load the kernel module (requires sudo)\"\n\t@echo \"  unload-kmod    - Unload the kernel module (requires sudo)\"\n\t@echo \"  check-kmod     - Check if kernel module is loaded\"\n" else "")
-              (if has_kfuncs then "\n\t@echo \"\"\n\t@echo \"For kfunc programs, you need to load the kernel module first:\"\n\t@echo \"  make load-kmod && make all\"\n\t@echo \"Or use: make all-with-load\"" else "")
-       (* Test target help *)
-       (match test_file_generated with Some _ -> "\n\t@echo \"  test           - Build test functions\"\n\t@echo \"  run-test       - Build and run test functions\"" | None -> "")
-       (* Test target content *)
-       (match test_file_generated with 
-        | Some _ -> Printf.sprintf "# Test target (compile tests only)\ntest: %s.test.c\n\t$(CC) $(CFLAGS) -o %s_test %s.test.c $(LIBS)\n\n# Run test target (compile and run tests)\nrun-test: test\n\t./%s_test" base_name base_name base_name base_name
-        | None -> "")
-       (* .PHONY targets - ensure no newlines by cleaning the string *)
-       (let phony_targets = (match test_file_generated with Some _ -> " test run-test" | None -> "") ^ (if has_kfuncs then " load-kmod unload-kmod clean-kmod check-kmod" else "") in
-        String.map (function '\n' -> ' ' | c -> c) phony_targets) in
+.PHONY: all clean run ebpf-only help
+|} base_name base_name base_name base_name base_name 
+       shared_lib_deps shared_lib_deps
+       (if shared_lib_targets = "" then "" else (" " ^ String.concat " " (List.map (fun import -> "./" ^ import.Import_resolver.module_name ^ ".so") ks_imports)))
+       python_flags
+       shared_lib_rules 
+       (if shared_lib_targets = "" then "" else (" " ^ shared_lib_targets)) in
       
-      let makefile_path = output_dir ^ "/Makefile" in
+      let makefile_path = actual_output_dir ^ "/Makefile" in
       let oc = open_out makefile_path in
       output_string oc makefile_content;
       close_out oc;
       
-      Printf.printf "📄 Generated Makefile: %s/Makefile\n" output_dir
+      Printf.printf "📄 Generated Makefile: %s/Makefile\n" actual_output_dir
     );
     
       Printf.printf "\n✨ Compilation completed successfully!\n";
-      Printf.printf "📁 Output directory: %s/\n" output_dir;
-      Printf.printf "🔨 To build: cd %s && make\n" output_dir;
+      Printf.printf "📁 Output directory: %s/\n" actual_output_dir;
+      Printf.printf "🔨 To build: cd %s && make\n" actual_output_dir;
       (match test_file_generated with 
-       | Some _ -> Printf.printf "🧪 To build tests: cd %s && make test\n🧪 To run tests: cd %s && make run-test\n" output_dir output_dir
+       | Some _ -> Printf.printf "🧪 To build tests: cd %s && make test\n🧪 To run tests: cd %s && make run-test\n" actual_output_dir actual_output_dir
        | None -> ());
     )  (* Close the compilation block *)
     

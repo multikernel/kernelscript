@@ -5,7 +5,8 @@
           multi_program_analyzer multi_program_ir_optimizer ebpf_c_codegen
           userspace_codegen evaluator safety_checker stdlib test_codegen
 tail_call_analyzer kernel_module_codegen dynptr_bridge
-          btf_parser btf_binary_parser kernel_types struct_ops_registry)
+          btf_parser btf_binary_parser kernel_types struct_ops_registry
+          import_resolver python_bridge kernelscript_bridge)
  (libraries unix str kernelscript_context)
  (foreign_stubs
   (language c)

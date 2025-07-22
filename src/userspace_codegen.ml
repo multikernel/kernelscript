@@ -22,6 +22,404 @@
 open Ir
 open Printf
 
+(** Python function call signature for bridge generation *)
+type python_function_call = {
+  module_name: string;
+  function_name: string;
+  param_count: int;
+  return_type: ir_type;
+}
+
+(** Convert IR types to C types *)
+let rec c_type_from_ir_type = function
+  | IRU8 -> "uint8_t"
+  | IRU16 -> "uint16_t"
+  | IRU32 -> "uint32_t"
+  | IRU64 -> "uint64_t"
+  | IRI8 -> "int8_t"
+  | IRI16 -> "int16_t"
+  | IRI32 -> "int32_t"
+  | IRI64 -> "int64_t"
+  | IRF32 -> "float"
+  | IRF64 -> "double"
+  | IRVoid -> "void"
+  | IRBool -> "bool"
+  | IRChar -> "char"
+  | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
+  | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
+  | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
+  | IRStruct (name, _, _) -> sprintf "struct %s" name
+  | IREnum (name, _, _) -> sprintf "enum %s" name
+  | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
+  | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
+  | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
+  | IRContext _ -> "void*" (* context pointers *)
+  | IRAction _ -> "int" (* action return values *)
+  | IRFunctionPointer (param_types, return_type) -> 
+      (* For function pointers, we need special handling - this is used for type aliases *)
+      let return_type_str = c_type_from_ir_type return_type in
+      let param_types_str = List.map c_type_from_ir_type param_types in
+      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
+
+(** Generate bridge code for imported KernelScript modules *)
+let generate_kernelscript_bridge_code resolved_imports =
+  let ks_imports = List.filter (fun import ->
+    match import.Import_resolver.source_type with
+    | Ast.KernelScript -> true
+    | _ -> false
+  ) resolved_imports in
+  
+  if ks_imports = [] then ""
+  else
+    let bridge_code = List.map (fun import ->
+      let module_name = import.Import_resolver.module_name in
+      let function_decls = List.map (fun symbol ->
+        match symbol.Import_resolver.symbol_type with
+        | Ast.Function (param_types, return_type) ->
+            let c_return_type = match return_type with
+              | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
+              | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
+              | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
+            in
+            let c_param_types = List.map (function
+              | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
+              | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
+              | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
+            ) param_types in
+            let params_str = if c_param_types = [] then "void" else String.concat ", " c_param_types in
+            sprintf "extern %s %s_%s(%s);" c_return_type module_name symbol.symbol_name params_str
+        | _ ->
+            sprintf "// %s (non-function symbol)" symbol.symbol_name
+      ) import.ks_symbols in
+      sprintf "// External functions from %s module\n%s" module_name (String.concat "\n" function_decls)
+    ) ks_imports in
+    
+    sprintf "\n// Bridge code for imported KernelScript modules\n%s\n"
+      (String.concat "\n\n" bridge_code)
+
+(** Collect Python function calls from IR programs *)
+let collect_python_function_calls ir_programs resolved_imports =
+  let python_calls = ref [] in
+  
+  (* Extract function calls from IR instructions *)
+  let rec extract_calls_from_instrs instrs =
+    List.iter (fun instr ->
+      match instr.instr_desc with
+      | IRCall (DirectCall func_name, args, ret_opt) when String.contains func_name '.' ->
+          (* This is a module call - check if it's Python *)
+          let parts = String.split_on_char '.' func_name in
+          (match parts with
+           | [module_name; function_name] ->
+               (* Check if this module is a Python import *)
+               let is_python_module = List.exists (fun import ->
+                 import.Import_resolver.module_name = module_name && 
+                 import.Import_resolver.source_type = Ast.Python
+               ) resolved_imports in
+               if is_python_module then (
+                 let call_signature = {
+                   module_name = module_name;
+                   function_name = function_name;
+                   param_count = List.length args;
+                   return_type = (match ret_opt with 
+                     | Some ret_val -> ret_val.val_type 
+                     | None -> IRVoid);
+                 } in
+                 if not (List.mem call_signature !python_calls) then
+                   python_calls := call_signature :: !python_calls
+               )
+           | _ -> ())
+      | IRIf (_, then_body, else_body) ->
+          extract_calls_from_instrs then_body;
+          (match else_body with
+           | Some else_instrs -> extract_calls_from_instrs else_instrs
+           | None -> ())
+      | IRIfElseChain (conditions_and_bodies, final_else) ->
+          List.iter (fun (_, then_body) ->
+            extract_calls_from_instrs then_body
+          ) conditions_and_bodies;
+          (match final_else with
+           | Some else_instrs -> extract_calls_from_instrs else_instrs
+           | None -> ())
+      | IRBpfLoop (_, _, _, _, body_instrs) ->
+          extract_calls_from_instrs body_instrs
+      | IRTry (try_instrs, catch_clauses) ->
+          extract_calls_from_instrs try_instrs;
+          List.iter (fun clause ->
+            extract_calls_from_instrs clause.catch_body
+          ) catch_clauses
+      | _ -> ()
+    ) instrs
+  in
+  
+  (* Extract calls from all IR functions *)
+  List.iter (fun ir_func ->
+    List.iter (fun block ->
+      extract_calls_from_instrs block.instructions
+    ) ir_func.basic_blocks
+  ) ir_programs;
+  
+  !python_calls
+
+(** Generate bridge code for imported KernelScript and Python modules *)
+let generate_mixed_bridge_code resolved_imports ir_programs =
+  let ks_imports = List.filter (fun import ->
+    match import.Import_resolver.source_type with
+    | Ast.KernelScript -> true
+    | _ -> false
+  ) resolved_imports in
+  
+  let py_imports = List.filter (fun import ->
+    match import.Import_resolver.source_type with
+    | Ast.Python -> true
+    | _ -> false
+  ) resolved_imports in
+  
+  (* Generate KernelScript bridge code *)
+  let ks_bridge_code = if ks_imports = [] then ""
+    else
+      let ks_declarations = List.map (fun import ->
+        let module_name = import.Import_resolver.module_name in
+        let function_decls = List.map (fun symbol ->
+          match symbol.Import_resolver.symbol_type with
+          | Ast.Function (param_types, return_type) ->
+              let c_return_type = match return_type with
+                | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
+                | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
+                | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
+              in
+              let c_param_types = List.map (function
+                | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
+                | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
+                | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
+              ) param_types in
+              let params_str = if c_param_types = [] then "void" else String.concat ", " c_param_types in
+              sprintf "extern %s %s_%s(%s);" c_return_type module_name symbol.symbol_name params_str
+          | _ ->
+              sprintf "// %s (non-function symbol)" symbol.symbol_name
+        ) import.ks_symbols in
+        sprintf "// External functions from KernelScript module: %s\n%s" module_name (String.concat "\n" function_decls)
+      ) ks_imports in
+      sprintf "\n// Bridge code for imported KernelScript modules\n%s\n" (String.concat "\n\n" ks_declarations)
+  in
+  
+  (* Generate Python bridge code based on actual function calls *)
+  let py_bridge_code = if py_imports = [] then ""
+    else
+      (* Collect actual Python function calls from IR *)
+      let python_calls = collect_python_function_calls ir_programs resolved_imports in
+      
+      if python_calls = [] then
+        (* No Python function calls found - generate minimal bridge *)
+        let py_headers = "\n#include <Python.h>" in
+        let py_minimal_bridge = List.map (fun import ->
+          let module_name = import.Import_resolver.module_name in
+          let file_path = import.Import_resolver.resolved_path in
+          let python_module_name = Filename.remove_extension (Filename.basename file_path) in
+          sprintf {|
+// Python module: %s
+static PyObject* %s_module = NULL;
+
+// Initialize Python bridge for %s
+int init_%s_bridge(void) {
+    if (!Py_IsInitialized()) {
+        Py_Initialize();
+        if (!Py_IsInitialized()) {
+            fprintf(stderr, "Failed to initialize Python interpreter\n");
+            return -1;
+        }
+    }
+    
+    // Add the current directory to Python path
+    PyRun_SimpleString("import sys");
+    PyRun_SimpleString("sys.path.insert(0, '.')");
+    
+    // Import the module by name
+    PyObject* module_name_obj = PyUnicode_FromString("%s");
+    if (!module_name_obj) {
+        fprintf(stderr, "Failed to create module name string\n");
+        return -1;
+    }
+    
+    %s_module = PyImport_Import(module_name_obj);
+    Py_DECREF(module_name_obj);
+    
+    if (!%s_module) {
+        PyErr_Print();
+        fprintf(stderr, "Failed to import Python module: %s (make sure %s.py is in the current directory)\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+// Cleanup Python bridge for %s
+void cleanup_%s_bridge(void) {
+    if (%s_module) {
+        Py_DECREF(%s_module);
+        %s_module = NULL;
+    }
+}|} module_name module_name module_name module_name python_module_name 
+      module_name module_name module_name python_module_name
+      module_name module_name module_name module_name module_name
+        ) py_imports in
+        sprintf "%s\n// Bridge code for imported Python modules\n%s\n" py_headers (String.concat "\n\n" py_minimal_bridge)
+      else
+        (* Generate specific bridge functions for actual calls *)
+        let py_headers = "\n#include <Python.h>" in
+        
+        (* Group calls by module *)
+        let calls_by_module = List.fold_left (fun acc call ->
+          let existing_calls = try List.assoc call.module_name acc with Not_found -> [] in
+          let updated_calls = call :: (List.filter (fun c -> c.function_name <> call.function_name) existing_calls) in
+          (call.module_name, updated_calls) :: (List.remove_assoc call.module_name acc)
+        ) [] python_calls in
+        
+        let py_declarations = List.map (fun import ->
+          let module_name = import.Import_resolver.module_name in
+          let file_path = import.Import_resolver.resolved_path in
+          let python_module_name = Filename.remove_extension (Filename.basename file_path) in
+          
+          (* Get the calls for this module *)
+          let module_calls = try List.assoc module_name calls_by_module with Not_found -> [] in
+          
+          (* Generate bridge functions for each called function *)
+          let bridge_functions = List.map (fun call ->
+            let c_return_type = c_type_from_ir_type call.return_type in
+            let params_list = List.init call.param_count (fun i -> sprintf "PyObject* arg%d" i) in
+            let params_str = if params_list = [] then "void" else String.concat ", " params_list in
+            let args_tuple = if call.param_count = 0 then "NULL" else (
+              let arg_refs = List.init call.param_count (fun i -> sprintf "arg%d" i) in
+              sprintf "Py_BuildValue(\"(%s)\", %s)" 
+                (String.make call.param_count 'O') 
+                (String.concat ", " arg_refs)
+            ) in
+            
+            sprintf {|
+// Bridge function for %s.%s
+%s %s_%s(%s) {
+    if (!%s_module) {
+        fprintf(stderr, "Python module %s not initialized\n");
+        return (%s){0};
+    }
+    
+    PyObject* py_func = PyObject_GetAttrString(%s_module, "%s");
+    if (!py_func || !PyCallable_Check(py_func)) {
+        fprintf(stderr, "Function %s not found in module %s\n");
+        Py_XDECREF(py_func);
+        return (%s){0};
+    }
+    
+    PyObject* args_tuple = %s;
+    PyObject* result = PyObject_CallObject(py_func, args_tuple);
+    Py_DECREF(py_func);
+    if (args_tuple) Py_DECREF(args_tuple);
+    
+    if (!result) {
+        PyErr_Print();
+        return (%s){0};
+    }
+    
+    %s ret_val = %s;
+    if (PyErr_Occurred()) {
+        PyErr_Print();
+        Py_DECREF(result);
+        return (%s){0};
+    }
+    
+    Py_DECREF(result);
+    return ret_val;
+}|} module_name call.function_name c_return_type module_name call.function_name params_str
+      module_name module_name c_return_type module_name call.function_name call.function_name 
+      module_name c_return_type args_tuple c_return_type c_return_type 
+      (match call.return_type with
+       | IRU64 -> "PyLong_AsUnsignedLongLong(result)"
+       | IRU32 -> "(uint32_t)PyLong_AsUnsignedLong(result)" 
+       | IRU16 -> "(uint16_t)PyLong_AsUnsignedLong(result)"
+       | IRU8 -> "(uint8_t)PyLong_AsUnsignedLong(result)"
+       | IRI64 -> "PyLong_AsLongLong(result)"
+       | IRI32 -> "(int32_t)PyLong_AsLong(result)"
+       | IRI16 -> "(int16_t)PyLong_AsLong(result)"
+       | IRI8 -> "(int8_t)PyLong_AsLong(result)"
+       | IRBool -> "PyObject_IsTrue(result)"
+       | IRF64 -> "PyFloat_AsDouble(result)"
+       | IRF32 -> "(float)PyFloat_AsDouble(result)"
+       | IRStr _ -> "/* string conversion would go here */"
+       | _ -> "0 /* unsupported type */") c_return_type
+          ) module_calls in
+          
+          sprintf {|
+// Python module: %s
+static PyObject* %s_module = NULL;
+
+%s
+
+// Initialize Python bridge for %s
+int init_%s_bridge(void) {
+    if (!Py_IsInitialized()) {
+        Py_Initialize();
+        if (!Py_IsInitialized()) {
+            fprintf(stderr, "Failed to initialize Python interpreter\n");
+            return -1;
+        }
+    }
+    
+    // Add the current directory to Python path
+    PyRun_SimpleString("import sys");
+    PyRun_SimpleString("sys.path.insert(0, '.')");
+    
+    // Import the module by name
+    PyObject* module_name_obj = PyUnicode_FromString("%s");
+    if (!module_name_obj) {
+        fprintf(stderr, "Failed to create module name string\n");
+        return -1;
+    }
+    
+    %s_module = PyImport_Import(module_name_obj);
+    Py_DECREF(module_name_obj);
+    
+    if (!%s_module) {
+        PyErr_Print();
+        fprintf(stderr, "Failed to import Python module: %s (make sure %s.py is in the current directory)\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+// Cleanup Python bridge for %s
+void cleanup_%s_bridge(void) {
+    if (%s_module) {
+        Py_DECREF(%s_module);
+        %s_module = NULL;
+    }
+}|} module_name module_name (String.concat "\n" bridge_functions) module_name module_name 
+      python_module_name module_name module_name module_name python_module_name
+      module_name module_name module_name module_name module_name
+        ) py_imports in
+        sprintf "%s\n// Bridge code for imported Python modules\n%s\n" py_headers (String.concat "\n\n" py_declarations)
+  in
+  
+  ks_bridge_code ^ py_bridge_code
+
+(** Generate Python initialization calls for all Python imports *)
+let generate_python_initialization_calls resolved_imports =
+  let py_imports = List.filter (fun import ->
+    match import.Import_resolver.source_type with
+    | Ast.Python -> true
+    | _ -> false
+  ) resolved_imports in
+  
+  if py_imports = [] then ""
+  else
+    let init_calls = List.map (fun import ->
+      let module_name = import.Import_resolver.module_name in
+      sprintf "    if (init_%s_bridge() != 0) {\n        fprintf(stderr, \"Failed to initialize Python module: %s\\n\");\n        return 1;\n    }" module_name module_name
+    ) py_imports in
+    
+    sprintf "\n    // Initialize Python modules\n%s\n" 
+      (String.concat "\n" init_calls)
+
 (** Dependency information for a single eBPF program *)
 type program_dependencies = {
   program_name: string;
@@ -750,37 +1148,7 @@ let fix_format_specifiers format_string arg_types =
   in
   fix_formats format_chars arg_types []
 
-let rec c_type_from_ir_type = function
-  | IRU8 -> "uint8_t"
-  | IRU16 -> "uint16_t"
-  | IRU32 -> "uint32_t"
-  | IRU64 -> "uint64_t"
-  | IRI8 -> "int8_t"
-  | IRI16 -> "int16_t"
-  | IRI32 -> "int32_t"
-  | IRI64 -> "int64_t"
-  | IRF32 -> "float"
-  | IRF64 -> "double"
-  | IRVoid -> "void"
-  | IRBool -> "bool"
-  | IRChar -> "char"
-  | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
-  | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
-  | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
-  | IRStruct (name, _, _) -> sprintf "struct %s" name
-      | IREnum (name, _, _) -> sprintf "enum %s" name
 
-  | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
-  | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
-  | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRContext _ -> "void*" (* context pointers *)
-  | IRAction _ -> "int" (* action return values *)
-  | IRFunctionPointer (param_types, return_type) -> 
-      (* For function pointers, we need special handling - this is used for type aliases *)
-      let return_type_str = c_type_from_ir_type return_type in
-      let param_types_str = List.map c_type_from_ir_type param_types in
-      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
 
 (** Generate type alias definitions for userspace *)
 let generate_type_alias_definitions_userspace type_aliases =
@@ -1414,8 +1782,14 @@ let rec generate_c_instruction_from_ir ctx instruction =
       (* Handle different call targets *)
       let (actual_name, translated_args) = match target with
         | DirectCall name ->
+            (* Check for module calls (contain dots) and transform them *)
+            let actual_function_name = if String.contains name '.' then
+              (* Module call like "utils.validate_config" -> "utils_validate_config" *)
+              String.map (function '.' -> '_' | c -> c) name
+            else name in
+            
             (* Check if this is a built-in function that needs context-specific translation *)
-            (match Stdlib.get_userspace_implementation name with
+            (match Stdlib.get_userspace_implementation actual_function_name with
         | Some userspace_impl ->
             (* This is a built-in function - translate for userspace context *)
             let c_args = List.map (generate_c_value_from_ir ctx) args in
@@ -1477,7 +1851,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
         | None ->
             (* Regular function call *)
             let c_args = List.map (generate_c_value_from_ir ctx) args in
-            (name, c_args))
+            (actual_function_name, c_args))
         | FunctionPointerCall func_ptr ->
             (* Function pointer call - generate the function pointer directly *)
             let func_ptr_str = generate_c_value_from_ir ctx func_ptr in
@@ -1829,7 +2203,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
     }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
 
 (** Generate C function from IR function *)
-let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) ?(ir_multi_prog = None) (ir_func : ir_function) =
+let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) ?(ir_multi_prog = None) ?(resolved_imports = []) (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
        generate_c_declaration ir_type name
@@ -1980,11 +2354,17 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
       "    // Note: Skeleton loaded implicitly above, load() now gets program handles"
     else "" in
     
+    (* Add Python initialization for main function *)
+    let python_init_code = if ir_func.func_name = "main" then
+      generate_python_initialization_calls resolved_imports
+    else "" in
+    
     (* Combine skeleton loading with other initialization *)
     let initialization_code = String.concat "\n" (List.filter (fun s -> s <> "") [
       skeleton_loading_code;
       setup_call;
       auto_init_call;
+      python_init_code;
       error_handling_notice;
     ]) in
     
@@ -2316,7 +2696,7 @@ let generate_load_function_with_tail_calls _base_name all_usage tail_call_analys
   else ""
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?symbol_table (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
@@ -2355,7 +2735,10 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     sprintf "#include \"%s.skel.h\"\n" base_name
   else "" in
   
-  let includes = base_includes ^ "\n" ^ additional_includes ^ kmodule_loading_code ^ skeleton_include in
+  (* Generate bridge code for imported KernelScript and Python modules *)
+  let bridge_code = generate_mixed_bridge_code resolved_imports userspace_prog.userspace_functions in
+  
+  let includes = base_includes ^ "\n" ^ additional_includes ^ kmodule_loading_code ^ skeleton_include ^ bridge_code in
 
   (* Reset and use the global config names collector *)
   global_config_names := [];
@@ -2396,7 +2779,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Generate functions first so config names get collected *)
   let functions = String.concat "\n\n" 
-    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog)) userspace_prog.userspace_functions) in
+    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog) ~resolved_imports) userspace_prog.userspace_functions) in
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
@@ -2636,10 +3019,10 @@ void cleanup_bpf_maps(void) {
 |} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?symbol_table (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ?symbol_table userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ?symbol_table userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 
@@ -2670,3 +3053,8 @@ let is_impl_block_variable ir_multi_prog var_name =
   List.exists (fun struct_ops_decl ->
     struct_ops_decl.ir_instance_name = var_name
   ) ir_multi_prog.struct_ops_instances
+
+
+
+
+

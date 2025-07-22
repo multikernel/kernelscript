@@ -534,6 +534,10 @@ let rec lower_expression ctx (expr : Ast.expr) =
       (* Tail calls are handled specifically in return statements *)
       failwith ("Tail call to " ^ name ^ " should only appear in return statements")
       
+  | Ast.ModuleCall module_call ->
+      (* Module calls are handled by userspace code generation, not IR *)
+      failwith ("Module call to " ^ module_call.module_name ^ "." ^ module_call.function_name ^ " should be handled in userspace code generation")
+      
   | Ast.Call (callee_expr, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
       

@@ -110,6 +110,8 @@
     | "defer" -> DEFER
     | "match" -> MATCH
     | "default" -> DEFAULT
+    | "import" -> IMPORT
+    | "from" -> FROM
     
     | "true" -> BOOL_LIT true
     | "false" -> BOOL_LIT false

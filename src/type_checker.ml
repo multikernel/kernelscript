@@ -39,6 +39,7 @@ type context = {
   configs: (string, Ast.config_declaration) Hashtbl.t;
   attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
   attributed_function_map: (string, attributed_function) Hashtbl.t; (* Map for tail call analysis *)
+  imports: (string, Import_resolver.resolved_import) Hashtbl.t; (* Track imported modules *)
   mutable current_function: string option;
   mutable current_program_type: program_type option;
   mutable multi_program_analysis: Multi_program_analyzer.multi_program_analysis option;
@@ -135,6 +136,7 @@ let create_context symbol_table ast =
   let types = Hashtbl.create 16 in
   let maps = Hashtbl.create 16 in
   let configs = Hashtbl.create 16 in
+  let imports = Hashtbl.create 16 in
   
   (* Extract enum constants, impl blocks, and type definitions from symbol table *)
   let global_symbols = Symbol_table.get_global_symbols symbol_table in
@@ -173,6 +175,7 @@ let create_context symbol_table ast =
     types = types;
     maps = maps;
     configs = configs;
+    imports = imports;
     symbol_table = symbol_table;
     current_function = None;
     current_program_type = None;
@@ -794,6 +797,25 @@ and type_check_field_access ctx obj field pos =
          type_error (Printf.sprintf "Config '%s' has no field '%s'" config_name field) pos
        in
        { texpr_desc = TConfigAccess (config_name, field); texpr_type = field_type; texpr_pos = pos }
+   | Identifier module_name when Hashtbl.mem ctx.imports module_name ->
+       (* This is a module function access - handle it as a special module field access *)
+       let resolved_import = Hashtbl.find ctx.imports module_name in
+               (match resolved_import.source_type with
+         | KernelScript ->
+             (* Find the function in the imported module *)
+             (match Import_resolver.find_kernelscript_symbol resolved_import field with
+              | None ->
+                  type_error (Printf.sprintf "Function '%s' not found in module '%s'" field module_name) pos
+              | Some symbol ->
+                  (* Return the function type so it can be called *)
+                  { texpr_desc = TIdentifier (module_name ^ "." ^ field); 
+                    texpr_type = symbol.symbol_type; 
+                    texpr_pos = pos })
+         | Python ->
+             (* Python modules - return generic function type *)
+             { texpr_desc = TIdentifier (module_name ^ "." ^ field); 
+               texpr_type = Function ([], U64); (* Generic signature for Python *)
+               texpr_pos = pos })
    | _ ->
        (* Regular field access - process normally *)
        let typed_obj = type_check_expression ctx obj in
@@ -1169,6 +1191,65 @@ and type_check_expression ctx expr =
           type_error ("Wrong number of arguments for tail call: " ^ name) expr.expr_pos
       with Not_found ->
         type_error ("Undefined tail call target: " ^ name) expr.expr_pos)
+        
+  | ModuleCall call ->
+      (* Simplified module call type checking *)
+      (match Hashtbl.find_opt ctx.imports call.module_name with
+       | None ->
+           type_error ("Unknown module: " ^ call.module_name) expr.expr_pos
+       | Some resolved_import ->
+                       (match resolved_import.source_type with
+             | KernelScript ->
+                 (* For KernelScript modules, we can do static type checking *)
+                 (match Import_resolver.find_kernelscript_symbol resolved_import call.function_name with
+                  | None ->
+                      type_error ("Function not found in module " ^ call.module_name ^ ": " ^ call.function_name) expr.expr_pos
+                  | Some symbol ->
+                      (* Extract actual function signature and validate call *)
+                                             (match symbol.symbol_type with
+                        | Function (param_types, return_type) ->
+                            (* Validate argument count *)
+                            if List.length call.args <> List.length param_types then
+                              type_error (Printf.sprintf "Wrong number of arguments in call to %s.%s: expected %d, got %d"
+                                call.module_name call.function_name 
+                                (List.length param_types) (List.length call.args)) expr.expr_pos;
+                            
+                            (* Type check arguments against expected parameters *)
+                            let typed_args = List.map2 (fun arg expected_type ->
+                              let typed_arg = type_check_expression ctx arg in
+                              let resolved_expected = resolve_user_type ctx expected_type in
+                              let resolved_actual = resolve_user_type ctx typed_arg.texpr_type in
+                              if resolved_expected <> resolved_actual then
+                                type_error (Printf.sprintf "Argument type mismatch in call to %s.%s: expected %s, got %s"
+                                  call.module_name call.function_name 
+                                  (Ast.string_of_bpf_type expected_type) 
+                                  (Ast.string_of_bpf_type typed_arg.texpr_type)) arg.expr_pos;
+                              typed_arg
+                            ) call.args param_types in
+                           
+                           (* Return the actual return type from the function signature *)
+                           { texpr_desc = TCall (
+                               { texpr_desc = TIdentifier (call.module_name ^ "." ^ call.function_name);
+                                 texpr_type = symbol.symbol_type;
+                                 texpr_pos = expr.expr_pos },
+                               typed_args);
+                             texpr_type = return_type; (* Use actual return type! *)
+                             texpr_pos = expr.expr_pos }
+                       | _ ->
+                           type_error ("Symbol " ^ call.function_name ^ " in module " ^ call.module_name ^ " is not a function") expr.expr_pos))
+             | Python ->
+                 (* For Python modules, all calls are dynamic - just validate module exists *)
+                 (match Import_resolver.validate_python_module_import resolved_import with
+                  | Error msg -> type_error msg expr.expr_pos
+                  | Ok _ ->
+                      (* Python calls are dynamic - return generic type *)
+                      { texpr_desc = TCall (
+                          { texpr_desc = TIdentifier (call.module_name ^ "." ^ call.function_name);
+                            texpr_type = Function ([], U64); (* Generic signature *)
+                            texpr_pos = expr.expr_pos },
+                          []);
+                        texpr_type = U64; (* Generic return type *)
+                        texpr_pos = expr.expr_pos })))
         
   | Match (matched_expr, arms) ->
       (* Type check the matched expression *)
@@ -2231,7 +2312,7 @@ let typed_ast_to_annotated_ast typed_attributed_functions typed_userspace_functi
   ) original_ast
 
 (** PHASE 2: Type check and annotate AST with multi-program analysis *)
-let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ast =
+let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?(imports=([] : Import_resolver.resolved_import list)) ast =
   (* STEP 1: Multi-program analysis *)
   let multi_prog_analysis = Multi_program_analyzer.analyze_multi_program_system ast in
   
@@ -2249,6 +2330,13 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
     | None -> Symbol_table.build_symbol_table ast
   in
   let ctx = create_context symbol_table ast in
+  
+  (* Populate imports in context *)
+  List.iter (fun (resolved_import : Import_resolver.resolved_import) ->
+    Hashtbl.replace ctx.imports resolved_import.module_name resolved_import;
+    (* Also add module names as variables so they can be used in field access *)
+    Hashtbl.replace ctx.variables resolved_import.module_name (UserType ("Module_" ^ resolved_import.module_name))
+  ) imports;
   
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
@@ -2454,6 +2542,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) a
               Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
           | ImplStaticField (_, _) -> ()  (* Static fields don't need function registration *)
         ) impl_block.impl_items
+    | ImportDecl _import_decl ->
+        (* Import declarations are handled elsewhere - no processing needed here *)
+        ()
   ) ast;
   
   (* Second pass: type check attributed functions and global functions with multi-program awareness *)

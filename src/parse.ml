@@ -78,6 +78,7 @@ let validate_ast ast =
     | StructLiteral (_, field_assignments) -> 
         List.for_all (fun (_, field_expr) -> validate_expr field_expr) field_assignments
     | TailCall (_, args) -> List.for_all validate_expr args
+    | ModuleCall module_call -> List.for_all validate_expr module_call.args
         | Match (matched_expr, arms) ->
         validate_expr matched_expr &&
         List.for_all (fun arm -> 
@@ -145,6 +146,7 @@ let validate_ast ast =
           | ImplFunction func -> validate_function func
           | ImplStaticField (_, expr) -> validate_expr expr
         ) impl_block.impl_items
+    | ImportDecl _ -> true (* Import declarations are always valid once parsed *)
   in
   
   List.for_all validate_declaration ast

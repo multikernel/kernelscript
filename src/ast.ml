@@ -162,6 +162,7 @@ and expr_desc =
   | ConfigAccess of string * string  (* config_name, field_name *)
   | Call of expr * expr list  (* Unified call: callee_expression * arguments *)
   | TailCall of string * expr list  (* function_name, arguments - for explicit tail calls *)
+  | ModuleCall of module_call  (* module.function(args) calls *)
   | ArrayAccess of expr * expr
   | FieldAccess of expr * string
   | ArrowAccess of expr * string  (* pointer->field *)
@@ -169,6 +170,14 @@ and expr_desc =
   | UnaryOp of unary_op * expr
   | StructLiteral of string * (string * expr) list
   | Match of expr * match_arm list  (* match (expr) { arms } *)
+
+(** Module function call *)
+and module_call = {
+  module_name: string;
+  function_name: string;
+  args: expr list;
+  call_pos: position;
+}
 
 (** Match pattern for basic match expressions *)
 and match_pattern =
@@ -309,6 +318,17 @@ type impl_block = {
   impl_pos: position;
 }
 
+(** Import source type - determined by file extension *)
+type import_source_type = KernelScript | Python
+
+(** Import declaration *)
+type import_declaration = {
+  module_name: string;        (* Local name for the imported module *)
+  source_path: string;        (* File path *)
+  source_type: import_source_type; (* Determined from file extension *)
+  import_pos: position;
+}
+
 (** Top-level declarations *)
 type declaration =
   | AttributedFunction of attributed_function
@@ -319,6 +339,7 @@ type declaration =
   | StructDecl of struct_def
   | GlobalVarDecl of global_variable_declaration
   | ImplBlock of impl_block
+  | ImportDecl of import_declaration
 
 (** Complete AST *)
 type ast = declaration list
@@ -488,6 +509,31 @@ let make_default_pattern () = DefaultPattern
 let make_match_expr matched_expr arms pos =
   make_expr (Match (matched_expr, arms)) pos
 
+(** Import-related helper functions *)
+let detect_import_source_type file_path =
+  let extension = Filename.extension file_path in
+  match String.lowercase_ascii extension with
+  | ".ks" -> KernelScript
+  | ".py" -> Python
+  | _ -> failwith ("Unsupported import file type: " ^ extension)
+
+let make_import_declaration module_name source_path pos = {
+  module_name;
+  source_path;
+  source_type = detect_import_source_type source_path;
+  import_pos = pos;
+}
+
+let make_module_call module_name function_name args pos = {
+  module_name;
+  function_name;
+  args;
+  call_pos = pos;
+}
+
+let make_module_call_expr module_name function_name args pos =
+  make_expr (ModuleCall (make_module_call module_name function_name args pos)) pos
+
 (** Pretty-printing functions for debugging *)
 
 let string_of_position pos =
@@ -607,6 +653,11 @@ let rec string_of_expr expr =
   | TailCall (name, args) ->
       Printf.sprintf "%s(%s)" name 
         (String.concat ", " (List.map string_of_expr args))
+  | ModuleCall module_call ->
+      Printf.sprintf "%s.%s(%s)" 
+        module_call.module_name 
+        module_call.function_name
+        (String.concat ", " (List.map string_of_expr module_call.args))
   | ArrayAccess (arr, idx) ->
       Printf.sprintf "%s[%s]" (string_of_expr arr) (string_of_expr idx)
   | FieldAccess (obj, field) ->
@@ -802,6 +853,15 @@ let string_of_declaration = function
         | ImplStaticField (name, expr) -> Printf.sprintf "%s: %s," name (string_of_expr expr)
       ) impl_block.impl_items) in
       Printf.sprintf "%s impl %s {\n    %s\n}" attrs_str impl_block.impl_name items_str
+  | ImportDecl import_decl ->
+      let source_type_str = match import_decl.source_type with
+        | KernelScript -> "KernelScript"
+        | Python -> "Python"
+      in
+      Printf.sprintf "import %s from \"%s\" // %s" 
+        import_decl.module_name 
+        import_decl.source_path 
+        source_type_str
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

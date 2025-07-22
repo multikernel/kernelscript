@@ -164,6 +164,8 @@ let comprehensive_symbol_analysis symbol_table ast =
       | GlobalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count
       | Config _ -> incr type_count
+      | ImportedModule _ -> () (* Imported modules don't need counting *)
+      | ImportedFunction _ -> incr function_count
       (* AttributedFunction programs are now just functions - no separate Program symbol kind *)
     ) symbols
   ) symbol_table.symbols;

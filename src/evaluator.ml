@@ -668,6 +668,10 @@ and eval_expression ctx expr =
       (* Tail calls are not supported in evaluation context - they only exist in eBPF *)
       eval_error ("Tail call to " ^ name ^ " cannot be evaluated in userspace context") expr.expr_pos
   
+  | ModuleCall module_call ->
+      (* Module calls are not supported in evaluation context - they need FFI setup *)
+      eval_error ("Module call to " ^ module_call.module_name ^ "." ^ module_call.function_name ^ " cannot be evaluated in userspace context") expr.expr_pos
+  
   | ArrayAccess (arr, idx) -> eval_array_access ctx arr idx expr.expr_pos
   
   | FieldAccess (obj, field) -> eval_field_access ctx obj field expr.expr_pos

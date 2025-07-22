@@ -89,6 +89,49 @@ fn main(args: Args) -> i32 {
 }
 ```
 
+### 1.4 Unified Import System
+
+KernelScript supports importing both KernelScript modules and external language modules using a unified syntax. Import behavior is automatically determined by file extension:
+
+```kernelscript
+// Import KernelScript modules (.ks files)
+import utils from "./common/utils.ks"           // Functions, types, maps, configs
+import packet_helpers from "../net/helpers.ks"  // Shared across eBPF and userspace
+
+// Import Python modules (.py files) - userspace only
+import ml_analysis from "./ml/threat_analysis.py"
+import data_processor from "./analytics/stats.py"
+
+// Usage is identical regardless of source language
+@xdp
+fn intelligent_filter(ctx: *xdp_md) -> xdp_action {
+    // Use KernelScript imported functions
+    var protocol = utils.extract_protocol(ctx)
+    
+    // Use Python imported functions (FFI bridge in userspace)
+    var packet_data = ctx->data
+    var packet_len = ctx->data_end - ctx->data
+    var threat_score = ml_analysis.compute_threat_score(packet_data, packet_len)
+    
+    if (threat_score > 0.8) {
+        return XDP_DROP
+    }
+    return XDP_PASS
+}
+
+fn main() -> i32 {
+    // Both KernelScript and Python functions work seamlessly in userspace
+    var is_valid = utils.validate_config()
+    var model_stats = ml_analysis.get_model_statistics()
+    
+    print("Config valid: %d, Model accuracy: %f", is_valid, model_stats.accuracy)
+    
+    var prog = load(intelligent_filter)
+    attach(prog, "eth0", 0)
+    return 0
+}
+```
+
 ## 2. Lexical Structure
 
 ### 2.1 Keywords
@@ -4449,9 +4492,17 @@ boolean_literal = "true" | "false"
 array_literal = "[" [ expression { "," expression } ] "]" 
 null_literal = "null" 
 
-(* Import declarations *)
-import_declaration = "import" import_target 
-import_target = identifier | string_literal 
+(* Import declarations - unified syntax for KernelScript and external languages *)
+import_declaration = "import" identifier "from" string_literal 
+
+(* Examples:
+   import utils from "./common/utils.ks"          // KernelScript import
+   import ml_analysis from "./ml/threat.py"       // Python import (userspace only)
+   
+   Import behavior is determined by file extension:
+   - .ks files: Import KernelScript symbols (functions, types, maps, configs)  
+   - .py files: Import Python functions with automatic FFI bridging (userspace only)
+*) 
 
 (* Identifiers and basic tokens *)
 identifier = letter { letter | digit | "_" } 

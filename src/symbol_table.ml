@@ -29,6 +29,8 @@ type symbol_kind =
   | Parameter of bpf_type
   | EnumConstant of string * int option  (* enum_name, value *)
   | Config of config_declaration
+  | ImportedModule of import_source_type * string  (* source_type, file_path *)
+  | ImportedFunction of string * bpf_type list * bpf_type  (* module_name, param_types, return_type *)
 
 (** Symbol information *)
 type symbol = {
@@ -490,6 +492,13 @@ and process_declaration_accumulate table declaration =
       ) impl_block.impl_items;
       table
 
+  | Ast.ImportDecl import_decl ->
+      (* Add the imported module to the symbol table *)
+      add_symbol table import_decl.module_name 
+        (ImportedModule (import_decl.source_type, import_decl.source_path)) 
+        Public import_decl.import_pos;
+      table
+
 and process_declaration table = function
   | Ast.TypeDef type_def ->
       let pos = { line = 1; column = 1; filename = "" } in  (* TODO: get actual position *)
@@ -559,6 +568,12 @@ and process_declaration table = function
       
   | Ast.GlobalVarDecl global_var_decl ->
       add_global_var_decl table global_var_decl
+      
+  | Ast.ImportDecl import_decl ->
+      (* Add the imported module to the symbol table *)
+      add_symbol table import_decl.module_name 
+        (ImportedModule (import_decl.source_type, import_decl.source_path)) 
+        Public import_decl.import_pos
       
   | Ast.ImplBlock impl_block ->
       (* Add the impl block itself as a struct_ops symbol *)
@@ -748,6 +763,17 @@ and process_expression table expr =
        | None -> symbol_error ("Undefined tail call target: " ^ name) expr.expr_pos);
       List.iter (process_expression table) args
       
+  | ModuleCall module_call ->
+      (* Validate module call - check that module is imported and function exists *)
+      (match lookup_symbol table module_call.module_name with
+       | Some { kind = ImportedModule _; _ } ->
+           (* Module is imported - function validation will be done by type checker *)
+           List.iter (process_expression table) module_call.args
+       | Some _ -> 
+           symbol_error (module_call.module_name ^ " is not an imported module") expr.expr_pos
+       | None -> 
+           symbol_error ("Unknown module: " ^ module_call.module_name) expr.expr_pos)
+      
   | ArrayAccess (arr, idx) ->
       process_expression table arr;
       process_expression table idx
@@ -907,6 +933,14 @@ let string_of_symbol_kind = function
   | EnumConstant (enum_name, value) ->
       "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")
   | Config config_decl -> "config:" ^ config_decl.config_name
+  | ImportedModule (source_type, file_path) ->
+      let source_str = match source_type with
+        | KernelScript -> "KernelScript"
+        | Python -> "Python"
+      in
+      "imported_module:" ^ source_str ^ ":" ^ file_path
+  | ImportedFunction (module_name, params, ret) ->
+      "imported_function:" ^ module_name ^ ".(" ^ String.concat "," (List.map string_of_bpf_type params) ^ ")->" ^ string_of_bpf_type ret
 
 let string_of_visibility = function
   | Public -> "pub"

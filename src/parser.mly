@@ -35,6 +35,7 @@
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
 %token IN DELETE TRY CATCH THROW DEFER MATCH DEFAULT
+%token IMPORT FROM
 
 
 /* Operators */
@@ -138,6 +139,7 @@
 %type <Ast.impl_block> impl_block_declaration
 %type <Ast.impl_block_item list> impl_block_items
 %type <Ast.impl_block_item> impl_block_item
+%type <Ast.import_declaration> import_declaration
 
 /* Start symbol */
 %start program
@@ -162,6 +164,7 @@ declaration:
   | type_alias_declaration { TypeDef $1 }
   | global_variable_declaration { GlobalVarDecl $1 }
   | impl_block_declaration { ImplBlock $1 }
+  | import_declaration { ImportDecl $1 }
 
 /* Config declaration: config name { config_fields } */
 config_declaration:
@@ -633,5 +636,10 @@ impl_block_items:
 impl_block_item:
   | function_declaration { ImplFunction $1 }
   | IDENTIFIER COLON expression COMMA { ImplStaticField ($1, $3) }
+
+/* Import declaration: import module_name from "file_path" */
+import_declaration:
+  | IMPORT IDENTIFIER FROM STRING
+    { make_import_declaration $2 $4 (make_pos ()) }
 
 %% 
