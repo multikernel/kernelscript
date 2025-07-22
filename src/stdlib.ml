@@ -124,7 +124,7 @@ let builtin_functions = [
     description = "Register an impl block instance (struct_ops) with the kernel";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
-    userspace_impl = "bpf_map__attach_struct_ops";
+    userspace_impl = ""; (* Use IRStructOpsRegister instruction instead *)
     kernel_impl = "";
     validate = Some validate_register_function;
   };

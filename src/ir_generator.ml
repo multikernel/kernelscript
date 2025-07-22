@@ -95,10 +95,10 @@ let create_context ?(global_variables = []) symbol_table = {
   variable_types = Hashtbl.create 32;
 }
 
-(** Register allocation *)
+(** Allocate a new register for intermediate values *)
 let allocate_register ctx =
   let reg = ctx.next_register in
-  ctx.next_register <- ctx.next_register + 1;
+  ctx.next_register <- reg + 1;
   reg
 
 (** Get or allocate register for variable *)
@@ -543,36 +543,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (* Check if this is a variable holding a function pointer or a direct function call *)
            if name = "register" then
              (* Special handling for register() builtin function *)
-             if List.length arg_vals = 1 then
-               let struct_arg = List.hd args in
-               (* Handle impl block references specially *)
-               let struct_val = match struct_arg.expr_desc with
-                 | Ast.Identifier impl_name ->
-                     (* Check if this is an impl block name in the symbol table *)
-                     (match Symbol_table.lookup_symbol ctx.symbol_table impl_name with
-                      | Some symbol -> 
-                          (match symbol.kind with
-                           | Symbol_table.TypeDef _ ->
-                               (* This is an impl block - use the name directly *)
-                               let ir_type = IRStruct (impl_name, [], false) in
-                               make_ir_value (IRVariable impl_name) ir_type struct_arg.expr_pos
-                           | _ ->
-                               (* Regular variable - use normal processing *)
-                               lower_expression ctx struct_arg)
-                      | None ->
-                          (* Not found in symbol table - use normal processing *)
-                          lower_expression ctx struct_arg)
-                 | _ ->
-                     (* Not an identifier - use normal processing *)
-                     lower_expression ctx struct_arg
-               in
-               let result_reg = allocate_register ctx in
-               let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
-               let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr.expr_pos in
-               emit_instruction ctx instr;
-               result_val
-             else
-               failwith "register() takes exactly one argument"
+              handle_register_builtin_call ctx args expr.expr_pos ()
            else if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
              (* This is a variable holding a function pointer - use FunctionPointerCall *)
              let callee_val = lower_expression ctx callee_expr in
@@ -977,6 +948,45 @@ let rec lower_expression ctx (expr : Ast.expr) =
       generate_match_conditions arms;
       result_val
 
+(** Helper function to handle register() builtin function calls *)
+and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type () =
+  if List.length args = 1 then
+    let struct_arg = List.hd args in
+    (* Handle impl block references specially *)
+    let struct_val = match struct_arg.Ast.expr_desc with
+      | Ast.Identifier impl_name ->
+          (* Check if this is an impl block name in the symbol table *)
+          (match Symbol_table.lookup_symbol ctx.symbol_table impl_name with
+           | Some symbol -> 
+               (match symbol.kind with
+                | Symbol_table.TypeDef _ ->
+                    (* This is an impl block - use the name directly *)
+                    let ir_type = IRStruct (impl_name, [], false) in
+                    make_ir_value (IRVariable impl_name) ir_type struct_arg.Ast.expr_pos
+                | _ ->
+                    (* Regular variable - use normal processing *)
+                    lower_expression ctx struct_arg)
+           | None ->
+               (* Not found in symbol table - use normal processing *)
+               lower_expression ctx struct_arg)
+      | _ ->
+          (* Not an identifier - use normal processing *)
+          lower_expression ctx struct_arg
+    in
+    (* Create result value - use provided target or allocate new register *)
+    let result_val = match target_register, target_type with
+      | Some reg, Some typ -> make_ir_value (IRRegister reg) typ expr_pos
+      | None, _ -> 
+          let result_reg = allocate_register ctx in
+          make_ir_value (IRRegister result_reg) IRU32 expr_pos
+      | Some reg, None -> make_ir_value (IRRegister reg) IRU32 expr_pos
+    in
+    let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr_pos in
+    emit_instruction ctx instr;
+    result_val
+  else
+    failwith "register() takes exactly one argument"
+
 (** Helper function to resolve type aliases and track them *)
 and resolve_type_alias ctx reg ast_type =
   match ast_type with
@@ -1021,22 +1031,29 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
       (match expr.Ast.expr_desc with
        | Ast.Call (callee_expr, args) ->
            (* Handle function call that should return to the target register *)
-           let arg_vals = List.map (lower_expression ctx) args in
-           let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
-           let call_target = match callee_expr.Ast.expr_desc with
-             | Ast.Identifier name ->
-                 if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
-                   let callee_val = lower_expression ctx callee_expr in
-                   FunctionPointerCall callee_val
-                 else
-                   DirectCall name
-             | _ ->
-                 let callee_val = lower_expression ctx callee_expr in
-                 FunctionPointerCall callee_val
-           in
-           let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
-           emit_instruction ctx instr;
-           (target_type, None)
+           (* Special handling for register() builtin function *)
+           (match callee_expr.Ast.expr_desc with
+            | Ast.Identifier "register" ->
+                                      let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_register:reg ~target_type:target_type () in
+                (target_type, None)
+            | _ ->
+                (* Regular function call handling *)
+                let arg_vals = List.map (lower_expression ctx) args in
+                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let call_target = match callee_expr.Ast.expr_desc with
+                  | Ast.Identifier name ->
+                      if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                        let callee_val = lower_expression ctx callee_expr in
+                        FunctionPointerCall callee_val
+                      else
+                        DirectCall name
+                  | _ ->
+                      let callee_val = lower_expression ctx callee_expr in
+                      FunctionPointerCall callee_val
+                in
+                let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+                emit_instruction ctx instr;
+                (target_type, None))
        | _ ->
            (* Non-function call - use normal processing *)
            let value = lower_expression ctx expr in
@@ -1050,22 +1067,29 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
              | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
              | None -> IRU32 (* Default fallback *)
            in
-           let arg_vals = List.map (lower_expression ctx) args in
-           let result_val = make_ir_value (IRRegister reg) inferred_type expr.Ast.expr_pos in
-           let call_target = match callee_expr.Ast.expr_desc with
-             | Ast.Identifier name ->
-                 if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
-                   let callee_val = lower_expression ctx callee_expr in
-                   FunctionPointerCall callee_val
-                 else
-                   DirectCall name
-             | _ ->
-                 let callee_val = lower_expression ctx callee_expr in
-                 FunctionPointerCall callee_val
-           in
-           let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
-           emit_instruction ctx instr;
-           (inferred_type, None)
+           (* Special handling for register() builtin function *)
+           (match callee_expr.Ast.expr_desc with
+            | Ast.Identifier "register" ->
+                let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_register:reg ~target_type:inferred_type () in
+                (inferred_type, None)
+            | _ ->
+                (* Regular function call handling *)
+                let arg_vals = List.map (lower_expression ctx) args in
+                let result_val = make_ir_value (IRRegister reg) inferred_type expr.Ast.expr_pos in
+                let call_target = match callee_expr.Ast.expr_desc with
+                  | Ast.Identifier name ->
+                      if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                        let callee_val = lower_expression ctx callee_expr in
+                        FunctionPointerCall callee_val
+                      else
+                        DirectCall name
+                  | _ ->
+                      let callee_val = lower_expression ctx callee_expr in
+                      FunctionPointerCall callee_val
+                in
+                let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+                emit_instruction ctx instr;
+                (inferred_type, None))
        | _ ->
            (* Non-function call - use normal processing *)
            let value = lower_expression ctx expr in
@@ -1310,7 +1334,7 @@ and lower_statement ctx stmt =
       
       (* Handle function call declarations elegantly by proper instruction ordering *)
       (match expr_opt with
-       | Some expr when (match expr.Ast.expr_desc with Ast.Call _ -> true | _ -> false) ->
+       | Some expr when (match expr.expr_desc with Ast.Call _ -> true | _ -> false) ->
            (* For function calls: emit declaration first, then call with assignment *)
            let target_type = match typ_opt with
              | Some ast_type -> resolve_type_alias ctx reg ast_type
@@ -1327,21 +1351,28 @@ and lower_statement ctx stmt =
            (* Then emit function call as assignment *)
            (match expr.Ast.expr_desc with
             | Ast.Call (callee_expr, args) ->
-                let arg_vals = List.map (lower_expression ctx) args in
-                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
-                let call_target = match callee_expr.Ast.expr_desc with
-                  | Ast.Identifier name ->
-                      if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
-                        let callee_val = lower_expression ctx callee_expr in
-                        FunctionPointerCall callee_val
-                      else
-                        DirectCall name
-                  | _ ->
-                      let callee_val = lower_expression ctx callee_expr in
-                      FunctionPointerCall callee_val
-                in
-                let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
-                emit_instruction ctx instr
+                (* Special handling for register() builtin function *)
+                (match callee_expr.Ast.expr_desc with
+                 | Ast.Identifier "register" ->
+                     let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_register:reg ~target_type:target_type () in
+                     ()
+                 | _ ->
+                     (* Regular function call handling *)
+                     let arg_vals = List.map (lower_expression ctx) args in
+                     let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                     let call_target = match callee_expr.Ast.expr_desc with
+                       | Ast.Identifier name ->
+                           if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                             let callee_val = lower_expression ctx callee_expr in
+                             FunctionPointerCall callee_val
+                           else
+                             DirectCall name
+                       | _ ->
+                           let callee_val = lower_expression ctx callee_expr in
+                           FunctionPointerCall callee_val
+                     in
+                     let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+                     emit_instruction ctx instr)
             | _ -> ()) (* Shouldn't happen due to our guard *)
        | _ ->
            (* Non-function call declarations: use existing logic *)

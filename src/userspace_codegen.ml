@@ -1720,17 +1720,24 @@ let rec generate_c_instruction_from_ir ctx instruction =
              | IRStruct (name, _, _) -> name
              | _ -> failwith "struct_ops register() argument must be an impl block instance")
       in
-      (* Generate normal C code instead of statement expressions *)
-      sprintf {|if (!obj) {
+      (* Generate struct_ops registration code *)
+      sprintf {|({
+    if (!obj) {
         fprintf(stderr, "eBPF skeleton not loaded for struct_ops registration\n");
-        return -1;
+        %s = -1;
+    } else {
+        struct bpf_map *map = bpf_object__find_map_by_name(obj->obj, "%s");
+        if (!map) {
+            fprintf(stderr, "Failed to find struct_ops map '%s'\n");
+            %s = -1;
+        } else {
+            struct bpf_link *link = bpf_map__attach_struct_ops(map);
+            %s = (link != NULL) ? 0 : -1;
+            if (link) bpf_link__destroy(link);
+        }
     }
-    struct bpf_map *map = bpf_object__find_map_by_name(obj->obj, "%s");
-    if (!map) {
-        fprintf(stderr, "Failed to find struct_ops map '%s'\n");
-        return -1;
-    }
-    %s = bpf_map__attach_struct_ops(map);|} instance_name instance_name result_str
+    %s;
+});|} result_str instance_name instance_name result_str result_str result_str
 
 (** Generate C struct from IR struct definition *)
 let generate_c_struct_from_ir ir_struct =
@@ -2343,7 +2350,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Generate skeleton header include for standard libbpf skeleton *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
-  let skeleton_include = if ir_multi_prog.global_variables <> [] || uses_bpf_functions then
+  let needs_skeleton_header = ir_multi_prog.global_variables <> [] || uses_bpf_functions || ir_multi_prog.struct_ops_instances <> [] in
+  let skeleton_include = if needs_skeleton_header then
     sprintf "#include \"%s.skel.h\"\n" base_name
   else "" in
   
@@ -2380,8 +2388,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Generate type alias definitions from AST *)
   let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
 
-  (* Generate eBPF object instance *)
-  let skeleton_code = if ir_multi_prog.global_variables <> [] || uses_bpf_functions then
+  (* Generate eBPF object instance - also needed for struct_ops *)
+  let needs_skeleton = ir_multi_prog.global_variables <> [] || uses_bpf_functions || ir_multi_prog.struct_ops_instances <> [] in
+  let skeleton_code = if needs_skeleton then
     sprintf "/* eBPF skeleton instance */\nstruct %s_ebpf *obj = NULL;\n" base_name
   else "" in
   

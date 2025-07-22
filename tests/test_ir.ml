@@ -278,6 +278,72 @@ fn main() -> i32 {
   with
   | e -> failwith (Printf.sprintf "Variable function call initialization test failed: %s" (Printexc.to_string e))
 
+(** Test that register() calls in variable declarations generate IRStructOpsRegister instructions.
+ * This test prevents regression of a critical bug where register() calls in variable declarations
+ * like "var result = register(minimal_test)" were not being properly converted to IRStructOpsRegister
+ * instructions. Instead, they were being processed as simple variable references, causing compilation 
+ * errors like "error: 'minimal_test' undeclared (first use in this function)".
+ * 
+ * The bug existed because register() handling was only implemented in the main lower_expression path,
+ * but variable declarations with function call initialization go through a separate code path in 
+ * resolve_declaration_type_and_init that bypassed the special register() processing.
+ * 
+ * This test ensures that ALL register() calls, regardless of context, generate the correct 
+ * IRStructOpsRegister instruction for proper struct_ops integration.
+ *)
+let test_register_builtin_ir_generation () =
+  let input = {|
+// Simple struct_ops impl block for testing
+@struct_ops("tcp_congestion_ops")
+impl minimal_test {
+    fn init() -> u32 {
+        return 1
+    }
+}
+
+fn main() -> i32 {
+    var result = register(minimal_test)  // This should generate IRStructOpsRegister
+    return result
+}
+|} in
+
+  try
+    let ast = Kernelscript.Parse.parse_string input in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    let ir_multi_prog = generate_ir typed_ast symbol_table "test_register_ir" in
+    
+    (* Find the userspace program *)
+    let userspace_program = match ir_multi_prog.userspace_program with
+      | Some prog -> prog
+      | None -> failwith "No userspace program found"
+    in
+    let main_func = List.find (fun func -> func.func_name = "main") userspace_program.userspace_functions in
+    
+    (* Collect all instructions from all basic blocks *)
+    let all_instructions = List.flatten (List.map (fun block -> block.instructions) main_func.basic_blocks) in
+    
+    (* Check that there's at least one IRStructOpsRegister instruction *)
+    let struct_ops_registers = List.filter_map (fun instr ->
+      match instr.instr_desc with
+      | IRStructOpsRegister (result_val, struct_val) -> Some (result_val, struct_val)
+      | _ -> None
+    ) all_instructions in
+    
+    (* Before the fix, this would fail because register() calls weren't generating IRStructOpsRegister *)
+    check bool "IRStructOpsRegister instruction generated" true (List.length struct_ops_registers > 0);
+    
+    (* Verify the instruction has the correct structure *)
+    if List.length struct_ops_registers > 0 then (
+      let (result_val, struct_val) = List.hd struct_ops_registers in
+      check bool "result is register" true (match result_val.value_desc with IRRegister _ -> true | _ -> false);
+      check bool "struct is variable reference" true (match struct_val.value_desc with IRVariable _ -> true | _ -> false)
+    )
+    
+  with exn ->
+    Printf.printf "Register IR test failed with exception: %s\n" (Printexc.to_string exn);
+    check bool "test should not fail" false true
+
 let ir_tests = [
   "program_lowering", `Quick, test_program_lowering;
   "context_access_lowering", `Quick, test_context_access_lowering;
@@ -286,6 +352,7 @@ let ir_tests = [
   "stack_usage_tracking", `Quick, test_stack_usage_tracking;
   "userspace_binding_generation", `Quick, test_userspace_binding_generation;
   "variable_function_call_initialization", `Quick, test_variable_function_call_initialization;
+  "register_builtin_ir_generation", `Quick, test_register_builtin_ir_generation;
 ]
 
 let () =
