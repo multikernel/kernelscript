@@ -123,8 +123,8 @@ struct PacketStats {
 }
 
 // Maps using type aliases and structs
-map<u32, Counter> cpu_counters : HashMap(256)
-map<IpAddress, PacketStats> ip_stats : HashMap(1000) 
+var cpu_counters : HashMap<u32, Counter>(256)
+var ip_stats : HashMap<IpAddress, PacketStats>(1000) 
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -253,7 +253,7 @@ type UserId = u32
 type AccountId = UserId
 type GroupId = AccountId
 
-map<GroupId, u64> user_groups : HashMap(100)
+var user_groups : HashMap<GroupId, u64>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   return 2

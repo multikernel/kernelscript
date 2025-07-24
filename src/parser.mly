@@ -30,7 +30,7 @@
 %token NULL NONE
 
 /* Keywords */
-%token FN MAP PIN TYPE STRUCT ENUM IMPL
+%token FN PIN TYPE STRUCT ENUM IMPL
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR VOID STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
@@ -486,20 +486,20 @@ struct_literal_field:
 
 /* Map Declarations */
 map_declaration:
-  | MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+  | VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
     { let config = make_map_config (fst $11) ~flags:[] () in
-      make_map_declaration $7 $3 $5 $9 config true ~is_pinned:false (make_pos ()) }
-  | PIN MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+      make_map_declaration $2 $6 $8 $4 config true ~is_pinned:false (make_pos ()) }
+  | PIN VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
     { let config = make_map_config (fst $12) ~flags:[] () in
-      make_map_declaration $8 $4 $6 $10 config true ~is_pinned:true (make_pos ()) }
-  | AT IDENTIFIER LPAREN flag_expression RPAREN MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+      make_map_declaration $3 $7 $9 $5 config true ~is_pinned:true (make_pos ()) }
+  | AT IDENTIFIER LPAREN flag_expression RPAREN VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
     { if $2 <> "flags" then failwith ("Unknown map attribute: " ^ $2);
       let config = make_map_config (fst $16) ~flags:$4 () in
-      make_map_declaration $12 $8 $10 $14 config true ~is_pinned:false (make_pos ()) }
-  | AT IDENTIFIER LPAREN flag_expression RPAREN PIN MAP LT bpf_type COMMA bpf_type GT IDENTIFIER COLON map_type LPAREN INT RPAREN
+      make_map_declaration $7 $11 $13 $9 config true ~is_pinned:false (make_pos ()) }
+  | AT IDENTIFIER LPAREN flag_expression RPAREN PIN VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
     { if $2 <> "flags" then failwith ("Unknown map attribute: " ^ $2);
       let config = make_map_config (fst $17) ~flags:$4 () in
-      make_map_declaration $13 $9 $11 $15 config true ~is_pinned:true (make_pos ()) }
+      make_map_declaration $8 $12 $14 $10 config true ~is_pinned:true (make_pos ()) }
 
 map_type:
   | IDENTIFIER { 

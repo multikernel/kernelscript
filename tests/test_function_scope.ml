@@ -386,7 +386,7 @@ let test_userspace_function_calling_userspace () =
 (** Test 11: Comprehensive kernel function system *)
 let test_comprehensive_kernel_function_system () =
   let source = {|
-    map<u32, u64> global_counters : Array(1024)
+    var global_counters : Array<u32, u64>(1024)
     
     @helper
 fn increment_global_counter(index: u32) {

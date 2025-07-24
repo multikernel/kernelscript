@@ -73,19 +73,19 @@ struct PerCpuData {
 // Global maps shared across multiple programs with the new simplified syntax
 
 // Global counter with automatic path: /sys/fs/bpf/map_operations_demo/maps/global_counter
-pin map<u32, u64> global_counter : HashMap(10000)
+pin var global_counter : HashMap<u32, u64>(10000)
 
 // Statistics map with read-only flags
-@flags(rdonly) pin map<u32, Statistics> shared_stats : HashMap(1000)
+@flags(rdonly) pin var shared_stats : HashMap<u32, Statistics>(1000)
 
 // Per-CPU data with automatic pinning path: /sys/fs/bpf/map_operations_demo/maps/percpu_data  
-pin map<u32, PerCpuData> percpu_data : PercpuHash(256)
+pin var percpu_data : PercpuHash<u32, PerCpuData>(256)
 
 // Event stream ring buffer with no preallocation flag
-@flags(no_prealloc) pin map<u32, u32> event_stream : RingBuffer(65536)
+@flags(no_prealloc) pin var event_stream : RingBuffer<u32, u32>(65536)
 
 // Sequential data array - not pinned (local to program)
-map<u32, ArrayElement> sequential_data : Array(1024)
+var sequential_data : Array<u32, ArrayElement>(1024)
 
 struct Event {
     timestamp: u64,

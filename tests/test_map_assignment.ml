@@ -48,7 +48,7 @@ let comprehensive_assignment_analysis _ = {all_valid = true; errors = []; analys
 (** Test basic map assignment operations *)
 let test_basic_map_assignment () =
   let program_text = {|
-map<u32, u64> counter : HashMap(1024)
+var counter : HashMap<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   counter[42] = 100
@@ -67,7 +67,7 @@ map<u32, u64> counter : HashMap(1024)
 (** Test complex map assignments *)
 let test_complex_map_assignments () =
   let program_text = {|
-map<u32, u64> stats : HashMap(1024)
+var stats : HashMap<u32, u64>(1024)
 
 @xdp fn complex_assign(ctx: *xdp_md) -> xdp_action {
   var key = 42
@@ -91,7 +91,7 @@ map<u32, u64> stats : HashMap(1024)
 (** Test assignment type checking *)
 let test_assignment_type_checking () =
   let valid_program = {|
-map<u32, u64> typed_map : HashMap(1024)
+var typed_map : HashMap<u32, u64>(1024)
 
 @xdp fn valid_assign(ctx: *xdp_md) -> xdp_action {
   typed_map[1] = 100  // u64 value
@@ -101,7 +101,7 @@ map<u32, u64> typed_map : HashMap(1024)
 |} in
   
   let invalid_program = {|
-map<u32, u64> typed_map : HashMap(1024)
+var typed_map : HashMap<u32, u64>(1024)
 
 @xdp fn invalid_assign(ctx: *xdp_md) -> xdp_action {
   typed_map["string_key"] = 100  // Invalid key type
@@ -137,7 +137,7 @@ map<u32, u64> typed_map : HashMap(1024)
 (** Test assignment optimization *)
 let test_assignment_optimization () =
   let program_text = {|
-map<u32, u64> data : HashMap(1024)
+var data : HashMap<u32, u64>(1024)
 
 @xdp fn optimize_assign(ctx: *xdp_md) -> xdp_action {
   var key = 1
@@ -177,7 +177,7 @@ map<u32, u64> data : HashMap(1024)
 (** Test assignment dependency analysis *)
 let test_assignment_dependency_analysis () =
   let program_text = {|
-map<u32, u64> flow_data : HashMap(1024)
+var flow_data : HashMap<u32, u64>(1024)
 
 @xdp fn dependency_test(ctx: *xdp_md) -> xdp_action {
   var key = 1
@@ -210,7 +210,7 @@ map<u32, u64> flow_data : HashMap(1024)
 (** Test assignment validation *)
 let test_assignment_validation () =
   let valid_assignments = {|
-map<u32, u64> valid_map : HashMap(1024)
+var valid_map : HashMap<u32, u64>(1024)
 
 @xdp fn valid_assignments(ctx: *xdp_md) -> xdp_action {
   valid_map[1] = 100
@@ -250,7 +250,7 @@ map<u32, u64> valid_map : HashMap(1024)
 (** Test assignment safety analysis *)
 let test_assignment_safety_analysis () =
   let program_text = {|
-map<u32, u64> bounds_map : Array(10)
+var bounds_map : Array<u32, u64>(10)
 
 @xdp fn safety_test(ctx: *xdp_md) -> xdp_action {
   var safe_index = 5
@@ -281,8 +281,8 @@ map<u32, u64> bounds_map : Array(10)
 (** Test assignment performance analysis *)
 let test_assignment_performance_analysis () =
   let program_text = {|
-map<u32, u64> fast_array : Array(100)
-map<u32, u64> slow_hash : HashMap(1024)
+var fast_array : Array<u32, u64>(100)
+var slow_hash : HashMap<u32, u64>(1024)
 
 @xdp fn perf_test(ctx: *xdp_md) -> xdp_action {
   // Fast array assignments
@@ -317,8 +317,8 @@ map<u32, u64> slow_hash : HashMap(1024)
 (** Test comprehensive assignment analysis *)
 let test_comprehensive_assignment_analysis () =
   let program_text = {|
-map<u32, u64> packet_stats : HashMap(1024)
-map<u16, u32> port_counts : Array(65536)
+var packet_stats : HashMap<u32, u64>(1024)
+var port_counts : Array<u16, u32>(65536)
 
 @helper
 fn update_packet_stats(protocol: u32, size: u32) -> u64 {

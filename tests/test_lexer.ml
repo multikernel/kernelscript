@@ -19,8 +19,8 @@ open Kernelscript
 
 let token_testable = testable (fun fmt -> function
   | Parser.FN -> Format.fprintf fmt "FN"
+  | Parser.PIN -> Format.fprintf fmt "PIN"
   | Parser.AT -> Format.fprintf fmt "AT"
-  | Parser.MAP -> Format.fprintf fmt "MAP"
   | Parser.INT (i, _) -> Format.fprintf fmt "INT(%d)" i
   | Parser.STRING s -> Format.fprintf fmt "STRING(%s)" s
   | Parser.BOOL_LIT b -> Format.fprintf fmt "BOOL_LIT(%b)" b
@@ -75,8 +75,8 @@ let token_testable = testable (fun fmt -> function
 ) (=)
 
 let test_keywords () =
-  let tokens = Lexer.tokenize_string "fn map @" in
-  check (list token_testable) "keywords" [Parser.FN; Parser.MAP; Parser.AT] tokens
+  let tokens = Lexer.tokenize_string "fn pin @" in
+  check (list token_testable) "keywords" [Parser.FN; Parser.PIN; Parser.AT] tokens
 
 let test_literals () =
   let tokens = Lexer.tokenize_string "42 \"hello\" true" in

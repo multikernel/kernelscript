@@ -549,7 +549,7 @@ let test_enum_array_index () =
       ICMP = 1
     }
     
-    map<Protocol, u32> protocol_stats : PercpuArray(32)
+    var protocol_stats : PercpuArray<Protocol, u32>(32)
     
     @helper
     fn test_enum_index() -> u32 {

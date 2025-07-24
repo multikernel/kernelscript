@@ -28,7 +28,7 @@ struct ConnStats {
 }
 
 // Map to store connection statistics
-map<u32, *ConnStats> conn_tracker : HashMap(1024)
+var conn_tracker : HashMap<u32, *ConnStats>(1024)
 
 @xdp fn packet_inspector(ctx: *xdp_md) -> xdp_action {
     // Simple source IP extraction (in real code, would parse ethernet/IP headers)

@@ -53,11 +53,11 @@ struct PacketInfo {
 }
 
 // Global maps (accessible from all programs)
-pin map<u32, u64> global_stats : HashMap(1024)
+pin var global_stats : HashMap<u32, u64>(1024)
 
-pin map<u32, PacketInfo> packet_cache : LruHash(256)
+pin var packet_cache : LruHash<u32, PacketInfo>(256)
 
-pin map<u32, u32> traffic_data : Array(128)
+pin var traffic_data : Array<u32, u32>(128)
 
 @helper
 fn log_packet(info: PacketInfo) -> u32 {

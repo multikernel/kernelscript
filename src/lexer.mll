@@ -72,7 +72,6 @@
 
   let lookup_keyword = function
     | "fn" -> FN
-    | "map" -> MAP
     | "pin" -> PIN
     | "type" -> TYPE
     | "struct" -> STRUCT

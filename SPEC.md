@@ -25,8 +25,8 @@ u8[64]                 // 64-byte buffer
 u32[16]                // 16 u32 values
 
 // Simple map declarations
-map<u32, u64> counters : Array(256)
-map<IpAddress, PacketStats> flows : HashMap(1024)
+var counters : Array<u32, u64>(256)
+var flows : HashMap<IpAddress, PacketStats>(1024)
 
 // No complex template metaprogramming - just practical, concrete types
 ```
@@ -43,7 +43,7 @@ KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 ```kernelscript
 // Shared resources (accessible by both kernel and userspace)
 config system { debug: bool = false }
-map<u32, u64> counters : Array(256)
+var counters : Array<u32, u64>(256)
 
 // Kernel-shared functions (accessible by all eBPF programs)
 @helper
@@ -137,12 +137,12 @@ fn main() -> i32 {
 ### 2.1 Keywords
 ```
 program     fn          var         const       config      local
-map         pin         type        struct      enum        if          else
-for         while       loop        break       continue    return      import
-export      pub         priv        static      unsafe      where       impl
-true        false       null        and         or          not         in
-as          is          try         catch       throw       defer       go
-delete      match       test
+pin         type        struct      enum        if          else        for
+while       loop        break       continue    return      import      export
+pub         priv        static      unsafe      where       impl        true
+false       null        and         or          not         in          as
+is          try         catch       throw       defer       go          delete
+match       test
 ```
 
 **Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
@@ -480,7 +480,7 @@ struct PinnedGlobals {
 
 // Single-entry pinned map
 @flags(BPF_F_NO_PREALLOC)
-pin map<u32, PinnedGlobals> __pinned_globals : Array(1)
+pin var __pinned_globals : Array<u32, PinnedGlobals>(1)
 
 // Access wrappers (transparent to user):
 // packet_count access becomes: __pinned_globals[0].packet_count
@@ -536,7 +536,7 @@ fn main() -> i32 {
 
 | Feature | Global Variables | Pinned Global Variables | Maps | Configs |
 |---------|------------------|-------------------------|------|---------|
-| **Syntax** | `var name: type = value` | `pin var name: type = value` | `[pin] [@flags(...)] map<K,V> name : Type(size)` | `config name { field: type = value }` |
+| **Syntax** | `var name: type = value` | `pin var name: type = value` | `[pin] [@flags(...)] var name : Type<K,V>(size)` | `config name { field: type = value }` |
 | **Use Case** | Simple shared state | Persistent simple state | Complex data structures | Structured configuration |
 | **Access** | Direct variable access | Direct variable access | Key-value lookup | Dotted field access |
 | **Performance** | Fastest | Fast (single map lookup) | Medium | Fastest |
@@ -561,7 +561,7 @@ config monitoring {
     packets_processed: u64 = 0,
 }
 
-map<u32, PacketStats> global_stats : HashMap(1024)
+var global_stats : HashMap<u32, PacketStats>(1024)
 
 // Userspace types
 struct PacketStats {
@@ -1356,7 +1356,7 @@ struct tcp_congestion_ops {
 }
 
 // Initialize shared state before registration
-map<u32, BbrState> connection_state : HashMap(1024)
+var connection_state : HashMap<u32, BbrState>(1024)
 
 // Implement struct_ops using impl block syntax
 @struct_ops("tcp_congestion_ops")
@@ -2031,7 +2031,7 @@ fn ebpf_function_parameters() {
 #### 4.6.7 Map Integration with Pointers
 
 ```kernelscript
-map<FlowKey, FlowData> flow_map : HashMap(1024)
+var flow_map : HashMap<FlowKey, FlowData>(1024)
 
 @helper
 fn map_pointer_operations(flow_key: FlowKey) {
@@ -2087,7 +2087,7 @@ fn bounds_safety_example(ctx: *xdp_md) -> xdp_action {
 
 ### 5.1 Map Declaration Syntax
 ```ebnf
-map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")"
+map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "var" identifier ":" map_type "<" key_type "," value_type ">" "(" map_config ")"
 
 map_type = "HashMap" | "Array" | "ProgArray" | "PerCpuHash" | "PerCpuArray" |
            "LruHash" | "RingBuffer" | "PerfEvent" | "StackTrace" 
@@ -2115,11 +2115,11 @@ Map flags can be specified using the `@flags` attribute:
 ```kernelscript
 // Map with flags
 @flags(BPF_F_NO_PREALLOC | BPF_F_NO_COMMON_LRU)
-map<u32, PacketData> dynamic_cache : HashMap(1024)
+var dynamic_cache : HashMap<u32, PacketData>(1024)
 
 // Pinned map with flags
 @flags(BPF_F_NO_PREALLOC)
-pin map<u32, FlowData> persisted_flows : HashMap(2048)
+pin var persisted_flows : HashMap<u32, FlowData>(2048)
 ```
 
 **Supported flags:**
@@ -2136,10 +2136,10 @@ pin map<u32, FlowData> persisted_flows : HashMap(2048)
 Global maps are declared at the global scope and are automatically shared between all eBPF programs.
 
 **Map Declaration Syntax:**
-- `map<K,V> name : Type(size)` - Local map (program-specific)
-- `pin map<K,V> name : Type(size)` - Pinned map (persisted to filesystem)
-- `@flags(...) map<K,V> name : Type(size)` - Map with specific flags
-- `@flags(...) pin map<K,V> name : Type(size)` - Pinned map with flags
+- `var name : Type<K,V>(size)` - Local map (program-specific)
+- `pin var name : Type<K,V>(size)` - Pinned map (persisted to filesystem)
+- `@flags(...) var name : Type<K,V>(size)` - Map with specific flags
+- `@flags(...) pin var name : Type<K,V>(size)` - Pinned map with flags
 
 **Automatic Path Generation:**
 Pinned maps are automatically stored at `/sys/fs/bpf/<PROJECT_NAME>/maps/<MAP_NAME>`.
@@ -2148,16 +2148,16 @@ Pinned maps are automatically stored at `/sys/fs/bpf/<PROJECT_NAME>/maps/<MAP_NA
 // Global maps - automatically shared between all programs
 
 // Pinned maps - persisted to filesystem (/sys/fs/bpf/<PROJECT>/maps/<NAME>)
-pin map<FlowKey, FlowStats> global_flows : HashMap(10000)
-pin map<u32, InterfaceStats> interface_stats : Array(256)
-pin map<SecurityEvent> security_events : RingBuffer(1024 * 1024)
+pin var global_flows : HashMap<FlowKey, FlowStats>(10000)
+pin var interface_stats : Array<u32, InterfaceStats>(256)
+pin var security_events : RingBuffer<SecurityEvent>(1024 * 1024)
 
 // Non-pinned maps - shared during runtime but not persisted
-map<u32, TempData> session_cache : HashMap(512)
+var session_cache : HashMap<u32, TempData>(512)
 
 // Maps with flags
 @flags(BPF_F_NO_PREALLOC)
-pin map<ConfigKey, ConfigValue> global_config : Array(64)
+pin var global_config : Array<ConfigKey, ConfigValue>(64)
 
 // Program 1: Can access all global maps
 @xdp
@@ -2234,8 +2234,8 @@ fn security_analyzer(ctx: LsmContext) -> i32 {
 
 ```kernelscript
 // Global maps - accessible by all eBPF programs
-pin map<u32, GlobalCounter> global_counters : Array(256)
-pin map<Event> event_stream : RingBuffer(1024 * 1024)
+pin var global_counters : Array<u32, GlobalCounter>(256)
+pin var event_stream : RingBuffer<Event>(1024 * 1024)
 
 @kprobe("sys_read")
 fn producer(fd: u32, buf: *u8, count: usize) -> i32 {
@@ -2274,15 +2274,15 @@ fn consumer(fd: u32, buf: *u8, count: usize) -> i32 {
 ### 5.4 Map Examples
 ```kernelscript
 // Global maps accessible by all programs
-pin map<u32, PacketStats> packet_stats : HashMap(1024)
+pin var packet_stats : HashMap<u32, PacketStats>(1024)
 
-pin map<u32, u64> counters : PerCpuArray(256)
+pin var counters : PerCpuArray<u32, u64>(256)
 
-pin map<FlowKey, FlowInfo> active_flows : LruHash(10000)
+pin var active_flows : LruHash<FlowKey, FlowInfo>(10000)
 
-pin map<PacketEvent> events : RingBuffer(1024 * 1024)
+pin var events : RingBuffer<PacketEvent>(1024 * 1024)
 
-pin map<ConfigKey, ConfigValue> config_map : Array(16)
+pin var config_map : Array<ConfigKey, ConfigValue>(16)
 
 @xdp
 fn simple_monitor(ctx: *xdp_md) -> xdp_action {
@@ -2373,7 +2373,7 @@ fn packet_counter(ctx: *xdp_md) -> xdp_action {
 }
 
 // Map operations with compound assignment
-map<u32, FlowStats> flow_stats : HashMap(1024)
+var flow_stats : HashMap<u32, FlowStats>(1024)
 
 @helper
 fn update_flow_stats(flow_id: u32, packet_size: u32) {
@@ -3196,11 +3196,11 @@ fn main() -> i32 {
 ### 9.2 Top-Level Userspace Coordination with Global Maps
 ```kernelscript
 // Global maps (accessible from all programs and userspace)
-pin map<FlowKey, FlowStats> global_flows : HashMap(10000)
+pin var global_flows : HashMap<FlowKey, FlowStats>(10000)
 
-pin map<Event> global_events : RingBuffer(1024 * 1024)
+pin var global_events : RingBuffer<Event>(1024 * 1024)
 
-pin map<ConfigKey, ConfigValue> global_config : Array(64)
+pin var global_config : Array<ConfigKey, ConfigValue>(64)
 
 // Multiple eBPF programs working together
 @xdp fn network_monitor(ctx: *xdp_md) -> xdp_action {
@@ -3415,7 +3415,7 @@ fn safe_userspace_access(data: *u8, len: u32) -> u8 {
 The compiler transparently uses eBPF's dynamic pointer (dynptr) APIs when beneficial, without exposing complexity to the programmer.
 
 ```kernelscript
-map<Event> event_log : RingBuffer(1024 * 1024)
+var event_log : RingBuffer<Event>(1024 * 1024)
 
 @helper
 fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
@@ -3509,7 +3509,7 @@ fn resource_safe_processing(input: *u8, len: u32) -> ProcessResult {
 }
 
 // Map value pointer lifetime tracking
-map<u32, DataCache> cache_map : HashMap(1024)
+var cache_map : HashMap<u32, DataCache>(1024)
 
 @helper
 fn map_lifetime_safety(key: u32) {
@@ -4140,9 +4140,9 @@ fn main(args: Args) -> i32 {
 ### 14.3 Performance Monitoring
 ```kernelscript
 // Global maps for performance data
-map<u32, CallInfo> active_calls : HashMap(1024)
-map<u32, u64> read_stats : Array(1024)
-map<u32, u64> write_stats : Array(1024)
+var active_calls : HashMap<u32, CallInfo>(1024)
+var read_stats : Array<u32, u64>(1024)
+var write_stats : Array<u32, u64>(1024)
 
 struct CallInfo {
     start_time: u64,
@@ -4310,7 +4310,7 @@ global_declaration = config_declaration | map_declaration | type_declaration |
                     global_variable_declaration | bindings_declaration | import_declaration 
 
 (* Map declarations - global scope *)
-map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "map" "<" key_type "," value_type ">" identifier ":" map_type "(" map_config ")"
+map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "var" identifier ":" map_type "<" key_type "," value_type ">" "(" map_config ")"
 
 map_type = "HashMap" | "Array" | "PerCpuHash" | "PerCpuArray" | "LruHash" |
            "RingBuffer" | "PerfEvent" | "StackTrace" | "ProgArray" 

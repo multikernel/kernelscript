@@ -25,7 +25,7 @@ let test_address_of_user_type_resolution () =
         size: u32
     }
     
-    map<u32, DataBuffer> buffer_map : HashMap(1024)
+    var buffer_map : HashMap<u32, DataBuffer>(1024)
     
     @helper
     fn process_map_data(buffer_ptr: *DataBuffer) -> u32 {

@@ -25,7 +25,7 @@ config network {
     blocked_ports: u16[4] = [22, 23, 135, 445],
 }
 
-map<u32, u64> packet_stats : HashMap(1024)
+var packet_stats : HashMap<u32, u64>(1024)
 
 @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
     // Use network config

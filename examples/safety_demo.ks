@@ -32,7 +32,7 @@ struct PacketInfo {
 }
 
 // Global map for statistics
-pin map<u32, Counter> packet_stats : HashMap(1024)
+pin var packet_stats : HashMap<u32, Counter>(1024)
 
 // Kernel-shared functions accessible by all eBPF programs
 @helper

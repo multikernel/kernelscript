@@ -43,7 +43,7 @@ enum FilterDecision {
 }
 
 // Global map for demonstration
-pin map<IpAddress, u64> connection_stats : HashMap(1024)
+pin var connection_stats : HashMap<IpAddress, u64>(1024)
 
 @helper
 fn extract_header(ctx: *xdp_md) -> *PacketHeader {

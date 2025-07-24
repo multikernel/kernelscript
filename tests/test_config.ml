@@ -64,7 +64,7 @@ config network {
     max_size: u32 = 1500,
 }
 
-map<u32, u64> network : HashMap(1024)
+var network : HashMap<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
     return 2
@@ -120,7 +120,7 @@ config security {
     threat_level: u32 = 3,
 }
 
-map<u32, u64> packet_counts : HashMap(1024)
+var packet_counts : HashMap<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
     return 2
@@ -259,7 +259,7 @@ fn main() -> i32 {
 (** Test accessing map as config *)
 let test_accessing_map_as_config () =
   let program_text = {|
-map<u32, u64> packet_counts : HashMap(1024)
+var packet_counts : HashMap<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
     var bad_access = packet_counts.some_field
@@ -478,7 +478,7 @@ config application {
     max_memory: u64 = 1048576,
 }
 
-map<u32, u64> stats : HashMap(1024)
+var stats : HashMap<u32, u64>(1024)
 
 @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
     var version = application.version
