@@ -103,6 +103,7 @@
     | "config" -> CONFIG
     | "local" -> LOCAL
     | "in" -> IN
+    | "new" -> NEW
     | "delete" -> DELETE
     | "try" -> TRY
     | "catch" -> CATCH

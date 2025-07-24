@@ -694,9 +694,13 @@ and process_statement table stmt =
       List.iter (process_statement table_with_loop) body;
       let _ = exit_scope table_with_loop in ()
 
-  | Delete (map_expr, key_expr) ->
-      process_expression table map_expr;
-      process_expression table key_expr
+  | Delete target ->
+      (match target with
+       | DeleteMapEntry (map_expr, key_expr) ->
+           process_expression table map_expr;
+           process_expression table key_expr
+       | DeletePointer ptr_expr ->
+           process_expression table ptr_expr)
   
   | Break ->
       (* Break statements don't need symbol processing *)
@@ -843,18 +847,15 @@ and process_expression table expr =
       process_expression table matched_expr;
       (* Process all arms *)
       List.iter (fun arm ->
-        (* Process the arm body *)
-        (match arm.arm_body with
-         | SingleExpr expr -> process_expression table expr
-         | Block stmts -> List.iter (process_statement table) stmts);
-        (* Validate the pattern if it's an identifier *)
-        (match arm.arm_pattern with
-         | IdentifierPattern name ->
-             (match lookup_symbol table name with
-              | Some _ -> () (* Found, all good *)
-              | None -> symbol_error ("Undefined identifier in pattern: " ^ name) arm.arm_pos)
-         | ConstantPattern _ | DefaultPattern -> ())
+        match arm.arm_body with
+        | SingleExpr expr -> process_expression table expr
+        | Block stmts -> List.iter (process_statement table) stmts
       ) arms
+      
+  | New _ ->
+      (* New expressions don't introduce new symbols, but we should validate the type *)
+      (* Type validation will be handled by the type checker *)
+      ()
 
 (** Query functions for symbol table *)
 

@@ -86,6 +86,7 @@ let validate_ast ast =
           | SingleExpr expr -> validate_expr expr
           | Block stmts -> List.for_all validate_stmt stmts
         ) arms
+    | New _ -> true  (* New expressions are always syntactically valid *)
   
   and validate_stmt stmt =
     match stmt.stmt_desc with
@@ -117,8 +118,10 @@ let validate_ast ast =
         validate_expr iterable && List.for_all validate_stmt body
     | While (cond, body) ->
         validate_expr cond && List.for_all validate_stmt body
-    | Delete (map_expr, key_expr) ->
-        validate_expr map_expr && validate_expr key_expr
+    | Delete target ->
+        (match target with
+         | DeleteMapEntry (map_expr, key_expr) -> validate_expr map_expr && validate_expr key_expr
+         | DeletePointer ptr_expr -> validate_expr ptr_expr)
     | Break -> true
     | Continue -> true
     | Try (try_stmts, catch_clauses) ->

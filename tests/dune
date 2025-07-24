@@ -49,6 +49,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_object_allocation)
+ (modules test_object_allocation)
+ (libraries kernelscript alcotest))
+
+(executable
  (name test_safety_checker)
  (modules test_safety_checker)
  (libraries kernelscript alcotest))
@@ -404,6 +409,10 @@
  (action (run ./test_safety_checker.exe)))
 
 (rule
+ (alias runtest_object_allocation)
+ (action (run ./test_object_allocation.exe)))
+
+(rule
  (alias runtest_map_operations)
  (action (run ./test_map_operations.exe)))
 
@@ -684,6 +693,7 @@
   test_compound_index_assignment.exe
   test_dynptr_bridge.exe
   test_safety_checker.exe
+  test_object_allocation.exe
   test_program_ref.exe
   test_return_path_analysis.exe
   test_tail_call.exe
@@ -727,6 +737,7 @@
    (run ./test_compound_index_assignment.exe)
    (run ./test_dynptr_bridge.exe)
    (run ./test_safety_checker.exe)
+   (run ./test_object_allocation.exe)
    (run ./test_program_ref.exe)
    (run ./test_return_path_analysis.exe)
    (run ./test_tail_call.exe)

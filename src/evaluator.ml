@@ -716,74 +716,44 @@ and eval_expression ctx expr =
       StructValue field_values
       
   | Match (matched_expr, arms) ->
-      (* Evaluate the matched expression *)
       let matched_value = eval_expression ctx matched_expr in
-      
-      (* Find the matching arm and evaluate its expression *)
-      let rec find_matching_arm = function
-        | [] -> eval_error "No matching arm found in match expression" expr.expr_pos
-        | arm :: rest_arms ->
-            (match arm.arm_pattern with
-             | ConstantPattern lit ->
-                 let pattern_value = runtime_value_of_literal lit in
-                 if runtime_values_equal matched_value pattern_value then
-                   (match arm.arm_body with
-                    | SingleExpr expr -> eval_expression ctx expr
-                    | Block stmts -> 
-                        let rec eval_stmts = function
-                          | [] -> IntValue 0 (* Default value if no return *)
-                          | stmt :: rest -> 
-                              (try
-                                 eval_statement ctx stmt;
-                                 eval_stmts rest
-                               with Return_value value -> value)
-                        in
-                        eval_stmts stmts)
-                 else
-                   find_matching_arm rest_arms
-             | IdentifierPattern name ->
-                 (* For identifier patterns, try to get the value from symbol table *)
-                 (match ctx.symbol_table with
-                  | Some symbol_table ->
-                      (match Symbol_table.lookup_symbol symbol_table name with
-                       | Some { kind = Symbol_table.EnumConstant (_, Some value); _ } ->
-                           let pattern_value = EnumValue (name, value) in
-                           if runtime_values_equal matched_value pattern_value then
-                             (match arm.arm_body with
-                              | SingleExpr expr -> eval_expression ctx expr
-                              | Block stmts -> 
-                                  let rec eval_stmts = function
-                                    | [] -> IntValue 0 (* Default value if no return *)
-                                    | stmt :: rest -> 
-                                        (try
-                                           eval_statement ctx stmt;
-                                           eval_stmts rest
-                                         with Return_value value -> value)
-                                  in
-                                  eval_stmts stmts)
-                           else
-                             find_matching_arm rest_arms
-                       | _ ->
-                           (* Pattern not found or not an enum constant, treat as wildcard *)
-                           find_matching_arm rest_arms)
-                  | None ->
-                      find_matching_arm rest_arms)
-             | DefaultPattern ->
-                 (* Default pattern always matches *)
-                 (match arm.arm_body with
-                  | SingleExpr expr -> eval_expression ctx expr
-                  | Block stmts -> 
-                      let rec eval_stmts = function
-                        | [] -> IntValue 0 (* Default value if no return *)
-                        | stmt :: rest -> 
-                            (try
-                               eval_statement ctx stmt;
-                               eval_stmts rest
-                             with Return_value value -> value)
-                      in
-                      eval_stmts stmts))
+      let rec try_arms = function
+        | [] -> eval_error "No matching pattern in match expression" expr.expr_pos
+        | arm :: remaining_arms ->
+            let pattern_matches = match arm.arm_pattern with
+              | ConstantPattern lit ->
+                  let literal_value = runtime_value_of_literal lit in
+                  runtime_values_equal matched_value literal_value
+              | IdentifierPattern name ->
+                  (* Check if this is an enum constant *)
+                  (match ctx.symbol_table with
+                   | Some symbol_table ->
+                       (match Symbol_table.lookup_symbol symbol_table name with
+                        | Some { kind = Symbol_table.EnumConstant (_, Some value); _ } ->
+                            (match matched_value with
+                             | EnumValue (_, matched_val) -> matched_val = value
+                             | IntValue matched_val -> matched_val = value
+                             | _ -> false)
+                        | _ -> false)
+                   | None -> false)
+              | DefaultPattern -> true
+            in
+            
+            if pattern_matches then
+              match arm.arm_body with
+              | SingleExpr arm_expr -> eval_expression ctx arm_expr
+              | Block arm_stmts ->
+                  eval_statements ctx arm_stmts;
+                  UnitValue  (* Default return for block *)
+            else
+              try_arms remaining_arms
       in
-      find_matching_arm arms
+      try_arms arms
+
+  | New _ ->
+      (* For evaluator, object allocation returns a mock pointer value *)
+      (* This is just for testing - real allocation happens in generated code *)
+      PointerValue (Random.int 1000000)
 
 (** Evaluate statements *)
 and eval_statements ctx stmts =
@@ -968,24 +938,29 @@ and eval_statement ctx stmt =
       in
       loop ()
 
-  | Delete (map_expr, key_expr) ->
-      let map_name = match map_expr.expr_desc with
-        | Identifier name -> name
-        | _ -> eval_error ("Delete requires a map identifier") stmt.stmt_pos
-      in
-      let key_result = eval_expression ctx key_expr in
-      
-      (* Get the map storage *)
-      let map_store = 
-        try Hashtbl.find ctx.map_storage map_name
-        with Not_found -> eval_error ("Map not found: " ^ map_name) stmt.stmt_pos
-      in
-      
-      (* Perform the actual delete operation *)
-      let key_str = string_of_runtime_value key_result in
-      let existed = Hashtbl.mem map_store key_str in
-      if existed then
-        Hashtbl.remove map_store key_str
+  | Delete target ->
+      (match target with
+      | DeleteMapEntry (map_expr, key_expr) ->
+          let map_name = match map_expr.expr_desc with
+            | Identifier name -> name
+            | _ -> eval_error ("Delete requires a map identifier") stmt.stmt_pos
+          in
+          let key_result = eval_expression ctx key_expr in
+          
+          (* Get the map storage *)
+          let map_store = 
+            try Hashtbl.find ctx.map_storage map_name
+            with Not_found -> eval_error ("Map not found: " ^ map_name) stmt.stmt_pos
+          in
+          
+          (* Perform the actual delete operation *)
+          let key_str = string_of_runtime_value key_result in
+          let existed = Hashtbl.mem map_store key_str in
+          if existed then
+            Hashtbl.remove map_store key_str
+      | DeletePointer _ptr_expr ->
+          (* For evaluator, pointer deletion is a no-op since we don't have real memory management *)
+          ())
   
   | Break ->
       raise Break_loop

@@ -296,6 +296,8 @@ and ir_instr_desc =
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
   | IRMapDelete of ir_value * ir_value
+  | IRObjectNew of ir_value * ir_type  (* target_pointer, object_type *)
+  | IRObjectDelete of ir_value  (* pointer_to_delete *)
   | IRConfigFieldUpdate of ir_value * ir_value * string * ir_value (* map, key, field, value *)
   | IRStructFieldAssignment of ir_value * string * ir_value (* object, field, value *)
   | IRConfigAccess of string * string * ir_value (* config_name, field_name, result_val *)
@@ -895,6 +897,10 @@ let rec string_of_ir_instruction instr =
         type_str (string_of_ir_value map) (string_of_ir_value key) (string_of_ir_value value)
   | IRMapDelete (map, key) ->
       Printf.sprintf "delete(%s, %s)" (string_of_ir_value map) (string_of_ir_value key)
+  | IRObjectNew (dest, obj_type) ->
+      Printf.sprintf "%s = object_new(%s)" (string_of_ir_value dest) (string_of_ir_type obj_type)
+  | IRObjectDelete ptr ->
+      Printf.sprintf "object_delete(%s)" (string_of_ir_value ptr)
   | IRConfigFieldUpdate (map, key, field, value) ->
       Printf.sprintf "config_update(%s, %s, %s, %s)" 
         (string_of_ir_value map) (string_of_ir_value key) field (string_of_ir_value value)

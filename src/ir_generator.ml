@@ -823,133 +823,119 @@ let rec lower_expression ctx (expr : Ast.expr) =
       result_val
 
   | Ast.Match (matched_expr, arms) ->
-      (* Lower the matched expression *)
       let matched_val = lower_expression ctx matched_expr in
       
-      (* Determine the result type from the type annotation *)
-      let result_type = match expr.expr_type with
-        | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-        | None -> 
-            (* Try to infer from the first arm *)
-            (match arms with
-             | [] -> IRU32 (* Default to U32 if no arms *)
-             | first_arm :: _ -> 
-                 (match first_arm.arm_body with
-                  | SingleExpr expr ->
-                      (match expr.expr_type with
-                       | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-                       | None -> IRU32)
-                  | Block _ -> IRU32))
-      in
+      (* Check if any arms have Block bodies - if so, we need special handling *)
+      let has_block_arms = List.exists (fun arm -> 
+        match arm.arm_body with Block _ -> true | _ -> false) arms in
       
+      if has_block_arms then
+        (* For match expressions with block arms, generate conditional statements *)
+        let result_reg = allocate_register ctx in
+        let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
+        
+        (* Generate if-else chain for the match arms *)
+        let rec generate_conditions arms_remaining =
+          match arms_remaining with
+          | [] -> ()
+          | arm :: rest_arms ->
+              let condition_val = match arm.arm_pattern with
+                | ConstantPattern lit ->
+                    let const_val = lower_literal lit arm.arm_pos in
+                    let eq_reg = allocate_register ctx in
+                    let eq_val = make_ir_value (IRRegister eq_reg) IRBool arm.arm_pos in
+                    let eq_expr = make_ir_expr (IRBinOp (matched_val, IREq, const_val)) IRBool arm.arm_pos in
+                    let eq_instr = make_ir_instruction (IRAssign (eq_val, eq_expr)) arm.arm_pos in
+                    emit_instruction ctx eq_instr;
+                    eq_val
+                | DefaultPattern ->
+                    (* Default pattern always matches - create a true condition *)
+                    make_ir_value (IRLiteral (BoolLit true)) IRBool arm.arm_pos
+                | IdentifierPattern _ ->
+                    (* For now, treat as default pattern *)
+                    make_ir_value (IRLiteral (BoolLit true)) IRBool arm.arm_pos
+              in
+              
+              (* Process the arm body *)
+              let then_instructions = ref [] in
+              let old_block = ctx.current_block in
+              ctx.current_block <- [];
+              
+              (match arm.arm_body with
+               | SingleExpr expr ->
+                   let expr_val = lower_expression ctx expr in
+                   let assign_instr = make_ir_instruction (IRAssign (result_val, make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos)) arm.arm_pos in
+                   emit_instruction ctx assign_instr
+               | Block stmts ->
+                   (* Process block statements - they will be executed conditionally *)
+                   List.iter (lower_statement ctx) stmts;
+                   (* If no explicit assignment to result, use default value *)
+                   let default_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 arm.arm_pos in
+                   let assign_instr = make_ir_instruction (IRAssign (result_val, make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos in
+                   emit_instruction ctx assign_instr);
+              
+              then_instructions := List.rev ctx.current_block;
+              ctx.current_block <- old_block;
+              
+              (* Generate conditional execution for this arm *)
+              let else_instructions = ref [] in
+              if rest_arms <> [] then (
+                ctx.current_block <- [];
+                generate_conditions rest_arms;
+                else_instructions := List.rev ctx.current_block;
+                ctx.current_block <- old_block
+              );
+              
+              let if_instr = make_ir_instruction 
+                (IRIf (condition_val, !then_instructions, 
+                       if !else_instructions = [] then None else Some !else_instructions))
+                arm.arm_pos in
+              emit_instruction ctx if_instr
+        in
+        
+        generate_conditions arms;
+        result_val
+      else
+        (* Original simple match expression handling for arms without blocks *)
+        let ir_arms = List.map (fun arm ->
+          let ir_pattern = match arm.arm_pattern with
+            | ConstantPattern lit -> 
+                let lit_val = lower_literal lit arm.arm_pos in
+                IRConstantPattern lit_val
+            | IdentifierPattern _ -> IRConstantPattern (make_ir_value (IRLiteral (IntLit (0, None))) IRU32 arm.arm_pos)
+            | DefaultPattern -> IRDefaultPattern
+          in
+          let ir_value = match arm.arm_body with
+            | SingleExpr expr -> lower_expression ctx expr
+            | Block _ -> failwith "Block arms should be handled above"
+          in
+          { ir_arm_pattern = ir_pattern; ir_arm_value = ir_value; ir_arm_pos = arm.arm_pos }
+        ) arms in
+        
+        (* Infer result type from first arm *)
+        let result_type = match ir_arms with
+          | first_arm :: _ -> first_arm.ir_arm_value.val_type
+          | [] -> IRU32  (* Default type for empty match *)
+        in
+        
+        let result_reg = allocate_register ctx in
+        let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+        
+        let match_expr = make_ir_expr (IRMatch (matched_val, ir_arms)) result_type expr.expr_pos in
+        let assign_instr = make_ir_instruction (IRAssign (result_val, match_expr)) expr.expr_pos in
+        emit_instruction ctx assign_instr;
+        
+        result_val
+
+  | Ast.New typ ->
+      (* Object allocation using bpf_obj_new() or malloc() depending on context *)
+      let ir_type = ast_type_to_ir_type typ in
       let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = make_ir_value (IRRegister result_reg) (IRPointer (ir_type, make_bounds_info ())) expr.expr_pos in
       
-      (* Generate conditional control flow for match arms *)
-      let rec generate_match_conditions arms_list =
-        match arms_list with
-        | [] -> 
-            (* No arms left - this shouldn't happen if there's a default case *)
-            ()
-        | arm :: remaining_arms ->
-            (* Generate condition for this arm's pattern *)
-            let condition_val = match arm.arm_pattern with
-              | ConstantPattern lit ->
-                  let lit_val = lower_literal lit arm.arm_pos in
-                  let cond_reg = allocate_register ctx in
-                  let cond_val = make_ir_value (IRRegister cond_reg) IRBool arm.arm_pos in
-                  let cond_expr = make_ir_expr (IRBinOp (matched_val, IREq, lit_val)) IRBool arm.arm_pos in
-                  let cond_instr = make_ir_instruction (IRAssign (cond_val, cond_expr)) arm.arm_pos in
-                  emit_instruction ctx cond_instr;
-                  Some cond_val
-              | IdentifierPattern name ->
-                  (* Look up enum constant value *)
-                  (match Symbol_table.lookup_symbol ctx.symbol_table name with
-                   | Some symbol ->
-                       (match symbol.kind with
-                        | Symbol_table.EnumConstant (enum_name, Some value) ->
-                            let enum_val = make_ir_value (IREnumConstant (enum_name, name, value)) IRU32 arm.arm_pos in
-                            let cond_reg = allocate_register ctx in
-                            let cond_val = make_ir_value (IRRegister cond_reg) IRBool arm.arm_pos in
-                            let cond_expr = make_ir_expr (IRBinOp (matched_val, IREq, enum_val)) IRBool arm.arm_pos in
-                            let cond_instr = make_ir_instruction (IRAssign (cond_val, cond_expr)) arm.arm_pos in
-                            emit_instruction ctx cond_instr;
-                            Some cond_val
-                        | _ -> None)
-                   | None -> None)
-              | DefaultPattern ->
-                  (* Default case - no condition needed *)
-                  None
-            in
-            
-            (* Generate instructions for this arm's body *)
-            let arm_instructions = match arm.arm_body with
-              | SingleExpr expr ->
-                  (* For single expressions, generate assignment to result *)
-                  let arm_val = lower_expression ctx expr in
-                  let assign_expr = make_ir_expr (IRValue arm_val) result_type arm.arm_pos in
-                  let assign_instr = make_ir_instruction (IRAssign (result_val, assign_expr)) arm.arm_pos in
-                  [assign_instr]
-              | Block stmts ->
-                  (* For block statements, capture instructions in separate context *)
-                  let old_block = ctx.current_block in
-                  ctx.current_block <- [];
-                  
-                  (* Process block statements *)
-                  List.iter (lower_statement ctx) stmts;
-                  let block_instructions = List.rev ctx.current_block in
-                  
-                  (* Check if block has explicit return/assignment to result *)
-                  let has_result_assignment = List.exists (fun instr ->
-                    match instr.instr_desc with
-                    | IRAssign (target, _) when target = result_val -> true
-                    | _ -> false
-                  ) block_instructions in
-                  
-                  (* If no explicit assignment, add default assignment *)
-                  let final_instructions = 
-                    if has_result_assignment then
-                      block_instructions
-                    else
-                      (* Add default assignment for blocks without explicit result *)
-                      let default_val = make_ir_value (IRLiteral (IntLit (0, None))) result_type arm.arm_pos in
-                      let default_assign = make_ir_instruction (IRAssign (result_val, make_ir_expr (IRValue default_val) result_type arm.arm_pos)) arm.arm_pos in
-                      block_instructions @ [default_assign]
-                  in
-                  
-                  ctx.current_block <- old_block;
-                  final_instructions
-            in
-            
-            (* Generate conditional structure *)
-            (match condition_val with
-             | Some cond_val ->
-                 (* Generate if-else structure for conditional arms *)
-                 let else_instructions = 
-                   if remaining_arms <> [] then
-                     (* Capture else instructions (remaining arms) *)
-                     let old_block = ctx.current_block in
-                     ctx.current_block <- [];
-                     generate_match_conditions remaining_arms;
-                     let else_instrs = List.rev ctx.current_block in
-                     ctx.current_block <- old_block;
-                     Some else_instrs
-                   else
-                     None
-                 in
-                 
-                 (* Generate IRIf instruction *)
-                 let if_instr = make_ir_instruction 
-                   (IRIf (cond_val, arm_instructions, else_instructions))
-                   arm.arm_pos in
-                 emit_instruction ctx if_instr
-             | None ->
-                 (* Default case - emit instructions directly *)
-                 List.iter (emit_instruction ctx) arm_instructions)
-      in
+      let alloc_instr = make_ir_instruction (IRObjectNew (result_val, ir_type)) expr.expr_pos in
+      emit_instruction ctx alloc_instr;
       
-      (* Generate the match conditional structure *)
-      generate_match_conditions arms;
       result_val
 
 (** Helper function to handle register() builtin function calls *)
@@ -1063,7 +1049,7 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
            let value = lower_expression ctx expr in
            (target_type, Some value))
   | None, Some expr ->
-      (* No declared type - use type checker annotation if available, otherwise infer from expression *)
+             (* No declared type - use type checker annotation if available, otherwise infer from expression *)
       (match expr.Ast.expr_desc with
        | Ast.Call (callee_expr, args) ->
            (* Handle function call in type inference *)
@@ -1321,38 +1307,54 @@ and lower_statement ctx stmt =
       in
       emit_instruction ctx instr
       
-  | Ast.Delete (map_expr, key_expr) ->
-      let map_val = lower_expression ctx map_expr in
-      let key_val = lower_expression ctx key_expr in
-      
-      (* Generate map delete instruction *)
-      let instr = make_ir_instruction
-        (IRMapDelete (map_val, key_val))
-        ~verifier_hints:[HelperCall "map_delete_elem"]
-        stmt.stmt_pos
-      in
-      emit_instruction ctx instr
+  | Ast.Delete target ->
+      (match target with
+      | DeleteMapEntry (map_expr, key_expr) ->
+          let map_val = lower_expression ctx map_expr in
+          let key_val = lower_expression ctx key_expr in
+          
+          (* Generate map delete instruction *)
+          let instr = make_ir_instruction
+            (IRMapDelete (map_val, key_val))
+            ~verifier_hints:[HelperCall "map_delete_elem"]
+            stmt.stmt_pos
+          in
+          emit_instruction ctx instr
+      | DeletePointer ptr_expr ->
+          let ptr_val = lower_expression ctx ptr_expr in
+          
+          (* Generate object delete instruction *)
+          let instr = make_ir_instruction
+            (IRObjectDelete ptr_val)
+            stmt.stmt_pos
+          in
+          emit_instruction ctx instr)
       
   | Ast.Declaration (name, typ_opt, expr_opt) ->
       let reg = get_variable_register ctx name in
       
-      (* Handle function call declarations elegantly by proper instruction ordering *)
+      (* Handle function call and new expression declarations elegantly by proper instruction ordering *)
       (match expr_opt with
-       | Some expr when (match expr.expr_desc with Ast.Call _ -> true | _ -> false) ->
-           (* For function calls: emit declaration first, then call with assignment *)
+       | Some expr when (match expr.expr_desc with Ast.Call _ | Ast.New _ -> true | _ -> false) ->
+           (* For function calls and new expressions: emit declaration first, then operation with assignment *)
            let target_type = match typ_opt with
              | Some ast_type -> resolve_type_alias ctx reg ast_type
              | None ->
-                 (* Infer type from function call if no explicit type *)
+                 (* Infer type from expression if no explicit type *)
                  (match expr.expr_type with
                   | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-                  | None -> IRU32)
+                  | None -> 
+                      (match expr.expr_desc with
+                       | Ast.New typ -> 
+                           let ir_type = ast_type_to_ir_type typ in
+                           IRPointer (ir_type, make_bounds_info ())
+                       | _ -> IRU32))
            in
            
            (* Emit declaration first *)
            declare_variable ctx name reg target_type None stmt.stmt_pos;
            
-           (* Then emit function call as assignment *)
+           (* Then emit the operation as assignment *)
            (match expr.Ast.expr_desc with
             | Ast.Call (callee_expr, args) ->
                 (* Special handling for register() builtin function *)
@@ -1377,6 +1379,12 @@ and lower_statement ctx stmt =
                      in
                      let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
                      emit_instruction ctx instr)
+            | Ast.New typ ->
+                (* Handle new expression: emit allocation instruction *)
+                let ir_type = ast_type_to_ir_type typ in
+                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let alloc_instr = make_ir_instruction (IRObjectNew (result_val, ir_type)) expr.Ast.expr_pos in
+                emit_instruction ctx alloc_instr
             | _ -> ()) (* Shouldn't happen due to our guard *)
        | _ ->
            (* Non-function call declarations: use existing logic *)

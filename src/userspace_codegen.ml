@@ -1898,7 +1898,16 @@ let rec generate_c_instruction_from_ir ctx instruction =
   | IRConfigFieldUpdate (map_val, key_val, field, value_val) ->
       track_function_usage ctx instruction;
       generate_config_field_update_from_ir ctx map_val key_val field value_val
-
+  
+  | IRObjectNew (dest_val, obj_type) ->
+      let dest_str = generate_c_value_from_ir ctx dest_val in
+      let type_str = c_type_from_ir_type obj_type in
+      sprintf "%s = malloc(sizeof(%s));" dest_str type_str
+      
+  | IRObjectDelete ptr_val ->
+      let ptr_str = generate_c_value_from_ir ctx ptr_val in
+      sprintf "free(%s);" ptr_str
+  
   | IRStructFieldAssignment (obj_val, field_name, value_val) ->
       (* Generate struct field assignment: obj.field = value or obj->field = value *)
       let obj_str = generate_c_value_from_ir ctx obj_val in

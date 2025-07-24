@@ -68,6 +68,7 @@ and typed_expr_desc =
   | TUnaryOp of unary_op * typed_expr
   | TStructLiteral of string * (string * typed_expr) list
   | TMatch of typed_expr * typed_match_arm list  (* match (expr) { arms } *)
+  | TNew of bpf_type  (* new Type() - object allocation *)
 
 (** Typed match arm *)
 and typed_match_arm = {
@@ -101,12 +102,17 @@ and typed_stmt_desc =
   | TFor of string * typed_expr * typed_expr * typed_statement list
   | TForIter of string * string * typed_expr * typed_statement list
   | TWhile of typed_expr * typed_statement list
-  | TDelete of typed_expr * typed_expr
+  | TDelete of typed_delete_target
   | TBreak
   | TContinue
   | TTry of typed_statement list * catch_clause list  (* try statements, catch clauses *)
   | TThrow of typed_expr  (* throw statements with expression *)
   | TDefer of typed_expr  (* defer expression *)
+
+(** Typed delete target - either map entry or object pointer *)
+and typed_delete_target =
+  | TDeleteMapEntry of typed_expr * typed_expr  (* delete map[key] *)
+  | TDeletePointer of typed_expr                (* delete ptr *)
 
 type typed_function = {
   tfunc_name: string;
@@ -1321,6 +1327,13 @@ and type_check_expression ctx expr =
       
       { texpr_desc = TMatch (typed_matched_expr, typed_arms); texpr_type = result_type; texpr_pos = expr.expr_pos }
 
+  | New typ ->
+      (* Type check object allocation *)
+      let resolved_type = resolve_user_type ctx typ in
+      (* The new expression returns a pointer to the allocated type *)
+      let pointer_type = Pointer resolved_type in
+      { texpr_desc = TNew resolved_type; texpr_type = pointer_type; texpr_pos = expr.expr_pos }
+
 (** Type check statement *)
 and type_check_statement ctx stmt =
   match stmt.stmt_desc with
@@ -1819,23 +1832,32 @@ and type_check_statement ctx stmt =
       decr loop_depth;
       { tstmt_desc = TWhile (typed_cond, typed_body); tstmt_pos = stmt.stmt_pos }
 
-  | Delete (map_expr, key_expr) ->
-      let typed_key = type_check_expression ctx key_expr in
-      
-      (* Check if this is map deletion *)
-      (match map_expr.expr_desc with
-       | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
-           (* This is map deletion *)
-           let map_decl = Hashtbl.find ctx.maps map_name in
-           (* Check key type compatibility *)
-           (match unify_types map_decl.key_type typed_key.texpr_type with
-            | Some _ -> ()
-            | None -> type_error ("Map key type mismatch in delete statement") stmt.stmt_pos);
-           (* Create a synthetic map type for the result *)
-           let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
-           { tstmt_desc = TDelete (typed_map, typed_key); tstmt_pos = stmt.stmt_pos }
-       | _ ->
-           type_error ("Delete can only be used on maps") stmt.stmt_pos)
+  | Delete target ->
+      (match target with
+      | DeleteMapEntry (map_expr, key_expr) ->
+          let typed_key = type_check_expression ctx key_expr in
+          (* Check if this is map deletion *)
+          (match map_expr.expr_desc with
+           | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
+               (* This is map deletion *)
+               let map_decl = Hashtbl.find ctx.maps map_name in
+               (* Check key type compatibility *)
+               (match unify_types map_decl.key_type typed_key.texpr_type with
+                | Some _ -> ()
+                | None -> type_error ("Map key type mismatch in delete statement") stmt.stmt_pos);
+               (* Create a synthetic map type for the result *)
+               let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
+               { tstmt_desc = TDelete (TDeleteMapEntry (typed_map, typed_key)); tstmt_pos = stmt.stmt_pos }
+           | _ ->
+               type_error ("Delete map[key] can only be used on maps") stmt.stmt_pos)
+      | DeletePointer ptr_expr ->
+          let typed_ptr = type_check_expression ctx ptr_expr in
+          (* Check that the expression is a pointer type *)
+          (match typed_ptr.texpr_type with
+           | Pointer _ ->
+               { tstmt_desc = TDelete (TDeletePointer typed_ptr); tstmt_pos = stmt.stmt_pos }
+           | _ ->
+               type_error ("Delete pointer can only be used on pointer types") stmt.stmt_pos))
   
   | Break ->
       (* Break statements are only valid inside loops *)
@@ -2195,6 +2217,7 @@ let rec typed_expr_to_expr texpr =
           { arm_pattern = tarm.tarm_pattern; arm_body = arm_body; arm_pos = tarm.tarm_pos }
         ) typed_arms in
         Match (matched_expr, arms)
+    | TNew typ -> New typ
   in
   (* Handle special cases for type annotations *)
   let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with
@@ -2237,8 +2260,14 @@ and typed_stmt_to_stmt tstmt =
         ForIter (index_var, value_var, typed_expr_to_expr iterable, List.map typed_stmt_to_stmt body)
     | TWhile (cond, body) ->
         While (typed_expr_to_expr cond, List.map typed_stmt_to_stmt body)
-    | TDelete (cond, body) ->
-        Delete (typed_expr_to_expr cond, typed_expr_to_expr body)
+    | TDelete target ->
+        let delete_target = match target with
+          | TDeleteMapEntry (map_expr, key_expr) ->
+              DeleteMapEntry (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr)
+          | TDeletePointer ptr_expr ->
+              DeletePointer (typed_expr_to_expr ptr_expr)
+        in
+        Delete delete_target
     | TBreak -> Break
     | TContinue -> Continue
     | TTry (try_stmts, catch_clauses) ->
@@ -2803,13 +2832,17 @@ and populate_multi_program_context ast multi_prog_analysis =
     | While (cond_expr, body_stmts) ->
         enhance_expr prog_type cond_expr;
         List.iter (enhance_stmt prog_type) body_stmts
-    | Delete (map_expr, key_expr) ->
-        enhance_expr prog_type map_expr;
-        enhance_expr prog_type key_expr;
-        (* Delete is a write operation *)
-        (match map_expr.program_context with
-         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
-         | None -> ())
+    | Delete target ->
+        (match target with
+         | DeleteMapEntry (map_expr, key_expr) ->
+             enhance_expr prog_type map_expr;
+             enhance_expr prog_type key_expr;
+             (* Delete is a write operation *)
+             (match map_expr.program_context with
+              | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+              | None -> ())
+         | DeletePointer ptr_expr ->
+             enhance_expr prog_type ptr_expr)
     | Return None -> ()
     | Break -> ()
     | Continue -> ()
@@ -2893,9 +2926,13 @@ and populate_multi_program_context ast multi_prog_analysis =
       | While (cond_expr, body_stmts) ->
           enhance_userspace_expr cond_expr;
           List.iter enhance_userspace_stmt_inner body_stmts
-      | Delete (map_expr, key_expr) ->
-          enhance_userspace_expr map_expr;
-          enhance_userspace_expr key_expr
+      | Delete target ->
+          (match target with
+           | DeleteMapEntry (map_expr, key_expr) ->
+               enhance_userspace_expr map_expr;
+               enhance_userspace_expr key_expr
+           | DeletePointer ptr_expr ->
+               enhance_userspace_expr ptr_expr)
       | Return None -> ()
       | Break -> ()
       | Continue -> ()

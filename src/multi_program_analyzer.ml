@@ -244,9 +244,13 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
     | While (cond_expr, body_stmts) ->
         analyze_expr_for_maps prog_name cond_expr;
         List.iter (analyze_stmt_for_maps prog_name) body_stmts
-    | Delete (map_expr, key_expr) ->
-        analyze_expr_for_maps prog_name map_expr;
-        analyze_expr_for_maps prog_name key_expr
+    | Delete target ->
+        (match target with
+         | DeleteMapEntry (map_expr, key_expr) ->
+             analyze_expr_for_maps prog_name map_expr;
+             analyze_expr_for_maps prog_name key_expr
+         | DeletePointer ptr_expr ->
+             analyze_expr_for_maps prog_name ptr_expr)
     | Return None -> ()
     | Break -> ()
     | Continue -> ()

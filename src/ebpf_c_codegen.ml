@@ -475,6 +475,10 @@ let rec collect_string_sizes_from_instr ir_instr =
         acc @ (collect_string_sizes_from_value arg)) [] args
   | IRStructOpsRegister (instance_val, struct_ops_val) ->
       (collect_string_sizes_from_value instance_val) @ (collect_string_sizes_from_value struct_ops_val)
+  | IRObjectNew (dest_val, _) ->
+      collect_string_sizes_from_value dest_val
+  | IRObjectDelete ptr_val ->
+      collect_string_sizes_from_value ptr_val
 
 let collect_string_sizes_from_function ir_func =
   List.fold_left (fun acc block ->
@@ -1125,6 +1129,35 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     (* For non-kprobe programs, use standard processing *)
     let all_includes = builtin_includes @ standard_includes @ unique_context_includes @ base_type_includes in
     List.iter (emit_line ctx) all_includes;
+    emit_blank_line ctx;
+        
+    (* Use proper kernel implementation: extern declarations and macros *)
+    emit_line ctx "extern void *bpf_obj_new_impl(__u64 local_type_id__k, void *meta__ign) __ksym;";
+    emit_line ctx "extern void bpf_obj_drop_impl(void *p__alloc, void *meta__ign) __ksym;";
+    emit_blank_line ctx;
+    
+    (* Use exact kernel implementation for proper typeof handling *)
+    emit_line ctx "#define ___concat(a, b) a ## b";
+    emit_line ctx "#ifdef __clang__";
+    emit_line ctx "#define ___bpf_typeof(type) ((typeof(type) *) 0)";
+    emit_line ctx "#else";
+    emit_line ctx "#define ___bpf_typeof1(type, NR) ({                                         \\";
+    emit_line ctx "        extern typeof(type) *___concat(bpf_type_tmp_, NR);                  \\";
+    emit_line ctx "        ___concat(bpf_type_tmp_, NR);                                       \\";
+    emit_line ctx "})";
+    emit_line ctx "#define ___bpf_typeof(type) ___bpf_typeof1(type, __COUNTER__)";
+    emit_line ctx "#endif";
+    emit_blank_line ctx;
+    
+    (* Add BPF_TYPE_ID_LOCAL constant *)
+    emit_line ctx "#ifndef BPF_TYPE_ID_LOCAL";
+    emit_line ctx "#define BPF_TYPE_ID_LOCAL 1";
+    emit_line ctx "#endif";
+    emit_blank_line ctx;
+    
+    emit_line ctx "#define bpf_core_type_id_kernel(type) __builtin_btf_type_id(*(type*)0, 0)";
+    emit_line ctx "#define bpf_obj_new(type) ((type *)bpf_obj_new_impl(bpf_core_type_id_kernel(type), NULL))";
+    emit_line ctx "#define bpf_obj_drop(ptr) bpf_obj_drop_impl(ptr, NULL)";
     emit_blank_line ctx
   )
 
@@ -2611,6 +2644,10 @@ let rec generate_c_instruction ctx ir_instr =
               Option.iter collect_in_value result_val_opt
           | IRTailCall (_, args, _) ->
               List.iter collect_in_value args
+          | IRObjectNew (dest_val, _) ->
+              collect_in_value dest_val
+          | IRObjectDelete ptr_val ->
+              collect_in_value ptr_val
           | IRJump _ | IRComment _ | IRBreak | IRContinue | IRThrow _ -> ()
         in
         collect_in_instr ir_instr
@@ -2812,6 +2849,18 @@ let rec generate_c_instruction ctx ir_instr =
   | IRStructOpsRegister (_instance_val, _struct_ops_val) ->
       (* For eBPF, struct_ops registration is handled by userspace loader *)
       emit_line ctx (sprintf "/* struct_ops_register - handled by userspace */")
+
+    | IRObjectNew (dest_val, obj_type) ->
+      let dest_str = generate_c_value ctx dest_val in
+      let type_str = ebpf_type_from_ir_type obj_type in
+      (* Use proper kernel pattern: ptr = bpf_obj_new(type) *)
+      emit_line ctx (sprintf "%s = bpf_obj_new(%s);" dest_str type_str)
+      
+  | IRObjectDelete ptr_val ->
+      let ptr_str = generate_c_value ctx ptr_val in
+      (* Use the proper kernel bpf_obj_drop(ptr) macro *)
+      emit_line ctx (sprintf "bpf_obj_drop(%s);" ptr_str)
+      
 
 (** Generate C code for basic block *)
 
@@ -3016,6 +3065,10 @@ let collect_registers_in_function ir_func =
         List.iter collect_in_value args
     | IRStructOpsRegister (instance_val, struct_ops_val) ->
         collect_in_value instance_val; collect_in_value struct_ops_val
+    | IRObjectNew (dest_val, _) ->
+        collect_in_value dest_val
+    | IRObjectDelete ptr_val ->
+        collect_in_value ptr_val
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions

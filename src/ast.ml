@@ -170,6 +170,7 @@ and expr_desc =
   | UnaryOp of unary_op * expr
   | StructLiteral of string * (string * expr) list
   | Match of expr * match_arm list  (* match (expr) { arms } *)
+  | New of bpf_type  (* new Type() - object allocation *)
 
 (** Module function call *)
 and module_call = {
@@ -218,12 +219,17 @@ and stmt_desc =
   | For of string * expr * expr * statement list
   | ForIter of string * string * expr * statement list  (* for (index, value) in expr.iter() { ... } *)
   | While of expr * statement list
-  | Delete of expr * expr  (* delete map[key] *)
+  | Delete of delete_target  (* Unified delete: map[key] or pointer *)
   | Break
   | Continue
   | Try of statement list * catch_clause list  (* try { statements } catch clauses *)
   | Throw of expr  (* throw integer_expression *)
   | Defer of expr  (* defer function_call *)
+
+(** Delete target - either map entry or object pointer *)
+and delete_target =
+  | DeleteMapEntry of expr * expr  (* delete map[key] *)
+  | DeletePointer of expr         (* delete ptr *)
 
 (** Catch clause definition *)
 and catch_clause = {
@@ -677,6 +683,7 @@ let rec string_of_expr expr =
   | Match (expr, arms) ->
       let arms_str = String.concat ",\n    " (List.map string_of_match_arm arms) in
       Printf.sprintf "match (%s) {\n    %s\n}" (string_of_expr expr) arms_str
+  | New typ -> Printf.sprintf "new %s()" (string_of_bpf_type typ)
 
 and string_of_match_pattern = function
   | ConstantPattern lit -> string_of_literal lit
@@ -746,8 +753,10 @@ and string_of_stmt stmt =
   | While (cond, body) ->
       let body_str = String.concat " " (List.map string_of_stmt body) in
       Printf.sprintf "while (%s) { %s }" (string_of_expr cond) body_str
-  | Delete (map_expr, key_expr) ->
+  | Delete (DeleteMapEntry (map_expr, key_expr)) ->
       Printf.sprintf "delete %s[%s];" (string_of_expr map_expr) (string_of_expr key_expr)
+  | Delete (DeletePointer ptr_expr) ->
+      Printf.sprintf "delete %s;" (string_of_expr ptr_expr)
   | Break -> "break;"
   | Continue -> "continue;"
   | Try (statements, catch_clauses) ->

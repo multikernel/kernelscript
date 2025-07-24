@@ -551,10 +551,10 @@ let test_delete_statement_ast () =
   let map_expr = make_expr (Identifier "test_map") pos in
   let key_expr = make_expr (Literal (IntLit (42, None))) pos in
   
-  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
   (* Verify statement structure *)
-  check bool "delete statement created" true (match delete_stmt.stmt_desc with Delete (_, _) -> true | _ -> false);
+  check bool "delete statement created" true (match delete_stmt.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false);
   check bool "delete statement position" true (delete_stmt.stmt_pos = pos)
 
 (** Test delete statement parsing and validation *)
@@ -565,11 +565,11 @@ let test_delete_statement_parsing () =
   (* Since we don't have direct access to parser here, we'll test the AST construction *)
   let map_expr = make_expr (Identifier "my_map") pos in
   let key_expr = make_expr (Identifier "key_var") pos in
-  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
   (* Test statement validation *)
   let is_valid = match delete_stmt.stmt_desc with 
-    | Delete (map_e, key_e) -> 
+    | Delete (DeleteMapEntry (map_e, key_e)) -> 
         (* Validate map and key expressions *)
         (match map_e.expr_desc, key_e.expr_desc with
          | Identifier "my_map", Identifier "key_var" -> true
@@ -590,8 +590,8 @@ let test_delete_with_different_key_types () =
   let map_expr = make_expr (Identifier "test_map") pos in
   
   List.iter (fun (test_name, key_expr) ->
-    let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
-    let is_valid = match delete_stmt.stmt_desc with Delete (_, _) -> true | _ -> false in
+    let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
+    let is_valid = match delete_stmt.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false in
     check bool ("delete with " ^ test_name) true is_valid
   ) test_cases
 
@@ -643,11 +643,11 @@ let test_delete_statement_codegen_validation () =
   (* Test that delete statements can be processed by the analysis system *)
   let map_expr = make_expr (Identifier "codegen_map") pos in
   let key_expr = make_expr (Literal (IntLit (777, None))) pos in
-  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
   (* Verify the statement has the expected structure for code generation *)
   let has_map_and_key = match delete_stmt.stmt_desc with
-    | Delete (m_expr, k_expr) ->
+    | Delete (DeleteMapEntry (m_expr, k_expr)) ->
         (match m_expr.expr_desc, k_expr.expr_desc with
          | Identifier "codegen_map", Literal (IntLit (777, None)) -> true
          | _ -> false)
@@ -673,7 +673,7 @@ let test_delete_statement_end_to_end () =
     let has_delete = match ast with
       | [_; AttributedFunction attr_func] ->
           (match attr_func.attr_function.func_body with
-           | [_; { stmt_desc = Delete (_, _); _ }; _] -> true
+           | [_; { stmt_desc = Delete (DeleteMapEntry (_, _)); _ }; _] -> true
            | _ -> false)
       | _ -> false
     in
@@ -702,24 +702,24 @@ let test_delete_statement_complex_expressions () =
   
   (* Test delete with function call as key *)
   let func_call_key = make_expr (Call (make_expr (Identifier "get_key") pos, [])) pos in
-  let delete_with_func = make_stmt (Delete (map_expr, func_call_key)) pos in
-  check bool "delete with function call key" true (match delete_with_func.stmt_desc with Delete (_, _) -> true | _ -> false);
+  let delete_with_func = make_stmt (Delete (DeleteMapEntry (map_expr, func_call_key))) pos in
+  check bool "delete with function call key" true (match delete_with_func.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false);
   
   (* Test delete with field access as key *)
   let field_access_key = make_expr (FieldAccess (make_expr (Identifier "obj") pos, "id")) pos in
-  let delete_with_field = make_stmt (Delete (map_expr, field_access_key)) pos in
-  check bool "delete with field access key" true (match delete_with_field.stmt_desc with Delete (_, _) -> true | _ -> false);
+  let delete_with_field = make_stmt (Delete (DeleteMapEntry (map_expr, field_access_key))) pos in
+  check bool "delete with field access key" true (match delete_with_field.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false);
   
   (* Test delete with array access as key *)
   let array_access_key = make_expr (ArrayAccess (make_expr (Identifier "keys") pos, make_expr (Literal (IntLit (0, None))) pos)) pos in
-  let delete_with_array = make_stmt (Delete (map_expr, array_access_key)) pos in
-  check bool "delete with array access key" true (match delete_with_array.stmt_desc with Delete (_, _) -> true | _ -> false)
+  let delete_with_array = make_stmt (Delete (DeleteMapEntry (map_expr, array_access_key))) pos in
+  check bool "delete with array access key" true (match delete_with_array.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false)
 
 (** Test delete statement validation in different contexts *)
 let test_delete_statement_contexts () =
   let map_expr = make_expr (Identifier "context_map") pos in
   let key_expr = make_expr (Literal (IntLit (999, None))) pos in
-  let delete_stmt = make_stmt (Delete (map_expr, key_expr)) pos in
+  let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
   (* Test that delete statements can be used in different control flow contexts *)
   let in_if_stmt = make_stmt (If (make_expr (Literal (BoolLit true)) pos, [delete_stmt], None)) pos in
@@ -727,9 +727,9 @@ let test_delete_statement_contexts () =
   let in_for_stmt = make_stmt (For ("i", make_expr (Literal (IntLit (0, None))) pos, make_expr (Literal (IntLit (10, None))) pos, [delete_stmt])) pos in
   
   (* Verify statements are constructed correctly *)
-  check bool "delete in if statement" true (match in_if_stmt.stmt_desc with If (_, [{ stmt_desc = Delete (_, _); _ }], None) -> true | _ -> false);
-  check bool "delete in while statement" true (match in_while_stmt.stmt_desc with While (_, [{ stmt_desc = Delete (_, _); _ }]) -> true | _ -> false);
-  check bool "delete in for statement" true (match in_for_stmt.stmt_desc with For (_, _, _, [{ stmt_desc = Delete (_, _); _ }]) -> true | _ -> false)
+  check bool "delete in if statement" true (match in_if_stmt.stmt_desc with If (_, [{ stmt_desc = Delete (DeleteMapEntry (_, _)); _ }], None) -> true | _ -> false);
+  check bool "delete in while statement" true (match in_while_stmt.stmt_desc with While (_, [{ stmt_desc = Delete (DeleteMapEntry (_, _)); _ }]) -> true | _ -> false);
+  check bool "delete in for statement" true (match in_for_stmt.stmt_desc with For (_, _, _, [{ stmt_desc = Delete (DeleteMapEntry (_, _)); _ }]) -> true | _ -> false)
 
 let map_operations_tests = [
   "access_pattern_analysis", `Quick, test_access_pattern_analysis;

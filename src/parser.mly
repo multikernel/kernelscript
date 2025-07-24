@@ -34,7 +34,7 @@
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR VOID STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
-%token IN DELETE TRY CATCH THROW DEFER MATCH DEFAULT
+%token IN NEW DELETE TRY CATCH THROW DEFER MATCH DEFAULT
 %token IMPORT FROM
 
 
@@ -363,7 +363,9 @@ for_statement:
 
 delete_statement:
   | DELETE expression LBRACKET expression RBRACKET
-    { make_stmt (Delete ($2, $4)) (make_pos ()) }
+    { make_stmt (Delete (DeleteMapEntry ($2, $4))) (make_pos ()) }
+  | DELETE expression
+    { make_stmt (Delete (DeletePointer $2)) (make_pos ()) }
 
 break_statement:
   | BREAK { make_stmt (Break) (make_pos ()) }
@@ -430,6 +432,7 @@ primary_expression:
   | LPAREN expression RPAREN { $2 }
   | primary_expression DOT IDENTIFIER { make_expr (FieldAccess ($1, $3)) (make_pos ()) }
   | primary_expression ARROW IDENTIFIER { make_expr (ArrowAccess ($1, $3)) (make_pos ()) }
+  | NEW bpf_type LPAREN RPAREN { make_expr (New $2) (make_pos ()) }
 
 function_call:
   | IDENTIFIER LPAREN argument_list RPAREN
