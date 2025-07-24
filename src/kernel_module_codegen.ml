@@ -179,6 +179,14 @@ let rec generate_statement_translation stmt =
       sprintf "    %s;" (generate_expression_translation expr)
   | Break -> "    break;"
   | Continue -> "    continue;"
+  | Delete (DeletePointer ptr_expr) ->
+      (* Translate pointer deletion to kfree() *)
+      let ptr_str = generate_expression_translation ptr_expr in
+      sprintf "    kfree(%s);" ptr_str
+  | Delete (DeleteMapEntry (map_expr, key_expr)) ->
+      (* Map deletion not supported in kernel modules - this should be caught earlier *)
+      sprintf "    /* Map deletion not supported in kernel modules: delete %s[%s] */" 
+        (generate_expression_translation map_expr) (generate_expression_translation key_expr)
   | _ -> "    /* TODO: Implement statement translation */"
 
 (** Generate expression translation *)
@@ -262,6 +270,15 @@ and generate_expression_translation expr =
       sprintf "%s->%s" (generate_expression_translation obj) field
   | ArrayAccess (array, index) ->
       sprintf "%s[%s]" (generate_expression_translation array) (generate_expression_translation index)
+  | New typ ->
+      (* Basic allocation with GFP_KERNEL (default for kernel context) *)
+      let c_type = kernelscript_type_to_c_type typ in
+      sprintf "kmalloc(sizeof(%s), GFP_KERNEL)" c_type
+  | NewWithFlag (typ, flag_expr) ->
+      (* Allocation with specific GFP flag *)
+      let c_type = kernelscript_type_to_c_type typ in
+      let flag_str = generate_expression_translation flag_expr in
+      sprintf "kmalloc(sizeof(%s), %s)" c_type flag_str
   | _ -> "/* TODO: Implement expression translation */"
 
 (** Generate function implementation for regular kernel module functions *)

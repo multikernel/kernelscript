@@ -754,6 +754,11 @@ and eval_expression ctx expr =
       (* For evaluator, object allocation returns a mock pointer value *)
       (* This is just for testing - real allocation happens in generated code *)
       PointerValue (Random.int 1000000)
+      
+  | NewWithFlag (_, _) ->
+      (* For evaluator, object allocation with flag returns a mock pointer value *)
+      (* This is just for testing - real allocation happens in generated code *)
+      PointerValue (Random.int 1000000)
 
 (** Evaluate statements *)
 and eval_statements ctx stmts =

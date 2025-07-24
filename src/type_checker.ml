@@ -69,6 +69,7 @@ and typed_expr_desc =
   | TStructLiteral of string * (string * typed_expr) list
   | TMatch of typed_expr * typed_match_arm list  (* match (expr) { arms } *)
   | TNew of bpf_type  (* new Type() - object allocation *)
+  | TNewWithFlag of bpf_type * typed_expr  (* new Type(gfp_flag) - object allocation with flag *)
 
 (** Typed match arm *)
 and typed_match_arm = {
@@ -1334,6 +1335,51 @@ and type_check_expression ctx expr =
       let pointer_type = Pointer resolved_type in
       { texpr_desc = TNew resolved_type; texpr_type = pointer_type; texpr_pos = expr.expr_pos }
 
+  | NewWithFlag (typ, flag_expr) ->
+      (* Type check object allocation with GFP flag - only valid in kernel context *)
+      
+      (* First, validate execution context *)
+      (* Check if we're in an eBPF program first (indicated by current_program_type being set) *)
+      (match ctx.current_program_type with
+       | Some _ -> 
+           (* We're in an eBPF program context *)
+           type_error "GFP allocation flags can only be used in @kfunc functions (kernel context), not in eBPF programs" expr.expr_pos
+       | None ->
+           (* Not in eBPF, check function scope *)
+           let current_scope = match ctx.current_function with
+             | Some func_name ->
+                 (try Some (Hashtbl.find ctx.function_scopes func_name)
+                  with Not_found -> Some Ast.Userspace)
+             | None -> Some Ast.Userspace
+           in
+           
+           (match current_scope with
+            | Some Ast.Kernel -> 
+                (* Valid context - continue with type checking *)
+                ()
+            | Some Ast.Userspace -> 
+                type_error "GFP allocation flags can only be used in @kfunc functions (kernel context), not in userspace" expr.expr_pos
+            | None -> 
+                (* This shouldn't happen now that we check program_type first *)
+                type_error "GFP allocation flags can only be used in @kfunc functions (kernel context)" expr.expr_pos));
+      
+      (* Type check the flag expression *)
+      let typed_flag_expr = type_check_expression ctx flag_expr in
+      
+      (* Validate that flag expression is of type gfp_flag *)
+      let resolved_flag_type = resolve_user_type ctx typed_flag_expr.texpr_type in
+      (match resolved_flag_type with
+       | Enum "gfp_flag" -> 
+           (* Valid GFP flag *)
+           ()
+       | _ -> 
+           type_error ("GFP allocation flag must be of type gfp_flag, got " ^ string_of_bpf_type resolved_flag_type) expr.expr_pos);
+      
+      (* Type check the allocated type *)
+      let resolved_type = resolve_user_type ctx typ in
+      let pointer_type = Pointer resolved_type in
+      { texpr_desc = TNewWithFlag (resolved_type, typed_flag_expr); texpr_type = pointer_type; texpr_pos = expr.expr_pos }
+
 (** Type check statement *)
 and type_check_statement ctx stmt =
   match stmt.stmt_desc with
@@ -2122,12 +2168,16 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
         in
         Hashtbl.replace ctx.functions attr_func.attr_function.func_name (param_types, return_type);
         
-        (* Check if this is a @helper function and update scope accordingly *)
+        (* Check if this is a @helper or @kfunc function and update scope accordingly *)
         let is_helper = List.exists (function
           | SimpleAttribute "helper" -> true
           | _ -> false
         ) attr_func.attr_list in
-        let actual_scope = if is_helper then Ast.Kernel else attr_func.attr_function.func_scope in
+        let is_kfunc = List.exists (function
+          | SimpleAttribute "kfunc" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let actual_scope = if is_helper || is_kfunc then Ast.Kernel else attr_func.attr_function.func_scope in
         Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name actual_scope;
         
         (* Track @helper functions separately *)
@@ -2159,7 +2209,29 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
   (* Third pass: type check attributed functions now that global functions are registered *)
   List.iter (function
     | AttributedFunction attr_func ->
+        (* Extract program type from attribute for context *)
+        let prog_type = match attr_func.attr_list with
+          | SimpleAttribute prog_type_str :: _ ->
+              (match prog_type_str with
+               | "xdp" -> Some Xdp
+               | "tc" -> Some Tc  
+               | "kprobe" -> Some Kprobe
+               | "uprobe" -> Some Uprobe
+               | "tracepoint" -> Some Tracepoint
+               | "lsm" -> Some Lsm
+               | "cgroup_skb" -> Some CgroupSkb
+               | "kfunc" -> None  (* kfuncs don't have program types *)
+               | "private" -> None  (* private functions don't have program types *)
+               | "helper" -> None  (* helper functions don't have program types *)
+               | "test" -> None  (* test functions don't have program types *)
+               | _ -> None)
+          | _ -> None
+        in
+        
+        (* Set current program type for context *)
+        ctx.current_program_type <- prog_type;
         let _ = type_check_function ~register_signature:false ctx attr_func.attr_function in
+        ctx.current_program_type <- None;
         ()
     | _ -> ()
   ) ast;
@@ -2218,6 +2290,7 @@ let rec typed_expr_to_expr texpr =
         ) typed_arms in
         Match (matched_expr, arms)
     | TNew typ -> New typ
+    | TNewWithFlag (typ, flag_expr) -> NewWithFlag (typ, typed_expr_to_expr flag_expr)
   in
   (* Handle special cases for type annotations *)
   let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with
@@ -2433,12 +2506,16 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
         in
         Hashtbl.replace ctx.functions attr_func.attr_function.func_name (param_types, return_type);
         
-        (* Check if this is a @helper function and update scope accordingly *)
+        (* Check if this is a @helper or @kfunc function and update scope accordingly *)
         let is_helper = List.exists (function
           | SimpleAttribute "helper" -> true
           | _ -> false
         ) attr_func.attr_list in
-        let actual_scope = if is_helper then Ast.Kernel else attr_func.attr_function.func_scope in
+        let is_kfunc = List.exists (function
+          | SimpleAttribute "kfunc" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        let actual_scope = if is_helper || is_kfunc then Ast.Kernel else attr_func.attr_function.func_scope in
         Hashtbl.replace ctx.function_scopes attr_func.attr_function.func_name actual_scope;
         
         (* Track @helper functions separately *)
@@ -2707,7 +2784,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
           attr_func.attr_function
         in
         
-        let typed_func = type_check_function ctx func_to_check in
+        let typed_func = type_check_function ~register_signature:false ctx func_to_check in
         ctx.current_program_type <- None;
         ((attr_func.attr_list, typed_func) :: attr_acc, userspace_acc)
     | GlobalFunction func ->

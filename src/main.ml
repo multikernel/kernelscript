@@ -740,7 +740,10 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
         (List.length filtered_btf_declarations) 
         (List.length btf_declarations - List.length filtered_btf_declarations);
 
-      let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[filtered_btf_declarations] compilation_ast in
+    (* Add stdlib builtin types to the symbol table *)
+    let stdlib_builtin_declarations = Stdlib.get_builtin_types () in
+    let all_builtin_declarations = stdlib_builtin_declarations @ filtered_btf_declarations in
+    let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[all_builtin_declarations] compilation_ast in
       
     Printf.printf "✅ Symbol table created successfully with BTF types\n\n";
     

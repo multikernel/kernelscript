@@ -86,7 +86,8 @@ let validate_ast ast =
           | SingleExpr expr -> validate_expr expr
           | Block stmts -> List.for_all validate_stmt stmts
         ) arms
-    | New _ -> true  (* New expressions are always syntactically valid *)
+    | New _ -> true
+    | NewWithFlag (_, flag_expr) -> validate_expr flag_expr  (* New expressions are always syntactically valid *)
   
   and validate_stmt stmt =
     match stmt.stmt_desc with

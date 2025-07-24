@@ -856,6 +856,10 @@ and process_expression table expr =
       (* New expressions don't introduce new symbols, but we should validate the type *)
       (* Type validation will be handled by the type checker *)
       ()
+      
+  | NewWithFlag (_, flag_expr) ->
+      (* Process the flag expression for symbol validation *)
+      process_expression table flag_expr
 
 (** Query functions for symbol table *)
 

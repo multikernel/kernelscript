@@ -433,6 +433,7 @@ primary_expression:
   | primary_expression DOT IDENTIFIER { make_expr (FieldAccess ($1, $3)) (make_pos ()) }
   | primary_expression ARROW IDENTIFIER { make_expr (ArrowAccess ($1, $3)) (make_pos ()) }
   | NEW bpf_type LPAREN RPAREN { make_expr (New $2) (make_pos ()) }
+  | NEW bpf_type LPAREN expression RPAREN { make_expr (NewWithFlag ($2, $4)) (make_pos ()) }
 
 function_call:
   | IDENTIFIER LPAREN argument_list RPAREN

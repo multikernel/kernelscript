@@ -1904,6 +1904,11 @@ let rec generate_c_instruction_from_ir ctx instruction =
       let type_str = c_type_from_ir_type obj_type in
       sprintf "%s = malloc(sizeof(%s));" dest_str type_str
       
+  | IRObjectNewWithFlag _ ->
+      (* GFP flags should never reach userspace code generation - this is an internal error *)
+      failwith ("Internal error: GFP allocation flags are not supported in userspace context. " ^
+                "This should have been caught by the type checker.")
+      
   | IRObjectDelete ptr_val ->
       let ptr_str = generate_c_value_from_ir ctx ptr_val in
       sprintf "free(%s);" ptr_str

@@ -937,6 +937,20 @@ let rec lower_expression ctx (expr : Ast.expr) =
       emit_instruction ctx alloc_instr;
       
       result_val
+      
+  | Ast.NewWithFlag (typ, flag_expr) ->
+      (* Object allocation with GFP flag - only valid in kernel context *)
+      let ir_type = ast_type_to_ir_type typ in
+      let result_reg = allocate_register ctx in
+      let result_val = make_ir_value (IRRegister result_reg) (IRPointer (ir_type, make_bounds_info ())) expr.expr_pos in
+      
+      (* Lower the flag expression *)
+      let flag_val = lower_expression ctx flag_expr in
+      
+      let alloc_instr = make_ir_instruction (IRObjectNewWithFlag (result_val, ir_type, flag_val)) expr.expr_pos in
+      emit_instruction ctx alloc_instr;
+      
+      result_val
 
 (** Helper function to handle register() builtin function calls *)
 and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type () =
@@ -1335,7 +1349,7 @@ and lower_statement ctx stmt =
       
       (* Handle function call and new expression declarations elegantly by proper instruction ordering *)
       (match expr_opt with
-       | Some expr when (match expr.expr_desc with Ast.Call _ | Ast.New _ -> true | _ -> false) ->
+       | Some expr when (match expr.expr_desc with Ast.Call _ | Ast.New _ | Ast.NewWithFlag _ -> true | _ -> false) ->
            (* For function calls and new expressions: emit declaration first, then operation with assignment *)
            let target_type = match typ_opt with
              | Some ast_type -> resolve_type_alias ctx reg ast_type
@@ -1346,6 +1360,9 @@ and lower_statement ctx stmt =
                   | None -> 
                       (match expr.expr_desc with
                        | Ast.New typ -> 
+                           let ir_type = ast_type_to_ir_type typ in
+                           IRPointer (ir_type, make_bounds_info ())
+                       | Ast.NewWithFlag (typ, _) ->
                            let ir_type = ast_type_to_ir_type typ in
                            IRPointer (ir_type, make_bounds_info ())
                        | _ -> IRU32))
@@ -1384,6 +1401,13 @@ and lower_statement ctx stmt =
                 let ir_type = ast_type_to_ir_type typ in
                 let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
                 let alloc_instr = make_ir_instruction (IRObjectNew (result_val, ir_type)) expr.Ast.expr_pos in
+                emit_instruction ctx alloc_instr
+            | Ast.NewWithFlag (typ, flag_expr) ->
+                (* Handle new expression with flag: emit allocation instruction with flag *)
+                let ir_type = ast_type_to_ir_type typ in
+                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let flag_val = lower_expression ctx flag_expr in
+                let alloc_instr = make_ir_instruction (IRObjectNewWithFlag (result_val, ir_type, flag_val)) expr.Ast.expr_pos in
                 emit_instruction ctx alloc_instr
             | _ -> ()) (* Shouldn't happen due to our guard *)
        | _ ->

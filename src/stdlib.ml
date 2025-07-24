@@ -177,6 +177,18 @@ let get_kernel_implementation name =
   | Some func -> Some func.kernel_impl
   | None -> None
 
+(** Builtin type definitions *)
+let builtin_types = [
+  (* Kernel allocation flags enum *)
+  TypeDef (EnumDef ("gfp_flag", [
+    ("GFP_KERNEL", Some 0x0001);
+    ("GFP_ATOMIC", Some 0x0002);
+  ], false));
+]
+
+(** Get all builtin type definitions *)
+let get_builtin_types () = builtin_types
+
 (** Validate builtin function call with custom validation if available *)
 let validate_builtin_call name arg_types ast_context pos =
   match get_builtin_function name with

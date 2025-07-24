@@ -171,6 +171,7 @@ and expr_desc =
   | StructLiteral of string * (string * expr) list
   | Match of expr * match_arm list  (* match (expr) { arms } *)
   | New of bpf_type  (* new Type() - object allocation *)
+  | NewWithFlag of bpf_type * expr  (* new Type(gfp_flag) - object allocation with flag *)
 
 (** Module function call *)
 and module_call = {
@@ -684,6 +685,8 @@ let rec string_of_expr expr =
       let arms_str = String.concat ",\n    " (List.map string_of_match_arm arms) in
       Printf.sprintf "match (%s) {\n    %s\n}" (string_of_expr expr) arms_str
   | New typ -> Printf.sprintf "new %s()" (string_of_bpf_type typ)
+  | NewWithFlag (typ, flag_expr) -> 
+      Printf.sprintf "new %s(%s)" (string_of_bpf_type typ) (string_of_expr flag_expr)
 
 and string_of_match_pattern = function
   | ConstantPattern lit -> string_of_literal lit

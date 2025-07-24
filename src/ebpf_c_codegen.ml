@@ -477,6 +477,8 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value instance_val) @ (collect_string_sizes_from_value struct_ops_val)
   | IRObjectNew (dest_val, _) ->
       collect_string_sizes_from_value dest_val
+  | IRObjectNewWithFlag (dest_val, _, flag_val) ->
+      (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_value flag_val)
   | IRObjectDelete ptr_val ->
       collect_string_sizes_from_value ptr_val
 
@@ -2646,6 +2648,8 @@ let rec generate_c_instruction ctx ir_instr =
               List.iter collect_in_value args
           | IRObjectNew (dest_val, _) ->
               collect_in_value dest_val
+          | IRObjectNewWithFlag (dest_val, _, flag_val) ->
+              collect_in_value dest_val; collect_in_value flag_val
           | IRObjectDelete ptr_val ->
               collect_in_value ptr_val
           | IRJump _ | IRComment _ | IRBreak | IRContinue | IRThrow _ -> ()
@@ -2855,6 +2859,11 @@ let rec generate_c_instruction ctx ir_instr =
       let type_str = ebpf_type_from_ir_type obj_type in
       (* Use proper kernel pattern: ptr = bpf_obj_new(type) *)
       emit_line ctx (sprintf "%s = bpf_obj_new(%s);" dest_str type_str)
+      
+  | IRObjectNewWithFlag _ ->
+      (* GFP flags should never reach eBPF code generation - this is an internal error *)
+      failwith ("Internal error: GFP allocation flags are not supported in eBPF context. " ^
+                "This should have been caught by the type checker.")
       
   | IRObjectDelete ptr_val ->
       let ptr_str = generate_c_value ctx ptr_val in
@@ -3067,6 +3076,8 @@ let collect_registers_in_function ir_func =
         collect_in_value instance_val; collect_in_value struct_ops_val
     | IRObjectNew (dest_val, _) ->
         collect_in_value dest_val
+    | IRObjectNewWithFlag (dest_val, _, flag_val) ->
+        collect_in_value dest_val; collect_in_value flag_val
     | IRObjectDelete ptr_val ->
         collect_in_value ptr_val
   in
