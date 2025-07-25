@@ -57,7 +57,7 @@ let generate_userspace_code_from_program program_text filename =
 (** Test 1: Ensure global function main works with custom struct name "ServerConfig" *)
 let test_global_function_main_with_different_struct_name () =
   let program_text = {|
-var server_stats : HashMap<u32, u64>(32)
+var server_stats : hash<u32, u64>(32)
 
 @xdp fn server_monitor(ctx: *xdp_md) -> xdp_action {
     return 2
@@ -122,7 +122,7 @@ fn main(settings: ServerConfig) -> i32 {
 (** Test 2: Ensure global function main works with single-letter struct name *)
 let test_global_function_main_with_minimal_struct_name () =
   let program_text = {|
-var minimal_map : HashMap<u32, u64>(8)
+var minimal_map : hash<u32, u64>(8)
 
 @xdp fn minimal_prog(ctx: *xdp_md) -> xdp_action {
     return 2
@@ -171,7 +171,7 @@ fn main(x: X) -> i32 {
 (** Test 3: Ensure compilation and validation still works with custom struct names *)
 let test_global_function_main_validation_with_custom_struct () =
   let program_text = {|
-var validation_map : HashMap<u32, u64>(16)
+var validation_map : hash<u32, u64>(16)
 
 @xdp fn validation_prog(ctx: *xdp_md) -> xdp_action {
     return 2

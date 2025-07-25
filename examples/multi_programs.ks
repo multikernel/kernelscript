@@ -40,7 +40,7 @@ enum tc_action {
   TC_ACT_REDIRECT = 7,
 }
 
-pin var shared_counter : HashMap<u32, u32>(1024)
+pin var shared_counter : hash<u32, u32>(1024)
 
 // First eBPF program - packet counter
 @xdp fn packet_counter(ctx: *xdp_md) -> xdp_action {

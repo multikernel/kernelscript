@@ -306,14 +306,11 @@ let generate_ebpf_c_declaration ir_type var_name =
 (** Map type conversion *)
 
 let ir_map_type_to_c_type = function
-  | IRHashMap -> "BPF_MAP_TYPE_HASH"
+  | IRHash -> "BPF_MAP_TYPE_HASH"
   | IRMapArray -> "BPF_MAP_TYPE_ARRAY"
-  | IRPercpuHash -> "BPF_MAP_TYPE_PERCPU_HASH"
-  | IRPercpuArray -> "BPF_MAP_TYPE_PERCPU_ARRAY"
-  | IRLruHash -> "BPF_MAP_TYPE_LRU_HASH"
-  | IRRingBuffer -> "BPF_MAP_TYPE_RINGBUF"
-  | IRPerfEvent -> "BPF_MAP_TYPE_PERF_EVENT_ARRAY"
-  | IRDevMap -> "BPF_MAP_TYPE_DEVMAP"
+  | IRPercpu_hash -> "BPF_MAP_TYPE_PERCPU_HASH"
+  | IRPercpu_array -> "BPF_MAP_TYPE_PERCPU_ARRAY"
+  | IRLru_hash -> "BPF_MAP_TYPE_LRU_HASH"
 
 (** Collect all string sizes used in the program *)
 

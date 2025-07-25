@@ -67,7 +67,7 @@ config network {
     enable_logging: bool = true,
 }
 
-var packet_stats : HashMap<u32, u64>(1024)
+var packet_stats : hash<u32, u64>(1024)
 
 @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
     if (network.max_packet_size > 1000) {

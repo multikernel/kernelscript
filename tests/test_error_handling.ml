@@ -34,7 +34,7 @@ let contains_substr str substr =
 
 (** Helper function to create a simple program with given body *)
 let make_simple_program_with_body body_text = {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test_prog(ctx: *xdp_md) -> i32 {
 |} ^ body_text ^ {|

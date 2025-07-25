@@ -17,7 +17,7 @@ enum xdp_action {
   XDP_TX = 4,
 }
 
-var packet_counts : HashMap<u32, u64>(1024)
+var packet_counts : hash<u32, u64>(1024)
 
 config network {
   limit : u32,

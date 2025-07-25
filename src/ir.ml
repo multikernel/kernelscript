@@ -199,8 +199,7 @@ and ir_map_def = {
 }
 
 and ir_map_type =
-  | IRHashMap | IRMapArray | IRPercpuHash | IRPercpuArray
-  | IRLruHash | IRRingBuffer | IRPerfEvent | IRDevMap
+  | IRHash | IRMapArray | IRPercpu_hash | IRPercpu_array | IRLru_hash
 
 and ir_map_attr = 
   | Pinned of string
@@ -407,10 +406,7 @@ and map_operation = OpLookup | OpUpdate | OpDelete | OpIterate
 and ir_event_handler = {
   event_type: string;
   callback_signature: string;
-  buffer_management: buffer_type;
 }
-
-and buffer_type = RingBuffer | PerfEvent
 
 and ir_config_struct = {
   config_struct_name: string;
@@ -757,13 +753,11 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
   | _ -> ast_type_to_ir_type ast_type
 
 let ast_map_type_to_ir_map_type = function
-  | HashMap -> IRHashMap
+  | Hash -> IRHash
   | Array -> IRMapArray
-  | PercpuHash -> IRPercpuHash
-  | PercpuArray -> IRPercpuArray
-  | LruHash -> IRLruHash
-  | RingBuffer -> IRRingBuffer
-  | PerfEvent -> IRPerfEvent
+  | Percpu_hash -> IRPercpu_hash
+  | Percpu_array -> IRPercpu_array
+  | Lru_hash -> IRLru_hash
 
 (* ast_map_attr_to_ir_map_attr function removed since old attribute system is gone *)
 

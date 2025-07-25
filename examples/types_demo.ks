@@ -50,17 +50,17 @@ enum Protocol {
 }
 
 // Global map declarations with different types
-pin var connection_count : HashMap<IpAddress, Counter>(1024)
+pin var connection_count : hash<IpAddress, Counter>(1024)
 
-var packet_filter : LruHash<PacketInfo, FilterAction>(512)
+var packet_filter : lru_hash<PacketInfo, FilterAction>(512)
 
-var recent_packets : Array<u32, PacketInfo>(256)
+var recent_packets : array<u32, PacketInfo>(256)
 
 // Result type for error handling
-var packet_cache : PercpuHash<u32, PacketInfo>(128)
+var packet_cache : percpu_hash<u32, PacketInfo>(128)
 
 // Local maps for program-specific data
-var protocol_stats : PercpuArray<Protocol, Counter>(32)
+var protocol_stats : percpu_array<Protocol, Counter>(32)
 
 @helper
 fn extract_packet_info(ctx: *xdp_md) -> *PacketInfo {

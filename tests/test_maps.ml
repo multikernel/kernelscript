@@ -30,7 +30,7 @@ let string_of_map_declaration = Kernelscript.Maps.string_of_map_declaration
 let test_basic_map_creation () =
   let key_type = U32 in
   let value_type = U64 in
-  let map_type = HashMap in
+  let map_type = Hash in
   let size = 1024 in
   
   let map_config = make_map_config size () in
@@ -45,10 +45,10 @@ let test_basic_map_creation () =
 (** Test different map types *)
 let test_different_map_types () =
   let test_cases = [
-    (HashMap, "HashMap");
-    (Array, "Array");
-    (LruHash, "LruHash");
-    (PercpuHash, "PercpuHash");
+    (Hash, "hash");
+    (Array, "array");
+    (Lru_hash, "lru_hash");
+    (Percpu_hash, "percpu_hash");
   ] in
   
   List.iter (fun (map_type, expected_name) ->
@@ -70,7 +70,7 @@ let test_map_key_value_types () =
   List.iter (fun (key_type, value_type, expected_key, expected_value) ->
     let config = make_map_config 1024 () in
     let pos = make_position 1 1 "test.ks" in
-    let map_decl = make_ast_map_declaration "test" key_type value_type HashMap config true ~is_pinned:false pos in
+    let map_decl = make_ast_map_declaration "test" key_type value_type Hash config true ~is_pinned:false pos in
     check bool ("key type: " ^ expected_key) true (map_decl.key_type = key_type);
     check bool ("value type: " ^ expected_value) true (map_decl.value_type = value_type)
   ) test_cases
@@ -79,7 +79,7 @@ let test_map_key_value_types () =
 let test_map_operations () =
   let pos = make_position 1 1 "test.ks" in
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "counter" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "counter" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test map declaration properties *)
   check string "map operations map name" "counter" map_decl.name;
@@ -90,7 +90,7 @@ let test_map_operations () =
 let test_map_initialization () =
   let pos = make_position 1 1 "test.ks" in
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "initialized_map" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "initialized_map" U32 U64 Hash config true ~is_pinned:false pos in
   
   check string "initialized map name" "initialized_map" map_decl.name;
   check bool "map has config" true (map_decl.config.max_entries > 0);
@@ -102,12 +102,12 @@ let test_map_validation () =
   
   (* Test valid map *)
   let config = make_map_config 1024 () in
-  let valid_map = make_ast_map_declaration "valid" U32 U64 HashMap config true ~is_pinned:false pos in
+  let valid_map = make_ast_map_declaration "valid" U32 U64 Hash config true ~is_pinned:false pos in
   check string "valid map name" "valid" valid_map.name;
   
   (* Test invalid map with zero size *)
   let invalid_config = make_map_config 0 () in
-  let invalid_map = make_ast_map_declaration "invalid" U32 U64 HashMap invalid_config true ~is_pinned:false pos in
+  let invalid_map = make_ast_map_declaration "invalid" U32 U64 Hash invalid_config true ~is_pinned:false pos in
   check string "invalid map name" "invalid" invalid_map.name
 
 (** Test map program integration *)
@@ -116,8 +116,8 @@ let test_map_program_integration () =
   let config = make_map_config 1024 () in
   
   (* Create maps *)
-  let packet_count_map = make_ast_map_declaration "packet_count" U32 U64 HashMap config true ~is_pinned:false pos in
-  let byte_count_map = make_ast_map_declaration "byte_count" U32 U64 HashMap config true ~is_pinned:false pos in
+  let packet_count_map = make_ast_map_declaration "packet_count" U32 U64 Hash config true ~is_pinned:false pos in
+  let byte_count_map = make_ast_map_declaration "byte_count" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test map integration *)
   check string "first map name" "packet_count" packet_count_map.name;
@@ -132,9 +132,9 @@ let test_map_type_compatibility () =
   let config = make_map_config 1024 () in
   
   (* Test compatible types *)
-  let compatible_map = make_ast_map_declaration "compatible" U32 U64 HashMap config true ~is_pinned:false pos in
+  let compatible_map = make_ast_map_declaration "compatible" U32 U64 Hash config true ~is_pinned:false pos in
   check string "compatible map name" "compatible" compatible_map.name;
-  check bool "compatible types" true (compatible_map.map_type = HashMap)
+  check bool "compatible types" true (compatible_map.map_type = Hash)
 
 (** Test map size validation *)
 let test_map_size_validation () =
@@ -144,7 +144,7 @@ let test_map_size_validation () =
   let valid_sizes = [1; 1024; 4096; 65536] in
   List.iter (fun size ->
     let config = make_map_config size () in
-    let map_decl = make_ast_map_declaration "test" U32 U64 HashMap config true ~is_pinned:false pos in
+    let map_decl = make_ast_map_declaration "test" U32 U64 Hash config true ~is_pinned:false pos in
     check int ("size matches: " ^ string_of_int size) size map_decl.config.max_entries
   ) valid_sizes
 
@@ -163,7 +163,7 @@ let test_map_error_handling () =
   
   (* Test error conditions *)
   try
-    let _ = make_ast_map_declaration "" U32 U64 HashMap config true ~is_pinned:false pos in
+    let _ = make_ast_map_declaration "" U32 U64 Hash config true ~is_pinned:false pos in
     check bool "empty name handled" true true
   with
   | _ -> check bool "empty name error handled" true true
@@ -172,7 +172,7 @@ let test_map_error_handling () =
 let test_map_metadata () =
   let pos = make_position 1 1 "test.ks" in
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "metadata_test" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "metadata_test" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test metadata properties *)
   check string "metadata map name" "metadata_test" map_decl.name;
@@ -184,7 +184,7 @@ let test_map_metadata () =
 let test_map_serialization () =
   let pos = make_position 1 1 "test.ks" in
   let config = make_map_config 1024 () in
-  let original_map = make_ast_map_declaration "serialize_test" U32 U64 HashMap config true ~is_pinned:false pos in
+  let original_map = make_ast_map_declaration "serialize_test" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test basic map properties instead of serialization *)
   check string "serialization test map name" "serialize_test" original_map.name;

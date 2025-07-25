@@ -52,7 +52,7 @@ let comprehensive_flags_analysis _ _ = ({
 (** Test basic map flag operations *)
 let test_basic_map_flags () =
   let program_text = {|
-var basic_map : HashMap<u32, u64>(1024)
+var basic_map : hash<u32, u64>(1024)
 
 @xdp fn flag_test(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -75,10 +75,10 @@ var basic_map : HashMap<u32, u64>(1024)
 (** Test different map types and their flags *)
 let test_different_map_type_flags () =
   let program_text = {|
-var hash_map : HashMap<u32, u64>(1024)
-var array_map : Array<u32, u64>(256)
-var lru_map : LruHash<u32, u64>(512)
-var percpu_map : PercpuHash<u32, u64>(2048)
+var hash_map : hash<u32, u64>(1024)
+var array_map : array<u32, u64>(256)
+var lru_map : lru_hash<u32, u64>(512)
+var percpu_map : percpu_hash<u32, u64>(2048)
 
 @xdp fn types_test(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -101,7 +101,7 @@ var percpu_map : PercpuHash<u32, u64>(2048)
     
     match find_map "hash_map", find_map "array_map", find_map "lru_map", find_map "percpu_map" with
     | Some hash_map, Some array_map, Some lru_map, Some percpu_map ->
-        check string "hash map type" "hash_map" (string_of_map_type hash_map.map_type);
+        check string "hash map type" "hash" (string_of_map_type hash_map.map_type);
         check string "array map type" "array" (string_of_map_type array_map.map_type);
         check string "lru map type" "lru_hash" (string_of_map_type lru_map.map_type);
         check string "percpu map type" "percpu_hash" (string_of_map_type percpu_map.map_type);
@@ -120,7 +120,7 @@ var percpu_map : PercpuHash<u32, u64>(2048)
 (** Test map flags validation *)
 let test_map_flags_validation () =
   let valid_program = {|
-var valid_map : HashMap<u32, u64>(1024)
+var valid_map : hash<u32, u64>(1024)
 
 @xdp fn valid_flags(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -128,7 +128,7 @@ var valid_map : HashMap<u32, u64>(1024)
 |} in
   
   let invalid_program = {|
-var invalid_map : HashMap<u32, u64>(0)  // Invalid size
+var invalid_map : hash<u32, u64>(0)  // Invalid size
 
 @xdp fn invalid_flags(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -158,7 +158,7 @@ var invalid_map : HashMap<u32, u64>(0)  // Invalid size
 (** Test map flags with initialization *)
 let test_map_flags_with_initialization () =
   let program_text = {|
-var initialized_map : HashMap<u32, u64>(1024)
+var initialized_map : hash<u32, u64>(1024)
 
 @xdp fn init_test(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -183,10 +183,10 @@ var initialized_map : HashMap<u32, u64>(1024)
 (** Test map flags for different key/value types *)
 let test_map_flags_key_value_types () =
   let program_text = {|
-var small_map : HashMap<u8, u16>(64)
-var medium_map : HashMap<u32, u64>(1024)
-var large_key_map : HashMap<u64, bool>(512)
-var bool_key_map : HashMap<bool, u32>(2)
+var small_map : hash<u8, u16>(64)
+var medium_map : hash<u32, u64>(1024)
+var large_key_map : hash<u64, bool>(512)
+var bool_key_map : hash<bool, u32>(2)
 
 @xdp fn types_test(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -217,7 +217,7 @@ var bool_key_map : HashMap<bool, u32>(2)
 (** Test map flags compatibility with program types *)
 let test_map_flags_program_compatibility () =
   let xdp_program = {|
-var xdp_map : HashMap<u32, u64>(1024)
+var xdp_map : hash<u32, u64>(1024)
 
 @xdp fn xdp_test(ctx: *xdp_md) -> xdp_action {
   return 2
@@ -225,7 +225,7 @@ var xdp_map : HashMap<u32, u64>(1024)
 |} in
   
   let tc_program = {|
-var tc_map : Array<u32, u64>(256)
+var tc_map : array<u32, u64>(256)
 
 @tc fn tc_test(ctx: TcContext) -> TcAction {
   return 0
@@ -255,11 +255,11 @@ var tc_map : Array<u32, u64>(256)
 (** Test map flags size limits *)
 let test_map_flags_size_limits () =
   let test_cases = [
-    ("var tiny : HashMap<u32, u64>(1)", 1, true);
-    ("var small : HashMap<u32, u64>(256)", 256, true);
-    ("var medium : HashMap<u32, u64>(1024)", 1024, true);
-    ("var large : HashMap<u32, u64>(65536)", 65536, true);
-    ("var too_large : HashMap<u32, u64>(1000000)", 1000000, false);
+    ("var tiny : hash<u32, u64>(1)", 1, true);
+    ("var small : hash<u32, u64>(256)", 256, true);
+    ("var medium : hash<u32, u64>(1024)", 1024, true);
+    ("var large : hash<u32, u64>(65536)", 65536, true);
+    ("var too_large : hash<u32, u64>(1000000)", 1000000, false);
   ] in
   
   List.iter (fun (map_def, expected_size, should_be_valid) ->
@@ -282,9 +282,9 @@ let test_map_flags_size_limits () =
 (** Test map flags optimization analysis *)
 let test_map_flags_optimization () =
   let program_text = {|
-var frequent_map : HashMap<u32, u64>(1024)
-var sparse_map : HashMap<u32, u64>(65536)
-var small_array : Array<u32, u64>(16)
+var frequent_map : hash<u32, u64>(1024)
+var sparse_map : hash<u32, u64>(65536)
+var small_array : array<u32, u64>(16)
 
 @helper
 fn process_frequent() -> u64 {
@@ -325,9 +325,9 @@ fn process_array() -> u64 {
 (** Test comprehensive map flags analysis *)
 let test_comprehensive_map_flags_analysis () =
   let program_text = {|
-var packet_count : HashMap<u32, u64>(4096)
-var port_stats : Array<u16, u32>(65536)
-var flow_cache : LruHash<u32, u64>(1024)
+var packet_count : hash<u32, u64>(4096)
+var port_stats : array<u16, u32>(65536)
+var flow_cache : lru_hash<u32, u64>(1024)
 
 @helper
 fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
@@ -370,9 +370,9 @@ fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
     (* Verify specific statistics *)
     let stats = comprehensive_analysis.map_statistics in
     check int "three maps total" 3 stats.total_maps;
-    check bool "has HashMap" true (stats.total_maps > 0);
+    check bool "has Hash" true (stats.total_maps > 0);
     check bool "has Array" true (stats.total_maps > 0);
-    check bool "has LruHash" true (stats.total_maps > 0);
+    check bool "has Lru_hash" true (stats.total_maps > 0);
     check bool "has initialized maps" true (stats.total_maps > 0)
   with
   | e -> fail ("Error occurred: " ^ Printexc.to_string e)
@@ -380,7 +380,7 @@ fn track_packet(src_ip: u32, dst_port: u16) -> u64 {
 (** Test flag parsing and validation *)
 let test_flag_parsing_validation () =
   let program_text = {|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test_program(ctx: *xdp_md) -> xdp_action {
   return 2

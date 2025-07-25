@@ -43,18 +43,18 @@ let contains_substr str substr =
 (** Test map declaration parsing *)
 let test_map_declaration_parsing () =
   let test_cases = [
-    (* Basic HashMap *)
-    ("var test_map : HashMap<u32, u64>(1024)", true);
+    (* Basic Hash *)
+    ("var test_map : hash<u32, u64>(1024)", true);
     (* Array map *)
-    ("var array_map : Array<u32, u32>(512)", true);
-    (* PercpuHash *)
-    ("var percpu_map : PercpuHash<u64, u64>(256)", true);
+    ("var array_map : array<u32, u32>(512)", true);
+    (* Percpu_hash *)
+    ("var percpu_map : percpu_hash<u64, u64>(256)", true);
     (* Invalid syntax - wrong order *)
-    ("var bad_map : HashMap<u32, u64>(1024)", true);
+    ("var bad_map : hash<u32, u64>(1024)", true);
     (* Invalid syntax - missing max_entries *)
-    ("var default_map : HashMap<u32, u64>()", false);
+    ("var default_map : hash<u32, u64>()", false);
     (* Old syntax with blocks - should fail *)
-    ("var old_map : HashMap<u32, u64>(1024) { }", false);
+    ("var old_map : hash<u32, u64>(1024) { }", false);
   ] in
   
   List.iter (fun (code, should_succeed) ->
@@ -70,22 +70,22 @@ let test_map_declaration_parsing () =
 (** Test new block-less map declaration syntax *)
 let test_blockless_map_declaration () =
   let test_cases = [
-    (* Basic block-less HashMap *)
-    ("var simple_map : HashMap<u32, u64>(1024)", true);
+    (* Basic block-less Hash *)
+    ("var simple_map : hash<u32, u64>(1024)", true);
     (* Block-less Array *)
-    ("var array_map : Array<u32, u32>(512)", true);
-    (* Block-less PercpuHash *)
-    ("var percpu_map : PercpuHash<u64, u64>(256)", true);
-    (* Block-less LruHash *)
-    ("var lru_map : LruHash<u32, u64>(128)", true);
+    ("var array_map : array<u32, u32>(512)", true);
+    (* Block-less Percpu_hash *)
+    ("var percpu_map : percpu_hash<u64, u64>(256)", true);
+    (* Block-less Lru_hash *)
+    ("var lru_map : lru_hash<u32, u64>(128)", true);
     (* Pinned map *)
-    ("pin var pinned_map : HashMap<u32, u64>(1024)", true);
+    ("pin var pinned_map : hash<u32, u64>(1024)", true);
     (* Map with flags *)
-    ("@flags(no_prealloc) var flags_map : HashMap<u32, u64>(1024)", true);
+    ("@flags(no_prealloc) var flags_map : hash<u32, u64>(1024)", true);
     (* Combined pin and flags *)
-    ("@flags(rdonly) pin var combined_map : HashMap<u32, u64>(1024)", true);
+    ("@flags(rdonly) pin var combined_map : hash<u32, u64>(1024)", true);
     (* Invalid - old syntax with blocks *)
-    ("var invalid_map : HashMap<u32, u64>(1024) { }", false);
+    ("var invalid_map : hash<u32, u64>(1024) { }", false);
   ] in
   
   List.iter (fun (code, should_succeed) ->
@@ -102,19 +102,19 @@ let test_blockless_map_declaration () =
 let test_map_attributes_syntax () =
   let test_cases = [
     (* Pinned map *)
-    ("pin var pinned_map : HashMap<u32, u64>(1024)", true);
+    ("pin var pinned_map : hash<u32, u64>(1024)", true);
     (* Map with flags *)
-    ("@flags(no_prealloc) var flags_map : HashMap<u32, u64>(1024)", true);
+    ("@flags(no_prealloc) var flags_map : hash<u32, u64>(1024)", true);
     (* Combined attributes *)
-    ("@flags(rdonly) pin var combined_map : HashMap<u32, u64>(1024)", true);
+    ("@flags(rdonly) pin var combined_map : hash<u32, u64>(1024)", true);
     (* Multiple flags *)
-    ("@flags(no_prealloc | rdonly) var multi_flags_map : HashMap<u32, u64>(1024)", true);
+    ("@flags(no_prealloc | rdonly) var multi_flags_map : hash<u32, u64>(1024)", true);
     (* Regular map without attributes *)
-    ("var regular_map : HashMap<u32, u64>(1024)", true);
+    ("var regular_map : hash<u32, u64>(1024)", true);
     (* Invalid - old syntax with blocks *)
-    ("var invalid_map : HashMap<u32, u64>(1024) { pinned: \"/path\" }", false);
+    ("var invalid_map : hash<u32, u64>(1024) { pinned: \"/path\" }", false);
     (* Invalid - old syntax with empty blocks *)
-    ("var invalid_map : HashMap<u32, u64>(1024) { }", false);
+    ("var invalid_map : hash<u32, u64>(1024) { }", false);
   ] in
   
   List.iter (fun (code, should_succeed) ->
@@ -131,20 +131,20 @@ let test_map_attributes_syntax () =
 let test_comprehensive_map_syntax () =
   let program = {|
 // Block-less maps
-var simple_counter : HashMap<u32, u64>(512)
-var lookup_array : Array<u32, u32>(256)
-var percpu_stats : PercpuHash<u64, u64>(128)
+var simple_counter : hash<u32, u64>(512)
+var lookup_array : array<u32, u32>(256)
+var percpu_stats : percpu_hash<u64, u64>(128)
 
 // Pinned maps
-pin var pinned_global : HashMap<u32, u64>(2048)
-pin var pinned_local : HashMap<u32, u64>(512)
+pin var pinned_global : hash<u32, u64>(2048)
+pin var pinned_local : hash<u32, u64>(512)
 
 // Maps with flags
-@flags(no_prealloc) var efficient_map : HashMap<u32, u64>(1024)
-@flags(rdonly) var readonly_map : HashMap<u32, u64>(256)
+@flags(no_prealloc) var efficient_map : hash<u32, u64>(1024)
+@flags(rdonly) var readonly_map : hash<u32, u64>(256)
 
 // Combined attributes
-@flags(no_prealloc | rdonly) pin var combined_map : HashMap<u32, u64>(1024)
+@flags(no_prealloc | rdonly) pin var combined_map : hash<u32, u64>(1024)
 
 @xdp fn test_syntax(ctx: *xdp_md) -> xdp_action {
   // Test all map types can be used
@@ -171,8 +171,8 @@ pin var pinned_local : HashMap<u32, u64>(512)
 (** Test map syntax type checking *)
 let test_new_syntax_type_checking () =
   let program = {|
-var blockless_map : HashMap<u32, u64>(512)
-pin var pinned_map : HashMap<u32, u64>(1024)
+var blockless_map : hash<u32, u64>(512)
+pin var pinned_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   // Test type checking works with new syntax
@@ -197,8 +197,8 @@ pin var pinned_map : HashMap<u32, u64>(1024)
 (** Test IR generation with new syntax *)
 let test_new_syntax_ir_generation () =
   let program = {|
-var simple_map : HashMap<u32, u64>(512)
-pin var pinned_map : HashMap<u32, u64>(1024)
+var simple_map : hash<u32, u64>(512)
+pin var pinned_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   simple_map[42] = 100
@@ -225,8 +225,8 @@ pin var pinned_map : HashMap<u32, u64>(1024)
 (** Test C code generation with new syntax *)
 let test_new_syntax_c_generation () =
   let program = {|
-var blockless_counter : HashMap<u32, u64>(512)
-pin var pinned_stats : HashMap<u32, u64>(1024)
+var blockless_counter : hash<u32, u64>(512)
+pin var pinned_stats : hash<u32, u64>(1024)
 
 @xdp fn counter(ctx: *xdp_md) -> xdp_action {
   var key = 42
@@ -257,13 +257,13 @@ pin var pinned_stats : HashMap<u32, u64>(1024)
 let test_new_syntax_error_cases () =
   let invalid_cases = [
     (* Old syntax with blocks - should fail *)
-    "var invalid : HashMap<u32, u64>(512) { }";
+    "var invalid : hash<u32, u64>(512) { }";
     (* Old syntax with attributes - should fail *)
-    "var invalid : HashMap<u32, u64>(512) { pinned: \"/path\" }";
+    "var invalid : hash<u32, u64>(512) { pinned: \"/path\" }";
     (* Missing colon *)
-    "var bad_map HashMap<u32, u64>(1024)";
+    "var bad_map hash<u32, u64>(1024)";
     (* Invalid flags *)
-    "@flags(invalid_flag) var invalid : HashMap<u32, u64>(512)";
+    "@flags(invalid_flag) var invalid : hash<u32, u64>(512)";
   ] in
   
   let all_failed_as_expected = List.for_all (fun invalid_code ->
@@ -299,7 +299,7 @@ let test_map_operations_parsing () =
 (** Test complete map program parsing *)
 let test_complete_map_program_parsing () =
   let program = {|
-var packet_counts : HashMap<u32, u64>(1024)
+var packet_counts : hash<u32, u64>(1024)
 
 @xdp fn rate_limiter(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x08080808
@@ -325,7 +325,7 @@ var packet_counts : HashMap<u32, u64>(1024)
 (** Test map type checking *)
 let test_map_type_checking () =
   let program = {|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = 42
@@ -347,7 +347,7 @@ let test_map_type_validation () =
   let test_cases = [
     (* Valid: u32 key with u32 access *)
     ({|
-var valid_map : HashMap<u32, u64>(1024)
+var valid_map : hash<u32, u64>(1024)
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key: u32 = 42
   var value = valid_map[key]
@@ -357,7 +357,7 @@ var valid_map : HashMap<u32, u64>(1024)
     
     (* Invalid: string key with u32 map *)
     ({|
-var invalid_map : HashMap<u32, u64>(1024)
+var invalid_map : hash<u32, u64>(1024)
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = "invalid"
   var value = invalid_map[key]
@@ -378,7 +378,7 @@ var invalid_map : HashMap<u32, u64>(1024)
 (** Test map identifier resolution *)
 let test_map_identifier_resolution () =
   let program = {|
-var global_map : HashMap<u32, u64>(1024)
+var global_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = global_map[42]
@@ -396,7 +396,7 @@ var global_map : HashMap<u32, u64>(1024)
 (** Test IR generation for maps *)
 let test_map_ir_generation () =
   let program = {|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var key = 42
@@ -420,7 +420,7 @@ var test_map : HashMap<u32, u64>(1024)
 (** Test C code generation for maps *)
 let test_map_c_generation () =
   let program = {|
-var packet_counter : HashMap<u32, u64>(1024)
+var packet_counter : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x12345678
@@ -451,11 +451,11 @@ var packet_counter : HashMap<u32, u64>(1024)
 (** Test different map types *)
 let test_different_map_types () =
   let map_types = [
-    ("HashMap", "BPF_MAP_TYPE_HASH");
-    ("Array", "BPF_MAP_TYPE_ARRAY");
-    ("PercpuHash", "BPF_MAP_TYPE_PERCPU_HASH");
-    ("PercpuArray", "BPF_MAP_TYPE_PERCPU_ARRAY");
-    ("LruHash", "BPF_MAP_TYPE_LRU_HASH");
+    ("hash", "BPF_MAP_TYPE_HASH");
+    ("array", "BPF_MAP_TYPE_ARRAY");
+    ("percpu_hash", "BPF_MAP_TYPE_PERCPU_HASH");
+    ("percpu_array", "BPF_MAP_TYPE_PERCPU_ARRAY");
+    ("lru_hash", "BPF_MAP_TYPE_LRU_HASH");
   ] in
   
   let all_map_types_work = List.for_all (fun (ks_type, c_type) ->

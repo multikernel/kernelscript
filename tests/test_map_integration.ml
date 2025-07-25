@@ -63,7 +63,7 @@ let compile_to_c_code_with_exceptions ast =
 (** Test end-to-end compilation of a complete map program *)
 let test_complete_map_compilation () =
   let program = {|
-var counter : HashMap<u32, u64>(1024)
+var counter : hash<u32, u64>(1024)
 
 @xdp fn rate_limiter(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x08080808
@@ -104,9 +104,9 @@ var counter : HashMap<u32, u64>(1024)
 (** Test multiple map types in one program *)
 let test_multiple_map_types () =
   let program = {|
-var global_counter : HashMap<u32, u64>(1024)
-var port_map : Array<u16, u32>(65536)  
-var session_map : HashMap<u64, u32>(10000)
+var global_counter : hash<u32, u64>(1024)
+var port_map : array<u16, u32>(65536)  
+var session_map : hash<u64, u32>(10000)
 
 @xdp fn multi_map(ctx: *xdp_md) -> xdp_action {
   var ip = 0x08080808
@@ -131,9 +131,9 @@ var session_map : HashMap<u64, u32>(10000)
     let port_map = List.find (fun m -> m.Kernelscript.Ast.name = "port_map") maps in 
     let session_map = List.find (fun m -> m.Kernelscript.Ast.name = "session_map") maps in
     
-    check bool "global_counter is HashMap" true (global_counter.Kernelscript.Ast.map_type = HashMap);
+    check bool "global_counter is Hash" true (global_counter.Kernelscript.Ast.map_type = Hash);
     check bool "port_map is Array" true (port_map.Kernelscript.Ast.map_type = Array);
-    check bool "session_map is HashMap" true (session_map.Kernelscript.Ast.map_type = HashMap);
+    check bool "session_map is Hash" true (session_map.Kernelscript.Ast.map_type = Hash);
     
     match compile_to_c_code ast with
     | Some c_code ->
@@ -155,7 +155,7 @@ let test_invalid_map_operations () =
   let invalid_programs = [
     (* Type mismatch: string key with u32 map *)
     {|
-var test_map : HashMap<u32, u64>(100)
+var test_map : hash<u32, u64>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map["invalid_key"] = 1
@@ -164,7 +164,7 @@ var test_map : HashMap<u32, u64>(100)
 |};
     (* Assignment type mismatch *)
     {|
-var test_map : HashMap<u32, u64>(100)
+var test_map : hash<u32, u64>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[1] = "invalid_value"
@@ -199,7 +199,7 @@ var test_map : HashMap<u32, u64>(100)
 (** Test map operations with complex expressions *)
 let test_complex_map_expressions () =
   let program = {|
-var stats : HashMap<u32, u64>(1024)
+var stats : hash<u32, u64>(1024)
 
 @helper
 fn compute_key(base: u32) -> u32 {
@@ -255,8 +255,8 @@ fn compute_key(base: u32) -> u32 {
 (** Test map operations in conditional statements *)
 let test_map_operations_in_conditionals () =
   let program = {|
-var packet_counts : HashMap<u32, u64>(1024)
-var blacklist : HashMap<u32, u32>(256)
+var packet_counts : hash<u32, u64>(1024)
+var blacklist : hash<u32, u32>(256)
 
 @xdp fn conditional_maps(ctx: *xdp_md) -> xdp_action {
   var src_ip = 0x08080808
@@ -322,7 +322,7 @@ var blacklist : HashMap<u32, u32>(256)
 (** Test memory safety of generated C code *)
 let test_memory_safety () =
   let program = {|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn memory_safe(ctx: *xdp_md) -> xdp_action {
   var key = 42
@@ -367,7 +367,7 @@ var test_map : HashMap<u32, u64>(1024)
 let test_different_context_types () =
   let programs = [
     ("xdp", {|
-var xdp_stats : HashMap<u32, u64>(1024)
+var xdp_stats : hash<u32, u64>(1024)
 
 @xdp fn xdp_test(ctx: *xdp_md) -> xdp_action {
   xdp_stats[1] = xdp_stats[2]
@@ -375,7 +375,7 @@ var xdp_stats : HashMap<u32, u64>(1024)
 }
 |});
     ("tc", {|
-var tc_stats : HashMap<u32, u64>(1024)
+var tc_stats : hash<u32, u64>(1024)
 
 @tc fn tc_test(ctx: *__sk_buff) -> int {
   tc_stats[1] = tc_stats[2]
@@ -414,7 +414,7 @@ enum TestEnum {
   VALUE_B = 2
 }
 
-var test_map : HashMap<u32, TestEnum>(64)
+var test_map : hash<u32, TestEnum>(64)
 
 @helper
 fn get_value(key: u32) -> TestEnum {

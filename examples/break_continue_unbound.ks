@@ -20,7 +20,7 @@ enum xdp_action {
 // Example demonstrating break and continue in truly unbound loops
 // This should force bpf_loop() usage
 
-var counter_map : HashMap<u32, u32>(10)
+var counter_map : hash<u32, u32>(10)
 
 @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
   var end_value = 1000 // Large value to make it unbound

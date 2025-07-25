@@ -18,7 +18,7 @@ enum xdp_action {
 }
 
 // Test catch/throw/defer functionality with integer-based error handling
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 // Error codes following "null for absence, throw for errors" pattern:
 // 1 = Invalid data (error condition, not absence)

@@ -64,7 +64,7 @@ let generate_optimization_strategies (analysis: multi_program_analysis) : optimi
   (* Strategy 1: Map type optimizations based on conflicts *)
   List.iter (fun conflict ->
     if String.contains conflict 'r' && String.contains conflict 'a' then (
-      strategies := MapTypeOptimization ("shared_map", "HashMap", "PercpuHash") :: !strategies
+      strategies := MapTypeOptimization ("shared_map", "Hash", "Percpu_hash") :: !strategies
     )
   ) analysis.potential_conflicts;
   
@@ -242,10 +242,8 @@ let optimize_program_scheduling programs dependencies =
 
 (** String conversion helper *)
 let string_of_map_type = function
-  | HashMap -> "HashMap"
-  | Array -> "Array" 
-  | PercpuHash -> "PercpuHash"
-  | PercpuArray -> "PercpuArray"
-  | LruHash -> "LruHash"
-  | RingBuffer -> "RingBuffer"
-  | PerfEvent -> "PerfEvent" 
+  | Hash -> "hash"
+  | Array -> "array" 
+  | Percpu_hash -> "percpu_hash"
+  | Percpu_array -> "percpu_array"
+  | Lru_hash -> "lru_hash" 

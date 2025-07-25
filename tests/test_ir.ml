@@ -59,7 +59,7 @@ let make_test_global_map_2 () =
     "global_map_2" 
     U32 
     U32 
-    HashMap 
+    Hash 
     (make_test_map_config 100) 
     true 
     ~is_pinned:false
@@ -134,7 +134,7 @@ let test_map_operation_lowering () =
     "global_map_2" 
     IRU32 
     IRU32 
-    IRHashMap 
+    IRHash 
     100 
     ~flags:0
     (make_test_position ()) in

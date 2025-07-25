@@ -39,8 +39,7 @@ type program_type =
 
 (** Map types for eBPF maps *)
 type map_type =
-  | HashMap | Array | PercpuHash | PercpuArray
-  | LruHash | RingBuffer | PerfEvent
+  | Hash | Array | Percpu_hash | Percpu_array | Lru_hash
 
 (** Map flags for eBPF map configuration *)
 type map_flag =
@@ -557,13 +556,11 @@ let string_of_program_type = function
   | StructOps -> "struct_ops"
 
 let string_of_map_type = function
-  | HashMap -> "hash_map"
+  | Hash -> "hash"
   | Array -> "array"
-  | PercpuHash -> "percpu_hash"
-  | PercpuArray -> "percpu_array"
-  | LruHash -> "lru_hash"
-  | RingBuffer -> "ring_buffer"
-  | PerfEvent -> "perf_event"
+  | Percpu_hash -> "percpu_hash"
+  | Percpu_array -> "percpu_array"
+  | Lru_hash -> "lru_hash"
 
 let string_of_map_flag = function
   | NoPrealloc -> "no_prealloc"

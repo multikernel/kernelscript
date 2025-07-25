@@ -44,22 +44,22 @@ struct PacketStats {
 // Global maps with different configurations
 
 // 1. Simple array map for per-CPU counters (pinned to filesystem)
-pin var cpu_counters : Array<u32, Counter>(256)
+pin var cpu_counters : array<u32, Counter>(256)
 
 // 2. Hash map for IP address tracking (pinned to filesystem)
-pin var ip_stats : HashMap<IpAddress, PacketStats>(10000)
+pin var ip_stats : hash<IpAddress, PacketStats>(10000)
 
 // 3. LRU hash map for recent connections (local to program)
-var recent_connections : LruHash<IpAddress, u64>(1000)
+var recent_connections : lru_hash<IpAddress, u64>(1000)
 
 // 4. Ring buffer for event logging (pinned to filesystem)
-pin var event_log : RingBuffer<u32, u8>(65536)
+pin var event_log : hash<u32, u8>(65536)
 
 // 5. Local state map (not pinned)
-var local_state : HashMap<u32, u32>(100)
+var local_state : hash<u32, u32>(100)
 
 // 6. Per-CPU bandwidth tracking (pinned to filesystem)
-pin var bandwidth_usage : PercpuArray<u32, u64>(256)
+pin var bandwidth_usage : percpu_array<u32, u64>(256)
 
 @helper
 fn get_cpu_id() -> u32 {

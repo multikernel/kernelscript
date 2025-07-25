@@ -53,7 +53,7 @@ let extract_compound_index_assignment ast =
 (** Test 1: Basic compound index assignment parsing *)
 let test_basic_parsing () =
   let source = {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] += 1
@@ -99,7 +99,7 @@ let test_all_operators_parsing () =
   
   List.iter (fun (op_str, expected_op) ->
     let source = Printf.sprintf {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] %s 5
@@ -126,7 +126,7 @@ let test_complex_key_expressions () =
   
   List.iter (fun (key_expr, description) ->
     let source = Printf.sprintf {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[%s] += 1
@@ -148,7 +148,7 @@ let test_integer_value_types () =
   (* Test unsigned types (should succeed) *)
   List.iter (fun value_type ->
     let source = Printf.sprintf {|
-var test_map : HashMap<u32, %s>(1024)
+var test_map : hash<u32, %s>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] += 1
@@ -166,7 +166,7 @@ var test_map : HashMap<u32, %s>(1024)
   (* Test signed types (may fail due to type coercion) *)
   List.iter (fun value_type ->
     let source = Printf.sprintf {|
-var test_map : HashMap<u32, %s>(1024)
+var test_map : hash<u32, %s>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] += 1
@@ -192,7 +192,7 @@ let test_non_integer_value_types () =
   
   List.iter (fun (value_type, description) ->
     let source = Printf.sprintf {|
-var test_map : HashMap<u32, %s>(1024)
+var test_map : hash<u32, %s>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] += 1
@@ -236,7 +236,7 @@ let test_array_compound_assignment () =
 (** Test 7: Key type mismatch (should fail) *)
 let test_key_type_mismatch () =
   let source = {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map["invalid_key"] += 1  // String key for u32 map
@@ -258,7 +258,7 @@ var test_map : HashMap<u32, u32>(1024)
 (** Test 8: Value type mismatch (should fail) *)
 let test_value_type_mismatch () =
   let source = {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] += "invalid_value"  // String value for u32 map
@@ -277,7 +277,7 @@ var test_map : HashMap<u32, u32>(1024)
 (** Test 9: Multiple compound assignments in sequence *)
 let test_multiple_compound_assignments () =
   let source = {|
-var counters : HashMap<u32, u32>(1024)
+var counters : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   counters[1] += 1
@@ -316,7 +316,7 @@ let test_non_map_compound_assignment () =
 (** Test 11: IR generation for compound index assignment *)
 let test_ir_generation () =
   let source = {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[123] += 5
@@ -340,7 +340,7 @@ var test_map : HashMap<u32, u32>(1024)
 (** Test 12: IR instruction ordering regression test *)
 let test_ir_instruction_ordering () =
   let source = {|
-var test_map : HashMap<u32, u32>(1024)
+var test_map : hash<u32, u32>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   test_map[42] += 1
@@ -391,7 +391,7 @@ var test_map : HashMap<u32, u32>(1024)
 (** Test 13: End-to-end compilation *)
 let test_end_to_end_compilation () =
   let source = {|
-var packet_counts : HashMap<u32, u64>(1024)
+var packet_counts : hash<u32, u64>(1024)
 
 @xdp fn rate_limiter(ctx: *xdp_md) -> xdp_action {
   var src_ip = 192168001

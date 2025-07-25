@@ -67,7 +67,7 @@ let create_test_map_decl name is_global =
     name;
     key_type = U32;
     value_type = U64;
-    map_type = HashMap;
+    map_type = Hash;
     config;
     is_global;
     is_pinned = false;
@@ -791,8 +791,8 @@ let test_symbol_conflicts () =
 (** Test map symbol handling *)
 let test_map_symbol_handling () =
   let program_text = {|
-var counter : HashMap<u32, u64>(1024)
-var flags : Array<u16, bool>(256)
+var counter : hash<u32, u64>(1024)
+var flags : array<u16, bool>(256)
 
 @xdp fn map_test(ctx: *xdp_md) -> xdp_action {
   counter[1] = 100
@@ -816,7 +816,7 @@ var flags : Array<u16, bool>(256)
     | Some map_info -> 
         check string "counter key type" "u32" (string_of_bpf_type map_info.key_type);
         check string "counter value type" "u64" (string_of_bpf_type map_info.value_type);
-        check string "counter map type" "hash_map" (string_of_map_type map_info.map_type)
+        check string "counter map type" "hash" (string_of_map_type map_info.map_type)
     | None -> fail "counter map should exist"
   with
   | _ -> fail "Failed to test map symbol handling"
@@ -889,7 +889,7 @@ let test_symbol_table_serialization () =
 (** Test comprehensive symbol analysis *)
 let test_comprehensive_symbol_analysis () =
   let program_text = {|
-var stats : HashMap<u32, u64>(1024)
+var stats : hash<u32, u64>(1024)
 
 @helper
 fn update_counter(key: u32, increment: u64) -> u64 {

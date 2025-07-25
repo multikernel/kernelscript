@@ -343,14 +343,14 @@ let generate_optimization_hints (map_usage_patterns: (string * string list) list
     if List.length accessing_programs > 1 then (
       let map_decl = List.find (fun m -> m.name = map_name) global_maps in
       match map_decl.map_type with
-      | HashMap ->
+      | Hash ->
           let hint = Printf.sprintf 
-            "Consider using PercpuHash for map '%s' to reduce contention between programs: %s" 
+            "Consider using percpu_hash for map '%s' to reduce contention between programs: %s" 
             map_name (String.concat ", " accessing_programs) in
           hints := hint :: !hints
       | Array ->
           let hint = Printf.sprintf 
-            "Consider using PercpuArray for map '%s' to reduce contention between programs: %s" 
+            "Consider using percpu_array for map '%s' to reduce contention between programs: %s" 
             map_name (String.concat ", " accessing_programs) in
           hints := hint :: !hints
       | _ -> ()

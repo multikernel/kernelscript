@@ -221,7 +221,7 @@ let test_map_lookup_truthy () =
     name = "test_map";
     key_type = I32;
     value_type = I32;
-    map_type = HashMap;
+    map_type = Hash;
     config = { max_entries = 100; key_size = None; value_size = None; flags = [] };
     is_global = true;
     is_pinned = false;

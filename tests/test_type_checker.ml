@@ -374,7 +374,7 @@ fn is_tcp(protocol: u8) -> bool {
 (** Test integer type promotion *)
 let test_integer_type_promotion () =
   let program_text = {|
-var counter : HashMap<u32, u64>(1024)
+var counter : hash<u32, u64>(1024)
 
 @xdp fn test_promotion(ctx: *xdp_md) -> xdp_action {
   // Test U32 literal assignment to U64 map value
@@ -425,7 +425,7 @@ let test_type_unification_enhanced () =
 (** Test comprehensive type checking *)
 let test_comprehensive_type_checking () =
   let program_text = {|
-var counter : HashMap<u32, u64>(1024)
+var counter : hash<u32, u64>(1024)
 
 @helper
 fn increment_counter(key: u32) -> u64 {
@@ -613,7 +613,7 @@ let test_map_operations_promotion () =
     (* Map key promotion *)
     ({|
 type IpAddress = u32
-var counters : HashMap<IpAddress, u64>(1000)
+var counters : hash<IpAddress, u64>(1000)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var ip: u16 = 12345  // u16 should promote to u32 (IpAddress)
@@ -625,7 +625,7 @@ var counters : HashMap<IpAddress, u64>(1000)
     (* Map value promotion *)
     ({|
 type Counter = u64
-var stats : HashMap<u32, Counter>(1000)
+var stats : hash<u32, Counter>(1000)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value: u16 = 1500  // u16 should promote to u64 (Counter)
@@ -638,7 +638,7 @@ var stats : HashMap<u32, Counter>(1000)
     ({|
 type PacketSize = u16
 type Counter = u64
-var stats : HashMap<u32, Counter>(1000)
+var stats : hash<u32, Counter>(1000)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var size: PacketSize = 1500
@@ -814,7 +814,7 @@ let test_map_null_semantics () =
   let map_null_tests = [
     (* Map access returning nullable value *)
     ({|
-var test_map : HashMap<u32, u64>(100)
+var test_map : hash<u32, u64>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = test_map[42]
@@ -827,7 +827,7 @@ var test_map : HashMap<u32, u64>(100)
     
     (* Null initialization pattern *)
     ({|
-var counters : HashMap<u32, u32>(100)
+var counters : hash<u32, u32>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var count = counters[1]
@@ -842,8 +842,8 @@ var counters : HashMap<u32, u32>(100)
     
     (* Multiple map null checks *)
     ({|
-var flows : HashMap<u32, u64>(100)
-var packets : HashMap<u32, u32>(100)
+var flows : hash<u32, u64>(100)
+var packets : hash<u32, u32>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var flow = flows[123]
@@ -876,7 +876,7 @@ let test_null_vs_throw_pattern () =
   let pattern_tests = [
     (* Correct: null for expected absence *)
     ({|
-var cache : HashMap<u32, u64>(100)
+var cache : hash<u32, u64>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var cached_value = cache[42]
@@ -907,7 +907,7 @@ fn validate_input(value: u32) -> u32 {
     
     (* Function returning nullable value *)
     ({|
-var data : HashMap<u32, u32>(100)
+var data : hash<u32, u32>(100)
 
 @helper
 fn lookup_value(key: u32) -> u32 {
@@ -941,7 +941,7 @@ let test_null_semantics () =
   let comprehensive_tests = [
     (* Null in conditional expressions *)
     ({|
-var test_map : HashMap<u32, u32>(100)
+var test_map : hash<u32, u32>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var value = test_map[1]
@@ -957,8 +957,8 @@ var test_map : HashMap<u32, u32>(100)
     
     (* Null in logical operations *)
     ({|
-var map1 : HashMap<u32, u32>(100)
-var map2 : HashMap<u32, u32>(100)
+var map1 : hash<u32, u32>(100)
+var map2 : hash<u32, u32>(100)
 
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   var val1 = map1[1]
@@ -1243,9 +1243,9 @@ let test_map_index_type_resolution_bug_fix _ =
     }
     
     // Maps using different key types
-    var connection_count : HashMap<IpAddress, Counter>(1024)      // Type alias key
-var protocol_stats : PercpuArray<Protocol, Counter>(32)       // Enum key
-var packet_filter : LruHash<PacketInfo, u32>(512)             // Struct key
+    var connection_count : hash<IpAddress, Counter>(1024)      // Type alias key
+var protocol_stats : percpu_array<Protocol, Counter>(32)       // Enum key
+var packet_filter : lru_hash<PacketInfo, u32>(512)             // Struct key
     
     @helper
     fn test_indexing() -> u32 {

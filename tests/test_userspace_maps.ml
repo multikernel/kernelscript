@@ -120,8 +120,8 @@ let get_generated_userspace_code ast source_filename =
 (** Test 1: Global maps are accessible from global functions *)
 let test_global_map_accessibility () =
   let code = {|
-var global_counter : HashMap<u32, u64>(1024)
-var global_config : Array<u32, u32>(256)
+var global_counter : hash<u32, u64>(1024)
+var global_config : array<u32, u32>(256)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -175,7 +175,7 @@ fn main() -> i32 {
 (** Test 2: Only global maps are accessible from global functions *)
 let test_global_only_map_access () =
   let code = {|
-var global_shared : HashMap<u32, u64>(1024)
+var global_shared : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -211,7 +211,7 @@ fn main() -> i32 {
 (** Test 3: Map operation function generation *)
 let test_map_operation_generation () =
   let code = {|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -231,7 +231,7 @@ fn main() -> i32 {
     check int "one test map" 1 (List.length maps);
     let test_map = List.hd maps in
     check string "test map name" "test_map" test_map.name;
-    check string "test map type" "hash_map" (string_of_map_type test_map.map_type);
+    check string "test map type" "hash" (string_of_map_type test_map.map_type);
     
     (* Generate userspace code and check for map operations *)
     match get_generated_userspace_code ast "test_operations.ks" with
@@ -260,10 +260,10 @@ fn main() -> i32 {
 (** Test 4: Multiple map types in global functions *)
 let test_multiple_map_types_global_functions () =
   let code = {|
-var hash_map : HashMap<u32, u64>(1024)
-var array_map : Array<u32, u32>(256)
-var lru_map : LruHash<u32, u64>(512)
-var percpu_map : PercpuHash<u64, u32>(128)
+var hash_map : hash<u32, u64>(1024)
+var array_map : array<u32, u32>(256)
+var lru_map : lru_hash<u32, u64>(512)
+var percpu_map : percpu_hash<u64, u32>(128)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -287,7 +287,7 @@ fn main() -> i32 {
     
     (* Verify each map type was parsed correctly *)
     let map_types = [
-      ("hash_map", "hash_map", "u32", "u64", 1024);
+      ("hash_map", "hash", "u32", "u64", 1024);
       ("array_map", "array", "u32", "u32", 256);
       ("lru_map", "lru_hash", "u32", "u64", 512);
       ("percpu_map", "percpu_hash", "u64", "u32", 128);
@@ -319,7 +319,7 @@ fn main() -> i32 {
 (** Test 5: Global function code structure and includes *)
 let test_global_function_code_structure () =
   let code = {|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -365,7 +365,7 @@ let test_global_function_error_handling () =
   let invalid_programs = [
     (* Missing main function *)
     ({|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -378,7 +378,7 @@ fn helper() -> i32 {
     
     (* Invalid main signature *)
     ({|
-var test_map : HashMap<u32, u64>(1024)
+var test_map : hash<u32, u64>(1024)
 
 @xdp fn test(ctx: *xdp_md) -> u32 {
   return 2
@@ -415,7 +415,7 @@ fn main(wrong_param: u32) -> i32 {
 (** Test 6: Map file descriptor generation for userspace *)
 let test_map_fd_generation () =
   let code = {|
-pin var shared_counter : HashMap<u32, u32>(1024)
+pin var shared_counter : hash<u32, u32>(1024)
 
 @xdp fn packet_counter(ctx: *xdp_md) -> xdp_action {
   shared_counter[1] = 100

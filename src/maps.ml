@@ -24,23 +24,11 @@ open Ast
 
 (** Extended map type definitions with detailed eBPF semantics *)
 type ebpf_map_type =
-  | HashMap
-  | Array
-  | PercpuHash
-  | PercpuArray
-  | LruHash
-  | LruPercpuHash
-  | RingBuffer
-  | PerfEvent
-  | ProgArray
-  | CgroupArray
-  | StackTrace
-  | DevMap
-  | SockMap
-  | CpuMap
-  | XskMap
-  | SockHash
-  | ReusePortSockArray
+  | Hash           (* BPF_MAP_TYPE_HASH *)
+  | Array          (* BPF_MAP_TYPE_ARRAY *)
+  | Lru_hash       (* BPF_MAP_TYPE_LRU_HASH *)
+  | Percpu_hash    (* BPF_MAP_TYPE_PERCPU_HASH *)
+  | Percpu_array   (* BPF_MAP_TYPE_PERCPU_ARRAY *)
 
 (** Map attribute definitions *)
 type map_attribute =
@@ -141,41 +129,38 @@ let validate_key_type map_type key_type =
   | Array, U32 -> Valid
   | Array, Enum _ -> Valid  (* Enums are compatible with u32 for array indexing *)
   | Array, _ -> InvalidKeyType "Array maps require u32 keys"
-  | PercpuArray, U32 -> Valid
-  | PercpuArray, Enum _ -> Valid  (* Enums are compatible with u32 for array indexing *)
-  | PercpuArray, _ -> InvalidKeyType "Per-CPU array maps require u32 keys"
-  | HashMap, (U8|U16|U32|U64|I8|I16|I32|I64) -> Valid
-  | HashMap, Struct _ -> Valid
-  | HashMap, Array (_, _) -> Valid
-  | HashMap, _ -> InvalidKeyType "Hash maps require primitive or struct keys"
-  | LruHash, (U8|U16|U32|U64|I8|I16|I32|I64) -> Valid
-  | LruHash, Struct _ -> Valid
-  | LruHash, _ -> InvalidKeyType "LRU hash maps require primitive or struct keys"
-  | RingBuffer, _ -> InvalidKeyType "Ring buffer maps don't use keys"
-  | PerfEvent, U32 -> Valid
-  | PerfEvent, _ -> InvalidKeyType "Perf event maps require u32 keys"
-  | _ -> Valid (* Other map types are more flexible *)
+  | Percpu_array, U32 -> Valid
+  | Percpu_array, Enum _ -> Valid  (* Enums are compatible with u32 for array indexing *)
+  | Percpu_array, _ -> InvalidKeyType "Per-CPU array maps require u32 keys"
+  | Hash, (U8|U16|U32|U64|I8|I16|I32|I64) -> Valid
+  | Hash, Struct _ -> Valid
+  | Hash, Array (_, _) -> Valid
+  | Hash, _ -> InvalidKeyType "Hash maps require primitive or struct keys"
+  | Lru_hash, (U8|U16|U32|U64|I8|I16|I32|I64) -> Valid
+  | Lru_hash, Struct _ -> Valid
+  | Lru_hash, _ -> InvalidKeyType "LRU hash maps require primitive or struct keys"
+  | Percpu_hash, (U8|U16|U32|U64|I8|I16|I32|I64) -> Valid
+  | Percpu_hash, Struct _ -> Valid
+  | Percpu_hash, _ -> InvalidKeyType "Per-CPU hash maps require primitive or struct keys"
 
 (** Validate value type for specific map types *)
 let validate_value_type map_type value_type =
   match map_type, value_type with
   | Array, t when get_type_size t != None -> Valid
   | Array, _ -> InvalidValueType "Array maps require fixed-size value types"
-  | HashMap, _ -> Valid (* Hash maps accept any value type *)
-  | RingBuffer, _ -> Valid (* Ring buffers can store any data *)
-  | PerfEvent, _ -> Valid (* Perf events can store any data *)
+  | Hash, _ -> Valid (* Hash maps accept any value type *)
+  | Percpu_hash, _ -> Valid (* Per-CPU hash maps accept any value type *)
+  | Lru_hash, _ -> Valid (* LRU hash maps accept any value type *)
   | _ -> Valid
 
 (** Validate map configuration *)
 let validate_map_config map_type config =
   (* Check max_entries constraints *)
   let max_entries_valid = match map_type with
-    | Array | PercpuArray when config.max_entries > 1000000 ->
+    | Array | Percpu_array when config.max_entries > 1000000 ->
         InvalidConfiguration "Array maps limited to 1M entries"
-    | HashMap | PercpuHash | LruHash when config.max_entries > 1000000 ->
+    | Hash | Percpu_hash | Lru_hash when config.max_entries > 1000000 ->
         InvalidConfiguration "Hash maps limited to 1M entries"
-    | RingBuffer when config.max_entries > (1024 * 1024 * 256) ->
-        InvalidConfiguration "Ring buffer limited to 256MB"
     | _ when config.max_entries <= 0 ->
         InvalidConfiguration "max_entries must be positive"
     | _ -> Valid
@@ -221,11 +206,8 @@ let validate_map_operation map_decl operation access_pattern =
   | MapDelete, ReadWrite ->
       (* Delete is only supported on certain map types *)
       (match map_decl.map_type with
-       | HashMap | PercpuHash | LruHash | LruPercpuHash -> Valid
-       | Array | PercpuArray -> UnsupportedOperation "Delete operations not supported on array maps"
-       | RingBuffer -> UnsupportedOperation "Delete operations not supported on ring buffer maps"
-       | PerfEvent -> UnsupportedOperation "Delete operations not supported on perf event maps"
-       | _ -> UnsupportedOperation "Delete operations not supported on this map type")
+       | Hash | Percpu_hash | Lru_hash -> Valid
+       | Array | Percpu_array -> UnsupportedOperation "Delete operations not supported on array maps")
   | MapInsert, ReadWrite -> Valid
   | MapUpsert, ReadWrite -> Valid
   | _, BatchUpdate -> Valid
@@ -245,24 +227,19 @@ let make_map_declaration name key_type value_type map_type config
 
 (** Convert AST map_type to ebpf_map_type *)
 let ast_to_ebpf_map_type = function
-  | Ast.HashMap -> HashMap
+  | Ast.Hash -> Hash
   | Ast.Array -> Array
-  | Ast.PercpuHash -> PercpuHash
-  | Ast.PercpuArray -> PercpuArray
-  | Ast.LruHash -> LruHash
-  | Ast.RingBuffer -> RingBuffer
-  | Ast.PerfEvent -> PerfEvent
+  | Ast.Percpu_hash -> Percpu_hash
+  | Ast.Percpu_array -> Percpu_array
+  | Ast.Lru_hash -> Lru_hash
 
 (** Convert ebpf_map_type to AST map_type *)
 let ebpf_to_ast_map_type = function
-  | HashMap -> Ast.HashMap
+  | Hash -> Ast.Hash
   | Array -> Ast.Array
-  | PercpuHash -> Ast.PercpuHash
-  | PercpuArray -> Ast.PercpuArray
-  | LruHash -> Ast.LruHash
-  | RingBuffer -> Ast.RingBuffer
-  | PerfEvent -> Ast.PerfEvent
-  | _ -> Ast.HashMap (* Default fallback *)
+  | Percpu_hash -> Ast.Percpu_hash
+  | Percpu_array -> Ast.Percpu_array
+  | Lru_hash -> Ast.Lru_hash
 
 (** Convert AST map_attribute to Maps map_attribute - removed since old attribute system is gone *)
 
@@ -311,40 +288,28 @@ let analyze_expr_access_pattern expr =
 (** Check if a map is compatible with a program type *)
 let is_map_compatible_with_program map_type prog_type =
   match map_type, prog_type with
-  | RingBuffer, Xdp -> true
-  | PerfEvent, _ -> true
-  | HashMap, _ -> true
+  | Hash, Xdp -> true
+  | Percpu_hash, _ -> true
+  | Hash, _ -> true
   | Array, _ -> true
-  | LruHash, _ -> true
-  | _, _ -> true (* Most combinations are valid *)
+  | Lru_hash, _ -> true
+  | _ -> true (* Most combinations are valid *)
 
 (** Get recommended map type for use case *)
 let recommend_map_type key_type _value_type usage_pattern =
   match usage_pattern with
   | ReadWrite when key_type = U32 -> Array
-  | ReadWrite -> HashMap
-  | BatchUpdate -> LruHash
+  | ReadWrite -> Hash
+  | BatchUpdate -> Lru_hash
 
 (** Pretty printing functions *)
 
 let string_of_ebpf_map_type = function
-  | HashMap -> "hash_map"
+  | Hash -> "hash"
   | Array -> "array"
-  | PercpuHash -> "percpu_hash"
-  | PercpuArray -> "percpu_array"
-  | LruHash -> "lru_hash"
-  | LruPercpuHash -> "lru_percpu_hash"
-  | RingBuffer -> "ring_buffer"
-  | PerfEvent -> "perf_event"
-  | ProgArray -> "prog_array"
-  | CgroupArray -> "cgroup_array"
-  | StackTrace -> "stack_trace"
-  | DevMap -> "dev_map"
-  | SockMap -> "sock_map"
-  | CpuMap -> "cpu_map"
-  | XskMap -> "xsk_map"
-  | SockHash -> "sock_hash"
-  | ReusePortSockArray -> "reuseport_sock_array"
+  | Percpu_hash -> "percpu_hash"
+  | Percpu_array -> "percpu_array"
+  | Lru_hash -> "lru_hash"
 
 let string_of_map_attribute = function
   | Pinned path -> Printf.sprintf "pinned = \"%s\"" path

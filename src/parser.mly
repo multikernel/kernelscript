@@ -504,13 +504,11 @@ map_declaration:
 map_type:
   | IDENTIFIER { 
       match $1 with
-      | "HashMap" -> HashMap
-      | "Array" -> Array
-      | "PercpuHash" -> PercpuHash
-      | "PercpuArray" -> PercpuArray
-      | "LruHash" -> LruHash
-      | "RingBuffer" -> RingBuffer
-      | "PerfEvent" -> PerfEvent
+      | "hash" -> Hash
+      | "array" -> Array
+      | "percpu_hash" -> Percpu_hash
+      | "percpu_array" -> Percpu_array
+      | "lru_hash" -> Lru_hash
       | unknown -> failwith ("Unknown map type: " ^ unknown)
     }
 

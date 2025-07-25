@@ -18,7 +18,7 @@ enum xdp_action {
 }
 
 // Minimal error handling demo
-var counters : HashMap<u32, u64>(1024)
+var counters : hash<u32, u64>(1024)
 
 @xdp fn error_demo(ctx: *xdp_md) -> xdp_action {
     var key = 42

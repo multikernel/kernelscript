@@ -409,7 +409,7 @@ let test_global_function_codegen () =
 (** Test literal map assignment with test functions - should not require main *)
 let test_literal_map_assignment () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -438,7 +438,7 @@ let test_literal_map_assignment () =
 (** Test map lookup with literal key *)
 let test_map_lookup_with_literal_key () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -467,7 +467,7 @@ let test_map_lookup_with_literal_key () =
 (** Test map update with literal key and value *)
 let test_map_update_with_literal_key_value () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -497,7 +497,7 @@ let test_map_update_with_literal_key_value () =
 (** Test map delete with literal key *)
 let test_map_delete_with_literal_key () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -527,7 +527,7 @@ let test_map_delete_with_literal_key () =
 (** Test map iterate with literal key *)
 let test_map_iterate_with_literal_key () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -557,7 +557,7 @@ let test_map_iterate_with_literal_key () =
 (** Test mixed literal and variable expressions *)
 let test_mixed_literal_variable_expressions () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -587,7 +587,7 @@ let test_mixed_literal_variable_expressions () =
 (** Test unique temporary variable names *)
 let test_unique_temp_var_names () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -618,7 +618,7 @@ let test_unique_temp_var_names () =
 (** Test no direct literal addressing *)
 let test_no_direct_literal_addressing () =
   let code = {|
-    var test_map : HashMap<u32, u32>(1024)
+    var test_map : hash<u32, u32>(1024)
     
     @xdp fn test(ctx: *xdp_md) -> xdp_action {
       return 2
@@ -647,7 +647,7 @@ let test_no_direct_literal_addressing () =
 (** Test that BPF functions are only generated when explicitly called *)
 let test_map_loading_code_generation () =
   let code = {|
-    var packet_stats : HashMap<u32, u64>(1024)
+    var packet_stats : hash<u32, u64>(1024)
     
     config network {
         max_packet_size: u32 = 1500,

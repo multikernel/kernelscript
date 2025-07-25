@@ -132,16 +132,14 @@ Built-in support for all eBPF map types:
 
 ```kernelscript
 // Pinned maps persist across program restarts
-pin var connection_count : HashMap<IpAddress, Counter>(1024)
+pin var connection_count : hash<IpAddress, Counter>(1024)
 
 // Per-CPU maps for better performance
-var cpu_stats : PercpuArray<u32, u64>(256)
+var cpu_stats : percpu_array<u32, u64>(256)
 
 // LRU maps for automatic eviction
-var recent_packets : LruHash<IpAddress, PacketInfo>(1000)
+var recent_packets : lru_hash<IpAddress, PacketInfo>(1000)
 
-// Ring buffers for event streaming
-pin var event_log : RingBuffer<u32, u8>(65536)
 ```
 
 ### Functions and Helpers
@@ -205,7 +203,7 @@ KernelScript can coordinate multiple eBPF programs:
 
 ```kernelscript
 // Shared map between programs
-pin var shared_counter : HashMap<u32, u32>(1024)
+pin var shared_counter : hash<u32, u32>(1024)
 
 // XDP program increments counter
 @xdp fn packet_counter(ctx: *xdp_md) -> xdp_action {

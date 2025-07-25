@@ -34,7 +34,7 @@ let pos = make_position 1 1 "test.ks"
 let test_map_origin_tracking () =
   (* Simplified test - just test that map access parsing works *)
   let test_program = {|
-    var test_map : HashMap<u32, u64>(1024)
+    var test_map : hash<u32, u64>(1024)
     
     @xdp fn test_func(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -54,7 +54,7 @@ let test_map_origin_tracking () =
 let test_map_origin_multiple_assignments () =
   (* Simplified test - test map origin tracking conceptually *)
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_tracking(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -75,7 +75,7 @@ let test_map_origin_multiple_assignments () =
 (** Test map origin tracking with conditional assignments *)
 let test_map_origin_conditional_assignments () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_conditional(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -115,7 +115,7 @@ let test_non_map_variable_tracking () =
 (** Test address-of operation on map-derived values *)
 let test_address_of_map_values () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_address_of(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -155,7 +155,7 @@ let test_address_of_regular_variables () =
 (** Test address-of operation type checking *)
 let test_address_of_type_checking () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_address_of_types(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -178,7 +178,7 @@ let test_address_of_type_checking () =
 (** Test address-of operation in different contexts *)
 let test_address_of_contexts () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_address_of_contexts(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -209,7 +209,7 @@ let test_address_of_contexts () =
 (** Test none comparison with map values *)
 let test_none_comparison_map_values () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_none_comparison(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -235,9 +235,9 @@ let test_none_comparison_map_values () =
 (** Test none comparison with different map types *)
 let test_none_comparison_different_map_types () =
   let test_program = {|
-    var hash_map : HashMap<u32, u64>(1024)
-    var lru_map : LruHash<u32, u64>(1024)
-    var percpu_map : PercpuHash<u32, u64>(1024)
+    var hash_map : hash<u32, u64>(1024)
+    var lru_map : lru_hash<u32, u64>(1024)
+    var percpu_map : percpu_hash<u32, u64>(1024)
     
     @xdp fn test_none_different_maps(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -271,7 +271,7 @@ let test_none_comparison_different_map_types () =
 (** Test none comparison in conditional statements *)
 let test_none_comparison_conditional_statements () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_none_conditionals(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -303,9 +303,9 @@ let test_none_comparison_conditional_statements () =
 (** Test none comparison with different value types *)
 let test_none_comparison_different_value_types () =
   let test_program = {|
-    var u32_map : HashMap<u32, u32>(1024)
-    var u64_map : HashMap<u32, u64>(1024)
-    var bool_map : HashMap<u32, bool>(1024)
+    var u32_map : hash<u32, u32>(1024)
+    var u64_map : hash<u32, u64>(1024)
+    var bool_map : hash<u32, bool>(1024)
     
     @xdp fn test_none_value_types(ctx: *xdp_md) -> xdp_action {
       var key: u32 = 123
@@ -339,8 +339,8 @@ let test_none_comparison_different_value_types () =
 (** Test complex scenarios with map value tracking, address-of, and none comparison *)
 let test_complex_map_value_scenarios () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
-    var user_counts : HashMap<u32, u32>(1024)
+    var user_stats : hash<u32, u64>(1024)
+    var user_counts : hash<u32, u32>(1024)
     
     @xdp fn test_complex_scenarios(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -372,7 +372,7 @@ let test_complex_map_value_scenarios () =
 (** Test map value tracking with nested access patterns *)
 let test_nested_map_value_access () =
   let test_program = {|
-    var user_stats : HashMap<u32, u64>(1024)
+    var user_stats : hash<u32, u64>(1024)
     
     @xdp fn test_nested_access(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
@@ -452,7 +452,7 @@ let test_concurrent_access_safety () =
 (** Test basic map operations *)
 let test_basic_map_operations () =
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "basic_map" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "basic_map" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test basic map properties *)
   check string "basic map name" "basic_map" map_decl.name;
@@ -511,7 +511,7 @@ let test_complex_map_operations () =
 (** Test map operation validation *)
 let test_map_operation_validation () =
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "validation_test" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "validation_test" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test basic map properties *)
   check string "validation test map name" "validation_test" map_decl.name;
@@ -530,7 +530,7 @@ let test_map_operation_performance () =
   ) in
   
   let maps = List.mapi (fun i config ->
-    make_ast_map_declaration ("perf_test_" ^ string_of_int i) U32 U64 HashMap config true ~is_pinned:false pos
+    make_ast_map_declaration ("perf_test_" ^ string_of_int i) U32 U64 Hash config true ~is_pinned:false pos
   ) configs in
   
   check bool "performance test completed" true (List.length maps = 10);
@@ -539,7 +539,7 @@ let test_map_operation_performance () =
 (** Test comprehensive map operation analysis *)
 let test_comprehensive_map_operation_analysis () =
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "comprehensive_test" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "comprehensive_test" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Simplified test - just check basic map properties *)
   check string "comprehensive test map name" "comprehensive_test" map_decl.name;
@@ -598,9 +598,9 @@ let test_delete_with_different_key_types () =
 (** Test delete statement with different map types *)
 let test_delete_with_different_map_types () =
   let map_types = [
-    (HashMap, "hash_map");
-    (LruHash, "lru_hash");
-    (PercpuHash, "percpu_hash");
+    (Hash, "hash");
+    (Lru_hash, "lru_hash");
+    (Percpu_hash, "percpu_hash");
   ] in
   
   List.iter (fun (map_type, map_type_name) ->
@@ -615,7 +615,7 @@ let test_delete_with_different_map_types () =
 let test_delete_statement_type_validation () =
   (* Create test map with U32 keys *)
   let config = make_map_config 1024 () in
-  let map_decl = make_ast_map_declaration "typed_map" U32 U64 HashMap config true ~is_pinned:false pos in
+  let map_decl = make_ast_map_declaration "typed_map" U32 U64 Hash config true ~is_pinned:false pos in
   
   (* Test cases for key type compatibility *)
   let test_cases = [
@@ -658,7 +658,7 @@ let test_delete_statement_codegen_validation () =
 (** Test end-to-end delete statement functionality *)
 let test_delete_statement_end_to_end () =
   let program_code = {|
-    var test_map : HashMap<u32, u64>(1024)
+    var test_map : hash<u32, u64>(1024)
     
     @xdp fn test_delete(ctx: *xdp_md) -> xdp_action {
       var key: u32 = 42
@@ -691,10 +691,10 @@ let test_delete_statement_error_cases () =
   (* Array maps don't support delete operations - simplified *)
   check string "delete on array map test" "array_map" array_map_decl.name;
   
-  (* Ring buffer maps also don't support delete operations in the traditional sense - simplified *)
-  let ring_config = make_map_config 1024 () in
-  let ring_map_decl = make_ast_map_declaration "ring_map" U32 U64 RingBuffer ring_config true ~is_pinned:false pos in
-  check string "delete on ring buffer test" "ring_map" ring_map_decl.name
+  (* Hash maps support delete operations - simplified *)
+  let hash_config = make_map_config 1024 () in
+  let hash_map_decl = make_ast_map_declaration "hash_map" U32 U64 Hash hash_config true ~is_pinned:false pos in
+  check string "delete on hash map test" "hash_map" hash_map_decl.name
 
 (** Test delete statement with complex expressions *)
 let test_delete_statement_complex_expressions () =

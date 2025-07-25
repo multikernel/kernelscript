@@ -97,29 +97,17 @@ let string_of_map_operation = function
   | MapUpsert -> "upsert"
 
 let string_of_map_type = function
-  | HashMap -> "HashMap"
-  | Array -> "Array"
-  | PercpuHash -> "PercpuHash"
-  | PercpuArray -> "PercpuArray"
-  | LruHash -> "LruHash"
-  | LruPercpuHash -> "LruPercpuHash"
-  | RingBuffer -> "RingBuffer"
-  | PerfEvent -> "PerfEvent"
-  | ProgArray -> "ProgArray"
-  | CgroupArray -> "CgroupArray"
-  | StackTrace -> "StackTrace"
-  | DevMap -> "DevMap"
-  | SockMap -> "SockMap"
-  | CpuMap -> "CpuMap"
-  | XskMap -> "XskMap"
-  | SockHash -> "SockHash"
-  | ReusePortSockArray -> "ReusePortSockArray"
+  | Hash -> "hash"
+  | Array -> "array"
+  | Percpu_hash -> "percpu_hash"
+  | Percpu_array -> "percpu_array"
+  | Lru_hash -> "lru_hash"
 
 (** eBPF map helper functions and their characteristics *)
 module EbpfHelpers = struct
   let map_lookup_elem = {
     method_name = "lookup";
-    supported_types = [HashMap; Array; PercpuHash; PercpuArray; LruHash; LruPercpuHash];
+    supported_types = [Hash; Array; Percpu_hash; Percpu_array; Lru_hash];
     parameters = [("key", Pointer U8)];
     return_type = Some (Pointer U8);
     ebpf_helper = Some "bpf_map_lookup_elem";
@@ -129,7 +117,7 @@ module EbpfHelpers = struct
   
   let map_update_elem = {
     method_name = "update";
-    supported_types = [HashMap; Array; PercpuHash; PercpuArray; LruHash; LruPercpuHash];
+    supported_types = [Hash; Array; Percpu_hash; Percpu_array; Lru_hash];
     parameters = [("key", Pointer U8); ("value", Pointer U8); ("flags", U64)];
     return_type = Some I32;
     ebpf_helper = Some "bpf_map_update_elem";
@@ -139,7 +127,7 @@ module EbpfHelpers = struct
   
   let map_delete_elem = {
     method_name = "delete";
-    supported_types = [HashMap; PercpuHash; LruHash; LruPercpuHash];
+    supported_types = [Hash; Percpu_hash; Lru_hash];
     parameters = [("key", Pointer U8)];
     return_type = Some I32;
     ebpf_helper = Some "bpf_map_delete_elem";
@@ -147,27 +135,9 @@ module EbpfHelpers = struct
     side_effects = ["Removes entry permanently"];
   }
   
-  let ringbuf_output = {
-    method_name = "output";
-    supported_types = [RingBuffer];
-    parameters = [("data", Pointer U8); ("size", U32); ("flags", U64)];
-    return_type = Some I32;
-    ebpf_helper = Some "bpf_ringbuf_output";
-    complexity = "O(1)";
-    side_effects = ["May block if ring buffer is full"];
-  }
+
   
-  let perf_event_output = {
-    method_name = "output";
-    supported_types = [PerfEvent];
-    parameters = [("ctx", Pointer U8); ("data", Pointer U8); ("size", U32)];
-    return_type = Some I32;
-    ebpf_helper = Some "bpf_perf_event_output";
-    complexity = "O(1)";
-    side_effects = ["Sends event to userspace"];
-  }
-  
-  let all_methods = [map_lookup_elem; map_update_elem; map_delete_elem; ringbuf_output; perf_event_output]
+  let all_methods = [map_lookup_elem; map_update_elem; map_delete_elem]
 end
 
 (** Performance characteristics for different map types *)
@@ -213,12 +183,9 @@ module PerformanceProfiles = struct
   }
   
   let get_profile = function
-    | HashMap | PercpuHash -> hash_map
-    | Array | PercpuArray -> array_map
-    | LruHash | LruPercpuHash -> lru_hash
-    | RingBuffer -> ring_buffer
-    | PerfEvent -> perf_event
-    | _ -> hash_map (* Default fallback *)
+    | Hash | Percpu_hash -> hash_map
+    | Array | Percpu_array -> array_map
+    | Lru_hash -> lru_hash
 end
 
 (** Access pattern analysis *)
@@ -274,32 +241,25 @@ let analyze_access_pattern map_name expressions =
 (** Check concurrent access safety for a map operation *)
 let analyze_concurrent_safety map_type operation readers writers =
   match map_type, operation with
-  | (HashMap | PercpuHash | LruHash | LruPercpuHash), MapLookup ->
+  | (Hash | Percpu_hash | Lru_hash), MapLookup ->
       if writers = 0 then Safe
       else if writers = 1 then ReadSafe
       else WriteLocked
-  | (HashMap | PercpuHash | LruHash | LruPercpuHash), (MapUpdate | MapInsert | MapUpsert) ->
+  | (Hash | Percpu_hash | Lru_hash), (MapUpdate | MapInsert | MapUpsert) ->
       if readers = 0 && writers <= 1 then Safe
       else if readers > 0 || writers > 1 then WriteLocked
       else Safe
-  | (HashMap | PercpuHash | LruHash | LruPercpuHash), MapDelete ->
+  | (Hash | Percpu_hash | Lru_hash), MapDelete ->
       if readers = 0 && writers <= 1 then Safe
       else WriteLocked
-  | (Array | PercpuArray), MapLookup ->
+  | (Array | Percpu_array), MapLookup ->
       if writers = 0 then Safe
       else ReadSafe
-  | (Array | PercpuArray), (MapUpdate | MapUpsert) ->
+  | (Array | Percpu_array), (MapUpdate | MapUpsert) ->
       if readers = 0 && writers <= 1 then Safe
       else WriteLocked
-  | (Array | PercpuArray), (MapInsert | MapDelete) ->
+  | (Array | Percpu_array), (MapInsert | MapDelete) ->
       Unsafe "Arrays do not support insert/delete operations"
-  | RingBuffer, _ ->
-      if writers <= 1 then Safe
-      else WriteLocked
-  | PerfEvent, _ ->
-      Safe (* Per-CPU event buffers *)
-  | _ ->
-      Unsafe "Unknown map type or operation combination"
 
 (** Global map sharing validation *)
 
@@ -327,12 +287,10 @@ let validate_global_sharing _map_name map_type programs_using_map =
   
   (* Check map type suitability for sharing *)
   (match map_type with
-   | PercpuHash | PercpuArray ->
+   | Percpu_hash | Percpu_array ->
        recommendations := "Per-CPU maps provide better isolation for shared access" :: !recommendations
-   | HashMap | Array when List.length programs_using_map > 2 ->
+   | Hash | Array when List.length programs_using_map > 2 ->
        recommendations := "Consider LRU maps for better memory management with multiple programs" :: !recommendations
-   | RingBuffer when List.length writers > 1 ->
-       conflicts := ("multiple", "programs", "Ring buffers should have single writer") :: !conflicts
    | _ -> ());
   
   {
@@ -368,22 +326,15 @@ let validate_operation context =
     in
     
     (* Pattern matching with priority order - most specific first *)
-    if contains_substring name_lower "percpu_hash" then PercpuHash
-    else if contains_substring name_lower "percpu_array" then PercpuArray
-    else if contains_substring name_lower "lru_percpu" then LruPercpuHash
-    else if contains_substring name_lower "lru_hash" then LruHash
-    else if contains_substring name_lower "ring_buffer" then RingBuffer
-    else if contains_substring name_lower "perf_event" then PerfEvent
-    else if contains_substring name_lower "hash_map" then HashMap
-    else if contains_substring name_lower "array_map" then Array
-    (* Fallback to partial matches *)
-    else if contains_substring name_lower "percpu" then PercpuHash
-    else if contains_substring name_lower "lru" then LruHash
-    else if contains_substring name_lower "hash" then HashMap
+    if contains_substring name_lower "percpu_hash" then Percpu_hash
+    else if contains_substring name_lower "percpu_array" then Percpu_array
+    else if contains_substring name_lower "lru_hash" then Lru_hash
+    else if contains_substring name_lower "hash" then Hash
     else if contains_substring name_lower "array" then Array
-    else if contains_substring name_lower "ring" || contains_substring name_lower "buffer" then RingBuffer
-    else if contains_substring name_lower "perf" || contains_substring name_lower "event" then PerfEvent
-    else HashMap (* Default fallback *)
+    (* Fallback to partial matches *)
+    else if contains_substring name_lower "percpu" then Percpu_hash
+    else if contains_substring name_lower "lru" then Lru_hash
+    else Hash (* Default fallback *)
   in
   let map_type = determine_map_type context.map_name in
 
@@ -398,16 +349,10 @@ let validate_operation context =
     | None -> 
         (* For basic operations, assume they're supported if they make sense *)
         match map_type, context.operation with
-        | (HashMap | PercpuHash | LruHash | LruPercpuHash), (MapLookup | MapUpdate | MapInsert | MapUpsert | MapDelete) -> true
-        | (Array | PercpuArray), (MapLookup | MapUpdate | MapUpsert) -> true
-        | (Array | PercpuArray), (MapInsert | MapDelete) -> 
+        | (Hash | Percpu_hash | Lru_hash), (MapLookup | MapUpdate | MapInsert | MapUpsert | MapDelete) -> true
+        | (Array | Percpu_array), (MapLookup | MapUpdate | MapUpsert) -> true
+        | (Array | Percpu_array), (MapInsert | MapDelete) -> 
             warnings := "Arrays do not support insert/delete operations" :: !warnings;
-            false
-        | RingBuffer, _ -> true
-        | PerfEvent, _ -> true
-        | _ ->
-            warnings := (Printf.sprintf "Operation %s not supported for map type %s" 
-                        (string_of_map_operation context.operation) (string_of_map_type map_type)) :: !warnings;
             false
   in
   
@@ -416,7 +361,7 @@ let validate_operation context =
   (* Check frequency vs performance *)
   if context.expected_frequency > 100000 then (
     warnings := "High frequency access detected - consider caching" :: !warnings;
-    if map_type = HashMap then
+    if map_type = Hash then
       optimizations := "Consider LRU hash map for better cache performance" :: !optimizations
   );
   

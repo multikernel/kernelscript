@@ -347,7 +347,7 @@ let test_operator_precedence () =
 (** Test complete program parsing *)
 let test_complete_program_parsing () =
   let program_text = {|
-var packet_count : HashMap<u32, u64>(1024)
+var packet_count : hash<u32, u64>(1024)
 
 @helper
 fn process_packet(src_ip: u32) -> u64 {
