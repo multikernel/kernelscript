@@ -26,6 +26,7 @@ type symbol_kind =
   | Function of bpf_type list * bpf_type  (* Parameter types, return type *)
   | TypeDef of type_def
   | GlobalMap of map_declaration
+  | GlobalList of list_declaration
   | Parameter of bpf_type
   | EnumConstant of string * int option  (* enum_name, value *)
   | Config of config_declaration
@@ -270,6 +271,16 @@ let add_map_decl table map_decl =
     symbol_error "All maps must be declared as global" pos
   )
 
+(** Add list declaration to symbol table *)
+let add_list_decl table list_decl =
+  let pos = list_decl.list_pos in
+  if list_decl.is_global then (
+    (* Global list - add to symbol table *)
+    add_symbol table list_decl.list_name (GlobalList list_decl) Public pos
+  ) else (
+    symbol_error "All lists must be declared as global" pos
+  )
+
 (** Add function with enhanced validation *)
 let add_function table func visibility =
   (* Special validation for main function *)
@@ -394,6 +405,10 @@ and process_declaration_accumulate table declaration =
       add_map_decl table map_decl;
       table
       
+  | Ast.ListDecl list_decl ->
+      add_list_decl table list_decl;
+      table
+      
   | Ast.GlobalFunction func ->
       add_function table func Public;
       (* Enter function scope to process function body *)
@@ -506,6 +521,9 @@ and process_declaration table = function
       
   | Ast.MapDecl map_decl ->
       add_map_decl table map_decl
+      
+  | Ast.ListDecl list_decl ->
+      add_list_decl table list_decl
       
   | Ast.GlobalFunction func ->
       add_function table func Public;
@@ -861,6 +879,13 @@ and process_expression table expr =
       (* Process the flag expression for symbol validation *)
       process_expression table flag_expr
 
+  | ListOperation list_op ->
+      (* Process the list expression and operation arguments *)
+      process_expression table list_op.list_expr;
+      (match list_op.operation with
+       | PushFront arg | PushBack arg -> process_expression table arg
+       | PopFront | PopBack -> ())
+
 (** Query functions for symbol table *)
 
 (** Get all functions in a program *)
@@ -934,6 +959,7 @@ let string_of_symbol_kind = function
   | TypeDef (EnumDef (name, _, _)) -> "enum:" ^ name
   | TypeDef (TypeAlias (name, t)) -> "alias:" ^ name ^ "=" ^ string_of_bpf_type t
   | GlobalMap _ -> "global_map"
+  | GlobalList _ -> "global_list"
   | Parameter t -> "param:" ^ string_of_bpf_type t
   | EnumConstant (enum_name, value) ->
       "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")

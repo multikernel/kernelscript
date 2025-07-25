@@ -138,6 +138,7 @@ and ir_type =
   | IREnum of string * (string * int) list * bool (* NEW: bool for kernel_defined *)
   | IRResult of ir_type * ir_type
   | IRContext of context_type
+  | IRBpfListHead of ir_type (* BPF list head containing elements of specified type *)
   | IRAction of action_type
   | IRTypeAlias of string * ir_type (* Simple type aliases *)
   | IRStructOps of string * ir_struct_ops_def (* Future: struct_ops support *)
@@ -298,6 +299,10 @@ and ir_instr_desc =
   | IRObjectNew of ir_value * ir_type  (* target_pointer, object_type *)
   | IRObjectNewWithFlag of ir_value * ir_type * ir_value  (* target_pointer, object_type, flag_expr *)
   | IRObjectDelete of ir_value  (* pointer_to_delete *)
+  | IRListPushFront of ir_value * ir_value * ir_value  (* result_val, list_head, element *)
+  | IRListPushBack of ir_value * ir_value * ir_value   (* result_val, list_head, element *)
+  | IRListPopFront of ir_value * ir_value              (* result_val, list_head *)
+  | IRListPopBack of ir_value * ir_value               (* result_val, list_head *)
   | IRConfigFieldUpdate of ir_value * ir_value * string * ir_value (* map, key, field, value *)
   | IRStructFieldAssignment of ir_value * string * ir_value (* object, field, value *)
   | IRConfigAccess of string * string * ir_value (* config_name, field_name, result_val *)
@@ -676,6 +681,10 @@ let rec ast_type_to_ir_type = function
       let ir_return_type = ast_type_to_ir_type return_type in
       IRFunctionPointer (ir_param_types, ir_return_type)
 
+  | List element_type ->
+      (* Lists are represented as BPF list heads in IR *)
+      IRBpfListHead (ast_type_to_ir_type element_type)
+
   | Map (_, _, _) -> failwith "Map types handled separately"
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
   | ProgramHandle -> IRI32 (* Program handles are represented as file descriptors (i32) in IR to support error codes *)
@@ -792,6 +801,7 @@ let rec string_of_ir_type = function
   | IRAction action -> Printf.sprintf "action %s" (match action with
     | Xdp_actionType -> "xdp" | TcActionType -> "tc"
     | GenericActionType -> "generic")
+  | IRBpfListHead element_type -> Printf.sprintf "bpf_list_head<%s>" (string_of_ir_type element_type)
   | IRFunctionPointer (param_types, return_type) ->
       let param_strs = List.map string_of_ir_type param_types in
       let return_str = string_of_ir_type return_type in
@@ -898,6 +908,14 @@ let rec string_of_ir_instruction instr =
       Printf.sprintf "%s = object_new(%s, %s)" (string_of_ir_value dest) (string_of_ir_type obj_type) (string_of_ir_value flag_expr)
   | IRObjectDelete ptr ->
       Printf.sprintf "object_delete(%s)" (string_of_ir_value ptr)
+  | IRListPushFront (result_val, list_head, element) ->
+      Printf.sprintf "%s = list_push_front(%s, %s)" (string_of_ir_value result_val) (string_of_ir_value list_head) (string_of_ir_value element)
+  | IRListPushBack (result_val, list_head, element) ->
+      Printf.sprintf "%s = list_push_back(%s, %s)" (string_of_ir_value result_val) (string_of_ir_value list_head) (string_of_ir_value element)
+  | IRListPopFront (result_val, list_head) ->
+      Printf.sprintf "%s = list_pop_front(%s)" (string_of_ir_value result_val) (string_of_ir_value list_head)
+  | IRListPopBack (result_val, list_head) ->
+      Printf.sprintf "%s = list_pop_back(%s)" (string_of_ir_value result_val) (string_of_ir_value list_head)
   | IRConfigFieldUpdate (map, key, field, value) ->
       Printf.sprintf "config_update(%s, %s, %s, %s)" 
         (string_of_ir_value map) (string_of_ir_value key) field (string_of_ir_value value)

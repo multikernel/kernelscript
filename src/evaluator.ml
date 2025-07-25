@@ -760,6 +760,11 @@ and eval_expression ctx expr =
       (* This is just for testing - real allocation happens in generated code *)
       PointerValue (Random.int 1000000)
 
+  | ListOperation _ ->
+      (* For evaluator, list operations return mock values *)
+      (* This is just for testing - real list operations happen in generated code *)
+      PointerValue (Random.int 1000000)
+
 (** Evaluate statements *)
 and eval_statements ctx stmts =
   List.iter (eval_statement ctx) stmts

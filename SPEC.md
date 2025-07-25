@@ -2297,6 +2297,174 @@ fn simple_monitor(ctx: *xdp_md) -> xdp_action {
 }
 ```
 
+
+### 5.6 eBPF Linked Lists
+
+KernelScript provides seamless support for eBPF linked lists with Python-like syntax. Lists automatically handle the complex BPF linked list infrastructure while providing a simple, type-safe interface.
+
+#### 5.6.1 List Declaration Syntax
+
+Lists use a simplified syntax compared to maps - no flags or pinning allowed:
+
+```kernelscript
+// Basic list declaration
+var my_list : list<StructType>
+
+// Lists can only contain struct types
+struct PacketInfo {
+    src_ip: u32,
+    dst_ip: u32,
+    size: u16,
+}
+
+var packet_queue : list<PacketInfo>
+```
+
+**List Constraints:**
+- ✅ Only struct types are allowed as list elements
+- ❌ Lists cannot be pinned (no `pin` keyword)
+- ❌ Lists cannot have flags (no `@flags()`)
+- ❌ Primitive types like `u32`, `str`, etc. are not allowed
+
+#### 5.6.2 List Operations
+
+KernelScript provides four core list operations that map directly to eBPF linked list functions:
+
+```kernelscript
+struct EventData {
+    timestamp: u64,
+    event_type: u32,
+}
+
+var event_list : list<EventData>
+
+@helper
+fn process_events() {
+    var event = EventData {
+        timestamp: bpf_ktime_get_ns(),
+        event_type: 1,
+    }
+    
+    // Add elements
+    event_list.push_back(event)    // Add to end of list
+    event_list.push_front(event)   // Add to beginning of list
+    
+    // Remove and return elements
+    var latest = event_list.pop_front()   // Remove from beginning
+    var oldest = event_list.pop_back()    // Remove from end
+    
+    // Check for null (empty list)
+    if (latest != null) {
+        // Process the event
+        if (latest->event_type == 1) {
+            // Handle event
+        }
+    }
+}
+```
+
+#### 5.6.3 Generated eBPF Code
+
+The compiler automatically generates the necessary BPF linked list infrastructure:
+
+##### 1. Helper Function Declarations
+```c
+/* BPF list helper functions are automatically declared */
+extern int bpf_list_push_front(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;
+extern int bpf_list_push_back(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;
+extern struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head) __ksym;
+extern struct bpf_list_node *bpf_list_pop_back(struct bpf_list_head *head) __ksym;
+```
+
+##### 2. Automatic Struct Modification
+```c
+/* Original KernelScript struct */
+// struct EventData { timestamp: u64, event_type: u32 }
+
+/* Generated eBPF struct with injected list node */
+struct EventData {
+    __u64 timestamp;
+    __u32 event_type;
+    struct bpf_list_node __list_node;  // Automatically injected
+};
+```
+
+##### 3. List Variable Declaration
+```c
+/* KernelScript: var event_list : list<EventData> */
+struct bpf_list_head event_list;
+```
+
+##### 4. Operation Translation
+```c
+// KernelScript: event_list.push_back(event)
+// Generated eBPF C:
+result = bpf_list_push_back(&event_list, &event.__list_node);
+```
+
+**Complete Operation Mapping:**
+- `list.push_front(item)` → `bpf_list_push_front(&list, &item.__list_node)`
+- `list.push_back(item)` → `bpf_list_push_back(&list, &item.__list_node)`  
+- `list.pop_front()` → `bpf_list_pop_front(&list)`
+- `list.pop_back()` → `bpf_list_pop_back(&list)`
+
+#### 5.6.4 Type Safety
+
+The compiler enforces strict type safety for list operations:
+
+```kernelscript
+struct PacketInfo { src_ip: u32 }
+struct EventData { timestamp: u64 }
+
+var packets : list<PacketInfo>
+var events : list<EventData>
+
+@helper
+fn type_safety_example() {
+    var packet = PacketInfo { src_ip: 1234 }
+    var event = EventData { timestamp: 5678 }
+    
+    packets.push_back(packet)  // ✅ Correct type
+    packets.push_back(event)   // ❌ Compile error: type mismatch
+    
+    var retrieved = packets.pop_front()  // Returns PacketInfo* or null
+}
+```
+
+#### 5.6.5 Integration with eBPF Programs
+
+Lists work seamlessly in all eBPF program types:
+
+```kernelscript
+struct NetworkEvent {
+    src_ip: u32,
+    dst_ip: u32,
+    action: u32,
+}
+
+var network_log : list<NetworkEvent>
+
+@xdp
+fn packet_filter(ctx: *xdp_md) -> xdp_action {
+    var event = NetworkEvent {
+        src_ip: ctx->remote_ip4,
+        dst_ip: ctx->local_ip4,
+        action: XDP_PASS,
+    }
+    
+    network_log.push_front(event)
+    return XDP_PASS
+}
+```
+
+#### 5.6.6 Memory Management
+
+List elements are automatically managed by the eBPF kernel infrastructure:
+- Elements are allocated using `bpf_obj_new()` when created
+- Elements are freed automatically when removed from lists
+- No manual memory management required
+- Built-in protection against memory leaks and use-after-free
+
 ## 6. Assignment Operators
 
 ### 6.1 Simple Assignment
@@ -4304,7 +4472,7 @@ fn print_summary_stats() {
 (* Top-level structure *)
 kernelscript_file = { global_declaration } 
 
-global_declaration = config_declaration | map_declaration | type_declaration | 
+global_declaration = config_declaration | map_declaration | list_declaration | type_declaration | 
                     function_declaration | struct_declaration | impl_declaration |
                     global_variable_declaration | bindings_declaration | import_declaration 
 
@@ -4316,7 +4484,12 @@ map_type = "hash" | "array" | "percpu_hash" | "percpu_array" | "lru_hash"
 map_config = integer_literal [ "," map_config_item { "," map_config_item } ] 
 map_config_item = identifier "=" literal 
 
-flag_expression = identifier | ( identifier { "|" identifier } ) 
+flag_expression = identifier | ( identifier { "|" identifier } )
+
+(* List declarations - global scope *)
+list_declaration = "var" identifier ":" "list" "<" struct_type ">"
+
+struct_type = identifier  (* Must resolve to a struct type, not primitive *) 
 
 (* eBPF program function attributes *)
 attribute_list = attribute { attribute }
@@ -4442,7 +4615,7 @@ unary_operator = "!" | "-" | "*" | "&"
 *)
 
 primary_expression = config_access | identifier | literal | function_call | field_access | 
-                     array_access | parenthesized_expression | struct_literal | match_expression 
+                     array_access | parenthesized_expression | struct_literal | match_expression | list_operation 
 
 config_access = identifier "." identifier 
 
@@ -4460,19 +4633,23 @@ match_expression = "match" "(" expression ")" "{" match_arm { "," match_arm } [ 
 match_arm = match_pattern ":" expression
 match_pattern = integer_literal | identifier | "default" 
 
+list_operation = primary_expression "." list_method "(" [ argument_list ] ")"
+list_method = "push_front" | "push_back" | "pop_front" | "pop_back" 
+
 (* Type annotations *)
 type_annotation = primitive_type | compound_type | identifier 
 
 primitive_type = "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | 
                  "bool" | "char" | "void" | "ProgramRef" | string_type 
 
-compound_type = array_type | pointer_type | function_type 
+compound_type = array_type | pointer_type | function_type | list_type 
 
 string_type = "str" "(" integer_literal ")" 
 
 array_type = "[" type_annotation "" integer_literal "]" 
 pointer_type = "*" type_annotation 
-function_type = "fn" "(" [ type_annotation { "," type_annotation } ] ")" [ return_type_spec ] 
+function_type = "fn" "(" [ type_annotation { "," type_annotation } ] ")" [ return_type_spec ]
+list_type = "list" "<" type_annotation ">" 
 
 (* Literals *)
 literal = integer_literal | string_literal | char_literal | boolean_literal | 

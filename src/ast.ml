@@ -72,6 +72,7 @@ and bpf_type =
   | Result of bpf_type * bpf_type
   | Function of bpf_type list * bpf_type
   | Map of bpf_type * bpf_type * map_type
+  | List of bpf_type  (* eBPF linked lists - only struct types allowed *)
   (* Built-in context types *)
   | Xdp_md | UprobeContext 
   | TracepointContext | LsmContext | CgroupSkbContext
@@ -101,6 +102,14 @@ type map_declaration = {
   is_global: bool;
   is_pinned: bool;
   map_pos: position;
+}
+
+(** List declarations - simpler than maps, no flags or pinning *)
+type list_declaration = {
+  list_name: string;
+  element_type: bpf_type;  (* Must be a struct type *)
+  is_global: bool;
+  list_pos: position;
 }
 
 (** Literal values *)
@@ -171,6 +180,20 @@ and expr_desc =
   | Match of expr * match_arm list  (* match (expr) { arms } *)
   | New of bpf_type  (* new Type() - object allocation *)
   | NewWithFlag of bpf_type * expr  (* new Type(gfp_flag) - object allocation with flag *)
+  | ListOperation of list_operation  (* List operations: push_front, pop_back, etc. *)
+
+(** List operations for eBPF linked lists *)
+and list_operation = {
+  list_expr: expr;  (* The list variable being operated on *)
+  operation: list_op_type;
+  op_pos: position;
+}
+
+and list_op_type =
+  | PushFront of expr  (* list.push_front(element) *)
+  | PushBack of expr   (* list.push_back(element) *)
+  | PopFront           (* list.pop_front() - returns element or null *)
+  | PopBack            (* list.pop_back() - returns element or null *)
 
 (** Module function call *)
 and module_call = {
@@ -341,6 +364,7 @@ type declaration =
   | GlobalFunction of function_def
   | TypeDef of type_def
   | MapDecl of map_declaration
+  | ListDecl of list_declaration
   | ConfigDecl of config_declaration
   | StructDecl of struct_def
   | GlobalVarDecl of global_variable_declaration
@@ -456,6 +480,13 @@ let make_map_declaration name key_type value_type map_type config is_global ~is_
   is_global;
   is_pinned;
   map_pos = pos;
+}
+
+let make_list_declaration name element_type is_global pos = {
+  list_name = name;
+  element_type = element_type;
+  is_global = is_global;
+  list_pos = pos;
 }
 
 let make_struct_def ?(attributes=[]) name fields pos = {
@@ -599,6 +630,7 @@ let rec string_of_bpf_type = function
         (string_of_bpf_type key_type)
         (string_of_bpf_type value_type)
         (string_of_map_type map_type)
+  | List t -> Printf.sprintf "list<%s>" (string_of_bpf_type t)
   | Xdp_md -> "xdp_md"
   | UprobeContext -> "UprobeContext"
   | TracepointContext -> "TracepointContext"
@@ -684,6 +716,14 @@ let rec string_of_expr expr =
   | New typ -> Printf.sprintf "new %s()" (string_of_bpf_type typ)
   | NewWithFlag (typ, flag_expr) -> 
       Printf.sprintf "new %s(%s)" (string_of_bpf_type typ) (string_of_expr flag_expr)
+  | ListOperation op ->
+      let op_str = match op.operation with
+        | PushFront arg -> Printf.sprintf "push_front(%s)" (string_of_expr arg)
+        | PushBack arg -> Printf.sprintf "push_back(%s)" (string_of_expr arg)
+        | PopFront -> "pop_front()"
+        | PopBack -> "pop_back()"
+      in
+      Printf.sprintf "%s.%s" (string_of_expr op.list_expr) op_str
 
 and string_of_match_pattern = function
   | ConstantPattern lit -> string_of_literal lit
@@ -827,6 +867,10 @@ let string_of_declaration = function
         md.name
         (string_of_map_type md.map_type)
         (string_of_int md.config.max_entries)
+  | ListDecl ld ->
+      Printf.sprintf "var %s : list<%s>"
+        ld.list_name
+        (string_of_bpf_type ld.element_type)
   | ConfigDecl config_decl ->
       let fields_str = String.concat ",\n    " (List.map (fun field ->
         let default_str = match field.field_default with

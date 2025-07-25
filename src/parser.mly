@@ -33,7 +33,7 @@
 %token FN PIN TYPE STRUCT ENUM IMPL
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR VOID STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
-%token VAR CONST CONFIG LOCAL
+%token VAR CONST CONFIG LOCAL LIST
 %token IN NEW DELETE TRY CATCH THROW DEFER MATCH DEFAULT
 %token IMPORT FROM
 
@@ -73,6 +73,7 @@
 %type <Ast.attribute> attribute
 %type <Ast.attributed_function> attributed_function_declaration
 %type <Ast.map_declaration> map_declaration
+%type <Ast.list_declaration> list_declaration
 %type <Ast.struct_def> struct_declaration
 %type <(string * Ast.bpf_type) list> struct_fields
 %type <string * Ast.bpf_type> struct_field
@@ -159,6 +160,7 @@ declaration:
   | attributed_function_declaration { AttributedFunction $1 }
   | function_declaration { GlobalFunction $1 }
   | map_declaration { MapDecl $1 }
+  | list_declaration { ListDecl $1 }
   | struct_declaration { StructDecl $1 }
   | enum_declaration { TypeDef $1 }
   | type_alias_declaration { TypeDef $1 }
@@ -231,6 +233,7 @@ bpf_type:
   | function_type { $1 }
   | MULTIPLY bpf_type { Pointer $2 }
   | map_type LT bpf_type COMMA bpf_type GT { Map ($3, $5, $1) }
+  | LIST LT bpf_type GT { List $3 }
 
 /* Array types: type[size] */
 array_type:
@@ -440,7 +443,33 @@ function_call:
     { make_expr (Call (make_expr (Identifier $1) (make_pos ()), $3)) (make_pos ()) }
   | primary_expression LPAREN argument_list RPAREN
     { make_expr (Call ($1, $3)) (make_pos ()) }
-
+  | primary_expression DOT IDENTIFIER LPAREN argument_list RPAREN
+    { 
+      (* Handle list operations: list.push_front(expr), list.pop_front(), etc. *)
+      let list_expr = $1 in
+      let method_name = $3 in
+      let args = $5 in
+      match method_name with
+      | "push_front" -> 
+          (match args with
+          | [arg] -> make_expr (ListOperation { list_expr; operation = PushFront arg; op_pos = make_pos () }) (make_pos ())
+          | _ -> failwith "push_front requires exactly one argument")
+      | "push_back" ->
+          (match args with
+          | [arg] -> make_expr (ListOperation { list_expr; operation = PushBack arg; op_pos = make_pos () }) (make_pos ())
+          | _ -> failwith "push_back requires exactly one argument")
+      | "pop_front" ->
+          (match args with
+          | [] -> make_expr (ListOperation { list_expr; operation = PopFront; op_pos = make_pos () }) (make_pos ())
+          | _ -> failwith "pop_front takes no arguments")
+      | "pop_back" ->
+          (match args with
+          | [] -> make_expr (ListOperation { list_expr; operation = PopBack; op_pos = make_pos () }) (make_pos ())
+          | _ -> failwith "pop_back takes no arguments")
+      | _ -> 
+          (* Regular method call, fallback to normal Call *)
+          make_expr (Call (make_expr (FieldAccess (list_expr, method_name)) (make_pos ()), args)) (make_pos ())
+    }
 
 
 array_access:
@@ -511,6 +540,11 @@ map_type:
       | "lru_hash" -> Lru_hash
       | unknown -> failwith ("Unknown map type: " ^ unknown)
     }
+
+/* List Declarations - simpler than maps, no flags or pinning */
+list_declaration:
+  | VAR IDENTIFIER COLON LIST LT bpf_type GT
+    { make_list_declaration $2 $6 true (make_pos ()) }
 
 flag_expression:
   | flag_item { [$1] }

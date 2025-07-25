@@ -160,8 +160,9 @@ let comprehensive_symbol_analysis symbol_table ast =
       | Variable _ | Parameter _ -> incr variable_count  
       | ConstVariable _ -> incr variable_count  (* Count const variables as variables *)
       | GlobalVariable _ -> incr variable_count  (* Count global variables as variables *)
+      | GlobalMap _ -> incr type_count  (* Count maps as types *)
+      | GlobalList _ -> incr variable_count  (* Count lists as variables *)
       | TypeDef _ -> incr type_count
-      | GlobalMap _ -> () (* Maps are counted separately *)
       | EnumConstant _ -> incr type_count
       | Config _ -> incr type_count
       | ImportedModule _ -> () (* Imported modules don't need counting *)

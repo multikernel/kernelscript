@@ -952,6 +952,53 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       result_val
 
+  | Ast.ListOperation list_op ->
+      (* Generate proper IR list operations *)
+      let list_val = lower_expression ctx list_op.list_expr in
+      
+      (match list_op.operation with
+       | PushFront arg ->
+           let arg_val = lower_expression ctx arg in
+           let result_reg = allocate_register ctx in
+           let result_val = make_ir_value (IRRegister result_reg) IRI32 expr.expr_pos in
+           let push_instr = make_ir_instruction (IRListPushFront (result_val, list_val, arg_val)) expr.expr_pos in
+           emit_instruction ctx push_instr;
+           result_val
+           
+       | PushBack arg ->
+           let arg_val = lower_expression ctx arg in
+           let result_reg = allocate_register ctx in
+           let result_val = make_ir_value (IRRegister result_reg) IRI32 expr.expr_pos in
+           let push_instr = make_ir_instruction (IRListPushBack (result_val, list_val, arg_val)) expr.expr_pos in
+           emit_instruction ctx push_instr;
+           result_val
+           
+       | PopFront ->
+           let result_reg = allocate_register ctx in
+           let bounds = make_bounds_info ~nullable:true () in
+           (* Extract element type from the list *)
+           let element_type = match list_val.val_type with
+             | IRBpfListHead elem_type -> elem_type
+             | _ -> failwith ("PopFront can only be applied to list types, got " ^ string_of_ir_type list_val.val_type)
+           in
+           let result_val = make_ir_value (IRRegister result_reg) (IRPointer (element_type, bounds)) expr.expr_pos in
+           let pop_instr = make_ir_instruction (IRListPopFront (result_val, list_val)) expr.expr_pos in
+           emit_instruction ctx pop_instr;
+           result_val
+           
+       | PopBack ->
+           let result_reg = allocate_register ctx in
+           let bounds = make_bounds_info ~nullable:true () in
+           (* Extract element type from the list *)
+           let element_type = match list_val.val_type with
+             | IRBpfListHead elem_type -> elem_type
+             | _ -> failwith ("PopBack can only be applied to list types, got " ^ string_of_ir_type list_val.val_type)
+           in
+           let result_val = make_ir_value (IRRegister result_reg) (IRPointer (element_type, bounds)) expr.expr_pos in
+           let pop_instr = make_ir_instruction (IRListPopBack (result_val, list_val)) expr.expr_pos in
+           emit_instruction ctx pop_instr;
+           result_val)
+
 (** Helper function to handle register() builtin function calls *)
 and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type () =
   if List.length args = 1 then

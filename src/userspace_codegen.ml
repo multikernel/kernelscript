@@ -55,6 +55,7 @@ let rec c_type_from_ir_type = function
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
   | IRContext _ -> "void*" (* context pointers *)
   | IRAction _ -> "int" (* action return values *)
+  | IRBpfListHead _element_type -> "void*" (* BPF lists not applicable in userspace *)
   | IRFunctionPointer (param_types, return_type) -> 
       (* For function pointers, we need special handling - this is used for type aliases *)
       let return_type_str = c_type_from_ir_type return_type in
@@ -1912,6 +1913,26 @@ let rec generate_c_instruction_from_ir ctx instruction =
   | IRObjectDelete ptr_val ->
       let ptr_str = generate_c_value_from_ir ctx ptr_val in
       sprintf "free(%s);" ptr_str
+  
+  | IRListPushFront (result_val, _list_head, _element) ->
+      (* List operations are eBPF-specific, not applicable in userspace *)
+      let result_str = generate_c_value_from_ir ctx result_val in
+      sprintf "%s = 0; /* list_push_front - eBPF only */" result_str
+      
+  | IRListPushBack (result_val, _list_head, _element) ->
+      (* List operations are eBPF-specific, not applicable in userspace *)
+      let result_str = generate_c_value_from_ir ctx result_val in
+      sprintf "%s = 0; /* list_push_back - eBPF only */" result_str
+      
+  | IRListPopFront (result_val, _list_head) ->
+      (* List operations are eBPF-specific, not applicable in userspace *)
+      let result_str = generate_c_value_from_ir ctx result_val in
+      sprintf "%s = NULL; /* list_pop_front - eBPF only */" result_str
+      
+  | IRListPopBack (result_val, _list_head) ->
+      (* List operations are eBPF-specific, not applicable in userspace *)
+      let result_str = generate_c_value_from_ir ctx result_val in
+      sprintf "%s = NULL; /* list_pop_back - eBPF only */" result_str
   
   | IRStructFieldAssignment (obj_val, field_name, value_val) ->
       (* Generate struct field assignment: obj.field = value or obj->field = value *)

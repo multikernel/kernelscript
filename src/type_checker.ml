@@ -40,6 +40,7 @@ type context = {
   attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
   attributed_function_map: (string, attributed_function) Hashtbl.t; (* Map for tail call analysis *)
   imports: (string, Import_resolver.resolved_import) Hashtbl.t; (* Track imported modules *)
+  list_structs: (string, unit) Hashtbl.t; (* Track structs that need bpf_list_node injection *)
   mutable current_function: string option;
   mutable current_program_type: program_type option;
   mutable multi_program_analysis: Multi_program_analyzer.multi_program_analysis option;
@@ -70,6 +71,7 @@ and typed_expr_desc =
   | TMatch of typed_expr * typed_match_arm list  (* match (expr) { arms } *)
   | TNew of bpf_type  (* new Type() - object allocation *)
   | TNewWithFlag of bpf_type * typed_expr  (* new Type(gfp_flag) - object allocation with flag *)
+  | TListOperation of list_operation
 
 (** Typed match arm *)
 and typed_match_arm = {
@@ -144,6 +146,7 @@ let create_context symbol_table ast =
   let maps = Hashtbl.create 16 in
   let configs = Hashtbl.create 16 in
   let imports = Hashtbl.create 16 in
+  let list_structs = Hashtbl.create 16 in
   
   (* Extract enum constants, impl blocks, and type definitions from symbol table *)
   let global_symbols = Symbol_table.get_global_symbols symbol_table in
@@ -183,6 +186,7 @@ let create_context symbol_table ast =
     maps = maps;
     configs = configs;
     imports = imports;
+    list_structs = list_structs;
     symbol_table = symbol_table;
     current_function = None;
     current_program_type = None;
@@ -195,6 +199,23 @@ let create_context symbol_table ast =
 
 (** Track loop nesting depth to prevent nested loops *)
 let loop_depth = ref 0
+
+(** Get list of structs that need bpf_list_node injection *)
+let get_list_structs ctx =
+  Hashtbl.fold (fun struct_name _ acc -> struct_name :: acc) ctx.list_structs []
+
+(** Modify a struct definition to include bpf_list_node field *)
+let inject_list_node_into_struct struct_def =
+  match struct_def with
+  | StructDef (name, fields, is_struct_ops) ->
+      (* Add bpf_list_node field if not already present *)
+      let has_list_node = List.exists (fun (field_name, _) -> field_name = "__list_node") fields in
+      if has_list_node then
+        struct_def  (* Already has list node *)
+      else
+        let list_node_field = ("__list_node", UserType "bpf_list_node") in
+        StructDef (name, fields @ [list_node_field], is_struct_ops)
+  | _ -> struct_def  (* Not a struct, return unchanged *)
 
 (** Helper to create type error *)
 let type_error msg pos = raise (Type_error (msg, pos))
@@ -373,6 +394,10 @@ let rec types_equal t1 t2 =
   | Str s1, Str s2 -> s1 = s2
   | Pointer t1, Pointer t2 -> types_equal t1 t2
   | Array (t1, s1), Array (t2, s2) -> types_equal t1 t2 && s1 = s2
+  | Struct s1, Struct s2 -> s1 = s2
+  | UserType s1, UserType s2 -> s1 = s2
+  | Enum s1, Enum s2 -> s1 = s2
+  | List t1, List t2 -> types_equal t1 t2
   | _ -> false
 
 (** Type check literals *)
@@ -862,6 +887,13 @@ and type_check_arrow_access ctx obj field pos =
     | Pointer TracepointContext -> "trace_entry"
     | Pointer LsmContext -> "task_struct"
     | Pointer CgroupSkbContext -> "__sk_buff"
+    (* Allow arrow access on struct types from list pop operations *)
+    | Struct name | UserType name ->
+        (match typed_obj.texpr_desc with
+         | TListOperation list_op when (match list_op.operation with Ast.PopFront | Ast.PopBack -> true | _ -> false) ->
+             name  (* Allow arrow access on list pop results *)
+         | _ ->
+             type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type ^ ". Use '.' for struct field access") pos)
     | _ -> 
         type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
   in
@@ -1379,6 +1411,33 @@ and type_check_expression ctx expr =
       let resolved_type = resolve_user_type ctx typ in
       let pointer_type = Pointer resolved_type in
       { texpr_desc = TNewWithFlag (resolved_type, typed_flag_expr); texpr_type = pointer_type; texpr_pos = expr.expr_pos }
+
+  | ListOperation list_op ->
+      (* Type check list operations *)
+      let typed_list_expr = type_check_expression ctx list_op.list_expr in
+      
+      (* Ensure the list expression has list type *)
+      let element_type = match typed_list_expr.texpr_type with
+        | List elem_type -> elem_type
+        | _ -> type_error ("List operation can only be applied to list types, got " ^ string_of_bpf_type typed_list_expr.texpr_type) expr.expr_pos
+      in
+      
+      (match list_op.operation with
+       | PushFront arg | PushBack arg ->
+           let typed_arg = type_check_expression ctx arg in
+           (* Resolve both types to ensure consistent comparison *)
+           let resolved_element_type = resolve_user_type ctx element_type in
+           let resolved_arg_type = resolve_user_type ctx typed_arg.texpr_type in
+           if not (types_equal resolved_element_type resolved_arg_type) then
+             type_error ("List element type mismatch: expected " ^ string_of_bpf_type resolved_element_type ^ 
+                        ", got " ^ string_of_bpf_type resolved_arg_type) expr.expr_pos;
+           (* Push operations return void for now *)
+           { texpr_desc = TListOperation list_op; texpr_type = Void; texpr_pos = expr.expr_pos }
+           
+       | PopFront | PopBack ->
+           (* Pop operations return element struct or none *)
+           let resolved_element_type = resolve_user_type ctx element_type in
+           { texpr_desc = TListOperation list_op; texpr_type = resolved_element_type; texpr_pos = expr.expr_pos })
 
 (** Type check statement *)
 and type_check_statement ctx stmt =
@@ -2291,6 +2350,7 @@ let rec typed_expr_to_expr texpr =
         Match (matched_expr, arms)
     | TNew typ -> New typ
     | TNewWithFlag (typ, flag_expr) -> NewWithFlag (typ, typed_expr_to_expr flag_expr)
+    | TListOperation list_op -> ListOperation list_op
   in
   (* Handle special cases for type annotations *)
   let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with
@@ -2648,6 +2708,25 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
               Hashtbl.replace ctx.function_scopes func.func_name func.func_scope
           | ImplStaticField (_, _) -> ()  (* Static fields don't need function registration *)
         ) impl_block.impl_items
+    | ListDecl list_decl ->
+        (* Validate that list element type is a struct *)
+        let resolved_element_type = resolve_user_type ctx list_decl.element_type in
+        let struct_name = match resolved_element_type with
+         | Struct name -> name
+         | UserType name -> 
+             (* Resolve UserType to see if it's a struct *)
+             (match resolve_user_type ctx (UserType name) with
+              | Struct struct_name -> struct_name
+              | _ -> type_error ("List elements must be struct types, got " ^ string_of_bpf_type resolved_element_type) list_decl.list_pos)
+         | _ -> 
+             type_error ("List elements must be struct types, got " ^ string_of_bpf_type resolved_element_type) list_decl.list_pos
+        in
+        
+        (* Track that this struct needs bpf_list_node injection *)
+        Hashtbl.replace ctx.list_structs struct_name ();
+        
+        (* Add list to context (lists are now of type bpf_list_head, not pointers to struct) *)
+        Hashtbl.replace ctx.variables list_decl.list_name (List resolved_element_type)
     | ImportDecl _import_decl ->
         (* Import declarations are handled elsewhere - no processing needed here *)
         ()

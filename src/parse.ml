@@ -88,6 +88,11 @@ let validate_ast ast =
         ) arms
     | New _ -> true
     | NewWithFlag (_, flag_expr) -> validate_expr flag_expr  (* New expressions are always syntactically valid *)
+    | ListOperation list_op ->
+        validate_expr list_op.list_expr &&
+        (match list_op.operation with
+         | PushFront arg | PushBack arg -> validate_expr arg
+         | PopFront | PopBack -> true)
   
   and validate_stmt stmt =
     match stmt.stmt_desc with
@@ -141,6 +146,7 @@ let validate_ast ast =
     | GlobalFunction func -> validate_function func
     | TypeDef _ -> true (* Type definitions are always valid once parsed *)
     | MapDecl _ -> true (* Map declarations are always valid once parsed *)
+    | ListDecl _ -> true (* List declarations are always valid once parsed *)
     | ConfigDecl _ -> true (* Config declarations are always valid once parsed *)
     | StructDecl _ -> true (* Struct declarations are always valid once parsed *)
     | GlobalVarDecl _ -> true (* Global variable declarations are always valid once parsed *)

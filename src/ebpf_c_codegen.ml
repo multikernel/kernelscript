@@ -155,6 +155,8 @@ type c_context = {
   mutable inlinable_registers: (int, string) Hashtbl.t;
   (* Current function's context type for proper field access generation *)
   mutable current_function_context_type: string option;
+  (* Track variables that come from list pop operations and their underlying pointers *)
+  mutable list_pop_variables: (string, string) Hashtbl.t; (* struct_var_name -> pointer_var_name *)
 }
 
 let create_c_context () = {
@@ -174,6 +176,7 @@ let create_c_context () = {
   register_name_hints = Hashtbl.create 32;
   inlinable_registers = Hashtbl.create 32;
   current_function_context_type = None;
+  list_pop_variables = Hashtbl.create 32;
 }
 
 (** Helper functions for code generation *)
@@ -283,6 +286,7 @@ let rec ebpf_type_from_ir_type = function
   | IRAction Xdp_actionType -> "int"
   | IRAction TcActionType -> "int"
   | IRAction GenericActionType -> "int"
+  | IRBpfListHead _element_type -> "struct bpf_list_head"
   | IRFunctionPointer (param_types, return_type) -> 
       let return_type_str = ebpf_type_from_ir_type return_type in
       let param_types_str = List.map ebpf_type_from_ir_type param_types in
@@ -478,6 +482,15 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_value flag_val)
   | IRObjectDelete ptr_val ->
       collect_string_sizes_from_value ptr_val
+  | IRListPushFront (result_val, list_head, element) ->
+      (collect_string_sizes_from_value result_val) @ (collect_string_sizes_from_value list_head) @ (collect_string_sizes_from_value element)
+  | IRListPushBack (result_val, list_head, element) ->
+      (collect_string_sizes_from_value result_val) @ (collect_string_sizes_from_value list_head) @ (collect_string_sizes_from_value element)
+  | IRListPopFront (result_val, list_head) ->
+      (collect_string_sizes_from_value result_val) @ (collect_string_sizes_from_value list_head)
+      
+  | IRListPopBack (result_val, list_head) ->
+      (collect_string_sizes_from_value result_val) @ (collect_string_sizes_from_value list_head)
 
 let collect_string_sizes_from_function ir_func =
   List.fold_left (fun acc block ->
@@ -796,8 +809,45 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   
   List.rev !struct_defs
 
-(** Generate struct definitions *)
-let generate_struct_definitions ctx struct_defs =
+(** Detect structs used in BPF lists by analyzing IR *)
+let detect_list_structs_from_ir ir_multi_prog =
+  let list_structs = ref [] in
+  
+  (* Helper function to analyze a single function *)
+  let analyze_function ir_func =
+    List.iter (fun block ->
+      List.iter (fun instr ->
+        match instr.instr_desc with
+        | IRListPushFront (_, _, element) | IRListPushBack (_, _, element) ->
+            (match element.val_type with
+             | IRStruct (struct_name, _, _) ->
+                 if not (List.mem struct_name !list_structs) then
+                   list_structs := struct_name :: !list_structs
+             | _ -> ())
+        | _ -> ()
+      ) block.instructions
+    ) ir_func.basic_blocks
+  in
+  
+  (* Analyze entry functions from all programs *)
+  List.iter (fun ir_prog ->
+    analyze_function ir_prog.entry_function
+  ) ir_multi_prog.programs;
+  
+  (* Analyze kernel functions *)
+  List.iter analyze_function ir_multi_prog.kernel_functions;
+  
+  !list_structs
+
+(** Extract list struct information from symbol table or IR analysis *)
+let get_list_structs_from_symbol_table _symbol_table ir_multi_prog =
+  (* For now, use IR analysis to detect list structs *)
+  detect_list_structs_from_ir ir_multi_prog
+
+(** Generate struct definitions with BPF list node injection *)
+let generate_struct_definitions_with_list_support ctx struct_defs symbol_table ir_multi_prog =
+  let list_structs = get_list_structs_from_symbol_table symbol_table ir_multi_prog in
+  
   (* Filter out kernel-defined structs that are provided by kernel headers *)
   let user_defined_structs = List.filter (fun (struct_name, fields) ->
     (* Check if any field indicates this is a kernel-defined struct *)
@@ -817,6 +867,8 @@ let generate_struct_definitions ctx struct_defs =
     List.iter (fun (struct_name, fields) ->
       emit_line ctx (sprintf "struct %s {" struct_name);
       increase_indent ctx;
+      
+      (* Generate regular fields *)
       List.iter (fun (field_name, field_type) ->
         (* Handle array fields with correct C syntax, preserving type aliases *)
         let field_declaration = match field_type with
@@ -838,6 +890,12 @@ let generate_struct_definitions ctx struct_defs =
         in
         emit_line ctx field_declaration
       ) fields;
+      
+      (* Add BPF list node field if this struct is used in lists *)
+      if List.mem struct_name list_structs then (
+        emit_line ctx "struct bpf_list_node __list_node;"
+      );
+      
       decrease_indent ctx;
       emit_line ctx "};"
     ) user_defined_structs;
@@ -1552,6 +1610,12 @@ let generate_c_expression ctx ir_expr =
                   | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
                       let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = non_none_val.val_pos } in
                       generate_c_value ~auto_deref_map_access:false ctx underlying_val
+                  | IRRegister reg ->
+                      (* Check if this is a list pop variable - if so, use the underlying pointer *)
+                      let var_name = get_meaningful_var_name ctx reg non_none_val.val_type in
+                      (match Hashtbl.find_opt ctx.list_pop_variables var_name with
+                       | Some pointer_name -> pointer_name  (* Use the underlying pointer *)
+                       | None -> generate_c_value ctx non_none_val)  (* Use the variable normally *)
                   | _ -> generate_c_value ctx non_none_val) in
                 sprintf "(%s == NULL)" val_str
             | _, IRNe, IRLiteral (Ast.NoneLit)
@@ -1563,6 +1627,12 @@ let generate_c_expression ctx ir_expr =
                   | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
                       let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = non_none_val.val_pos } in
                       generate_c_value ~auto_deref_map_access:false ctx underlying_val
+                  | IRRegister reg ->
+                      (* Check if this is a list pop variable - if so, use the underlying pointer *)
+                      let var_name = get_meaningful_var_name ctx reg non_none_val.val_type in
+                      (match Hashtbl.find_opt ctx.list_pop_variables var_name with
+                       | Some pointer_name -> pointer_name  (* Use the underlying pointer *)
+                       | None -> generate_c_value ctx non_none_val)  (* Use the variable normally *)
                   | _ -> generate_c_value ctx non_none_val) in
                 sprintf "(%s != NULL)" val_str
             | _ ->
@@ -1704,6 +1774,12 @@ let generate_c_expression ctx ir_expr =
                   | IRMapAccess (_, _, _) -> 
                       (* Map lookups return pointers, always use arrow notation *)
                       sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field
+                  | IRRegister reg ->
+                      (* Check if this is a list pop variable - if so, use the underlying pointer *)
+                      let var_name = get_meaningful_var_name ctx reg obj_val.val_type in
+                      (match Hashtbl.find_opt ctx.list_pop_variables var_name with
+                       | Some pointer_name -> sprintf "SAFE_PTR_ACCESS(%s, %s)" pointer_name field  (* Use the underlying pointer *)
+                       | None -> sprintf "%s.%s" obj_str field)  (* Direct struct field access *)
                   | _ -> 
                       (* Direct struct field access *)
                       sprintf "%s.%s" obj_str field)))
@@ -2182,6 +2258,24 @@ let rec generate_c_instruction ctx ir_instr =
                      emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
             | None ->
                 emit_line ctx (sprintf "%s %s;" type_str var_name))
+       | IRStruct (struct_name, _, _) when (match init_expr_opt with
+           | Some init_expr -> (match init_expr.expr_desc with
+               | IRValue src_val -> (match src_val.val_type with
+                   | IRPointer (IRStruct (src_struct_name, _, _), bounds) when src_struct_name = struct_name && bounds.nullable -> true
+                   | _ -> false)
+               | _ -> false)
+           | None -> false) ->
+                       (* Special handling for struct variables initialized from list pop results *)
+            (match init_expr_opt with
+             | Some init_expr ->
+                 let src_str = generate_c_expression ctx init_expr in
+                 let struct_type = sprintf "struct %s" struct_name in
+                 emit_line ctx (sprintf "%s %s = ({ %s __val = {0}; if (%s) { __val = *(%s); } __val; });" struct_type var_name struct_type src_str src_str);
+                 (* Track this variable as coming from list pop - map struct var to pointer var *)
+                 Hashtbl.replace ctx.list_pop_variables var_name src_str
+             | None ->
+                 let type_str = ebpf_type_from_ir_type typ in
+                 emit_line ctx (sprintf "%s %s;" type_str var_name))
        | _ ->
            (* Regular variable declaration - use proper C declaration generator *)
            let decl_str = generate_ebpf_c_declaration typ var_name in
@@ -2649,6 +2743,14 @@ let rec generate_c_instruction ctx ir_instr =
               collect_in_value dest_val; collect_in_value flag_val
           | IRObjectDelete ptr_val ->
               collect_in_value ptr_val
+          | IRListPushFront (result_val, list_head, element) ->
+              collect_in_value result_val; collect_in_value list_head; collect_in_value element
+          | IRListPushBack (result_val, list_head, element) ->
+              collect_in_value result_val; collect_in_value list_head; collect_in_value element
+          | IRListPopFront (result_val, list_head) ->
+              collect_in_value result_val; collect_in_value list_head
+          | IRListPopBack (result_val, list_head) ->
+              collect_in_value result_val; collect_in_value list_head
           | IRJump _ | IRComment _ | IRBreak | IRContinue | IRThrow _ -> ()
         in
         collect_in_instr ir_instr
@@ -2867,6 +2969,45 @@ let rec generate_c_instruction ctx ir_instr =
       (* Use the proper kernel bpf_obj_drop(ptr) macro *)
       emit_line ctx (sprintf "bpf_obj_drop(%s);" ptr_str)
       
+  | IRListPushFront (result_val, list_head, element) ->
+      let result_str = generate_c_value ctx result_val in
+      let list_str = generate_c_value ctx list_head in
+      let element_str = generate_c_value ctx element in
+      emit_line ctx (sprintf "%s = bpf_list_push_front(&%s, &%s.__list_node);" result_str list_str element_str)
+      
+  | IRListPushBack (result_val, list_head, element) ->
+      let result_str = generate_c_value ctx result_val in
+      let list_str = generate_c_value ctx list_head in
+      let element_str = generate_c_value ctx element in
+      emit_line ctx (sprintf "%s = bpf_list_push_back(&%s, &%s.__list_node);" result_str list_str element_str)
+      
+  | IRListPopFront (result_val, list_head) ->
+      let result_str = generate_c_value ctx result_val in
+      let list_str = generate_c_value ctx list_head in
+      (* Get the struct type name from the result value *)
+      let struct_type_str = match result_val.val_type with
+        | IRPointer (IRStruct (name, _, _), _) -> sprintf "struct %s" name
+        | _ -> failwith "IRListPopFront result must be a pointer to struct"
+      in
+      (* Generate code with container_of to convert from bpf_list_node to actual struct *)
+      emit_line ctx "{";
+      emit_line ctx (sprintf "  struct bpf_list_node *node = bpf_list_pop_front(&%s);" list_str);
+      emit_line ctx (sprintf "  %s = node ? container_of(node, %s, __list_node) : NULL;" result_str struct_type_str);
+      emit_line ctx "}"
+      
+  | IRListPopBack (result_val, list_head) ->
+      let result_str = generate_c_value ctx result_val in
+      let list_str = generate_c_value ctx list_head in
+      (* Get the struct type name from the result value *)
+      let struct_type_str = match result_val.val_type with
+        | IRPointer (IRStruct (name, _, _), _) -> sprintf "struct %s" name
+        | _ -> failwith "IRListPopBack result must be a pointer to struct"
+      in
+      (* Generate code with container_of to convert from bpf_list_node to actual struct *)
+      emit_line ctx "{";
+      emit_line ctx (sprintf "  struct bpf_list_node *node = bpf_list_pop_back(&%s);" list_str);
+      emit_line ctx (sprintf "  %s = node ? container_of(node, %s, __list_node) : NULL;" result_str struct_type_str);
+      emit_line ctx "}"
 
 (** Generate C code for basic block *)
 
@@ -3077,6 +3218,14 @@ let collect_registers_in_function ir_func =
         collect_in_value dest_val; collect_in_value flag_val
     | IRObjectDelete ptr_val ->
         collect_in_value ptr_val
+    | IRListPushFront (result_val, list_head, element) ->
+        collect_in_value result_val; collect_in_value list_head; collect_in_value element
+    | IRListPushBack (result_val, list_head, element) ->
+        collect_in_value result_val; collect_in_value list_head; collect_in_value element
+    | IRListPopFront (result_val, list_head) ->
+        collect_in_value result_val; collect_in_value list_head
+    | IRListPopBack (result_val, list_head) ->
+        collect_in_value result_val; collect_in_value list_head
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -3324,9 +3473,9 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   (* Generate declarations in original AST order to preserve source order *)
   generate_declarations_in_source_order ctx ir_multi_program type_aliases;
   
-  (* Generate struct definitions *)
+  (* Generate struct definitions with list node injection *)
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
-  generate_struct_definitions ctx struct_defs;
+  generate_struct_definitions_with_list_support ctx struct_defs None ir_multi_program;
   
   (* Generate config maps from IR multi-program *)
   if ir_multi_program.global_configs <> [] then
@@ -3428,6 +3577,14 @@ let compile_multi_to_c_with_tail_calls
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
   generate_includes ctx ~program_types ();
   
+  (* Generate BPF list helper function declarations *)
+  emit_line ctx "/* BPF list helper functions */";
+  emit_line ctx "extern int bpf_list_push_front(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;";
+  emit_line ctx "extern int bpf_list_push_back(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;";
+  emit_line ctx "extern struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head) __ksym;";
+  emit_line ctx "extern struct bpf_list_node *bpf_list_pop_back(struct bpf_list_head *head) __ksym;";
+  emit_blank_line ctx;
+  
   (* Generate dynptr safety macros and helper functions *)
   emit_line ctx "/* eBPF Dynptr API integration for enhanced pointer safety */";
   emit_line ctx "/* Using system-provided bpf_dynptr_* helper functions from bpf_helpers.h */";
@@ -3511,9 +3668,9 @@ let compile_multi_to_c_with_tail_calls
   (* Generate declarations in original AST order to preserve source order *)
   generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
   
-  (* Generate struct definitions *)
+  (* Generate struct definitions with list node injection *)
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
-  generate_struct_definitions ctx struct_defs;
+  generate_struct_definitions_with_list_support ctx struct_defs symbol_table ir_multi_prog;
   
   (* Generate global map definitions BEFORE functions that use them *)
   List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;

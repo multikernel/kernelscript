@@ -101,6 +101,7 @@
     | "const" -> CONST
     | "config" -> CONFIG
     | "local" -> LOCAL
+    | "list" -> LIST
     | "in" -> IN
     | "new" -> NEW
     | "delete" -> DELETE

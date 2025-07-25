@@ -49,6 +49,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_lists)
+ (modules test_lists)
+ (libraries kernelscript alcotest test_utils))
+
+(executable
  (name test_object_allocation)
  (modules test_object_allocation)
  (libraries kernelscript alcotest))
@@ -405,6 +410,10 @@
  (action (run ./test_maps.exe)))
 
 (rule
+ (alias runtest_lists)
+ (action (run ./test_lists.exe)))
+
+(rule
  (alias runtest_safety_checker)
  (action (run ./test_safety_checker.exe)))
 
@@ -692,6 +701,7 @@
   test_function_pointers.exe
   test_compound_index_assignment.exe
   test_dynptr_bridge.exe
+  test_lists.exe
   test_safety_checker.exe
   test_object_allocation.exe
   test_program_ref.exe
@@ -736,6 +746,7 @@
    (run ./test_function_pointers.exe)
    (run ./test_compound_index_assignment.exe)
    (run ./test_dynptr_bridge.exe)
+   (run ./test_lists.exe)
    (run ./test_safety_checker.exe)
    (run ./test_object_allocation.exe)
    (run ./test_program_ref.exe)
