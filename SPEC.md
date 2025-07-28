@@ -136,13 +136,11 @@ fn main() -> i32 {
 
 ### 2.1 Keywords
 ```
-program     fn          var         const       config      local
-pin         type        struct      enum        if          else        for
-while       loop        break       continue    return      import      export
-pub         priv        static      unsafe      where       impl        true
-false       null        and         or          not         in          as
-is          try         catch       throw       defer       go          delete
-match       test
+fn          var         const       config      local       for
+pin         type        struct      enum        if          else
+while       loop        break       continue    return      import
+pub         priv        impl        true        false       null
+try         catch       throw       defer       delete      match
 ```
 
 **Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
