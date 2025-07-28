@@ -789,6 +789,7 @@ impl my_bbr {
         // State transitions
     }
 }
+```
 
 ### 3.6 Custom Kernel Functions (kfunc)
 
@@ -1451,32 +1452,6 @@ fn register(ops) -> i32
 - The compiler determines the registration method based on the impl block attribute
 - Impl blocks provide a cleaner syntax compared to struct initialization
 
-// Multi-program userspace coordination
-fn main() -> i32 {
-    // Load all programs
-    var ingress_handle = load(ingress_monitor)
-    var egress_handle = load(egress_monitor)
-    var security_handle = load(security_check)
-    
-    // Attach in specific order for coordinated monitoring
-    attach(security_handle, "socket_connect", 0)
-    attach(ingress_handle, "eth0", 0)
-    attach(egress_handle, "eth0", 1)  // Egress direction
-    
-    // Register struct_ops using impl block
-    register(my_bbr)
-    
-    print("Multi-program monitoring system with BBR congestion control active")
-    
-    // Event processing loop
-    while (true) {
-        process_events()
-        sleep(1000)
-    }
-    
-    return 0
-}
-```
 
 ## 4. Type System
 
