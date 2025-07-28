@@ -1435,7 +1435,7 @@ and type_check_expression ctx expr =
            { texpr_desc = TListOperation list_op; texpr_type = Void; texpr_pos = expr.expr_pos }
            
        | PopFront | PopBack ->
-           (* Pop operations return element struct or none *)
+           (* Pop operations return pointer to element struct (nullable) *)
            let resolved_element_type = resolve_user_type ctx element_type in
            { texpr_desc = TListOperation list_op; texpr_type = resolved_element_type; texpr_pos = expr.expr_pos })
 
@@ -2709,23 +2709,23 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
           | ImplStaticField (_, _) -> ()  (* Static fields don't need function registration *)
         ) impl_block.impl_items
     | ListDecl list_decl ->
-        (* Validate that list element type is a struct *)
+        (* Validate that list element type is a pointer to struct (C-style) *)
         let resolved_element_type = resolve_user_type ctx list_decl.element_type in
         let struct_name = match resolved_element_type with
-         | Struct name -> name
-         | UserType name -> 
+         | Pointer (Struct name) -> name
+         | Pointer (UserType name) -> 
              (* Resolve UserType to see if it's a struct *)
              (match resolve_user_type ctx (UserType name) with
               | Struct struct_name -> struct_name
-              | _ -> type_error ("List elements must be struct types, got " ^ string_of_bpf_type resolved_element_type) list_decl.list_pos)
+              | _ -> type_error ("List elements must be pointers to struct types, got pointer to " ^ string_of_bpf_type resolved_element_type) list_decl.list_pos)
          | _ -> 
-             type_error ("List elements must be struct types, got " ^ string_of_bpf_type resolved_element_type) list_decl.list_pos
+             type_error ("List elements must be pointer types (*StructName), got " ^ string_of_bpf_type resolved_element_type) list_decl.list_pos
         in
         
         (* Track that this struct needs bpf_list_node injection *)
         Hashtbl.replace ctx.list_structs struct_name ();
         
-        (* Add list to context (lists are now of type bpf_list_head, not pointers to struct) *)
+        (* Add list to context (lists store pointers to structs) *)
         Hashtbl.replace ctx.variables list_decl.list_name (List resolved_element_type)
     | ImportDecl _import_decl ->
         (* Import declarations are handled elsewhere - no processing needed here *)

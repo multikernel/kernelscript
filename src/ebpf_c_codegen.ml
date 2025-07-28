@@ -823,6 +823,9 @@ let detect_list_structs_from_ir ir_multi_prog =
              | IRStruct (struct_name, _, _) ->
                  if not (List.mem struct_name !list_structs) then
                    list_structs := struct_name :: !list_structs
+             | IRPointer (IRStruct (struct_name, _, _), _) ->
+                 if not (List.mem struct_name !list_structs) then
+                   list_structs := struct_name :: !list_structs
              | _ -> ())
         | _ -> ()
       ) block.instructions
@@ -1255,9 +1258,43 @@ let generate_global_variables ctx global_variables =
       emit_blank_line ctx
     );
     
-    (* Separate pinned and non-pinned variables *)
+    (* Separate different types of global variables *)
     let pinned_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
-    let regular_vars = List.filter (fun gv -> not gv.is_pinned) global_variables in
+    let bpf_special_vars = List.filter (fun gv -> 
+      not gv.is_pinned && 
+      match gv.global_var_type with 
+      | IRBpfListHead _ -> true 
+      | _ -> false) global_variables in
+    let regular_vars = List.filter (fun gv -> 
+      not gv.is_pinned && 
+      match gv.global_var_type with 
+      | IRBpfListHead _ -> false 
+      | _ -> true) global_variables in
+    
+        (* Generate BPF special variables (list heads, spin locks) as direct globals *)
+    if bpf_special_vars <> [] then (
+      emit_line ctx "/* BPF private global variables (list heads, etc.) */";
+      emit_line ctx "#define __contains(name, node) __attribute__((btf_decl_tag(\"contains:\" #name \":\" #node)))";
+      emit_line ctx "#define private(name) SEC(\".bss.\" #name) __hidden __attribute__((aligned(8)))";
+      emit_blank_line ctx;
+      List.iter (fun global_var ->
+        let c_type = ebpf_type_from_ir_type global_var.global_var_type in
+        let var_name = global_var.global_var_name in
+        
+        (* Generate with proper __contains attribute for list heads *)
+        (match global_var.global_var_type with
+         | IRBpfListHead element_type ->
+             let element_type_name = match element_type with
+               | IRStruct (name, _, _) -> name
+               | IRPointer (IRStruct (name, _, _), _) -> name
+               | _ -> failwith "List element type must be a struct or pointer to struct"
+             in
+             emit_line ctx (sprintf "%s %s private(%s) __contains(%s, __list_node);" c_type var_name var_name element_type_name)
+         | _ ->
+             emit_line ctx (sprintf "%s %s private(%s);" c_type var_name var_name))
+      ) bpf_special_vars;
+      emit_blank_line ctx
+    );
     
     (* Generate pinned globals struct if there are any pinned variables *)
     if pinned_vars <> [] then (
@@ -1299,39 +1336,41 @@ let generate_global_variables ctx global_variables =
       emit_blank_line ctx
     );
     
-    (* Generate regular (non-pinned) global variables *)
-    List.iter (fun global_var ->
-      let c_type = ebpf_type_from_ir_type global_var.global_var_type in
-      let var_name = global_var.global_var_name in
-      let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
-      
-      (* Generate variable declaration with initialization if present *)
-      (match global_var.global_var_init with
-       | Some init_val ->
-           let init_str = match init_val.value_desc with
-             | IRLiteral (Ast.IntLit (i, original_opt)) -> 
-                 (* Use original format if available, otherwise use decimal *)
-                 (match original_opt with
-                  | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
-                  | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
-                  | _ -> string_of_int i)
-             | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
-             | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" s
-             | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
-             | IRLiteral (Ast.NullLit) -> "NULL"
-             | _ -> "0" (* fallback *)
-           in
-           if global_var.is_local then
-             emit_line ctx (sprintf "%s%s %s = %s;" local_attr c_type var_name init_str)
-           else
-             emit_line ctx (sprintf "%s %s = %s;" c_type var_name init_str)
-       | None ->
-           if global_var.is_local then
-             emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
-           else
-             emit_line ctx (sprintf "%s %s;" c_type var_name))
-    ) regular_vars;
-    emit_blank_line ctx
+    (* Generate regular (non-pinned, non-special) global variables *)
+    if regular_vars <> [] then (
+      List.iter (fun global_var ->
+        let c_type = ebpf_type_from_ir_type global_var.global_var_type in
+        let var_name = global_var.global_var_name in
+        let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
+        
+        (* Generate variable declaration with initialization if present *)
+        (match global_var.global_var_init with
+         | Some init_val ->
+             let init_str = match init_val.value_desc with
+               | IRLiteral (Ast.IntLit (i, original_opt)) -> 
+                   (* Use original format if available, otherwise use decimal *)
+                   (match original_opt with
+                    | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
+                    | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
+                    | _ -> string_of_int i)
+               | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
+               | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" s
+               | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
+               | IRLiteral (Ast.NullLit) -> "NULL"
+               | _ -> "0" (* fallback *)
+             in
+             if global_var.is_local then
+               emit_line ctx (sprintf "%s%s %s = %s;" local_attr c_type var_name init_str)
+             else
+               emit_line ctx (sprintf "%s %s = %s;" c_type var_name init_str)
+         | None ->
+             if global_var.is_local then
+               emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
+             else
+               emit_line ctx (sprintf "%s %s;" c_type var_name))
+      ) regular_vars;
+      emit_blank_line ctx
+    )
   )
 
 (** Generate struct_ops definitions and instances for eBPF *)
@@ -2973,13 +3012,23 @@ let rec generate_c_instruction ctx ir_instr =
       let result_str = generate_c_value ctx result_val in
       let list_str = generate_c_value ctx list_head in
       let element_str = generate_c_value ctx element in
-      emit_line ctx (sprintf "%s = bpf_list_push_front(&%s, &%s.__list_node);" result_str list_str element_str)
+      (* Validate element is a pointer before using -> syntax *)
+      (match element.val_type with
+       | IRPointer (IRStruct (_, _, _), _) ->
+           emit_line ctx (sprintf "%s = bpf_list_push_front(&%s, &%s->__list_node);" result_str list_str element_str)
+       | _ ->
+           failwith ("Internal error: List push element must be a pointer to struct, got " ^ string_of_ir_type element.val_type))
       
   | IRListPushBack (result_val, list_head, element) ->
       let result_str = generate_c_value ctx result_val in
       let list_str = generate_c_value ctx list_head in
       let element_str = generate_c_value ctx element in
-      emit_line ctx (sprintf "%s = bpf_list_push_back(&%s, &%s.__list_node);" result_str list_str element_str)
+      (* Validate element is a pointer before using -> syntax *)
+      (match element.val_type with
+       | IRPointer (IRStruct (_, _, _), _) ->
+           emit_line ctx (sprintf "%s = bpf_list_push_back(&%s, &%s->__list_node);" result_str list_str element_str)
+       | _ ->
+           failwith ("Internal error: List push element must be a pointer to struct, got " ^ string_of_ir_type element.val_type))
       
   | IRListPopFront (result_val, list_head) ->
       let result_str = generate_c_value ctx result_val in
@@ -3577,10 +3626,22 @@ let compile_multi_to_c_with_tail_calls
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
   generate_includes ctx ~program_types ();
   
-  (* Generate BPF list helper function declarations *)
-  emit_line ctx "/* BPF list helper functions */";
-  emit_line ctx "extern int bpf_list_push_front(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;";
-  emit_line ctx "extern int bpf_list_push_back(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;";
+  (* Generate BPF list helper function declarations with correct kernel API *)
+  emit_line ctx "/* BPF list helper functions - using correct kernel API */";
+  emit_line ctx "extern int bpf_list_push_front_impl(struct bpf_list_head *head,";
+  emit_line ctx "                                    struct bpf_list_node *node,";
+  emit_line ctx "                                    void *meta, __u64 off) __ksym;";
+  emit_line ctx "";
+  emit_line ctx "/* Convenience macro to wrap over bpf_list_push_front_impl */";
+  emit_line ctx "#define bpf_list_push_front(head, node) bpf_list_push_front_impl(head, node, NULL, 0)";
+  emit_line ctx "";
+  emit_line ctx "extern int bpf_list_push_back_impl(struct bpf_list_head *head,";
+  emit_line ctx "                                   struct bpf_list_node *node,";
+  emit_line ctx "                                   void *meta, __u64 off) __ksym;";
+  emit_line ctx "";
+  emit_line ctx "/* Convenience macro to wrap over bpf_list_push_back_impl */";
+  emit_line ctx "#define bpf_list_push_back(head, node) bpf_list_push_back_impl(head, node, NULL, 0)";
+  emit_line ctx "";
   emit_line ctx "extern struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head) __ksym;";
   emit_line ctx "extern struct bpf_list_node *bpf_list_pop_back(struct bpf_list_head *head) __ksym;";
   emit_blank_line ctx;

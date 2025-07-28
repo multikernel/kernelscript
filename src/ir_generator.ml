@@ -975,26 +975,26 @@ let rec lower_expression ctx (expr : Ast.expr) =
            
        | PopFront ->
            let result_reg = allocate_register ctx in
-           let bounds = make_bounds_info ~nullable:true () in
            (* Extract element type from the list *)
            let element_type = match list_val.val_type with
              | IRBpfListHead elem_type -> elem_type
              | _ -> failwith ("PopFront can only be applied to list types, got " ^ string_of_ir_type list_val.val_type)
            in
-           let result_val = make_ir_value (IRRegister result_reg) (IRPointer (element_type, bounds)) expr.expr_pos in
+           (* For C-style lists, element_type is already a pointer, so use it directly *)
+           let result_val = make_ir_value (IRRegister result_reg) element_type expr.expr_pos in
            let pop_instr = make_ir_instruction (IRListPopFront (result_val, list_val)) expr.expr_pos in
            emit_instruction ctx pop_instr;
            result_val
            
        | PopBack ->
            let result_reg = allocate_register ctx in
-           let bounds = make_bounds_info ~nullable:true () in
            (* Extract element type from the list *)
            let element_type = match list_val.val_type with
              | IRBpfListHead elem_type -> elem_type
              | _ -> failwith ("PopBack can only be applied to list types, got " ^ string_of_ir_type list_val.val_type)
            in
-           let result_val = make_ir_value (IRRegister result_reg) (IRPointer (element_type, bounds)) expr.expr_pos in
+           (* For C-style lists, element_type is already a pointer, so use it directly *)
+           let result_val = make_ir_value (IRRegister result_reg) element_type expr.expr_pos in
            let pop_instr = make_ir_instruction (IRListPopBack (result_val, list_val)) expr.expr_pos in
            emit_instruction ctx pop_instr;
            result_val)

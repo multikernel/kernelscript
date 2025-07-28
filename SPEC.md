@@ -2300,35 +2300,36 @@ fn simple_monitor(ctx: *xdp_md) -> xdp_action {
 
 ### 5.6 eBPF Linked Lists
 
-KernelScript provides seamless support for eBPF linked lists with Python-like syntax. Lists automatically handle the complex BPF linked list infrastructure while providing a simple, type-safe interface.
+KernelScript provides C-style pointer-based eBPF linked lists with zero-copy semantics and explicit memory management. Lists handle the complex BPF linked list infrastructure while providing familiar C-style pointer operations.
 
 #### 5.6.1 List Declaration Syntax
 
-Lists use a simplified syntax compared to maps - no flags or pinning allowed:
+Lists must be declared with pointer types using C-style syntax:
 
 ```kernelscript
-// Basic list declaration
-var my_list : list<StructType>
+// C-style pointer list declaration
+var my_list : list<*StructType>
 
-// Lists can only contain struct types
+// Lists store pointers to struct types
 struct PacketInfo {
     src_ip: u32,
     dst_ip: u32,
     size: u16,
 }
 
-var packet_queue : list<PacketInfo>
+var packet_queue : list<*PacketInfo>
 ```
 
 **List Constraints:**
-- ✅ Only struct types are allowed as list elements
+- ✅ Only pointer-to-struct types are allowed (`list<*StructType>`)
 - ❌ Lists cannot be pinned (no `pin` keyword)
 - ❌ Lists cannot have flags (no `@flags()`)
-- ❌ Primitive types like `u32`, `str`, etc. are not allowed
+- ❌ Primitive types and non-pointer types are not allowed
+- ❌ Value types like `list<StructType>` are rejected at compile time
 
 #### 5.6.2 List Operations
 
-KernelScript provides four core list operations that map directly to eBPF linked list functions:
+KernelScript provides four core list operations with C-style pointer semantics and zero-copy ownership transfer:
 
 ```kernelscript
 struct EventData {
@@ -2336,42 +2337,71 @@ struct EventData {
     event_type: u32,
 }
 
-var event_list : list<EventData>
+var event_list : list<*EventData>
 
 @helper
 fn process_events() {
-    var event = EventData {
-        timestamp: bpf_ktime_get_ns(),
-        event_type: 1,
+    // Heap allocation required for list elements
+    var event = new EventData()
+    if (event == null) {
+        return  // Handle allocation failure
     }
+    event->timestamp = bpf_ktime_get_ns()
+    event->event_type = 1
     
-    // Add elements
-    event_list.push_back(event)    // Add to end of list
-    event_list.push_front(event)   // Add to beginning of list
+    // Add pointers to list (ownership transfer)
+    event_list.push_back(event)    // Transfer ownership to list
     
-    // Remove and return elements
-    var latest = event_list.pop_front()   // Remove from beginning
-    var oldest = event_list.pop_back()    // Remove from end
+    var event2 = new EventData()
+    if (event2 == null) {
+        return
+    }
+    event2->timestamp = bpf_ktime_get_ns()
+    event2->event_type = 2
     
-    // Check for null (empty list)
-    if (latest != null) {
+    event_list.push_front(event2)  // Transfer ownership to list
+    
+    // Remove and return pointers (ownership returned)
+    var latest = event_list.pop_front()   // Returns *EventData or null
+    var oldest = event_list.pop_back()    // Returns *EventData or null
+    
+    // Check for none (empty list)
+    if (latest != none) {
         // Process the event
         if (latest->event_type == 1) {
             // Handle event
         }
+        // Manual cleanup required after popping
+        delete latest
+    }
+    
+    if (oldest != none) {
+        delete oldest  // Explicit memory management
     }
 }
 ```
 
 #### 5.6.3 Generated eBPF Code
 
-The compiler automatically generates the necessary BPF linked list infrastructure:
+The compiler automatically generates optimized zero-copy BPF linked list infrastructure:
 
 ##### 1. Helper Function Declarations
 ```c
-/* BPF list helper functions are automatically declared */
-extern int bpf_list_push_front(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;
-extern int bpf_list_push_back(struct bpf_list_head *head, struct bpf_list_node *node) __ksym;
+/* BPF list helper functions - using correct kernel API */
+extern int bpf_list_push_front_impl(struct bpf_list_head *head,
+                                    struct bpf_list_node *node,
+                                    void *meta, __u64 off) __ksym;
+
+/* Convenience macro to wrap over bpf_list_push_front_impl */
+#define bpf_list_push_front(head, node) bpf_list_push_front_impl(head, node, NULL, 0)
+
+extern int bpf_list_push_back_impl(struct bpf_list_head *head,
+                                   struct bpf_list_node *node,
+                                   void *meta, __u64 off) __ksym;
+
+/* Convenience macro to wrap over bpf_list_push_back_impl */
+#define bpf_list_push_back(head, node) bpf_list_push_back_impl(head, node, NULL, 0)
+
 extern struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head) __ksym;
 extern struct bpf_list_node *bpf_list_pop_back(struct bpf_list_head *head) __ksym;
 ```
@@ -2389,51 +2419,86 @@ struct EventData {
 };
 ```
 
-##### 3. List Variable Declaration
+##### 3. List Variable Declaration with BTF Annotations
 ```c
-/* KernelScript: var event_list : list<EventData> */
-struct bpf_list_head event_list;
+/* KernelScript: var event_list : list<*EventData> */
+#define __contains(name, node) __attribute__((btf_decl_tag("contains:" #name ":" #node)))
+#define private(name) SEC(".bss." #name) __hidden __attribute__((aligned(8)))
+
+struct bpf_list_head event_list private(event_list) __contains(EventData, __list_node);
 ```
 
-##### 4. Operation Translation
+##### 4. Operation Translation (Zero-Copy Pointers)
 ```c
-// KernelScript: event_list.push_back(event)
+// KernelScript: var event = new EventData()
 // Generated eBPF C:
-result = bpf_list_push_back(&event_list, &event.__list_node);
+struct EventData* ptr_0;
+ptr_0 = bpf_obj_new(struct EventData);
+
+// KernelScript: event_list.push_back(event)  
+// Generated eBPF C (zero-copy pointer transfer):
+val_1 = bpf_list_push_back(&event_list, &ptr_0->__list_node);
+
+// KernelScript: var item = event_list.pop_front()
+// Generated eBPF C:
+{
+  struct bpf_list_node *node = bpf_list_pop_front(&event_list);
+  ptr_2 = node ? container_of(node, struct EventData, __list_node) : NULL;
+}
+
+// KernelScript: delete item
+// Generated eBPF C:
+bpf_obj_drop(ptr_2);
 ```
 
 **Complete Operation Mapping:**
-- `list.push_front(item)` → `bpf_list_push_front(&list, &item.__list_node)`
-- `list.push_back(item)` → `bpf_list_push_back(&list, &item.__list_node)`  
-- `list.pop_front()` → `bpf_list_pop_front(&list)`
-- `list.pop_back()` → `bpf_list_pop_back(&list)`
+- `list.push_front(ptr)` → `bpf_list_push_front(&list, &ptr->__list_node)`
+- `list.push_back(ptr)` → `bpf_list_push_back(&list, &ptr->__list_node)`  
+- `list.pop_front()` → `container_of(bpf_list_pop_front(&list), struct_type, __list_node)`
+- `list.pop_back()` → `container_of(bpf_list_pop_back(&list), struct_type, __list_node)`
 
 #### 5.6.4 Type Safety
 
-The compiler enforces strict type safety for list operations:
+The compiler enforces strict type safety for C-style pointer list operations:
 
 ```kernelscript
 struct PacketInfo { src_ip: u32 }
 struct EventData { timestamp: u64 }
 
-var packets : list<PacketInfo>
-var events : list<EventData>
+var packets : list<*PacketInfo>
+var events : list<*EventData>
 
 @helper
 fn type_safety_example() {
-    var packet = PacketInfo { src_ip: 1234 }
-    var event = EventData { timestamp: 5678 }
+    var packet = new PacketInfo()
+    packet->src_ip = 1234
     
-    packets.push_back(packet)  // ✅ Correct type
-    packets.push_back(event)   // ❌ Compile error: type mismatch
+    var event = new EventData()
+    event->timestamp = 5678
     
-    var retrieved = packets.pop_front()  // Returns PacketInfo* or null
+    packets.push_back(packet)  // ✅ Correct type: *PacketInfo
+    packets.push_back(event)   // ❌ Compile error: type mismatch (*EventData vs *PacketInfo)
+    
+    var retrieved = packets.pop_front()  // Returns *PacketInfo or null
+    if (retrieved != none) {
+        // Use pointer dereference syntax
+        if (retrieved->src_ip > 0) {
+            // Process packet
+        }
+        delete retrieved  // Manual cleanup required
+    }
 }
 ```
 
+**Type Safety Features:**
+- ✅ **Pointer Type Checking**: Lists declared as `list<*T>` only accept `*T` pointers
+- ✅ **Struct Type Validation**: Only pointer-to-struct types allowed, not primitives
+- ✅ **Ownership Transfer**: Clear ownership semantics prevent double-free errors
+- ✅ **Null Safety**: Pop operations return nullable pointers requiring null checks
+
 #### 5.6.5 Integration with eBPF Programs
 
-Lists work seamlessly in all eBPF program types:
+C-style pointer lists work seamlessly in all eBPF program types:
 
 ```kernelscript
 struct NetworkEvent {
@@ -2442,28 +2507,126 @@ struct NetworkEvent {
     action: u32,
 }
 
-var network_log : list<NetworkEvent>
+var network_log : list<*NetworkEvent>
 
 @xdp
 fn packet_filter(ctx: *xdp_md) -> xdp_action {
-    var event = NetworkEvent {
-        src_ip: ctx->remote_ip4,
-        dst_ip: ctx->local_ip4,
-        action: XDP_PASS,
+    // Heap allocate event for safe list storage
+    var event = new NetworkEvent()
+    if (event == null) {
+        return XDP_DROP  // Handle allocation failure
     }
     
+    event->src_ip = ctx->remote_ip4
+    event->dst_ip = ctx->local_ip4
+    event->action = XDP_PASS
+    
+    // Transfer ownership to list (zero-copy)
     network_log.push_front(event)
+    
     return XDP_PASS
+}
+
+@helper  
+fn process_network_events() {
+    // Process accumulated events
+    var event = network_log.pop_back()
+    while (event != none) {
+        // Process the event
+        if (event->action == XDP_PASS) {
+            // Handle allowed packets
+        }
+        
+        // Clean up after processing
+        delete event
+        
+        // Get next event
+        event = network_log.pop_back()
+    }
 }
 ```
 
-#### 5.6.6 Memory Management
+#### 5.6.6 Memory Management ✅ **SAFE & EFFICIENT**
 
-List elements are automatically managed by the eBPF kernel infrastructure:
-- Elements are allocated using `bpf_obj_new()` when created
-- Elements are freed automatically when removed from lists
-- No manual memory management required
-- Built-in protection against memory leaks and use-after-free
+**🎉 C-Style Implementation is Memory Safe**
+
+The C-style pointer implementation eliminates use-after-free vulnerabilities through explicit memory management and zero-copy ownership transfer.
+
+**Safe Implementation Features:**
+
+##### 1. **Mandatory Heap Allocation**
+```kernelscript
+@xdp
+fn safe_processor(ctx: *xdp_md) -> xdp_action {
+    // Only heap allocation allowed for list elements
+    var event = new EventData()      // ✅ bpf_obj_new() allocation
+    if (event == null) {
+        return XDP_DROP              // Handle allocation failure
+    }
+    
+    event->timestamp = bpf_ktime_get_ns()
+    event->event_type = 1
+    
+    // Direct pointer transfer (zero-copy)
+    event_list.push_back(event)     // ✅ Transfer ownership to list
+    
+    return XDP_PASS
+    // ✅ SAFE: heap object persists beyond function scope
+}
+```
+
+##### 2. **Generated C Code (Safe)**
+```c
+int safe_processor(struct xdp_md* ctx) {
+    struct EventData* ptr_0;
+    ptr_0 = bpf_obj_new(struct EventData);           // ✅ Heap allocation
+    if (ptr_0 == NULL) {
+        return XDP_DROP;
+    }
+    
+    ptr_0->timestamp = bpf_ktime_get_ns();
+    ptr_0->event_type = 1;
+    
+    // Zero-copy pointer transfer
+    bpf_list_push_back(&event_list, &ptr_0->__list_node);  // ✅ Direct pointer
+    
+    return XDP_PASS;
+    // ✅ SAFE: ptr_0 lives on heap, accessible via list
+}
+```
+
+##### 3. **Explicit Ownership Management**
+```kernelscript
+@helper
+fn process_events() {
+    // Pop returns ownership to caller
+    var event = event_list.pop_front()  // Ownership transferred back
+    
+    if (event != null) {
+        // Process the event
+        if (event->event_type == 1) {
+            // Handle specific event type
+        }
+        
+        // Explicit cleanup required
+        delete event                     // ✅ bpf_obj_drop() - manual cleanup
+    }
+}
+```
+
+**Memory Safety Guarantees:**
+- ✅ **Zero Use-After-Free**: Only heap objects allowed in lists
+- ✅ **Clear Ownership**: Explicit transfer semantics prevent confusion
+- ✅ **Zero-Copy Performance**: Direct pointer operations, no data copying
+- ✅ **Compile-Time Safety**: Type checker rejects non-pointer list types
+- ✅ **Runtime Safety**: Null checks and proper error handling
+- ✅ **eBPF Verifier Compliant**: Generates verifier-friendly code patterns
+
+**Performance Benefits:**
+- 🚀 **Zero Data Copying**: Direct pointer manipulation
+- ⚡ **Minimal Overhead**: Single pointer dereference for list operations  
+- 🎯 **Cache Efficient**: Objects remain in original memory locations
+- 📊 **Predictable**: Deterministic memory access patterns
 
 ## 6. Assignment Operators
 
