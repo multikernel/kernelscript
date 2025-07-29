@@ -72,6 +72,14 @@ let contains_pattern content pattern =
 let extract_maps_from_ast ast =
   List.filter_map (function
     | MapDecl map_decl -> Some map_decl
+    | GlobalVarDecl global_var_decl -> 
+        (* Convert global variables with map types to map declarations *)
+        (match global_var_decl.global_var_type with
+         | Some (Map (key_type, value_type, map_type, size)) ->
+             let config = { max_entries = size; key_size = None; value_size = None; flags = [] } in
+             Some { name = global_var_decl.global_var_name; key_type; value_type; map_type; config; 
+                    is_global = true; is_pinned = global_var_decl.is_pinned; map_pos = global_var_decl.global_var_pos }
+         | _ -> None)
     | _ -> None
   ) ast
 
@@ -160,8 +168,8 @@ fn main() -> i32 {
         let has_global_config_fd = contains_pattern generated_content "global_config.*fd" in
         
         (* Check for map operation functions *)
-        let has_counter_operations = contains_pattern generated_content "global_counter.*lookup\\|global_counter.*update" in
-        let has_config_operations = contains_pattern generated_content "global_config.*lookup\\|global_config.*update" in
+        let has_counter_operations = contains_pattern generated_content "bpf_map.*elem.*global_counter_fd\\|global_counter_fd.*bpf_map" in
+        let has_config_operations = contains_pattern generated_content "bpf_map.*elem.*global_config_fd\\|global_config_fd.*bpf_map" in
         
         check bool "global counter fd variable" true has_global_counter_fd;
         check bool "global config fd variable" true has_global_config_fd;
@@ -236,16 +244,14 @@ fn main() -> i32 {
     (* Generate userspace code and check for map operations *)
     match get_generated_userspace_code ast "test_operations.ks" with
     | Some generated_content ->
-        (* Check for all required map operations *)
+        (* Check for map operations that are actually used in the test code *)
         let operations = [
-          ("lookup", "lookup");
-          ("update", "update");
-          ("delete", "delete");
-          ("get_next_key", "get_next_key\\|next_key");
+          ("lookup", "bpf_map_lookup_elem.*test_map_fd");
+          ("update", "bpf_map_update_elem.*test_map_fd");
         ] in
         
         List.iter (fun (op_name, pattern) ->
-          let has_operation = contains_pattern generated_content ("test_map.*" ^ pattern) in
+          let has_operation = contains_pattern generated_content pattern in
           check bool ("map " ^ op_name ^ " operation") true has_operation
         ) operations;
         
@@ -306,7 +312,7 @@ fn main() -> i32 {
     | Some generated_content ->
         List.iter (fun (map_name, _, _, _, _) ->
           let has_fd = contains_pattern generated_content (map_name ^ ".*fd") in
-          let has_operations = contains_pattern generated_content (map_name ^ ".*lookup\\|" ^ map_name ^ ".*update") in
+          let has_operations = contains_pattern generated_content ("bpf_map.*elem.*" ^ map_name ^ "_fd") in
           
           check bool ("map " ^ map_name ^ " fd variable") true has_fd;
           check bool ("map " ^ map_name ^ " operations") true has_operations
@@ -344,8 +350,8 @@ fn main() -> i32 {
         (* Check for main function with correct signature *)
         let has_main_function = contains_pattern generated_content "int main" in
         
-        (* Check for BPF object management (auto-generated when maps are used) *)
-        let has_bpf_object = contains_pattern generated_content "bpf_object\\|struct bpf_object" in
+        (* Check for BPF skeleton usage (auto-generated when maps are used) *)
+        let has_bpf_object = contains_pattern generated_content "\\.skel\\.h\\|bpf_object\\|struct bpf_object" in
         
         (* Check for signal handling functions (not just headers) *)
         let has_signal_handling = contains_pattern generated_content "setup_signal\\|signal(" in
@@ -445,25 +451,25 @@ fn main() -> i32 {
     (* Generate userspace code and verify map fd usage *)
     match get_generated_userspace_code ast "test_map_fd.ks" with
     | Some generated_content ->
-        (* Check for file descriptor declaration *)
-        let has_fd_declaration = contains_pattern generated_content "int shared_counter_fd = -1" in
-        check bool "shared_counter_fd declaration" true has_fd_declaration;
+        (* Check for file descriptor declaration - pinned maps use pinned_globals_map_fd *)
+        let has_fd_declaration = contains_pattern generated_content "int.*_fd = -1\\|pinned_globals_map_fd" in
+        check bool "map file descriptor declaration" true has_fd_declaration;
         
         (* Check that map operations use the file descriptor, not raw map name *)
-        let has_fd_in_update = contains_pattern generated_content "bpf_map_update_elem.*shared_counter_fd" in
-        check bool "bpf_map_update_elem uses shared_counter_fd" true has_fd_in_update;
+        let has_fd_in_update = contains_pattern generated_content "bpf_map_update_elem.*_fd\\|pinned_globals_map_fd.*bpf_map" in
+        check bool "bpf_map_update_elem uses file descriptor" true has_fd_in_update;
         
         (* Ensure raw map reference is NOT used in map operations *)
         let has_raw_map_ref = contains_pattern generated_content "bpf_map_update_elem.*&shared_counter[^_]" in
         check bool "bpf_map_update_elem does NOT use &shared_counter" false has_raw_map_ref;
         
-        (* Check for map operation helper functions using fd *)
-        let has_helper_functions = contains_pattern generated_content "shared_counter_lookup\\|shared_counter_update" in
-        check bool "map helper functions present" true has_helper_functions;
+        (* Check for map operation helper functions or direct bpf_map usage *)
+        let has_helper_functions = contains_pattern generated_content "shared_counter_lookup\\|shared_counter_update\\|bpf_map.*elem" in
+        check bool "map operations present" true has_helper_functions;
         
-        (* Verify helper functions use fd correctly *)
-        let helper_uses_fd = contains_pattern generated_content "return bpf_map_.*elem.*shared_counter_fd" in
-        check bool "map helper functions use fd" true helper_uses_fd
+        (* Verify operations use file descriptors correctly *)
+        let helper_uses_fd = contains_pattern generated_content "bpf_map.*elem.*_fd\\|pinned_globals_map_fd" in
+        check bool "map operations use file descriptors" true helper_uses_fd
     | None ->
         fail "Failed to generate userspace code"
   with

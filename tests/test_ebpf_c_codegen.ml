@@ -46,7 +46,8 @@ let test_type_conversion () =
 
 (** Test map definition generation *)
 let test_map_definition () =
-  let map_def = make_ir_map_def "test_map" IRU32 IRU64 IRHash 1024 test_pos in
+  let map_def = make_ir_map_def "test_map" IRU32 IRU64 IRHash 1024 
+    ~ast_key_type:U32 ~ast_value_type:U64 ~ast_map_type:Hash test_pos in
   let ctx = create_c_context () in
   generate_map_definition ctx map_def;
   
@@ -219,7 +220,8 @@ let test_complete_program () =
   let main_func = make_ir_function "test_xdp" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   
   (* Add a simple map *)
-  let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHash 1024 test_pos in
+  let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHash 1024 
+    ~ast_key_type:U32 ~ast_value_type:U64 ~ast_map_type:Hash test_pos in
   
   let ir_prog = make_ir_program "test_xdp" Xdp main_func test_pos in
   
@@ -470,6 +472,7 @@ let test_no_empty_struct_generation () =
     struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     multi_pos = dummy_pos;
   } in
   
@@ -527,6 +530,7 @@ let test_type_alias_struct_ordering () =
     struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     multi_pos = dummy_pos;
   } in
   
@@ -707,6 +711,7 @@ let test_complete_type_alias_fix_integration () =
     struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     multi_pos = dummy_pos;
   } in
   
@@ -776,6 +781,7 @@ let test_string_size_collection_from_userspace_structs () =
     struct_ops_instances = [];
     userspace_program = Some userspace_program;
     userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     multi_pos = dummy_pos;
   } in
   
@@ -794,7 +800,8 @@ let test_declaration_ordering_fix () =
   (* Create a multi-program IR with map and function to test ordering *)
   let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
   
-  let map_def = make_ir_map_def "test_map" IRU32 IRU64 IRHash 1024 dummy_pos in
+  let map_def = make_ir_map_def "test_map" IRU32 IRU64 IRHash 1024 
+    ~ast_key_type:U32 ~ast_value_type:U64 ~ast_map_type:Hash dummy_pos in
   
   let map_lookup_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) dummy_pos in
   let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 dummy_pos in
@@ -825,6 +832,7 @@ let test_declaration_ordering_fix () =
     struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     multi_pos = dummy_pos;
   } in
   
@@ -877,6 +885,7 @@ let test_bpf_printk_string_literal_fix () =
     struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     multi_pos = dummy_pos;
   } in
   

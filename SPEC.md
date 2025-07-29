@@ -3406,11 +3406,14 @@ fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
     }
 }
 
-// What compiler generates (conceptually):
+// What compiler generates (using modern dynptr APIs):
 // - bpf_ringbuf_reserve_dynptr() for allocation
-// - bpf_dynptr_data() for direct access when possible
-// - bpf_dynptr_write() for safe access when needed
+// - bpf_dynptr_data() for pointer retrieval
+// - bpf_dynptr_write() for ALL field assignments (event->field = value)
 // - bpf_ringbuf_submit_dynptr() for submission
+// Example: event->id = 42 becomes:
+//   { __u32 __tmp_val = 42;
+//     bpf_dynptr_write(&event_dynptr, __builtin_offsetof(struct Event, id), &__tmp_val, 4, 0); }
 ```
 
 ### 10.3 Stack Management and Large Struct Handling

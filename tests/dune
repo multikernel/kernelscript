@@ -4,6 +4,11 @@
  (libraries kernelscript))
 
 (executable
+ (name test_ringbuf)
+ (modules test_ringbuf)
+ (libraries kernelscript alcotest test_utils str))
+
+(executable
  (name test_test_attribute)
  (modules test_test_attribute)
  (libraries kernelscript alcotest))
@@ -621,7 +626,8 @@
   test_map_integration.exe
   test_map_flags.exe
   test_maps.exe
-  test_map_operations.exe)
+  test_map_operations.exe
+  test_ringbuf.exe)
  (action
   (progn
    (run ./test_map_syntax.exe)
@@ -629,7 +635,8 @@
    (run ./test_map_integration.exe)
    (run ./test_map_flags.exe)
    (run ./test_maps.exe)
-   (run ./test_map_operations.exe))))
+   (run ./test_map_operations.exe)
+   (run ./test_ringbuf.exe))))
 
 (rule
  (alias userspace-tests)

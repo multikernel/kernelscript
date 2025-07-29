@@ -862,12 +862,15 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Continue with regular eBPF compilation using the appropriate AST *)
     (
-      let optimized_ir = Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table input_file in
+          let optimized_ir = Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table input_file in
     
-    (* Phase 6: Advanced multi-target code generation *)
+    (* Ring Buffer Analysis - populate the centralized registry *)
+    let ir_with_ring_buffer_analysis = Ir_analysis.RingBufferAnalysis.analyze_and_populate_registry optimized_ir in
+  
+  (* Phase 6: Advanced multi-target code generation *)
     current_phase := "Code Generation";
     Printf.printf "Phase 6: %s\n" !current_phase;
-    let _resource_plan = Multi_program_ir_optimizer.plan_system_resources optimized_ir.programs multi_prog_analysis in
+    let _resource_plan = Multi_program_ir_optimizer.plan_system_resources ir_with_ring_buffer_analysis.programs multi_prog_analysis in
     let _optimization_strategies = Multi_program_ir_optimizer.generate_optimization_strategies multi_prog_analysis in
     
     (* Extract type aliases from original AST *)
@@ -922,13 +925,13 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       let updated_programs = List.map (fun prog ->
         let updated_entry_function = Tail_call_analyzer.update_ir_function_tail_call_indices prog.Ir.entry_function tail_call_analysis in
         { prog with entry_function = updated_entry_function }
-      ) optimized_ir.programs in
+      ) ir_with_ring_buffer_analysis.programs in
       
       let updated_kernel_functions = List.map (fun func ->
         Tail_call_analyzer.update_ir_function_tail_call_indices func tail_call_analysis
-      ) optimized_ir.kernel_functions in
+      ) ir_with_ring_buffer_analysis.kernel_functions in
       
-      { optimized_ir with programs = updated_programs; kernel_functions = updated_kernel_functions }
+      { ir_with_ring_buffer_analysis with programs = updated_programs; kernel_functions = updated_kernel_functions }
     in
     
     (* Generate eBPF C code (with updated IR and kfunc declarations) *)
@@ -936,7 +939,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table ~tail_call_analysis:(Some tail_call_analysis) updated_optimized_ir in
       
     (* Analyze kfunc dependencies for automatic kernel module loading *)
-    let ir_functions = List.map (fun prog -> prog.Ir.entry_function) optimized_ir.programs in
+    let ir_functions = List.map (fun prog -> prog.Ir.entry_function) ir_with_ring_buffer_analysis.programs in
     let kfunc_dependencies = Userspace_codegen.analyze_kfunc_dependencies base_name annotated_ast ir_functions in
     
     (* Generate kernel module for kfuncs if any exist *)

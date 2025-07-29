@@ -61,6 +61,9 @@ let rec c_type_from_ir_type = function
       let param_types_str = List.map c_type_from_ir_type param_types in
       let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
       sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
+  | IRRingbuf (_value_type, _size) ->
+      (* Ring buffer objects are represented as ring_buffer pointers in userspace *)
+      "struct ring_buffer*"
 
 (** Generate bridge code for imported KernelScript modules *)
 let generate_kernelscript_bridge_code resolved_imports =
@@ -442,6 +445,7 @@ type function_usage = {
   mutable uses_attach: bool;
   mutable uses_map_operations: bool;
   mutable used_maps: string list;
+  mutable used_dispatch_functions: int list;
 }
 
 let create_function_usage () = {
@@ -449,6 +453,7 @@ let create_function_usage () = {
   uses_attach = false;
   uses_map_operations = false;
   used_maps = [];
+  used_dispatch_functions = [];
 }
 
 (** Extract kfunc and private function definitions from AST *)
@@ -672,6 +677,8 @@ type userspace_context = {
   mutable inlinable_registers: (int, string) Hashtbl.t;
   mutable current_function: ir_function option;
   mutable temp_var_counter: int;
+  (* Ring buffer event handler registrations *)
+  ring_buffer_handlers: (string, string) Hashtbl.t; (* map_name -> handler_function_name *)
 }
 
 let create_userspace_context ?(global_variables = []) () = {
@@ -685,6 +692,7 @@ let create_userspace_context ?(global_variables = []) () = {
   inlinable_registers = Hashtbl.create 32;
   current_function = None;
   temp_var_counter = 0;
+  ring_buffer_handlers = Hashtbl.create 16;
 }
 
 let create_main_context ?(global_variables = []) () = {
@@ -698,6 +706,7 @@ let create_main_context ?(global_variables = []) () = {
   inlinable_registers = Hashtbl.create 32;
   current_function = None;
   temp_var_counter = 0;
+  ring_buffer_handlers = Hashtbl.create 16;
 }
 
 let fresh_temp_var ctx prefix =
@@ -707,12 +716,16 @@ let fresh_temp_var ctx prefix =
 (** Track function usage based on instruction *)
 let track_function_usage ctx instr =
   match instr.instr_desc with
-  | IRCall (target, _, _) ->
+  | IRCall (target, args, _) ->
       (match target with
        | DirectCall func_name ->
            (match func_name with
             | "load" -> ctx.function_usage.uses_load <- true
             | "attach" -> ctx.function_usage.uses_attach <- true
+            | "dispatch" -> 
+                let num_buffers = List.length args in
+                if not (List.mem num_buffers ctx.function_usage.used_dispatch_functions) then
+                  ctx.function_usage.used_dispatch_functions <- num_buffers :: ctx.function_usage.used_dispatch_functions
             | _ -> ())
        | FunctionPointerCall _ -> ())
   | IRMapLoad (map_val, _, _, _) 
@@ -740,6 +753,9 @@ let track_function_usage ctx instr =
   | IRStructOpsRegister (_, _) ->
       (* Struct_ops registration requires skeleton object to be loaded *)
       ctx.function_usage.uses_attach <- true
+  | IRRingbufOp (_, _) ->
+      (* Ring buffer operations require skeleton and ring buffer setup *)
+      ctx.function_usage.uses_map_operations <- true
   | _ -> ()
 
 (** Recursively track usage in all instructions *)
@@ -1316,9 +1332,15 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
           (* Pinned global variables are accessed through map lookup *)
           sprintf "({ struct pinned_globals_struct __pg; uint32_t __key = 0; if (bpf_map_lookup_elem(pinned_globals_map_fd, &__key, &__pg) == 0) __pg.%s; else (typeof(__pg.%s)){0}; })" name name
         else
-          (* Regular shared global variables are accessed through skeleton - determine correct section *)
-          let section = determine_global_var_section global_var in
-          sprintf "obj->%s->%s" section name
+          (* Check if this is a ring buffer variable *)
+          (match global_var.global_var_type with
+           | IRRingbuf (_, _) ->
+               (* Ring buffers should reference the ring buffer instance, not the map *)
+               name  (* The dispatch function will append _rb to get the ring buffer instance *)
+           | _ ->
+               (* Regular shared global variables are accessed through skeleton - determine correct section *)
+               let section = determine_global_var_section global_var in
+               sprintf "obj->%s->%s" section name)
       else
         name  (* Function parameters and regular variables use their names directly *)
   | IRRegister reg_id -> get_register_var_name ctx reg_id ir_value.val_type
@@ -1543,6 +1565,7 @@ let generate_map_load_from_ir ctx map_val key_val dest_val load_type =
   | MapPeek ->
       sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str
 
+
 let generate_map_store_from_ir ctx map_val key_val value_val store_type =
   let map_str = generate_c_value_from_ir ctx map_val in
   
@@ -1582,6 +1605,7 @@ let generate_map_store_from_ir ctx map_val key_val value_val store_type =
       let value_str = generate_c_value_from_ir ctx value_val in
       sprintf "bpf_ringbuf_submit(%s, 0);" value_str
 
+
 let generate_map_delete_from_ir ctx map_val key_val =
   let map_str = generate_c_value_from_ir ctx map_val in
   
@@ -1594,6 +1618,35 @@ let generate_map_delete_from_ir ctx map_val key_val =
     | _ -> 
         let key_str = generate_c_value_from_ir ctx key_val in
         sprintf "bpf_map_delete_elem(%s, &(%s));" map_str key_str
+
+(** Generate C code for ring buffer operations from IR (userspace) *)
+let generate_ringbuf_operation_userspace ctx ringbuf_val op =
+  match op with
+  | RingbufReserve _result_val ->
+      (* reserve() is eBPF-only *)
+      failwith "Ring buffer reserve() operation is not supported in userspace - it's eBPF-only"
+  
+  | RingbufSubmit _data_val ->
+      (* submit() is eBPF-only *)
+      failwith "Ring buffer submit() operation is not supported in userspace - it's eBPF-only"
+  
+  | RingbufDiscard _data_val ->
+      (* discard() is eBPF-only *)
+      failwith "Ring buffer discard() operation is not supported in userspace - it's eBPF-only"
+  
+  | RingbufOnEvent handler_name ->
+      (* on_event() is userspace-only - register handler for ring buffer setup *)
+      let ringbuf_name = match ringbuf_val.value_desc with
+        | IRVariable name -> name
+        | IRRegister reg -> sprintf "ringbuf_%d" reg
+        | _ -> failwith "IRRingbufOp requires a ring buffer variable"
+      in
+      
+      (* Store handler registration for later use in ring buffer setup *)
+      Hashtbl.replace ctx.ring_buffer_handlers ringbuf_name handler_name;
+      
+      (* Return success comment - actual registration happens in setup code *)
+      sprintf "/* Ring buffer %s registered with handler %s */" ringbuf_name handler_name
 
 (** Global config names collector *)
 let global_config_names = ref []
@@ -1847,6 +1900,12 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       (* Use the program handle variable directly instead of extracting program name *)
                       ("attach_bpf_program_by_fd", [program_handle; target; flags])
                   | _ -> failwith "attach expects exactly three arguments")
+             | "dispatch" ->
+                 (* Special handling for dispatch: generate ring buffer polling *)
+                 (* Track usage of dispatch function *)
+                 if not (List.mem 1 ctx.function_usage.used_dispatch_functions) then
+                   ctx.function_usage.used_dispatch_functions <- 1 :: ctx.function_usage.used_dispatch_functions;
+                 ("dispatch_ring_buffers", [])
              | _ -> (userspace_impl, c_args))
         | None ->
             (* Regular function call *)
@@ -1894,6 +1953,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
   | IRMapDelete (map_val, key_val) ->
       track_function_usage ctx instruction;
       generate_map_delete_from_ir ctx map_val key_val
+  
+  | IRRingbufOp (ringbuf_val, op) ->
+      (* Ring buffer operations *)
+      generate_ringbuf_operation_userspace ctx ringbuf_val op
   
   | IRConfigFieldUpdate (map_val, key_val, field, value_val) ->
       track_function_usage ctx instruction;
@@ -2217,7 +2280,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
     }|} config_name struct_name (String.concat "\n" field_initializations) config_name config_name
 
 (** Generate C function from IR function *)
-let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) ?(ir_multi_prog = None) ?(resolved_imports = []) (ir_func : ir_function) =
+let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(config_declarations = []) ?(ir_multi_prog = None) ?(resolved_imports = []) ?(all_setup_code = "") (ir_func : ir_function) =
   let params_str = String.concat ", " 
     (List.map (fun (name, ir_type) ->
        generate_c_declaration ir_type name
@@ -2317,6 +2380,7 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
     (* Include setup code when object is loaded in main() *)
     let pinned_globals_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
     let has_pinned_globals = List.length pinned_globals_vars > 0 in
+    
     let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations || has_pinned_globals) then
       let all_setup_parts = List.filter (fun s -> s <> "") [
         (if func_usage.uses_map_operations then "    // Map setup would go here if needed" else "");
@@ -2344,22 +2408,9 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
             return 1;
         }
     }|} pin_path pin_path
-        else "");
-        (if List.length config_declarations > 0 then 
-          String.concat "\n" (List.map (fun config_decl ->
-            let config_name = config_decl.Ast.config_name in
-            let load_code = sprintf {|    
-    // Load %s config map from eBPF object
-    %s_config_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s_config_map");
-    if (%s_config_map_fd < 0) {
-        fprintf(stderr, "Failed to find %s config map in eBPF object\n");
-        return 1;
-    }|} config_name config_name config_name config_name config_name in
-            let init_code = generate_config_initialization config_decl in
-            load_code ^ "\n" ^ init_code
-          ) config_declarations)
-        else "");
-      ] in
+                else "");
+        (if all_setup_code <> "" then all_setup_code else "");
+        ] in
       if all_setup_parts <> [] then "\n" ^ String.concat "\n" all_setup_parts else ""
     else "" in
     
@@ -2540,12 +2591,117 @@ let generate_pinned_globals_support _project_name global_variables =
     (* Setup code is now handled in main function generation to avoid duplication *)
     (struct_definition, map_fd_declaration, "")
 
+(** Generate ring buffer event handler functions *)
+let generate_ringbuf_handlers_from_registry (registry : Ir.ir_ring_buffer_registry) ~dispatch_used =
+  let event_handlers = List.map (fun rb_decl ->
+    let ringbuf_name = rb_decl.rb_name in
+    let value_type = c_type_from_ir_type rb_decl.rb_value_type in
+    let handler_name = match List.assoc_opt ringbuf_name registry.event_handler_registrations with
+      | Some handler -> handler
+      | None -> ringbuf_name ^ "_default_handler"
+    in
+    sprintf {|
+// Ring buffer event handler for %s
+static int %s_event_handler(void *ctx, void *data, size_t data_sz) {
+    %s *event = (%s *)data;
+    return %s(event);
+}|} 
+      ringbuf_name 
+      ringbuf_name value_type value_type handler_name
+  ) registry.ring_buffer_declarations |> String.concat "\n" in
+  
+  (* Only generate combined ring buffer if dispatch is actually used *)
+  let combined_rb_declaration = if List.length registry.ring_buffer_declarations > 0 && dispatch_used then
+    "\n// Combined ring buffer for all ring buffers\nstatic struct ring_buffer *combined_rb = NULL;"
+  else "" in
+  
+  (* Only generate event handlers if dispatch is actually used *)
+  let final_event_handlers = if dispatch_used then event_handlers else "" in
+  
+  final_event_handlers ^ combined_rb_declaration
+
+(** Generate ring buffer setup code from centralized registry *)
+let generate_ringbuf_setup_code_from_registry (registry : Ir.ir_ring_buffer_registry) ~dispatch_used =
+  if List.length registry.ring_buffer_declarations = 0 then ""
+  else
+    let fd_setup_code = List.map (fun rb_decl ->
+      let ringbuf_name = rb_decl.rb_name in
+      sprintf {|    // Get ring buffer map FD for %s
+    int %s_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s");
+    if (%s_map_fd < 0) {
+        fprintf(stderr, "Failed to find %s ring buffer map\n");
+        return 1;
+    }|} 
+        ringbuf_name ringbuf_name ringbuf_name ringbuf_name ringbuf_name
+    ) registry.ring_buffer_declarations in
+    
+    let combined_rb_setup = if List.length registry.ring_buffer_declarations > 0 && dispatch_used then
+      match registry.ring_buffer_declarations with
+      | [] -> ""
+      | first_rb :: remaining_rbs ->
+          let first_rb_name = first_rb.rb_name in
+          let remaining_rb_adds = List.map (fun rb_decl ->
+            let ringbuf_name = rb_decl.rb_name in
+            sprintf {|    
+    // Add %s to combined ring buffer
+    err = ring_buffer__add(combined_rb, %s_map_fd, %s_event_handler, NULL);
+    if (err < 0) {
+        fprintf(stderr, "Failed to add %s ring buffer: %%d\n", err);
+        ring_buffer__free(combined_rb);
+        return 1;
+    }|} ringbuf_name ringbuf_name ringbuf_name ringbuf_name
+          ) remaining_rbs |> String.concat "\n" in
+          
+          sprintf {|
+    // Create combined ring buffer starting with first ring buffer
+    int err;
+    combined_rb = ring_buffer__new(%s_map_fd, %s_event_handler, NULL, NULL);
+    if (!combined_rb) {
+        fprintf(stderr, "Failed to create combined ring buffer\n");
+        return 1;
+    }
+%s|} first_rb_name first_rb_name remaining_rb_adds
+    else "" in
+    
+    String.concat "\n" fd_setup_code ^ combined_rb_setup
+
+
+
+(** Generate ring buffer dispatch functions for different numbers of arguments *)
+let generate_dispatch_functions used_dispatch_functions =
+  if List.length used_dispatch_functions = 0 then ""
+  else
+    {|
+// Dispatch function for ring buffer event processing
+int dispatch_ring_buffers() {
+    int err;
+    
+    printf("Starting ring buffer event processing...\n");
+    
+    if (!combined_rb) {
+        fprintf(stderr, "Combined ring buffer not initialized\n");
+        return -1;
+    }
+    
+    // Poll all ring buffers with a single call
+    while (1) {
+        err = ring_buffer__poll(combined_rb, 1000);  // 1 second timeout
+        if (err < 0 && err != -EINTR) {
+            fprintf(stderr, "Error polling combined ring buffer: %d\n", err);
+            return err;
+        }
+    }
+    
+    return 0;
+}|}
+
 (** Generate map operation functions *)
-let generate_map_operation_functions maps =
-  List.map (fun map ->
+let generate_map_operation_functions maps ir_multi_prog ~dispatch_used =
+  let regular_maps = maps in (* All maps are regular now, ring buffers are separate objects *)
+  let regular_map_ops = List.map (fun map ->
     let key_type = c_type_from_ir_type map.map_key_type in
     let value_type = c_type_from_ir_type map.map_value_type in
-  sprintf {|
+    sprintf {|
 // Map operations for %s
 int %s_lookup(%s *key, %s *value) {
     return bpf_map_lookup_elem(%s_fd, key, value);
@@ -2567,7 +2723,10 @@ int %s_get_next_key(%s *key, %s *next_key) {
       map.map_name key_type value_type map.map_name
       map.map_name key_type map.map_name
       map.map_name key_type key_type map.map_name
-  ) maps |> String.concat "\n"
+  ) regular_maps in
+  
+  let ringbuf_handlers = generate_ringbuf_handlers_from_registry ir_multi_prog.ring_buffer_registry ~dispatch_used in
+  String.concat "\n" (regular_map_ops @ [ringbuf_handlers])
 
 (** Generate map setup code - handle both regular and pinned maps *)
 let generate_map_setup_code maps =
@@ -2616,6 +2775,7 @@ let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
 let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
   let has_maps = List.length maps > 0 in
   let has_pinned_maps = List.exists (fun map -> map.pin_path <> None) maps in
+  let has_ringbufs = false in (* Ring buffers are no longer maps *)
 
   
   let base_headers = [
@@ -2637,9 +2797,13 @@ let generate_headers_for_maps ?(uses_bpf_functions=false) maps =
     "#include <sys/types.h>";
   ] else [] in
   
+  let ringbuf_headers = if has_ringbufs then [
+    "#include <stdarg.h>";
+  ] else [] in
+  
   let event_headers = [] in
   
-  String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ event_headers)
+  String.concat "\n" (base_headers @ bpf_headers @ pinning_headers @ ringbuf_headers @ event_headers)
 
 (** Generate userspace code with tail call dependency management *)
 let generate_load_function_with_tail_calls _base_name all_usage tail_call_analysis _all_setup_code kfunc_dependencies _global_variables =
@@ -2720,8 +2884,16 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
       used_maps = List.fold_left (fun acc map_name ->
         if List.mem map_name acc then acc else map_name :: acc
       ) acc_usage.used_maps func_usage.used_maps;
+      used_dispatch_functions = List.fold_left (fun acc dispatch_count ->
+        if List.mem dispatch_count acc then acc else dispatch_count :: acc
+      ) acc_usage.used_dispatch_functions func_usage.used_dispatch_functions;
     }
   ) (create_function_usage ()) userspace_prog.userspace_functions in
+
+  (* Generate map-related code only if maps are actually used *)
+  let used_global_maps = List.filter (fun map ->
+    List.mem map.map_name all_usage.used_maps
+  ) global_maps in
 
   let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach in
   let base_includes = generate_headers_for_maps ~uses_bpf_functions global_maps in
@@ -2790,9 +2962,45 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     sprintf "/* eBPF skeleton instance */\nstruct %s_ebpf *obj = NULL;\n" base_name
   else "" in
   
-  (* Generate functions first so config names get collected *)
+  (* Generate setup code first for use in main function *)
+  let map_setup_code = if all_usage.uses_map_operations then
+    generate_map_setup_code used_global_maps
+  else "" in
+  
+  (* Generate pinned globals support *)
+  let project_name = Filename.remove_extension (Filename.basename source_filename) in
+  let (pinned_globals_struct, pinned_globals_fd, pinned_globals_setup) = 
+    generate_pinned_globals_support project_name ir_multi_prog.global_variables in
+  
+  (* Generate config map setup code - load from eBPF object and initialize with defaults *)
+  let config_setup_code = if List.length config_declarations > 0 then
+    List.map (fun config_decl ->
+      let config_name = config_decl.Ast.config_name in
+      let load_code = sprintf {|    /* Load %s config map from eBPF object */
+    %s_config_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s_config_map");
+    if (%s_config_map_fd < 0) {
+        fprintf(stderr, "Failed to find %s config map in eBPF object\n");
+        return -1;
+    }|} config_name config_name config_name config_name config_name in
+      let init_code = generate_config_initialization config_decl in
+      load_code ^ "\n" ^ init_code
+    ) config_declarations |> String.concat "\n"
+  else "" in
+  
+  (* Generate struct_ops registration code *)
+  let struct_ops_registration_code = generate_struct_ops_registration_code ir_multi_prog in
+  
+  (* Generate ring buffer setup code using the centralized registry *)
+  let ringbuf_setup_code = generate_ringbuf_setup_code_from_registry ir_multi_prog.ring_buffer_registry ~dispatch_used:(List.length all_usage.used_dispatch_functions > 0) in
+  
+  let all_setup_code = 
+    let parts = [map_setup_code; pinned_globals_setup; config_setup_code; struct_ops_registration_code; ringbuf_setup_code] in
+    let non_empty_parts = List.filter (fun s -> s <> "") parts in
+    String.concat "\n" non_empty_parts in
+
+  (* Generate functions with setup code available *)
   let functions = String.concat "\n\n" 
-    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog) ~resolved_imports) userspace_prog.userspace_functions) in
+    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog) ~resolved_imports ~all_setup_code) userspace_prog.userspace_functions) in
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
@@ -2813,19 +3021,11 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let structs = String.concat "\n\n" 
     ((List.map generate_c_struct_from_ir user_defined_ir_structs) @ config_structs) in
   
-  (* Generate map-related code only if maps are actually used *)
-  let used_global_maps = List.filter (fun map ->
-    List.mem map.map_name all_usage.used_maps
-  ) global_maps in
+
   
   let map_fd_declarations = if all_usage.uses_map_operations then
     generate_map_fd_declarations used_global_maps
   else "" in
-  
-  (* Generate pinned globals support *)
-  let project_name = Filename.remove_extension (Filename.basename source_filename) in
-  let (pinned_globals_struct, pinned_globals_fd, pinned_globals_setup) = 
-    generate_pinned_globals_support project_name ir_multi_prog.global_variables in
   
   (* Generate config map file descriptors if there are config declarations *)
   let config_fd_declarations = if List.length config_declarations > 0 then
@@ -2840,36 +3040,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     if non_empty_parts = [] then "" else String.concat "\n" non_empty_parts in
   
   let map_operation_functions = if all_usage.uses_map_operations then
-    generate_map_operation_functions used_global_maps
+    generate_map_operation_functions used_global_maps ir_multi_prog ~dispatch_used:(List.length all_usage.used_dispatch_functions > 0)
   else "" in
   
-  let map_setup_code = if all_usage.uses_map_operations then
-    generate_map_setup_code used_global_maps
-  else "" in
+  let ringbuf_dispatch_functions = 
+    if List.length all_usage.used_dispatch_functions = 0 then ""
+    else generate_dispatch_functions all_usage.used_dispatch_functions in
   
-  (* Generate config map setup code - load from eBPF object and initialize with defaults *)
-  (* Always generate config setup if there are config declarations, since eBPF programs may use them *)
-  let config_setup_code = if List.length config_declarations > 0 then
-    List.map (fun config_decl ->
-      let config_name = config_decl.Ast.config_name in
-      let load_code = sprintf {|    /* Load %s config map from eBPF object */
-    %s_config_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s_config_map");
-    if (%s_config_map_fd < 0) {
-        fprintf(stderr, "Failed to find %s config map in eBPF object\n");
-        return -1;
-    }|} config_name config_name config_name config_name config_name in
-      let init_code = generate_config_initialization config_decl in
-      load_code ^ "\n" ^ init_code
-    ) config_declarations |> String.concat "\n"
-  else "" in
-  
-  (* Generate struct_ops registration code *)
-  let struct_ops_registration_code = generate_struct_ops_registration_code ir_multi_prog in
-  
-  let all_setup_code = 
-    let parts = [map_setup_code; pinned_globals_setup; config_setup_code; struct_ops_registration_code] in
-    let non_empty_parts = List.filter (fun s -> s <> "") parts in
-    String.concat "\n" non_empty_parts in
+
   
   let structs_with_pinned = if pinned_globals_struct <> "" then
     structs ^ "\n\n" ^ pinned_globals_struct
@@ -3021,15 +3199,17 @@ void cleanup_bpf_maps(void) {
 %s
 
 %s
-%s
 
 %s
 %s
 
 %s
+%s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
+
+%s
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
@@ -3066,6 +3246,12 @@ let is_impl_block_variable ir_multi_prog var_name =
   List.exists (fun struct_ops_decl ->
     struct_ops_decl.ir_instance_name = var_name
   ) ir_multi_prog.struct_ops_instances
+
+
+
+
+
+
 
 
 

@@ -71,7 +71,7 @@ and bpf_type =
   | Option of bpf_type
   | Result of bpf_type * bpf_type
   | Function of bpf_type list * bpf_type
-  | Map of bpf_type * bpf_type * map_type
+  | Map of bpf_type * bpf_type * map_type * int  (* key_type, value_type, map_type, size *)
   (* Built-in context types *)
   | Xdp_md | UprobeContext 
   | TracepointContext | LsmContext | CgroupSkbContext
@@ -80,6 +80,9 @@ and bpf_type =
   | ProgramRef of program_type
   (* Program handle type - represents a loaded program *)
   | ProgramHandle
+  (* Ring buffer reference type - represents a ring buffer for dispatch *)
+  | RingbufRef of bpf_type (* value type *)
+  | Ringbuf of bpf_type * int (* value_type, size - ring buffer object *)
   (* None type - represents missing/absent values *)
   | NoneType
 
@@ -594,11 +597,12 @@ let rec string_of_bpf_type = function
       Printf.sprintf "function (%s) -> %s"
         (String.concat ", " (List.map string_of_bpf_type params))
         (string_of_bpf_type return_type)
-  | Map (key_type, value_type, map_type) ->
-      Printf.sprintf "map (%s, %s, %s)"
+  | Map (key_type, value_type, map_type, size) ->
+      Printf.sprintf "map (%s, %s, %s, %d)"
         (string_of_bpf_type key_type)
         (string_of_bpf_type value_type)
         (string_of_map_type map_type)
+        size
   | Xdp_md -> "xdp_md"
   | UprobeContext -> "UprobeContext"
   | TracepointContext -> "TracepointContext"
@@ -607,6 +611,8 @@ let rec string_of_bpf_type = function
   | Xdp_action -> "xdp_action"
   | ProgramRef pt -> string_of_program_type pt
   | ProgramHandle -> "ProgramHandle"
+  | RingbufRef value_type -> Printf.sprintf "ringbuf_ref<%s>" (string_of_bpf_type value_type)
+  | Ringbuf (value_type, size) -> Printf.sprintf "ringbuf<%s>(%d)" (string_of_bpf_type value_type) size
   | NoneType -> "none"
 
 let rec string_of_literal = function

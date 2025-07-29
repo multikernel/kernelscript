@@ -35,7 +35,7 @@ type context = {
   function_scopes: (string, Ast.function_scope) Hashtbl.t;
   helper_functions: (string, unit) Hashtbl.t; (* Track @helper functions *)
   test_functions: (string, unit) Hashtbl.t; (* Track @test functions *)
-  maps: (string, Ast.map_declaration) Hashtbl.t;
+  maps: (string, Ir.ir_map_def) Hashtbl.t;
   configs: (string, Ast.config_declaration) Hashtbl.t;
   attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
   attributed_function_map: (string, attributed_function) Hashtbl.t; (* Map for tail call analysis *)
@@ -226,6 +226,12 @@ let rec resolve_user_type ctx = function
       let resolved_params = List.map (resolve_user_type ctx) param_types in
       let resolved_return = resolve_user_type ctx return_type in
       Function (resolved_params, resolved_return)
+  | Map (key_type, value_type, map_type, size) ->
+      (* Resolve user types within map type *)
+      let resolved_key_type = resolve_user_type ctx key_type in
+      let resolved_value_type = resolve_user_type ctx value_type in
+      
+      Map (resolved_key_type, resolved_value_type, map_type, size)
   | other_type -> other_type
 
 (** C-style integer promotion - promotes to the larger type *)
@@ -316,9 +322,9 @@ let rec unify_types t1 t2 =
       Some (Function (params1, ret1))  (* Keep the original function type *)
   
   (* Map types *)
-  | Map (k1, v1, mt1), Map (k2, v2, mt2) when mt1 = mt2 ->
+  | Map (k1, v1, mt1, s1), Map (k2, v2, mt2, s2) when mt1 = mt2 && s1 = s2 ->
       (match unify_types k1 k2, unify_types v1 v2 with
-       | Some unified_k, Some unified_v -> Some (Map (unified_k, unified_v, mt1))
+       | Some unified_k, Some unified_v -> Some (Map (unified_k, unified_v, mt1, s1))
        | _ -> None)
   
   (* Program reference types *)
@@ -335,6 +341,27 @@ let rec unify_types t1 t2 =
   
   (* No unification possible *)
   | _ -> None
+
+(** Validate ring buffer object declaration *)
+let validate_ringbuf_object ctx _name ringbuf_type pos =
+  match ringbuf_type with
+  | Ringbuf (value_type, size) ->
+      (* Check value type is a struct *)
+      let resolved_value_type = resolve_user_type ctx value_type in
+      (match resolved_value_type with
+       | Struct _ | UserType _ -> () (* Valid: struct or user-defined type *)
+       | _ -> type_error ("Ring buffer value type must be a struct, got: " ^ string_of_bpf_type resolved_value_type) pos);
+      
+      (* Validate ring buffer size is power of 2 and reasonable *)
+      if size <= 0 then
+        type_error ("Ring buffer size must be positive, got: " ^ string_of_int size) pos;
+      if size land (size - 1) != 0 then
+        type_error ("Ring buffer size must be a power of 2, got: " ^ string_of_int size) pos;
+      if size < 4096 then
+        type_error ("Ring buffer size must be at least 4096 bytes, got: " ^ string_of_int size) pos;
+      if size > 134217728 then (* 128MB *)
+        type_error ("Ring buffer size must not exceed 128MB, got: " ^ string_of_int size) pos
+  | _ -> () (* Not a ring buffer, no validation needed *)
 
 (** Check if we can assign from_type to to_type (for variable declarations) *)
 let can_assign to_type from_type =
@@ -514,9 +541,12 @@ let type_check_identifier ctx name pos =
         let (param_types, return_type) = Hashtbl.find ctx.functions name in
         (* For attributed functions, we can create a function reference *)
         { texpr_desc = TIdentifier name; texpr_type = Function (param_types, return_type); texpr_pos = pos }
-      (* Check if it's a map - but don't create a Map type for standalone identifiers *)
+      (* Check if it's a map - allow ring buffers as standalone identifiers, reject others *)
       else if Hashtbl.mem ctx.maps name then
-        type_error ("Map '" ^ name ^ "' cannot be used as a standalone identifier. Use map[key] for map access.") pos
+        let map_decl = Hashtbl.find ctx.maps name in
+        (match map_decl.map_type with
+
+         | _ -> type_error ("Map '" ^ name ^ "' cannot be used as a standalone identifier. Use map[key] for map access.") pos)
       else
         type_error ("Undefined variable: " ^ name) pos
 
@@ -590,8 +620,15 @@ let type_check_builtin_call ctx name typed_args arg_types pos =
   | Some (expected_params, return_type) ->
       (match Stdlib.get_builtin_function name with
        | Some builtin_func when builtin_func.is_variadic ->
-           (* Variadic function - accept any number of arguments *)
-           Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+           (* Variadic function - but still run validation if available *)
+           let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types ctx.ast_context pos in
+           if not validation_ok then
+             (match validation_error with
+              | Some error_msg -> type_error error_msg pos
+              | None -> type_error ("Validation failed for function: " ^ name) pos)
+           else
+             (* Validation passed - accept any number of arguments *)
+             Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
          | Some _ ->
              (* Check if this function has custom validation *)
              let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types ctx.ast_context pos in
@@ -754,15 +791,15 @@ and type_check_array_access ctx arr idx pos =
    | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
        (* This is map access *)
        let map_decl = Hashtbl.find ctx.maps map_name in
-       (* Check key type compatibility *)
-       let resolved_map_key_type = resolve_user_type ctx map_decl.key_type in
+       (* Check key type compatibility with promotion support *)
+       let resolved_map_key_type = resolve_user_type ctx map_decl.ast_key_type in
        let resolved_idx_type = resolve_user_type ctx typed_idx.texpr_type in
        (match unify_types resolved_map_key_type resolved_idx_type with
         | Some _ -> 
             (* Create a synthetic map type for the result *)
-            let typed_arr = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = arr.expr_pos } in
+            let typed_arr = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.ast_key_type, map_decl.ast_value_type, map_decl.ast_map_type, map_decl.max_entries); texpr_pos = arr.expr_pos } in
             (* Map access returns the actual value type *)
-            { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = map_decl.value_type; texpr_pos = pos }
+            { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = map_decl.ast_value_type; texpr_pos = pos }
         | None -> type_error ("Map key type mismatch") pos)
    | _ ->
        (* Regular array access - index must be integer type or enum *)
@@ -781,7 +818,7 @@ and type_check_array_access ctx arr idx pos =
         | Str _ ->
             (* String indexing returns char *)
             { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = Char; texpr_pos = pos }
-        | Map (key_type, value_type, _) ->
+        | Map (key_type, value_type, _, _) ->
             (* This shouldn't happen anymore, but handle it for safety *)
             (match unify_types key_type typed_idx.texpr_type with
              | Some _ -> { texpr_desc = TArrayAccess (typed_arr, typed_idx); texpr_type = value_type; texpr_pos = pos }
@@ -823,11 +860,71 @@ and type_check_field_access ctx obj field pos =
              { texpr_desc = TIdentifier (module_name ^ "." ^ field); 
                texpr_type = Function ([], U64); (* Generic signature for Python *)
                texpr_pos = pos })
+   | Identifier var_name when Hashtbl.mem ctx.variables var_name ->
+       (* Check if this is a ring buffer variable *)
+       let var_type = Hashtbl.find ctx.variables var_name in
+       let resolved_var_type = resolve_user_type ctx var_type in
+       (match resolved_var_type with
+        | Ringbuf (value_type, _) ->
+            (* Ring buffer object operations *)
+            (match field with
+             | "reserve" ->
+                 (* reserve() returns a pointer to the value type *)
+                 { texpr_desc = TFieldAccess (type_check_expression ctx obj, field); texpr_type = Pointer value_type; texpr_pos = pos }
+             | "submit" | "discard" ->
+                 (* submit() and discard() return i32 (success code) *)
+                 { texpr_desc = TFieldAccess (type_check_expression ctx obj, field); texpr_type = I32; texpr_pos = pos }
+             | "on_event" ->
+                 (* on_event() returns i32 (success code) *)
+                 { texpr_desc = TFieldAccess (type_check_expression ctx obj, field); texpr_type = I32; texpr_pos = pos }
+             | _ ->
+                 type_error ("Ring buffer operation '" ^ field ^ "' not supported. Valid operations: reserve, submit, discard, on_event") pos)
+        | _ ->
+            (* Not a ring buffer, fall through to regular field access *)
+            let typed_obj = type_check_expression ctx obj in
+            (* Continue to regular struct field access handling below *)
+            (match typed_obj.texpr_type with
+             | Struct struct_name | UserType struct_name ->
+                 (* Look up struct definition and field type *)
+                 (try
+                    let type_def = Hashtbl.find ctx.types struct_name in
+                    match type_def with
+                    | StructDef (_, fields, _) ->
+                        (try
+                           let field_type = List.assoc field fields in
+                           { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
+                         with Not_found ->
+                           type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) pos)
+                    | _ ->
+                        type_error (struct_name ^ " is not a struct") pos
+                  with Not_found ->
+                    type_error ("Undefined struct: " ^ struct_name) pos)
+             | _ -> 
+                 type_error "Cannot access field of non-struct type" pos))
    | _ ->
        (* Regular field access - process normally *)
        let typed_obj = type_check_expression ctx obj in
        
        match typed_obj.texpr_type with
+  | Ringbuf (value_type, _) ->
+      (* Ring buffer object operations *)
+      (match field with
+       | "reserve" ->
+           (* reserve() returns a pointer to the value type *)
+           { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = Pointer value_type; texpr_pos = pos }
+       | "submit" | "discard" ->
+           (* submit() and discard() return i32 (success code) *)
+           { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = I32; texpr_pos = pos }
+       | "on_event" ->
+           (* on_event() returns i32 (success code) *)
+           { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = I32; texpr_pos = pos }
+       | _ ->
+           type_error ("Ring buffer operation '" ^ field ^ "' not supported. Valid operations: reserve, submit, discard, on_event") pos)
+  | RingbufRef _value_type ->
+      (* Ring buffer reference for dispatch() - limited operations *)
+      (match field with
+       | _ ->
+           type_error ("Ring buffer references can only be used with dispatch(), not with method calls") pos)
   | Struct struct_name | UserType struct_name ->
       (* Look up struct definition and field type *)
       (try
@@ -843,9 +940,6 @@ and type_check_field_access ctx obj field pos =
              type_error (struct_name ^ " is not a struct") pos
        with Not_found ->
          type_error ("Undefined struct: " ^ struct_name) pos)
-  
-
-  
   | _ ->
       type_error "Cannot access field of non-struct type" pos)
 
@@ -1159,7 +1253,60 @@ and type_check_expression ctx expr =
                  | None ->
                      (match type_check_function_pointer_variable ctx name typed_args arg_types expr.expr_pos with
                       | Some result -> result
-                      | None -> type_error ("Undefined function: " ^ name) expr.expr_pos)))
+                                            | None -> type_error ("Undefined function: " ^ name) expr.expr_pos)))
+                      
+       | FieldAccess ({expr_desc = Identifier var_name; _}, method_name) 
+         when Hashtbl.mem ctx.variables var_name ->
+           (* Check if this is a ring buffer method call *)
+           let var_type = Hashtbl.find ctx.variables var_name in
+           let resolved_var_type = resolve_user_type ctx var_type in
+           (match resolved_var_type with
+            | Ringbuf (value_type, _) ->
+                (* Handle ring buffer method calls *)
+                (match method_name with
+                 | "reserve" ->
+                     (* reserve() takes no arguments and returns pointer to value type *)
+                     if List.length typed_args = 0 then
+                       { texpr_desc = TCall (type_check_expression ctx callee_expr, typed_args); 
+                         texpr_type = Pointer value_type; texpr_pos = expr.expr_pos }
+                     else
+                       type_error ("reserve() takes no arguments") expr.expr_pos
+                 | "submit" | "discard" ->
+                     (* submit(ptr) and discard(ptr) take one pointer argument and return i32 *)
+                     if List.length typed_args = 1 then
+                       let expected_ptr_type = Pointer value_type in
+                       (match unify_types expected_ptr_type (List.hd typed_args).texpr_type with
+                        | Some _ ->
+                            { texpr_desc = TCall (type_check_expression ctx callee_expr, typed_args); 
+                              texpr_type = I32; texpr_pos = expr.expr_pos }
+                        | None ->
+                            type_error ("Type mismatch: expected pointer to " ^ (string_of_bpf_type value_type)) expr.expr_pos)
+                     else
+                       type_error (method_name ^ "() takes exactly one argument") expr.expr_pos
+                 | "on_event" ->
+                     (* on_event(handler) takes one function argument and returns i32 *)
+                     if List.length typed_args = 1 then
+                       let handler_arg = List.hd typed_args in
+                       (match handler_arg.texpr_type with
+                        | Function ([expected_param_type], I32) ->
+                            let resolved_value_type = resolve_user_type ctx value_type in
+                            let expected_handler_param = Pointer resolved_value_type in
+                            (match unify_types expected_handler_param expected_param_type with
+                             | Some _ ->
+                                 { texpr_desc = TCall (type_check_expression ctx callee_expr, typed_args); 
+                                   texpr_type = I32; texpr_pos = expr.expr_pos }
+                             | None ->
+                                 type_error ("on_event() handler must have signature fn(event: *" ^ (string_of_bpf_type resolved_value_type) ^ ") -> i32") expr.expr_pos)
+                        | _ ->
+                            type_error ("on_event() handler must have signature fn(event: *" ^ (string_of_bpf_type value_type) ^ ") -> i32") expr.expr_pos)
+                     else
+                       type_error ("on_event() takes exactly one argument") expr.expr_pos
+                 | _ ->
+                     type_error ("Unknown ring buffer operation: " ^ method_name) expr.expr_pos)
+            | _ ->
+                (* Not a ring buffer, fall through to regular function pointer handling *)
+                let typed_callee = type_check_expression ctx callee_expr in
+                type_check_function_pointer_call ctx typed_callee typed_args arg_types expr.expr_pos)
        | _ ->
            (* Complex expression - must be function pointer, type check the callee *)
            let typed_callee = type_check_expression ctx callee_expr in
@@ -1543,25 +1690,25 @@ and type_check_statement ctx stmt =
            (* This is map assignment *)
            let map_decl = Hashtbl.find ctx.maps map_name in
            (* Check key type compatibility *)
-           let resolved_key_type = resolve_user_type ctx map_decl.key_type in
+           let resolved_key_type = resolve_user_type ctx map_decl.ast_key_type in
            let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
            (match unify_types resolved_key_type resolved_typed_key_type with
             | Some _ -> ()
             | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
            (* Check value type compatibility *)
-           let resolved_value_type = resolve_user_type ctx map_decl.value_type in
+           let resolved_value_type = resolve_user_type ctx map_decl.ast_value_type in
            let resolved_typed_value_type = resolve_user_type ctx typed_value.texpr_type in
            (match unify_types resolved_value_type resolved_typed_value_type with
             | Some _ -> ()
             | None -> type_error ("Map value type mismatch") stmt.stmt_pos);
            (* Create a synthetic map type for the result *)
-           let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
+           let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.ast_key_type, map_decl.ast_value_type, map_decl.ast_map_type, map_decl.max_entries); texpr_pos = map_expr.expr_pos } in
            { tstmt_desc = TIndexAssignment (typed_map, typed_key, typed_value); tstmt_pos = stmt.stmt_pos }
        | _ ->
            (* Regular index assignment (arrays, etc.) *)
            let typed_map = type_check_expression ctx map_expr in
            (match typed_map.texpr_type with
-            | Map (key_type, value_type, _) ->
+            | Map (key_type, value_type, _, _) ->
                 (* This shouldn't happen anymore, but handle it for safety *)
                 (match unify_types key_type typed_key.texpr_type with
                  | Some _ -> ()
@@ -1588,13 +1735,13 @@ and type_check_statement ctx stmt =
            (* This is map compound assignment *)
            let map_decl = Hashtbl.find ctx.maps map_name in
            (* Check key type compatibility *)
-           let resolved_key_type = resolve_user_type ctx map_decl.key_type in
+           let resolved_key_type = resolve_user_type ctx map_decl.ast_key_type in
            let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
            (match unify_types resolved_key_type resolved_typed_key_type with
             | Some _ -> ()
             | None -> type_error ("Map key type mismatch") stmt.stmt_pos);
            (* Check value type compatibility and operator validity *)
-           let resolved_value_type = resolve_user_type ctx map_decl.value_type in
+           let resolved_value_type = resolve_user_type ctx map_decl.ast_value_type in
            let resolved_typed_value_type = resolve_user_type ctx typed_value.texpr_type in
            (match unify_types resolved_value_type resolved_typed_value_type with
             | Some _ -> ()
@@ -1603,7 +1750,7 @@ and type_check_statement ctx stmt =
            (match op, resolved_value_type with
             | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
                 (* Create a synthetic map type for the result *)
-                let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
+                let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.ast_key_type, map_decl.ast_value_type, map_decl.ast_map_type, map_decl.max_entries); texpr_pos = map_expr.expr_pos } in
                 { tstmt_desc = TCompoundIndexAssignment (typed_map, typed_key, op, typed_value); tstmt_pos = stmt.stmt_pos }
             | _, _ ->
                 type_error ("Operator " ^ string_of_binary_op op ^ 
@@ -1612,7 +1759,7 @@ and type_check_statement ctx stmt =
            (* Regular compound index assignment (arrays, etc.) *)
            let typed_map = type_check_expression ctx map_expr in
            (match typed_map.texpr_type with
-            | Map (key_type, value_type, _) ->
+            | Map (key_type, value_type, _, _) ->
                 (* This shouldn't happen anymore, but handle it for safety *)
                 (match unify_types key_type typed_key.texpr_type with
                  | Some _ -> ()
@@ -1646,7 +1793,7 @@ and type_check_statement ctx stmt =
       
       (* Check if trying to assign a map to a variable *)
       (match typed_expr_opt with
-       | Some typed_expr when (match typed_expr.texpr_type with Map (_, _, _) -> true | _ -> false) ->
+       | Some typed_expr when (match typed_expr.texpr_type with Map (_, _, _, _) -> true | _ -> false) ->
            type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
        | _ -> ());
       
@@ -1659,6 +1806,8 @@ and type_check_statement ctx stmt =
       let var_type = match type_opt with
         | Some declared_type ->
             let resolved_declared_type = resolve_user_type ctx declared_type in
+            (* Validate ring buffer objects *)
+            validate_ringbuf_object ctx name resolved_declared_type stmt.stmt_pos;
             (* For variable declarations, we should enforce the declared type *)
             (* and check if the expression type can be assigned to it *)
             (match typed_expr_opt with
@@ -1670,7 +1819,10 @@ and type_check_statement ctx stmt =
              | None -> resolved_declared_type) (* No initializer, just use declared type *)
         | None -> 
             (match typed_expr_opt with
-             | Some typed_expr -> typed_expr.texpr_type
+             | Some typed_expr -> 
+                 (* Validate ring buffer objects *)
+                 validate_ringbuf_object ctx name typed_expr.texpr_type stmt.stmt_pos;
+                 typed_expr.texpr_type
              | None -> type_error ("Variable declaration must have either a type annotation or an initializer") stmt.stmt_pos)
       in
       Hashtbl.replace ctx.variables name var_type;
@@ -1681,7 +1833,7 @@ and type_check_statement ctx stmt =
       
       (* Check if trying to assign a map to a const *)
       (match typed_expr.texpr_type with
-       | Map (_, _, _) -> type_error ("Maps cannot be assigned to const variables") stmt.stmt_pos
+       | Map (_, _, _, _) -> type_error ("Maps cannot be assigned to const variables") stmt.stmt_pos
        | _ -> ());
       
       (* Check if trying to assign none to a const *)
@@ -1861,7 +2013,7 @@ and type_check_statement ctx stmt =
            let typed_body = List.map (type_check_statement ctx) body in
            decr loop_depth;
            { tstmt_desc = TForIter (index_var, value_var, typed_iterable, typed_body); tstmt_pos = stmt.stmt_pos }
-       | Map (key_type, value_type, _) ->
+       | Map (key_type, value_type, _, _) ->
            (* For maps: index is key type, value is value type *)
            Hashtbl.replace ctx.variables index_var key_type;
            Hashtbl.replace ctx.variables value_var value_type;
@@ -1885,15 +2037,33 @@ and type_check_statement ctx stmt =
           (* Check if this is map deletion *)
           (match map_expr.expr_desc with
            | Identifier map_name when Hashtbl.mem ctx.maps map_name ->
-               (* This is map deletion *)
+               (* This is a regular map declaration *)
                let map_decl = Hashtbl.find ctx.maps map_name in
                (* Check key type compatibility *)
-               (match unify_types map_decl.key_type typed_key.texpr_type with
+               let resolved_key_type = resolve_user_type ctx map_decl.ast_key_type in
+               let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
+               (match unify_types resolved_key_type resolved_typed_key_type with
                 | Some _ -> ()
                 | None -> type_error ("Map key type mismatch in delete statement") stmt.stmt_pos);
                (* Create a synthetic map type for the result *)
-               let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type); texpr_pos = map_expr.expr_pos } in
+               let typed_map = { texpr_desc = TIdentifier map_name; texpr_type = Map (map_decl.ast_key_type, map_decl.ast_value_type, map_decl.ast_map_type, map_decl.max_entries); texpr_pos = map_expr.expr_pos } in
                { tstmt_desc = TDelete (TDeleteMapEntry (typed_map, typed_key)); tstmt_pos = stmt.stmt_pos }
+           | Identifier var_name when Hashtbl.mem ctx.variables var_name ->
+               (* Check if this is a global variable with map type *)
+               (match Hashtbl.find ctx.variables var_name with
+                | Map (key_type, value_type, map_type, size) ->
+                    (* This is a global variable with map type *)
+                    let resolved_key_type = resolve_user_type ctx key_type in
+                    let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
+                    (* Check key type compatibility *)
+                    (match unify_types resolved_key_type resolved_typed_key_type with
+                     | Some _ -> ()
+                     | None -> type_error ("Map key type mismatch in delete statement") stmt.stmt_pos);
+                    (* Create a synthetic map type for the result *)
+                    let typed_map = { texpr_desc = TIdentifier var_name; texpr_type = Map (key_type, value_type, map_type, size); texpr_pos = map_expr.expr_pos } in
+                    { tstmt_desc = TDelete (TDeleteMapEntry (typed_map, typed_key)); tstmt_pos = stmt.stmt_pos }
+                | _ ->
+                    type_error ("Delete map[key] can only be used on maps") stmt.stmt_pos)
            | _ ->
                type_error ("Delete map[key] can only be used on maps") stmt.stmt_pos)
       | DeletePointer ptr_expr ->
@@ -2050,12 +2220,32 @@ let type_check_function ?(register_signature=true) ctx func =
   
   typed_func
 
+
+
 (** Type check program *)
 let type_check_program ctx prog =
   
   (* Add program-scoped maps to context *)
   List.iter (fun map_decl ->
-    Hashtbl.replace ctx.maps map_decl.name map_decl
+    (* Convert AST map to IR map for type checking context *)
+    let ir_key_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table map_decl.key_type in
+    let ir_value_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table map_decl.value_type in
+    let ir_map_type = Ir.ast_map_type_to_ir_map_type map_decl.map_type in
+    let flags = Maps.ast_flags_to_int map_decl.config.flags in
+    let ir_map_def = Ir.make_ir_map_def
+      map_decl.name
+      ir_key_type
+      ir_value_type
+      ir_map_type
+      map_decl.config.max_entries
+      ~ast_key_type:map_decl.key_type
+      ~ast_value_type:map_decl.value_type
+      ~ast_map_type:map_decl.map_type
+      ~flags:flags
+      ~is_global:map_decl.is_global
+      map_decl.map_pos
+    in
+    Hashtbl.replace ctx.maps map_decl.name ir_map_def
   ) prog.prog_maps;
   
   (* Add program-scoped structs to context *)
@@ -2134,7 +2324,25 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
          | StructDef (name, _, _) | EnumDef (name, _, _) | TypeAlias (name, _) ->
              Hashtbl.replace ctx.types name type_def)
     | MapDecl map_decl ->
-        Hashtbl.replace ctx.maps map_decl.name map_decl
+        (* Convert AST map to IR map for type checking context *)
+        let ir_key_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table map_decl.key_type in
+        let ir_value_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table map_decl.value_type in
+        let ir_map_type = Ir.ast_map_type_to_ir_map_type map_decl.map_type in
+        let flags = Maps.ast_flags_to_int map_decl.config.flags in
+        let ir_map_def = Ir.make_ir_map_def
+          map_decl.name
+          ir_key_type
+          ir_value_type
+          ir_map_type
+          map_decl.config.max_entries
+          ~ast_key_type:map_decl.key_type
+          ~ast_value_type:map_decl.value_type
+          ~ast_map_type:map_decl.map_type
+          ~flags:flags
+          ~is_global:map_decl.is_global
+          map_decl.map_pos
+        in
+        Hashtbl.replace ctx.maps map_decl.name ir_map_def
     | GlobalVarDecl global_var_decl ->
         (* Validate pinning rules: cannot pin local variables *)
         if global_var_decl.is_pinned && global_var_decl.is_local then
@@ -2142,7 +2350,11 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
         
         (* Add global variable to type checker context *)
         let var_type = match global_var_decl.global_var_type with
-          | Some t -> resolve_user_type ctx t
+          | Some t -> 
+              let resolved_type = resolve_user_type ctx t in
+              (* Validate ring buffer objects *)
+              validate_ringbuf_object ctx global_var_decl.global_var_name resolved_type global_var_decl.global_var_pos;
+              resolved_type
           | None -> U32  (* Default type if not specified *)
         in
         Hashtbl.replace ctx.variables global_var_decl.global_var_name var_type
@@ -2294,10 +2506,10 @@ let rec typed_expr_to_expr texpr =
   in
   (* Handle special cases for type annotations *)
   let safe_expr_type = match texpr.texpr_desc, texpr.texpr_type with
-    | TIdentifier _, Map (_, _, _) -> 
+    | TIdentifier _, Map (_, _, _, _) -> 
         (* Map identifiers used in expressions should be represented as pointers for IR generation *)
         Some (Pointer U8)
-    | _, Map (_, _, _) -> 
+    | _, Map (_, _, _, _) -> 
         (* Don't set Map types in expr_type for other expressions *)
         None
     | _, other_type -> 
@@ -2465,7 +2677,25 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
         let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.kernel_defined) in
         Hashtbl.replace ctx.types struct_def.struct_name type_def
     | MapDecl map_decl ->
-        Hashtbl.replace ctx.maps map_decl.name map_decl
+        (* Convert AST map to IR map for type checking context *)
+        let ir_key_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table map_decl.key_type in
+        let ir_value_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table map_decl.value_type in
+        let ir_map_type = Ir.ast_map_type_to_ir_map_type map_decl.map_type in
+        let flags = Maps.ast_flags_to_int map_decl.config.flags in
+        let ir_map_def = Ir.make_ir_map_def
+          map_decl.name
+          ir_key_type
+          ir_value_type
+          ir_map_type
+          map_decl.config.max_entries
+          ~ast_key_type:map_decl.key_type
+          ~ast_value_type:map_decl.value_type
+          ~ast_map_type:map_decl.map_type
+          ~flags:flags
+          ~is_global:map_decl.is_global
+          map_decl.map_pos
+        in
+        Hashtbl.replace ctx.maps map_decl.name ir_map_def
     | ConfigDecl config_decl ->
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
     | GlobalVarDecl global_var_decl ->
@@ -2477,6 +2707,8 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
         let var_type = match global_var_decl.global_var_type with
           | Some t -> 
               let resolved_type = resolve_user_type ctx t in
+              (* Validate ring buffer objects *)
+              validate_ringbuf_object ctx global_var_decl.global_var_name resolved_type global_var_decl.global_var_pos;
               (* If both type and initial value are present, check for type mismatch *)
               (match global_var_decl.global_var_init with
                | Some init_expr ->
@@ -2493,9 +2725,33 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
               (match global_var_decl.global_var_init with
                | Some init_expr ->
                    let typed_init_expr = type_check_expression ctx init_expr in
-                   typed_init_expr.texpr_type
+                   let inferred_type = typed_init_expr.texpr_type in
+                   (* Validate ring buffer objects *)
+                   validate_ringbuf_object ctx global_var_decl.global_var_name inferred_type global_var_decl.global_var_pos;
+                   inferred_type
                | None -> U32)  (* Default type when no type or value specified *)
         in
+        (* If this is a map type, also register it as a map *)
+        (match var_type with
+         | Map (key_type, value_type, map_type, size) ->
+             let ir_key_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table key_type in
+             let ir_value_type = Ir.ast_type_to_ir_type_with_context ctx.symbol_table value_type in
+             let ir_map_type = Ir.ast_map_type_to_ir_map_type map_type in
+             let ir_map_def = Ir.make_ir_map_def
+               global_var_decl.global_var_name
+               ir_key_type
+               ir_value_type
+               ir_map_type
+               size
+               ~ast_key_type:key_type
+               ~ast_value_type:value_type
+               ~ast_map_type:map_type
+               ~flags:0
+               ~is_global:true
+               global_var_decl.global_var_pos
+             in
+             Hashtbl.replace ctx.maps global_var_decl.global_var_name ir_map_def
+         | _ -> ());
         Hashtbl.replace ctx.variables global_var_decl.global_var_name var_type
     | AttributedFunction attr_func ->
         (* Register attributed function signature in context *)
@@ -3059,4 +3315,6 @@ and populate_multi_program_context ast multi_prog_analysis =
 
     |       other_decl -> other_decl
           ) ast
+
+
 

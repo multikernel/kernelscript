@@ -45,6 +45,22 @@ type builtin_function = {
   validate: (bpf_type list -> declaration list -> position -> bool * string option) option;
 }
 
+(** Validation function for dispatch() - only accepts ring buffer arguments *)
+let validate_dispatch_function arg_types _ast_context _pos =
+  if List.length arg_types = 0 then
+    (false, Some "dispatch() requires at least one ring buffer argument")
+  else
+    (* Check that all arguments are ring buffer types (either Ringbuf or RingbufRef) *)
+    let all_ringbufs = List.for_all (function
+      | RingbufRef _ -> true
+      | Ringbuf (_, _) -> true
+      | _ -> false
+    ) arg_types in
+    if all_ringbufs then
+      (true, None)
+    else
+      (false, Some "dispatch() only accepts ring buffer arguments")
+
 (** Validation function for register() - only accepts impl block arguments *)
 let validate_register_function arg_types ast_context _pos =
   if List.length arg_types <> 1 then
@@ -138,6 +154,17 @@ let builtin_functions = [
     userspace_impl = "bpf_prog_test_run";
     kernel_impl = "";
     validate = None; (* Accept any two arguments - validate during compilation *)
+  };
+  {
+    name = "dispatch";
+    param_types = []; (* Custom validation handles type checking for ring buffers *)
+    return_type = I32; (* Returns 0 on success, error code on failure *)
+    description = "Poll multiple ring buffers for events and dispatch to their callbacks";
+    is_variadic = true;
+    ebpf_impl = ""; (* Not available in eBPF context - userspace only *)
+    userspace_impl = "ring_buffer__poll";
+    kernel_impl = "";
+    validate = Some validate_dispatch_function;
   };
 
 ]

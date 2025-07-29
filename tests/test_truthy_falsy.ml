@@ -217,18 +217,19 @@ let test_map_lookup_truthy () =
   (* This should demonstrate the elegant truthy/falsy pattern *)
   let symbol_table = create_symbol_table () in
   let ctx = create_context symbol_table [] in
-  let map_decl = {
-    name = "test_map";
-    key_type = I32;
-    value_type = I32;
-    map_type = Hash;
-    config = { max_entries = 100; key_size = None; value_size = None; flags = [] };
-    is_global = true;
-    is_pinned = false;
-    map_pos = pos;
-  } in
+  let map_def = Kernelscript.Ir.make_ir_map_def
+    "test_map"
+    Kernelscript.Ir.IRI32
+    Kernelscript.Ir.IRI32
+    Kernelscript.Ir.IRHash
+    100
+    ~ast_key_type:I32
+    ~ast_value_type:I32
+    ~ast_map_type:Hash
+    ~is_global:true
+    pos in
   
-  Hashtbl.replace ctx.maps "test_map" map_decl;
+  Hashtbl.replace ctx.maps "test_map" map_def;
   
   try
     let _ = type_check_statement ctx if_stmt in

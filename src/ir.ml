@@ -36,6 +36,7 @@ type ir_multi_program = {
   struct_ops_instances: ir_struct_ops_instance list; (* Struct_ops instances *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
   userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
+  ring_buffer_registry: ir_ring_buffer_registry; (* Centralized ring buffer tracking *)
   multi_pos: ir_position;
 }
 
@@ -142,6 +143,7 @@ and ir_type =
   | IRTypeAlias of string * ir_type (* Simple type aliases *)
   | IRStructOps of string * ir_struct_ops_def (* Future: struct_ops support *)
   | IRFunctionPointer of ir_type list * ir_type (* Function pointer: (param_types, return_type) *)
+  | IRRingbuf of ir_type * int (* Ring buffer object: (value_type, size) *)
 
 and context_type = 
   | XdpCtx | TcCtx | KprobeCtx | UprobeCtx | TracepointCtx | LsmCtx | CgroupSkbCtx
@@ -188,6 +190,10 @@ and ir_map_def = {
   map_name: string;
   map_key_type: ir_type;
   map_value_type: ir_type;
+  (* Store AST types for type checking *)
+  ast_key_type: Ast.bpf_type;
+  ast_value_type: Ast.bpf_type;
+  ast_map_type: Ast.map_type;
   map_type: ir_map_type;
   max_entries: int;
   attributes: ir_map_attr list;
@@ -295,6 +301,7 @@ and ir_instr_desc =
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
   | IRMapStore of ir_value * ir_value * ir_value * map_store_type
   | IRMapDelete of ir_value * ir_value
+  | IRRingbufOp of ir_value * ringbuf_operation  (* ringbuf_object, operation *)
   | IRObjectNew of ir_value * ir_type  (* target_pointer, object_type *)
   | IRObjectNewWithFlag of ir_value * ir_type * ir_value  (* target_pointer, object_type, flag_expr *)
   | IRObjectDelete of ir_value  (* pointer_to_delete *)
@@ -332,8 +339,35 @@ and ir_catch_pattern =
   | IntCatchPattern of int     (* catch 42 { ... } *)
   | WildcardCatchPattern       (* catch _ { ... } *)
 
+(** Ring buffer registry - centralized tracking of all ring buffer operations *)
+and ir_ring_buffer_registry = {
+  ring_buffer_declarations: ir_ring_buffer_declaration list; (* All ring buffer declarations *)
+  event_handler_registrations: (string * string) list; (* ringbuf_name -> handler_function_name *)
+  usage_summary: ir_ring_buffer_usage_summary; (* Usage patterns and optimization hints *)
+}
+
+and ir_ring_buffer_declaration = {
+  rb_name: string;
+  rb_value_type: ir_type;
+  rb_size: int;
+  rb_is_global: bool;
+  rb_declaration_pos: ir_position;
+}
+
+and ir_ring_buffer_usage_summary = {
+  used_in_ebpf: string list; (* Ring buffers used in eBPF programs *)
+  used_in_userspace: string list; (* Ring buffers used in userspace *)
+  needs_event_processing: string list; (* Ring buffers that need event loop setup *)
+}
+
 and map_load_type = DirectLoad | MapLookup | MapPeek
 and map_store_type = DirectStore | MapUpdate | MapPush
+
+and ringbuf_operation = 
+  | RingbufReserve of ir_value  (* result_value *)
+  | RingbufSubmit of ir_value   (* data_pointer *)
+  | RingbufDiscard of ir_value  (* data_pointer *)
+  | RingbufOnEvent of string    (* handler_function_name *)
 
 
 and bounds_check = {
@@ -503,11 +537,15 @@ let make_ir_function name params return_type blocks ?(total_stack_usage = 0)
   func_program_type = None;
 }
 
-let make_ir_map_def name key_type value_type map_type max_entries 
+let make_ir_map_def name ir_key_type ir_value_type map_type max_entries 
+                    ~ast_key_type ~ast_value_type ~ast_map_type
                     ?(attributes = []) ?(flags = 0) ?(is_global = false) ?pin_path pos = {
   map_name = name;
-  map_key_type = key_type;
-  map_value_type = value_type;
+  map_key_type = ir_key_type;
+  map_value_type = ir_value_type;
+  ast_key_type = ast_key_type;
+  ast_value_type = ast_value_type;
+  ast_map_type = ast_map_type;
   map_type;
   max_entries;
   attributes;
@@ -524,9 +562,20 @@ let make_ir_program name prog_type entry_function pos = {
   ir_pos = pos;
 }
 
+(** Ring buffer registry helper functions - defined before use *)
+let create_empty_ring_buffer_registry () = {
+  ring_buffer_declarations = [];
+  event_handler_registrations = [];
+  usage_summary = {
+    used_in_ebpf = [];
+    used_in_userspace = [];
+    needs_event_processing = [];
+  };
+}
+
 let make_ir_multi_program source_name programs kernel_functions global_maps 
                           ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = []) 
-                          ?userspace_program ?(userspace_bindings = []) pos = {
+                          ?userspace_program ?(userspace_bindings = []) ?(ring_buffer_registry = create_empty_ring_buffer_registry ()) pos = {
   source_name;
   programs;
   kernel_functions;
@@ -537,6 +586,7 @@ let make_ir_multi_program source_name programs kernel_functions global_maps
   struct_ops_instances;
   userspace_program;
   userspace_bindings;
+  ring_buffer_registry;
   multi_pos = pos;
 }
 
@@ -676,9 +726,14 @@ let rec ast_type_to_ir_type = function
       let ir_return_type = ast_type_to_ir_type return_type in
       IRFunctionPointer (ir_param_types, ir_return_type)
 
-  | Map (_, _, _) -> failwith "Map types handled separately"
+    | Map (_key_type, _value_type, _map_type, _size) ->
+      (* Map types in global variables should be treated as map file descriptors *)
+      (* Since maps are actually stored as file descriptors in the kernel *)
+      IRU32  (* File descriptor representation *)
   | ProgramRef _ -> IRU32 (* Program references are represented as file descriptors (u32) in IR *)
   | ProgramHandle -> IRI32 (* Program handles are represented as file descriptors (i32) in IR to support error codes *)
+  | Ringbuf (value_type, size) -> IRRingbuf (ast_type_to_ir_type value_type, size) (* Ring buffer object *)
+  | RingbufRef _ -> IRU32 (* Ring buffer references are represented as pointers/handles (u32) in IR *)
   | NoneType -> IRU32 (* None type represented as u32 sentinel value in IR *)
 
 (* Helper function that preserves type aliases when converting AST types to IR types *)
@@ -796,6 +851,8 @@ let rec string_of_ir_type = function
       let param_strs = List.map string_of_ir_type param_types in
       let return_str = string_of_ir_type return_type in
       Printf.sprintf "fn(%s) -> %s" (String.concat ", " param_strs) return_str
+  | IRRingbuf (value_type, size) ->
+      Printf.sprintf "ringbuf<%s>(%d)" (string_of_ir_type value_type) size
 
 let rec string_of_ir_value_desc = function
   | IRLiteral lit -> string_of_literal lit
@@ -892,6 +949,12 @@ let rec string_of_ir_instruction instr =
         type_str (string_of_ir_value map) (string_of_ir_value key) (string_of_ir_value value)
   | IRMapDelete (map, key) ->
       Printf.sprintf "delete(%s, %s)" (string_of_ir_value map) (string_of_ir_value key)
+  | IRRingbufOp (ringbuf, op) ->
+      (match op with
+       | RingbufReserve result -> Printf.sprintf "%s = %s.reserve()" (string_of_ir_value result) (string_of_ir_value ringbuf)
+       | RingbufSubmit data -> Printf.sprintf "%s.submit(%s)" (string_of_ir_value ringbuf) (string_of_ir_value data)
+       | RingbufDiscard data -> Printf.sprintf "%s.discard(%s)" (string_of_ir_value ringbuf) (string_of_ir_value data)
+       | RingbufOnEvent handler -> Printf.sprintf "%s.on_event(%s)" (string_of_ir_value ringbuf) handler)
   | IRObjectNew (dest, obj_type) ->
       Printf.sprintf "%s = object_new(%s)" (string_of_ir_value dest) (string_of_ir_type obj_type)
   | IRObjectNewWithFlag (dest, obj_type, flag_expr) ->
@@ -1023,4 +1086,6 @@ let string_of_ir_multi_program multi_prog =
   let programs_str = String.concat "\n\n" 
     (List.map string_of_ir_program multi_prog.programs) in
   Printf.sprintf "source %s {\n%s\n}" 
-    multi_prog.source_name programs_str 
+    multi_prog.source_name programs_str
+
+ 

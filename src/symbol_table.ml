@@ -334,7 +334,23 @@ let add_global_var_decl table global_var_decl =
               | _ -> U32)  (* Default to U32 for other expressions *)
          | None -> U32)  (* Default type when no type or value specified *)
   in
-  add_symbol table global_var_decl.global_var_name (GlobalVariable (var_type, global_var_decl.global_var_init)) Public pos
+  (* Check if this is a map type - register as GlobalMap instead of GlobalVariable *)
+  (match var_type with
+   | Map (key_type, value_type, map_type, size) ->
+       (* Create a map_declaration from the global variable *)
+       let map_decl = {
+         Ast.name = global_var_decl.global_var_name;
+         key_type = key_type;
+         value_type = value_type;
+         map_type = map_type;
+         config = { max_entries = size; key_size = None; value_size = None; flags = [] };
+         is_global = true;
+         is_pinned = global_var_decl.is_pinned;
+         map_pos = pos;
+       } in
+       add_symbol table global_var_decl.global_var_name (GlobalMap map_decl) Public pos
+   | _ ->
+       add_symbol table global_var_decl.global_var_name (GlobalVariable (var_type, global_var_decl.global_var_init)) Public pos)
 
 (** Check if map is global *)
 let is_global_map table name =

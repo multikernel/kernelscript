@@ -198,6 +198,14 @@ let validate_map_declaration map_decl =
   
   validate_map_config map_decl.map_type map_decl.config
 
+(** Convert AST map_type to ebpf_map_type *)
+let ast_to_ebpf_map_type = function
+  | Ast.Hash -> Hash
+  | Ast.Array -> Array
+  | Ast.Percpu_hash -> Percpu_hash
+  | Ast.Percpu_array -> Percpu_array
+  | Ast.Lru_hash -> Lru_hash
+
 (** Map operation validation *)
 let validate_map_operation map_decl operation access_pattern =
   match operation, access_pattern with
@@ -224,14 +232,6 @@ let make_map_declaration name key_type value_type map_type config
                         is_global ?program_scope pos =
   { name; key_type; value_type; map_type; config; is_global; 
     program_scope; map_pos = pos }
-
-(** Convert AST map_type to ebpf_map_type *)
-let ast_to_ebpf_map_type = function
-  | Ast.Hash -> Hash
-  | Ast.Array -> Array
-  | Ast.Percpu_hash -> Percpu_hash
-  | Ast.Percpu_array -> Percpu_array
-  | Ast.Lru_hash -> Lru_hash
 
 (** Convert ebpf_map_type to AST map_type *)
 let ebpf_to_ast_map_type = function
@@ -364,6 +364,18 @@ let extract_map_flags (ast : Ast.declaration list) =
           key_type = Ast.string_of_bpf_type map_decl.Ast.key_type;
           value_type = Ast.string_of_bpf_type map_decl.Ast.value_type;
         }
+    | Ast.GlobalVarDecl global_var_decl ->
+        (* Handle global variables with map types *)
+        (match global_var_decl.Ast.global_var_type with
+         | Some (Ast.Map (key_type, value_type, _map_type, _size)) ->
+             Some {
+               map_name = global_var_decl.Ast.global_var_name;
+               has_initial_values = false;
+               initial_values = [];
+               key_type = Ast.string_of_bpf_type key_type;
+               value_type = Ast.string_of_bpf_type value_type;
+             }
+         | _ -> None)
     | _ -> None
   ) ast
 

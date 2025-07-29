@@ -36,6 +36,14 @@ let _string_of_position pos =
 let extract_maps_from_ast ast =
   List.filter_map (function
     | Kernelscript.Ast.MapDecl map_decl -> Some map_decl
+    | Kernelscript.Ast.GlobalVarDecl global_var_decl -> 
+        (* Convert global variables with map types to map declarations *)
+        (match global_var_decl.global_var_type with
+         | Some (Kernelscript.Ast.Map (key_type, value_type, map_type, size)) ->
+             let config = { Kernelscript.Ast.max_entries = size; key_size = None; value_size = None; flags = [] } in
+             Some { name = global_var_decl.global_var_name; key_type; value_type; map_type; config; 
+                    is_global = true; is_pinned = global_var_decl.is_pinned; map_pos = global_var_decl.global_var_pos }
+         | _ -> None)
     | _ -> None
   ) ast
 

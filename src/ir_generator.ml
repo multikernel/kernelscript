@@ -136,6 +136,97 @@ let emit_instruction ctx instr =
   ctx.current_block <- instr :: ctx.current_block;
   ctx.stack_usage <- ctx.stack_usage + instr.instr_stack_usage
 
+(** Expand ring buffer operations to IR instructions *)
+let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
+  (* Get the ring buffer variable - could be local or global *)
+  let (ringbuf_val, ringbuf_type) = 
+    if Hashtbl.mem ctx.variables ringbuf_name then
+      (* Local variable *)
+      let ringbuf_reg = Hashtbl.find ctx.variables ringbuf_name in
+      let ringbuf_type = match Hashtbl.find_opt ctx.variable_types ringbuf_name with
+        | Some ir_type -> ir_type
+        | None ->
+            (* Fall back to symbol table lookup *)
+            (match Symbol_table.lookup_symbol ctx.symbol_table ringbuf_name with
+             | Some symbol -> 
+                 (match symbol.kind with
+                  | Symbol_table.Variable var_ast_type -> 
+                      ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
+                  | _ -> failwith ("Variable is not a ringbuf: " ^ ringbuf_name))
+             | None -> failwith ("Ringbuf variable not found in symbol table: " ^ ringbuf_name))
+      in
+      (make_ir_value (IRRegister ringbuf_reg) ringbuf_type pos, ringbuf_type)
+    else if Hashtbl.mem ctx.global_variables ringbuf_name then
+      (* Global variable *)
+      let global_var = Hashtbl.find ctx.global_variables ringbuf_name in
+      (make_ir_value (IRVariable ringbuf_name) global_var.global_var_type pos, global_var.global_var_type)
+    else
+      failwith ("Ring buffer variable not found: " ^ ringbuf_name)
+  in
+  
+  match operation with
+  | "reserve" ->
+      (* reserve() returns a pointer to the value type *)
+      let result_type = match ringbuf_type with
+        | IRRingbuf (value_type, _) -> IRPointer (value_type, make_bounds_info ())
+        | _ -> failwith ("Variable is not a ringbuf type")
+      in
+      (* Create a special IR expression that directly represents the ringbuf reserve call *)
+      (* This will be converted to the proper C call without intermediate assignments *)
+      let result_reg = allocate_register ctx in
+      let result_val = make_ir_value (IRRegister result_reg) result_type pos in
+      let ringbuf_op = RingbufReserve result_val in
+      let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
+      emit_instruction ctx instr;
+      result_val
+  
+  | "submit" ->
+      (* submit(data_pointer) returns i32 success code *)
+      let data_val = match arg_vals with
+        | [data] -> data
+        | _ -> failwith ("Ring buffer submit() requires exactly one argument")
+      in
+      let result_reg = allocate_register ctx in
+      let result_val = make_ir_value (IRRegister result_reg) IRI32 pos in
+      let ringbuf_op = RingbufSubmit data_val in
+      let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
+      emit_instruction ctx instr;
+      result_val
+  
+  | "discard" ->
+      (* discard(data_pointer) returns i32 success code *)
+      let data_val = match arg_vals with
+        | [data] -> data
+        | _ -> failwith ("Ring buffer discard() requires exactly one argument")
+      in
+      let result_reg = allocate_register ctx in
+      let result_val = make_ir_value (IRRegister result_reg) IRI32 pos in
+      let ringbuf_op = RingbufDiscard data_val in
+      let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
+      emit_instruction ctx instr;
+      result_val
+  
+  | "on_event" ->
+      (* on_event(handler) returns i32 success code *)
+      let handler_name = match arg_vals with
+        | [handler_val] ->
+            (* Extract function name from the handler value *)
+            (match handler_val.value_desc with
+             | IRFunctionRef name -> name
+             | IRVariable name -> name  (* Function variable *)
+             | _ -> failwith ("Ring buffer on_event() requires a function argument"))
+        | _ -> failwith ("Ring buffer on_event() requires exactly one argument")
+      in
+      let result_reg = allocate_register ctx in
+      let result_val = make_ir_value (IRRegister result_reg) IRI32 pos in
+      let ringbuf_op = RingbufOnEvent handler_name in
+      let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
+      emit_instruction ctx instr;
+      result_val
+  
+  | _ ->
+      failwith ("Unknown ring buffer operation: " ^ operation)
+
 (** Generate bounds information for types *)
 let generate_bounds_info ast_type = match ast_type with
   | Ast.Array (_, size) -> make_bounds_info ~min_size:size ~max_size:size ()
@@ -379,6 +470,7 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
       in
       emit_instruction ctx instr;
       make_ir_value (IRLiteral (IntLit (0, None))) IRU32 pos
+
   | _ -> failwith ("Unknown map operation: " ^ operation)
 
 (** Lower AST expressions to IR values *)
@@ -578,13 +670,44 @@ let rec lower_expression ctx (expr : Ast.expr) =
              emit_instruction ctx instr;
              result_val
        | Ast.FieldAccess ({expr_desc = Ast.Identifier obj_name; _}, method_name) ->
-           (* Method call (e.g., ctx.method() or map.operation()) *)
+           (* Method call (e.g., ctx.method() or ringbuf.operation()) *)
            if obj_name = "ctx" then
              expand_context_method ctx method_name arg_vals expr.expr_pos
            else if Hashtbl.mem ctx.maps obj_name then
-             let key_val = List.hd arg_vals in
+             (* Handle map operations *)
+             let key_val = if List.length arg_vals > 0 then List.hd arg_vals 
+                          else make_ir_value (IRLiteral (IntLit (0, None))) IRU32 expr.expr_pos in
              let value_val_opt = if List.length arg_vals > 1 then Some (List.nth arg_vals 1) else None in
              expand_map_operation ctx obj_name method_name key_val value_val_opt expr.expr_pos
+           else if Hashtbl.mem ctx.variables obj_name then
+             (* Local variable - check if this is a ring buffer variable *)
+             let var_type = match Hashtbl.find_opt ctx.variable_types obj_name with
+               | Some ir_type -> ir_type
+               | None ->
+                   (* Fall back to symbol table lookup for type resolution *)
+                   (match Symbol_table.lookup_symbol ctx.symbol_table obj_name with
+                    | Some symbol -> 
+                        (match symbol.kind with
+                         | Symbol_table.Variable var_ast_type -> 
+                             ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
+                         | _ -> IRU32)
+                    | None -> IRU32)
+             in
+             (match var_type with
+              | IRRingbuf (_, _) ->
+                  (* This is a ringbuf object that supports method calls *)
+                  expand_ringbuf_operation ctx obj_name method_name arg_vals expr.expr_pos
+              | _ ->
+                  failwith ("Method call '" ^ method_name ^ "' not supported on variable '" ^ obj_name ^ "' of type: " ^ (string_of_ir_type var_type)))
+           else if Hashtbl.mem ctx.global_variables obj_name then
+             (* Global variable - check if this is a ring buffer variable *)
+             let global_var = Hashtbl.find ctx.global_variables obj_name in
+             (match global_var.global_var_type with
+              | IRRingbuf (_, _) ->
+                  (* This is a global ringbuf object that supports method calls *)
+                  expand_ringbuf_operation ctx obj_name method_name arg_vals expr.expr_pos
+              | _ ->
+                  failwith ("Method call '" ^ method_name ^ "' not supported on global variable '" ^ obj_name ^ "' of type: " ^ (string_of_ir_type global_var.global_var_type)))
            else
              failwith ("Unknown method call: " ^ obj_name ^ "." ^ method_name)
        | _ ->
@@ -684,6 +807,20 @@ let rec lower_expression ctx (expr : Ast.expr) =
            let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
            emit_instruction ctx instr;
            result_val
+       | IRRingbuf (_, _) ->
+           (* Handle ring buffer field access - convert to method calls *)
+           (match field with
+            | "reserve" ->
+                (* reserve() - generate ring buffer reserve operation *)
+                let ringbuf_op = RingbufReserve result_val in
+                let instr = make_ir_instruction (IRRingbufOp (obj_val, ringbuf_op)) expr.expr_pos in
+                emit_instruction ctx instr;
+                result_val
+            | "submit" | "discard" | "on_event" ->
+                (* These operations require arguments, so should be handled as function calls, not field access *)
+                failwith ("Ring buffer operation '" ^ field ^ "' requires arguments and should be called as a function")
+            | _ ->
+                failwith ("Unknown ring buffer operation: " ^ field))
        | _ ->
            (* For userspace code, allow field access on other types (assuming it will be handled by C compilation) *)
            if ctx.is_userspace then
@@ -1382,20 +1519,33 @@ and lower_statement ctx stmt =
                  | _ ->
                      (* Regular function call handling *)
                      let arg_vals = List.map (lower_expression ctx) args in
-                     let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
-                     let call_target = match callee_expr.Ast.expr_desc with
-                       | Ast.Identifier name ->
-                           if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
-                             let callee_val = lower_expression ctx callee_expr in
-                             FunctionPointerCall callee_val
-                           else
-                             DirectCall name
-                       | _ ->
-                           let callee_val = lower_expression ctx callee_expr in
-                           FunctionPointerCall callee_val
-                     in
-                     let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
-                     emit_instruction ctx instr)
+                     (* Check if this is a method call and handle it specially *)
+                     (match callee_expr.Ast.expr_desc with
+                      | Ast.FieldAccess (_, _) ->
+                          (* This is a method call - evaluate the full expression directly *)
+                          (* The lower_expression will handle method calls and assign result to target register *)
+                          let result_val = lower_expression ctx expr in
+                          (* Emit assignment to ensure the result gets to the correct target register *)
+                          let target_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                          let assign_expr = make_ir_expr (IRValue result_val) target_type expr.Ast.expr_pos in
+                          let assign_instr = make_ir_instruction (IRAssign (target_val, assign_expr)) expr.Ast.expr_pos in
+                          emit_instruction ctx assign_instr
+                      | _ ->
+                          (* Regular function call handling *)
+                          let call_target = match callee_expr.Ast.expr_desc with
+                            | Ast.Identifier name ->
+                                if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                                  let callee_val = lower_expression ctx callee_expr in
+                                  FunctionPointerCall callee_val
+                                else
+                                  DirectCall name
+                            | _ ->
+                                let callee_val = lower_expression ctx callee_expr in
+                                FunctionPointerCall callee_val
+                          in
+                          let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                          let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
+                          emit_instruction ctx instr))
             | Ast.New typ ->
                 (* Handle new expression: emit allocation instruction *)
                 let ir_type = ast_type_to_ir_type typ in
@@ -2282,6 +2432,9 @@ let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
     ir_value_type
     ir_map_type
     map_decl.Ast.config.max_entries
+    ~ast_key_type:map_decl.Ast.key_type
+    ~ast_value_type:map_decl.Ast.value_type
+    ~ast_map_type:map_decl.Ast.map_type
     ~flags:flags
     ~is_global:map_decl.Ast.is_global
     ?pin_path:pin_path
@@ -2554,7 +2707,10 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
       List.find (fun f -> f.is_main) ir_program_functions
     with Not_found ->
       (* For struct_ops functions, use the first function as entry *)
-      List.hd ir_program_functions
+      if List.length ir_program_functions = 0 then
+        failwith ("No functions found in program " ^ prog_def.prog_name ^ ". This might be due to IR generation failures.")
+      else
+        List.hd ir_program_functions
   in
   
   (* Create IR program with the entry function *)
@@ -2695,15 +2851,49 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower global maps *)
   let ir_global_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) global_map_decls in
   
-  (* Lower global variables *)
-  let ir_global_variables = List.map (fun global_var_decl -> 
-    lower_global_variable_declaration ctx.symbol_table global_var_decl
-  ) global_var_decls in
+  (* Separate global variable declarations into maps and regular variables *)
+  let (global_var_maps, regular_global_vars) = List.fold_left (fun (maps, vars) global_var_decl ->
+    match global_var_decl.Ast.global_var_type with
+    | Some (Ast.Map (key_type, value_type, map_type, size)) ->
+        (* Convert global variable with map type to IR map definition *)
+        let ir_key_type = ast_type_to_ir_type_with_context ctx.symbol_table key_type in
+        let ir_value_type = ast_type_to_ir_type_with_context ctx.symbol_table value_type in
+        let ir_map_type = ast_map_type_to_ir_map_type map_type in
+        let pin_path = 
+          if global_var_decl.Ast.is_pinned then
+            Some (Printf.sprintf "/sys/fs/bpf/%s/maps/%s" ctx.symbol_table.project_name global_var_decl.Ast.global_var_name)
+          else
+            None
+        in
+        let ir_map_def = make_ir_map_def
+          global_var_decl.Ast.global_var_name
+          ir_key_type
+          ir_value_type
+          ir_map_type
+          size
+          ~ast_key_type:key_type
+          ~ast_value_type:value_type
+          ~ast_map_type:map_type
+          ~flags:0
+          ~is_global:true
+          ?pin_path:pin_path
+          global_var_decl.Ast.global_var_pos
+        in
+        (ir_map_def :: maps, vars)
+    | _ ->
+        (* Regular global variable *)
+        let ir_global_var = lower_global_variable_declaration ctx.symbol_table global_var_decl in
+        (maps, ir_global_var :: vars)
+  ) ([], []) global_var_decls in
   
-  (* Add global maps to main context for userspace processing *)
+  let ir_global_variables = List.rev regular_global_vars in
+  let ir_global_var_maps = List.rev global_var_maps in
+  
+  (* Add all global maps (regular + from global variables) to main context for userspace processing *)
+  let all_global_maps = ir_global_maps @ ir_global_var_maps in
   List.iter (fun (map_def : ir_map_def) -> 
     Hashtbl.add ctx.maps map_def.map_name map_def
-  ) ir_global_maps;
+  ) all_global_maps;
   
   (* Also add all program-scoped maps to main context for userspace processing *)
   List.iter (fun prog_def ->
@@ -2753,6 +2943,10 @@ let lower_multi_program ast symbol_table source_name =
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
     let prog_ctx = create_context ~global_variables:ir_global_variables symbol_table in
+    (* Copy maps from main context to program context *)
+    Hashtbl.iter (fun map_name map_def -> 
+      Hashtbl.add prog_ctx.maps map_name map_def
+    ) ctx.maps;
     lower_single_program prog_ctx prog_def ir_global_maps all_kernel_shared_functions
   ) all_prog_defs in
   
@@ -3072,7 +3266,7 @@ let lower_multi_program ast symbol_table source_name =
     source_name 
     ir_programs 
     ir_kernel_functions 
-    ir_global_maps 
+    all_global_maps 
     ~global_configs:ir_global_configs
     ~global_variables:ir_global_variables
     ~struct_ops_declarations:combined_struct_ops_declarations

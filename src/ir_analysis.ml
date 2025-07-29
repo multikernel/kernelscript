@@ -318,4 +318,147 @@ let generate_analysis_report (func : ir_function) : string =
     func.func_name
     cfg_stats
     (if return_info.all_paths_return then "complete" else "incomplete")
-    (if loops_bounded then "yes" else "no") 
+    (if loops_bounded then "yes" else "no")
+
+(** Ring Buffer Analysis - Centralized processing of all ring buffer operations *)
+module RingBufferAnalysis = struct
+  
+  (** Analyze ring buffer declarations from global variables *)
+  let analyze_ring_buffer_declarations (global_variables : ir_global_variable list) : ir_ring_buffer_declaration list =
+    List.fold_left (fun acc global_var ->
+      match global_var.global_var_type with
+      | IRRingbuf (value_type, size) ->
+          let rb_decl = {
+            rb_name = global_var.global_var_name;
+            rb_value_type = value_type;
+            rb_size = size;
+            rb_is_global = true;
+            rb_declaration_pos = global_var.global_var_pos;
+          } in
+          rb_decl :: acc
+      | _ -> acc
+    ) [] global_variables
+
+  (** Scan all functions for ring buffer operations *)
+  let collect_ring_buffer_operations (functions : ir_function list) : (string * string) list =
+    let handler_registrations = ref [] in
+    
+    List.iter (fun func ->
+      List.iter (fun block ->
+        List.iter (fun instr ->
+          match instr.instr_desc with
+          | IRRingbufOp (ringbuf_val, RingbufOnEvent handler_name) ->
+              let ringbuf_name = match ringbuf_val.value_desc with
+                | IRVariable name -> name
+                | IRRegister reg -> Printf.sprintf "ringbuf_%d" reg
+                | _ -> failwith "IRRingbufOp requires a ring buffer variable"
+              in
+              handler_registrations := (ringbuf_name, handler_name) :: !handler_registrations
+          | _ -> ()
+        ) block.instructions
+      ) func.basic_blocks
+    ) functions;
+    
+    !handler_registrations
+
+  (** Analyze usage patterns *)
+  let analyze_usage_patterns (programs : ir_program list) (userspace_program : ir_userspace_program option) 
+                           (ring_buffer_declarations : ir_ring_buffer_declaration list) : ir_ring_buffer_usage_summary =
+    let rb_names = List.map (fun rb -> rb.rb_name) ring_buffer_declarations in
+    
+    let used_in_ebpf = ref [] in
+    let used_in_userspace = ref [] in
+    let needs_event_processing = ref [] in
+    
+    (* Scan eBPF programs *)
+    List.iter (fun program ->
+      List.iter (fun block ->
+        List.iter (fun instr ->
+          match instr.instr_desc with
+          | IRRingbufOp (ringbuf_val, _) ->
+              let ringbuf_name = match ringbuf_val.value_desc with
+                | IRVariable name -> name
+                | _ -> "unknown"
+              in
+              if List.mem ringbuf_name rb_names && not (List.mem ringbuf_name !used_in_ebpf) then
+                used_in_ebpf := ringbuf_name :: !used_in_ebpf
+          | _ -> ()
+        ) block.instructions
+      ) program.entry_function.basic_blocks
+    ) programs;
+    
+    (* Scan userspace programs *)
+    (match userspace_program with
+     | Some userspace ->
+         List.iter (fun func ->
+           List.iter (fun block ->
+             List.iter (fun instr ->
+               match instr.instr_desc with
+               | IRRingbufOp (ringbuf_val, op) ->
+                   let ringbuf_name = match ringbuf_val.value_desc with
+                     | IRVariable name -> name
+                     | _ -> "unknown"
+                   in
+                   if List.mem ringbuf_name rb_names then (
+                     if not (List.mem ringbuf_name !used_in_userspace) then
+                       used_in_userspace := ringbuf_name :: !used_in_userspace;
+                     
+                     (* Check if this ring buffer needs event processing *)
+                     match op with
+                     | RingbufOnEvent _ ->
+                         if not (List.mem ringbuf_name !needs_event_processing) then
+                           needs_event_processing := ringbuf_name :: !needs_event_processing
+                     | _ -> ()
+                   )
+               | IRCall (DirectCall "dispatch", args, _) ->
+                   (* Check dispatch calls for ring buffer arguments *)
+                   List.iter (fun arg ->
+                     match arg.value_desc with
+                     | IRVariable name when List.mem name rb_names ->
+                         if not (List.mem name !needs_event_processing) then
+                           needs_event_processing := name :: !needs_event_processing
+                     | _ -> ()
+                   ) args
+               | _ -> ()
+             ) block.instructions
+           ) func.basic_blocks
+         ) userspace.userspace_functions
+     | None -> ());
+    
+    {
+      used_in_ebpf = !used_in_ebpf;
+      used_in_userspace = !used_in_userspace;
+      needs_event_processing = !needs_event_processing;
+    }
+
+  (** Main analysis function - populates the ring buffer registry *)
+  let analyze_and_populate_registry (ir_multi_prog : ir_multi_program) : ir_multi_program =
+    (* Collect declarations from global variables *)
+    let ring_buffer_declarations = analyze_ring_buffer_declarations ir_multi_prog.global_variables in
+    
+    (* Collect all functions (eBPF and userspace) *)
+    let all_functions = 
+      (List.map (fun prog -> prog.entry_function) ir_multi_prog.programs) @
+      ir_multi_prog.kernel_functions @
+      (match ir_multi_prog.userspace_program with
+       | Some userspace -> userspace.userspace_functions
+       | None -> [])
+    in
+    
+    (* Collect event handler registrations *)
+    let event_handler_registrations = collect_ring_buffer_operations all_functions in
+    
+    (* Analyze usage patterns *)
+    let usage_summary = analyze_usage_patterns ir_multi_prog.programs ir_multi_prog.userspace_program ring_buffer_declarations in
+    
+    (* Build the complete registry *)
+    let registry = {
+      ring_buffer_declarations;
+      event_handler_registrations;
+      usage_summary;
+    } in
+    
+    (* Return updated ir_multi_prog with populated registry *)
+    { ir_multi_prog with ring_buffer_registry = registry }
+
+end 

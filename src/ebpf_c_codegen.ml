@@ -153,8 +153,12 @@ type c_context = {
   mutable register_name_hints: (int, string) Hashtbl.t;
   (* Track which registers can be inlined *)
   mutable inlinable_registers: (int, string) Hashtbl.t;
+  (* Track which registers have been declared to avoid redeclaration *)
+  mutable declared_registers: (int, unit) Hashtbl.t;
   (* Current function's context type for proper field access generation *)
   mutable current_function_context_type: string option;
+  (* Track dynptr-backed pointers for proper field assignment *)
+  mutable dynptr_backed_pointers: (string, string) Hashtbl.t; (* pointer_var -> dynptr_var *)
 }
 
 let create_c_context () = {
@@ -173,10 +177,54 @@ let create_c_context () = {
   enable_temp_var_optimization = true;
   register_name_hints = Hashtbl.create 32;
   inlinable_registers = Hashtbl.create 32;
+  declared_registers = Hashtbl.create 32;
   current_function_context_type = None;
+  dynptr_backed_pointers = Hashtbl.create 32;
 }
 
 (** Helper functions for code generation *)
+
+(** Calculate the size of a type for dynptr field assignment operations.
+    This function should only be called with basic value types that are valid
+    for struct field assignments. The type checker ensures only compatible
+    types reach this point. *)
+let rec calculate_type_size ir_type =
+  match ir_type with
+  (* Basic integer types *)
+  | IRU8 | IRI8 | IRChar -> 1
+  | IRU16 | IRI16 -> 2
+  | IRU32 | IRI32 | IRF32 -> 4
+  | IRU64 | IRI64 | IRF64 -> 8
+  | IRBool -> 1
+  
+  (* String and pointer types (valid in some field contexts) *)
+  | IRStr _ -> 1  (* Size of individual char *)
+  | IRPointer (_, _) -> 8  (* Pointer size *)
+  
+  (* Array elements - recurse to get element size *)
+  | IRArray (elem_type, _, _) -> calculate_type_size elem_type
+  
+  (* These types should never appear in field assignments due to type checking *)
+  | IRVoid -> 
+      failwith "calculate_type_size: IRVoid should not appear in field assignments"
+  | IRStruct (struct_name, _, _) -> 
+      failwith ("calculate_type_size: IRStruct should not appear in field assignments, got: " ^ struct_name)
+  | IREnum (enum_name, _, _) -> 
+      failwith ("calculate_type_size: IREnum should not appear in field assignments, got: " ^ enum_name) 
+  | IRResult (_, _) ->
+      failwith "calculate_type_size: IRResult should not appear in field assignments"
+  | IRAction _ ->
+      failwith "calculate_type_size: IRAction should not appear in field assignments"
+  | IRTypeAlias (alias_name, _) ->
+      failwith ("calculate_type_size: IRTypeAlias should be resolved by type checker, got: " ^ alias_name)
+  | IRStructOps (ops_name, _) ->
+      failwith ("calculate_type_size: IRStructOps should not appear in field assignments, got: " ^ ops_name)
+  | IRFunctionPointer (_, _) ->
+      failwith "calculate_type_size: IRFunctionPointer should not appear in field assignments"
+  | IRRingbuf (_, _) ->
+      failwith "calculate_type_size: IRRingbuf should not appear in field assignments"
+  | IRContext _ ->
+      failwith "calculate_type_size: IRContext should not appear in field assignments"
 
 let indent ctx = String.make (ctx.indent_level * 4) ' '
 
@@ -283,11 +331,14 @@ let rec ebpf_type_from_ir_type = function
   | IRAction Xdp_actionType -> "int"
   | IRAction TcActionType -> "int"
   | IRAction GenericActionType -> "int"
-  | IRFunctionPointer (param_types, return_type) -> 
+    | IRFunctionPointer (param_types, return_type) ->
       let return_type_str = ebpf_type_from_ir_type return_type in
       let param_types_str = List.map ebpf_type_from_ir_type param_types in
       let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
+      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str
+  | IRRingbuf (_value_type, _size) ->
+      (* Ring buffer objects are represented as void pointers in eBPF C *)
+      "void*"  (* Function pointer type *)
 
 (** Generate proper C declaration for eBPF, handling function pointers correctly *)
 let generate_ebpf_c_declaration ir_type var_name =
@@ -311,6 +362,7 @@ let ir_map_type_to_c_type = function
   | IRPercpu_hash -> "BPF_MAP_TYPE_PERCPU_HASH"
   | IRPercpu_array -> "BPF_MAP_TYPE_PERCPU_ARRAY"
   | IRLru_hash -> "BPF_MAP_TYPE_LRU_HASH"
+
 
 (** Collect all string sizes used in the program *)
 
@@ -478,6 +530,8 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_value flag_val)
   | IRObjectDelete ptr_val ->
       collect_string_sizes_from_value ptr_val
+  | IRRingbufOp (ringbuf_val, _) ->
+      collect_string_sizes_from_value ringbuf_val
 
 let collect_string_sizes_from_function ir_func =
   List.fold_left (fun acc block ->
@@ -1241,7 +1295,27 @@ let generate_global_variables ctx global_variables =
       emit_blank_line ctx
     );
     
-    (* Generate regular (non-pinned) global variables *)
+    (* Separate ring buffer variables from regular variables *)
+    let (ringbuf_vars, non_ringbuf_vars) = List.partition (fun global_var ->
+      match global_var.global_var_type with
+      | IRRingbuf (_, _) -> true
+      | _ -> false
+    ) regular_vars in
+    
+    (* Generate ring buffer maps *)
+    List.iter (fun global_var ->
+      match global_var.global_var_type with
+      | IRRingbuf (_, size) ->
+          emit_line ctx (sprintf "/* Ring buffer for %s */" global_var.global_var_name);
+          emit_line ctx "struct {";
+          emit_line ctx "    __uint(type, BPF_MAP_TYPE_RINGBUF);";
+          emit_line ctx (sprintf "    __uint(max_entries, %d);" size);
+          emit_line ctx (sprintf "} %s SEC(\".maps\");" global_var.global_var_name);
+          emit_blank_line ctx
+      | _ -> () (* Should not happen due to filtering above *)
+    ) ringbuf_vars;
+    
+    (* Generate regular (non-pinned, non-ringbuf) global variables *)
     List.iter (fun global_var ->
       let c_type = ebpf_type_from_ir_type global_var.global_var_type in
       let var_name = global_var.global_var_name in
@@ -1272,7 +1346,7 @@ let generate_global_variables ctx global_variables =
              emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
            else
              emit_line ctx (sprintf "%s %s;" c_type var_name))
-    ) regular_vars;
+    ) non_ringbuf_vars;
     emit_blank_line ctx
   )
 
@@ -1673,9 +1747,12 @@ let generate_c_expression ctx ir_expr =
            (* Packet data field access - use bpf_dynptr_from_xdp *)
            (match obj_val.val_type with
             | IRPointer (IRStruct (struct_name, _, _), _) ->
-                let field_size = 4 in (* Default - should be calculated from struct *)
+                (* Note: For field ACCESS (not assignment), we use sizeof(__typeof(field)) 
+                   which is calculated by the C compiler, so we don't need calculate_type_size here *)
+                let field_size = sprintf "sizeof(__typeof(((%s*)0)->%s))" 
+                                        (sprintf "struct %s" struct_name) field in
                 let full_struct_name = sprintf "struct %s" struct_name in
-                sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __pkt_dynptr; if (bpf_dynptr_from_xdp(&__pkt_dynptr, ctx) == 0) { void* __field_data = bpf_dynptr_data(&__pkt_dynptr, (%s - (void*)(long)ctx->data) + __builtin_offsetof(%s, %s), %d); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
+                sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __pkt_dynptr; if (bpf_dynptr_from_xdp(&__pkt_dynptr, ctx) == 0) { void* __field_data = bpf_dynptr_data(&__pkt_dynptr, (%s - (void*)(long)ctx->data) + __builtin_offsetof(%s, %s), %s); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
                   full_struct_name field obj_str full_struct_name field field_size full_struct_name field
             | _ -> sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field)
        
@@ -1683,9 +1760,12 @@ let generate_c_expression ctx ir_expr =
             (* Map value field access - use bpf_dynptr_from_mem *)
             (match obj_val.val_type with
              | IRPointer (IRStruct (struct_name, _, _), _) ->
-                 let field_size = 4 in (* Default - should be calculated from struct *)
+                 (* Note: For field ACCESS (not assignment), we use sizeof(__typeof(field)) 
+                    which is calculated by the C compiler, so we don't need calculate_type_size here *)
+                 let field_size = sprintf "sizeof(__typeof(((%s*)0)->%s))" 
+                                         (sprintf "struct %s" struct_name) field in
                  let full_struct_name = sprintf "struct %s" struct_name in
-                 sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __mem_dynptr; if (bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr) == 0) { void* __field_data = bpf_dynptr_data(&__mem_dynptr, __builtin_offsetof(%s, %s), %d); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
+                 sprintf "({ __typeof(((%s*)0)->%s) __field_val = 0; struct bpf_dynptr __mem_dynptr; if (bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr) == 0) { void* __field_data = bpf_dynptr_data(&__mem_dynptr, __builtin_offsetof(%s, %s), %s); if (__field_data) __field_val = *(__typeof(((%s*)0)->%s)*)__field_data; } __field_val; })" 
                    full_struct_name field obj_str full_struct_name full_struct_name field field_size full_struct_name field
              | _ -> sprintf "SAFE_PTR_ACCESS(%s, %s)" obj_str field)
        
@@ -1931,6 +2011,7 @@ let generate_map_store ctx map_val key_val value_val store_type =
       let value_str = generate_c_value ctx value_val in
       emit_line ctx (sprintf "bpf_ringbuf_submit(%s, 0);" value_str)
 
+
 let generate_map_delete ctx map_val key_val =
   let map_str = generate_c_value ctx map_val in
   
@@ -1956,7 +2037,102 @@ let generate_map_delete ctx map_val key_val =
   
   emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
 
-
+(* Ring buffer code generation *)
+let generate_ringbuf_operation ctx ringbuf_val op =
+  match op with
+  | RingbufReserve result_val ->
+      (* Generate bpf_ringbuf_reserve_dynptr call - modern dynptr API *)
+      let ringbuf_str = generate_c_value ctx ringbuf_val in
+      let result_str = generate_c_value ctx result_val in
+      
+      (* Calculate proper size based on the result type *)
+      let size = match result_val.val_type with
+        | IRPointer (IRStruct (struct_name, _, _), _) ->
+            (* Use sizeof for struct types *)
+            sprintf "sizeof(struct %s)" struct_name
+        | IRPointer (elem_type, _) ->
+            (* Use sizeof for the pointed-to type *)
+            sprintf "sizeof(%s)" (ebpf_type_from_ir_type elem_type)
+        | other_type ->
+            (* This should never happen if type checker is working correctly *)
+            failwith (sprintf "generate_ringbuf_operation: Invalid result type for ringbuf reservation: %s. Expected pointer to struct." 
+                     (match other_type with
+                      | IRU32 -> "IRU32"
+                      | IRU64 -> "IRU64" 
+                      | IRStruct (name, _, _) -> "IRStruct " ^ name
+                      | IRVoid -> "IRVoid"
+                      | _ -> "unknown type"))
+      in
+      
+      (* Declare dynptr for the reservation - track it for later submit/discard *)
+      let base_name = match result_val.value_desc with
+        | IRRegister reg -> sprintf "ptr_%d" reg
+        | IRVariable name -> name
+        | _ -> "dynptr_data"
+      in
+      let dynptr_var = base_name ^ "_dynptr" in
+      emit_line ctx (sprintf "struct bpf_dynptr %s;" dynptr_var);
+      
+      (* Ensure the data pointer variable is declared before the if block *)
+      (match result_val.value_desc with
+       | IRRegister reg ->
+           let c_type = ebpf_type_from_ir_type result_val.val_type in
+           let var_name = get_meaningful_var_name ctx reg result_val.val_type in
+           if not (Hashtbl.mem ctx.declared_registers reg) then (
+             emit_line ctx (sprintf "%s %s;" c_type var_name);
+             Hashtbl.add ctx.declared_registers reg ()
+           )
+       | _ -> ());
+      
+      emit_line ctx (sprintf "if (bpf_ringbuf_reserve_dynptr(&%s, %s, 0, &%s) == 0) {" 
+                     ringbuf_str size dynptr_var);
+      
+      (* Get data pointer from dynptr *)
+      emit_line ctx (sprintf "    %s = bpf_dynptr_data(&%s, 0, %s);" 
+                     result_str dynptr_var size);
+      (* Track this pointer as dynptr-backed for field assignments *)
+      Hashtbl.replace ctx.dynptr_backed_pointers result_str dynptr_var;
+      emit_line ctx "} else {";
+      emit_line ctx (sprintf "    %s = NULL;" result_str);
+      emit_line ctx "}"
+  
+  | RingbufSubmit data_val ->
+      (* Generate bpf_ringbuf_submit_dynptr call *)
+      let data_str = generate_c_value ctx data_val in
+      (* Use the tracked dynptr variable for this data pointer *)
+      let dynptr_var = match Hashtbl.find_opt ctx.dynptr_backed_pointers data_str with
+        | Some tracked_dynptr -> tracked_dynptr
+        | None -> 
+            (* Fallback: construct dynptr name from data pointer name *)
+            let base_name = match data_val.value_desc with
+              | IRRegister reg -> sprintf "ptr_%d" reg
+              | IRVariable name -> name
+              | _ -> "dynptr_data"
+            in
+            base_name ^ "_dynptr"
+      in
+      emit_line ctx (Printf.sprintf "bpf_ringbuf_submit_dynptr(&%s, 0);" dynptr_var)
+  
+  | RingbufDiscard data_val ->
+      (* Generate bpf_ringbuf_discard_dynptr call *)
+      let data_str = generate_c_value ctx data_val in
+      (* Use the tracked dynptr variable for this data pointer *)
+      let dynptr_var = match Hashtbl.find_opt ctx.dynptr_backed_pointers data_str with
+        | Some tracked_dynptr -> tracked_dynptr
+        | None -> 
+            (* Fallback: construct dynptr name from data pointer name *)
+            let base_name = match data_val.value_desc with
+              | IRRegister reg -> sprintf "ptr_%d" reg
+              | IRVariable name -> name
+              | _ -> "dynptr_data"
+            in
+            base_name ^ "_dynptr"
+      in
+      emit_line ctx (Printf.sprintf "bpf_ringbuf_discard_dynptr(&%s, 0);" dynptr_var)
+  
+  | RingbufOnEvent _handler_name ->
+      (* on_event is userspace-only operation *)
+      failwith "Ring buffer on_event() operation is not supported in eBPF programs - it's userspace-only"
 
 (** Generate C code for IR instruction *)
 
@@ -2044,9 +2220,33 @@ and generate_assignment ctx dest_val expr is_const =
          (* Generate normal assignment for complex expressions *)
          let dest_str = generate_c_value ctx dest_val in
          let expr_str = generate_c_expression ctx expr in
+         
+         (* Check if we're assigning a dynptr-backed pointer to another variable *)
+         (match expr.expr_desc with
+          | IRValue src_val ->
+              let src_str = generate_c_value ctx src_val in
+              (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
+               | Some dynptr_var ->
+                   (* Source is dynptr-backed, mark destination as dynptr-backed too *)
+                   Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
+               | None -> ())
+          | _ -> ());
+         
          emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
        )
    | _ ->
+       (* Check for dynptr pointer assignment tracking before string assignment *)
+       (match expr.expr_desc with
+        | IRValue src_val ->
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = generate_c_value ctx src_val in
+            (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
+             | Some dynptr_var ->
+                 (* Source is dynptr-backed, mark destination as dynptr-backed too *)
+                 Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
+             | None -> ())
+        | _ -> ());
+       
        (* Check if this is a string assignment *)
        (match dest_val.val_type, expr.expr_desc with
         | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
@@ -2288,6 +2488,9 @@ let rec generate_c_instruction ctx ir_instr =
   | IRMapDelete (map_val, key_val) ->
       generate_map_delete ctx map_val key_val
 
+  | IRRingbufOp (ringbuf_val, op) ->
+      generate_ringbuf_operation ctx ringbuf_val op
+
   | IRConfigFieldUpdate (_map_val, _key_val, _field, _value_val) ->
       (* Config field updates should never occur in eBPF programs - they are read-only *)
       failwith "Internal error: Config field updates in eBPF programs should have been caught during type checking - configs are read-only in kernel space"
@@ -2297,13 +2500,28 @@ let rec generate_c_instruction ctx ir_instr =
       let obj_str = generate_c_value ctx obj_val in
       let value_str = generate_c_value ctx value_val in
       
-      (* Use enhanced semantic analysis for field assignment *)
-      (match detect_memory_region_enhanced obj_val with
+      (* Check if this is a dynptr-backed pointer first *)
+      (match Hashtbl.find_opt ctx.dynptr_backed_pointers obj_str with
+       | Some dynptr_var ->
+           (* This is a dynptr-backed pointer - use bpf_dynptr_write *)
+           let field_size = calculate_type_size value_val.val_type in
+           (match obj_val.val_type with
+            | IRPointer (IRStruct (struct_name, _, _), _) ->
+                let full_struct_name = sprintf "struct %s" struct_name in
+                emit_line ctx (sprintf "{ %s __tmp_val = %s;" (ebpf_type_from_ir_type value_val.val_type) value_str);
+                emit_line ctx (sprintf "  bpf_dynptr_write(&%s, __builtin_offsetof(%s, %s), &__tmp_val, %d, 0); }" 
+                         dynptr_var full_struct_name field_name field_size)
+            | _ ->
+                (* Fallback to direct assignment for non-struct types *)
+                emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str))
+       | None ->
+           (* Not a dynptr-backed pointer - use enhanced semantic analysis for field assignment *)
+           (match detect_memory_region_enhanced obj_val with
                | PacketData ->
             (* Packet data field assignment - use dynptr API for safe write *)
             (match obj_val.val_type with
              | IRPointer (IRStruct (struct_name, _, _), _) ->
-                 let field_size = 4 in (* Default - should be calculated from struct *)
+                 let field_size = calculate_type_size value_val.val_type in
                  let full_struct_name = sprintf "struct %s" struct_name in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __pkt_dynptr; bpf_dynptr_from_xdp(&__pkt_dynptr, ctx);");
                  emit_line ctx (sprintf "  __u32 __field_offset = (%s - ctx->data) + __builtin_offsetof(%s, %s);" obj_str full_struct_name field_name);
@@ -2315,7 +2533,7 @@ let rec generate_c_instruction ctx ir_instr =
             (* Map value field assignment - use dynptr API *)
             (match obj_val.val_type with
              | IRPointer (IRStruct (struct_name, _, _), _) ->
-                 let field_size = 4 in
+                 let field_size = calculate_type_size value_val.val_type in
                  let full_struct_name = sprintf "struct %s" struct_name in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __mem_dynptr; bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr);" obj_str full_struct_name);
                  emit_line ctx (sprintf "  bpf_dynptr_write(&__mem_dynptr, __builtin_offsetof(%s, %s), &%s, %d, 0); }" full_struct_name field_name value_str field_size)
@@ -2343,7 +2561,7 @@ let rec generate_c_instruction ctx ir_instr =
                       emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str)
                   | _ -> 
                       (* Direct struct field assignment *)
-                      emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str))))
+                      emit_line ctx (sprintf "%s.%s = %s;" obj_str field_name value_str)))))
       
   | IRConfigAccess (config_name, field_name, result_val) ->
       (* For eBPF, config access goes through global maps *)
@@ -2649,6 +2867,8 @@ let rec generate_c_instruction ctx ir_instr =
               collect_in_value dest_val; collect_in_value flag_val
           | IRObjectDelete ptr_val ->
               collect_in_value ptr_val
+          | IRRingbufOp (ringbuf_val, _) ->
+              collect_in_value ringbuf_val
           | IRJump _ | IRComment _ | IRBreak | IRContinue | IRThrow _ -> ()
         in
         collect_in_instr ir_instr
@@ -2866,7 +3086,6 @@ let rec generate_c_instruction ctx ir_instr =
       let ptr_str = generate_c_value ctx ptr_val in
       (* Use the proper kernel bpf_obj_drop(ptr) macro *)
       emit_line ctx (sprintf "bpf_obj_drop(%s);" ptr_str)
-      
 
 (** Generate C code for basic block *)
 
@@ -3077,6 +3296,8 @@ let collect_registers_in_function ir_func =
         collect_in_value dest_val; collect_in_value flag_val
     | IRObjectDelete ptr_val ->
         collect_in_value ptr_val
+    | IRRingbufOp (ringbuf_val, _) ->
+        collect_in_value ringbuf_val
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -3089,6 +3310,7 @@ let generate_c_function ctx ir_func =
   (* Clear per-function state to avoid conflicts between functions *)
   Hashtbl.clear ctx.register_name_hints;
   Hashtbl.clear ctx.inlinable_registers;
+  Hashtbl.clear ctx.declared_registers;
   
   (* Determine current function's context type from first parameter or program type *)
   ctx.current_function_context_type <- 
@@ -3174,6 +3396,14 @@ let generate_c_function ctx ir_func =
           (match dest_val.value_desc with
            | IRRegister reg -> declared_registers := reg :: !declared_registers
            | _ -> ())
+      | IRRingbufOp (_, op) ->
+          (* Collect registers that will be declared by ringbuf operations *)
+          (match op with
+           | RingbufReserve result_val ->
+               (match result_val.value_desc with
+                | IRRegister reg -> declared_registers := reg :: !declared_registers
+                | _ -> ())
+           | _ -> ())
       | _ -> ()
     ) block.instructions
   ) ir_func.basic_blocks;
@@ -3184,8 +3414,8 @@ let generate_c_function ctx ir_func =
   (* Generate proper variable declarations for all registers *)
   let register_declarations = ref [] in
   List.iter (fun (reg, reg_type) ->
-    (* Skip declaration if register can be inlined or is handled by IRDeclareVariable *)
-    if not (can_inline_register ctx reg) && not (List.mem reg !declared_registers) then (
+    (* Skip declaration if register can be inlined, is handled by IRDeclareVariable, or already declared by operations *)
+    if not (can_inline_register ctx reg) && not (List.mem reg !declared_registers) && not (Hashtbl.mem ctx.declared_registers reg) then (
       let effective_type = match reg_type with
         | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
         | _ ->
@@ -3257,6 +3487,7 @@ let generate_c_program ?_config_declarations ir_prog =
     struct_ops_instances = [];
     userspace_program = None;
     userspace_bindings = [];
+    ring_buffer_registry = Ir.create_empty_ring_buffer_registry ();
     multi_pos = ir_prog.ir_pos;
   } in
   generate_string_typedefs ctx temp_multi_prog;

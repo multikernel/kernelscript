@@ -166,7 +166,7 @@ let extract_exportable_symbols ast =
              } :: !symbols)
     
     | MapDecl map_decl ->
-        let map_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type) in
+        let map_type = Map (map_decl.key_type, map_decl.value_type, map_decl.map_type, map_decl.config.max_entries) in
         symbols := {
           symbol_name = map_decl.name;
           symbol_type = map_type;

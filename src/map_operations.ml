@@ -14,6 +14,8 @@
  * limitations under the License.
  *)
 
+[@@@warning "-32"]
+
 (** Map Operation Semantics Module for KernelScript
     
     This module provides advanced map operation analysis including access patterns,
@@ -96,12 +98,14 @@ let string_of_map_operation = function
   | MapInsert -> "insert"
   | MapUpsert -> "upsert"
 
+
 let string_of_map_type = function
   | Hash -> "hash"
   | Array -> "array"
   | Percpu_hash -> "percpu_hash"
   | Percpu_array -> "percpu_array"
   | Lru_hash -> "lru_hash"
+
 
 (** eBPF map helper functions and their characteristics *)
 module EbpfHelpers = struct
@@ -137,6 +141,12 @@ module EbpfHelpers = struct
   
 
   
+
+  
+
+  
+
+
   let all_methods = [map_lookup_elem; map_update_elem; map_delete_elem]
 end
 
@@ -182,10 +192,19 @@ module PerformanceProfiles = struct
     scale_limit = 1000000;
   }
   
+  let ring_buffer = {
+    lookup_complexity = "N/A";
+    update_complexity = "O(1)";
+    memory_overhead = 8; (* Minimal overhead for ring buffer entries *)
+    cache_efficiency = 0.9; (* High cache efficiency for sequential access *)
+    scale_limit = 16777216; (* 16MB max ring buffer size *)
+  }
+  
   let get_profile = function
     | Hash | Percpu_hash -> hash_map
     | Array | Percpu_array -> array_map
     | Lru_hash -> lru_hash
+
 end
 
 (** Access pattern analysis *)
@@ -260,6 +279,7 @@ let analyze_concurrent_safety map_type operation readers writers =
       else WriteLocked
   | (Array | Percpu_array), (MapInsert | MapDelete) ->
       Unsafe "Arrays do not support insert/delete operations"
+
 
 (** Global map sharing validation *)
 
@@ -354,6 +374,7 @@ let validate_operation context =
         | (Array | Percpu_array), (MapInsert | MapDelete) -> 
             warnings := "Arrays do not support insert/delete operations" :: !warnings;
             false
+
   in
   
   let performance = PerformanceProfiles.get_profile map_type in

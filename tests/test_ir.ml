@@ -136,6 +136,9 @@ let test_map_operation_lowering () =
     IRU32 
     IRHash 
     100 
+    ~ast_key_type:U32
+    ~ast_value_type:U32
+    ~ast_map_type:Hash
     ~flags:0
     (make_test_position ()) in
   Hashtbl.add ctx.maps "global_map_2" test_map;

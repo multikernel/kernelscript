@@ -158,7 +158,7 @@ let check_array_bounds expr =
                     ArrayOutOfBounds (arr_name, idx, size) :: errors
                   else
                     errors
-              | Some (Ast.Map (_, _, _)) ->
+              | Some (Ast.Map (_, _, _, _)) ->
                   (* Map access - inherently safe, skip bounds checking *)
                   errors
               | Some (Ast.Str size) ->
@@ -176,7 +176,7 @@ let check_array_bounds expr =
          | Identifier arr_name, _ ->
              (* Dynamic index access - use type annotations *)
              (match arr_expr.expr_type with
-              | Some (Ast.Map (_, _, _)) ->
+              | Some (Ast.Map (_, _, _, _)) ->
                   (* Map access with dynamic key - inherently safe *)
                   errors
               | Some (Ast.Array (_, _)) ->

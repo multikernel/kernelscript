@@ -371,13 +371,18 @@ fn process_packet(src_ip: u32) -> u64 {
     let ast = parse_string_with_builtins program_text in
     check int "complete program AST length" 3 (List.length ast);
     
-    (* Check map declaration *)
+    (* Check global variable declaration with map type *)
     (match List.hd ast with
-     | MapDecl map_decl -> 
-         check string "map name" "packet_count" map_decl.name;
-         check bool "map key type" true (map_decl.key_type = U32);
-         check bool "map value type" true (map_decl.value_type = U64)
-     | _ -> fail "Expected map declaration");
+     | GlobalVarDecl global_var -> 
+         check string "map variable name" "packet_count" global_var.global_var_name;
+         (match global_var.global_var_type with
+          | Some (Map (key_type, value_type, map_type, size)) ->
+              check bool "map key type" true (key_type = U32);
+              check bool "map value type" true (value_type = U64);
+              check bool "map type" true (map_type = Hash);
+              check int "map size" 1024 size
+          | _ -> fail "Expected map type")
+     | _ -> fail "Expected global variable declaration with map type");
     
     (* Check helper function declaration *)
     (match List.nth ast 1 with

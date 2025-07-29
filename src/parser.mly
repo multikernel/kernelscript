@@ -20,6 +20,15 @@
   let make_pos () = 
     let pos = Parsing.symbol_start_pos () in
     { line = pos.pos_lnum; column = pos.pos_cnum - pos.pos_bol; filename = pos.pos_fname }
+  
+  (* Elegant helper to convert identifier string to map_type *)
+  let string_to_map_type = function
+    | "hash" -> Hash
+    | "array" -> Array
+    | "percpu_hash" -> Percpu_hash
+    | "percpu_array" -> Percpu_array
+    | "lru_hash" -> Lru_hash
+    | unknown -> failwith ("Unknown map type: " ^ unknown)
 %}
 
 /* Token declarations */
@@ -94,6 +103,8 @@
 %type <Ast.bpf_type> bpf_type
 %type <Ast.bpf_type> array_type
 %type <Ast.bpf_type> function_type
+%type <Ast.bpf_type> generic_type_with_size
+%type <Ast.bpf_type> ringbuf_type
 %type <Ast.bpf_type list> function_parameter_list
 %type <Ast.bpf_type> function_parameter
 %type <Ast.statement list> statement_list
@@ -230,7 +241,9 @@ bpf_type:
   | array_type { $1 }
   | function_type { $1 }
   | MULTIPLY bpf_type { Pointer $2 }
-  | map_type LT bpf_type COMMA bpf_type GT { Map ($3, $5, $1) }
+  | map_type LT bpf_type COMMA bpf_type GT { Map ($3, $5, $1, 1024) }  (* Default size for non-sized maps *)
+  | generic_type_with_size { $1 }
+  | ringbuf_type { $1 }
 
 /* Array types: type[size] */
 array_type:
@@ -502,14 +515,22 @@ map_declaration:
       make_map_declaration $8 $12 $14 $10 config true ~is_pinned:true (make_pos ()) }
 
 map_type:
-  | IDENTIFIER { 
-      match $1 with
-      | "hash" -> Hash
-      | "array" -> Array
-      | "percpu_hash" -> Percpu_hash
-      | "percpu_array" -> Percpu_array
-      | "lru_hash" -> Lru_hash
-      | unknown -> failwith ("Unknown map type: " ^ unknown)
+  | IDENTIFIER { string_to_map_type $1 }
+
+/* Generic types with size parameters */
+generic_type_with_size:
+  | IDENTIFIER LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN { 
+        (* Map types with explicit size *)
+        Map ($3, $5, string_to_map_type $1, fst $8)
+    }
+
+/* Ring buffer types: ringbuf<Event_Type>(size) */
+ringbuf_type:
+  | IDENTIFIER LT bpf_type GT LPAREN INT RPAREN {
+      if $1 = "ringbuf" then
+        Ringbuf ($3, fst $6)
+      else
+        failwith ("Expected 'ringbuf', got: " ^ $1)
     }
 
 flag_expression:

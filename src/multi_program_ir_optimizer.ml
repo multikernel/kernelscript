@@ -246,4 +246,5 @@ let string_of_map_type = function
   | Array -> "array" 
   | Percpu_hash -> "percpu_hash"
   | Percpu_array -> "percpu_array"
-  | Lru_hash -> "lru_hash" 
+  | Lru_hash -> "lru_hash"
+ 
