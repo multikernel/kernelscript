@@ -1113,6 +1113,12 @@ let collect_type_aliases_from_userspace_program userspace_prog =
   
   List.rev !type_aliases
 
+(** Helper function to take first n elements from a list *)
+let rec list_take n lst =
+  match n, lst with
+  | 0, _ | _, [] -> []
+  | n, x :: xs -> x :: list_take (n - 1) xs
+
 (** Get printf format specifier for IR type *)
 let get_printf_format_specifier ir_type =
   match ir_type with
@@ -1134,35 +1140,41 @@ let get_printf_format_specifier ir_type =
 
 (** Fix format specifiers in a format string based on argument types *)
 let fix_format_specifiers format_string arg_types =
-  let format_chars = String.to_seq format_string |> List.of_seq in
-  let rec fix_formats chars arg_types_list acc =
-    match chars with
-    | [] -> String.concat "" (List.rev acc)
-    | '%' :: '%' :: rest ->
-        (* Escaped % - keep as is *)
-        fix_formats rest arg_types_list ("%%" :: acc)
-    | '%' :: rest ->
-        (* Format specifier - find the end and replace *)
-        let rec find_spec_end spec_chars =
-          match spec_chars with
-          | [] -> ([], [])
-          | ('d' | 'i' | 'u' | 'o' | 'x' | 'X' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'c' | 's' | 'p' | 'n') :: rest ->
-              (spec_chars, rest)
-          | c :: rest ->
-              let (spec, remaining) = find_spec_end rest in
-              (c :: spec, remaining)
-        in
-        let (spec_chars, remaining) = find_spec_end rest in
-        (match arg_types_list with
-         | [] -> fix_formats remaining [] (String.concat "" (List.rev_map (String.make 1) spec_chars) :: "%" :: acc)
-         | arg_type :: rest_types ->
-             let new_spec = get_printf_format_specifier arg_type in
-             fix_formats remaining rest_types (new_spec :: acc))
-    | c :: rest ->
-        (* Regular character - keep as is *)
-        fix_formats rest arg_types_list (String.make 1 c :: acc)
+  (* Count existing format specifiers in the string *)
+  let count_format_specs str =
+    let rec count chars spec_count =
+      match chars with
+      | [] -> spec_count
+      | '%' :: '%' :: rest -> count rest spec_count  (* Skip escaped %% *)
+      | '%' :: rest ->
+          (* Find the end of this format specifier *)
+          let rec find_spec_end spec_chars =
+            match spec_chars with
+            | [] -> rest
+            | ('d' | 'i' | 'u' | 'o' | 'x' | 'X' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'c' | 's' | 'p' | 'n') :: remaining ->
+                remaining
+            | _ :: remaining ->
+                find_spec_end remaining
+          in
+          let remaining = find_spec_end rest in
+          count remaining (spec_count + 1)
+      | _ :: rest -> count rest spec_count
+    in
+    count (String.to_seq str |> List.of_seq) 0
   in
-  fix_formats format_chars arg_types []
+  
+  let existing_specs = count_format_specs format_string in
+  let needed_specs = List.length arg_types in
+  
+  if existing_specs >= needed_specs then
+    (* Already has enough format specifiers - don't add more *)
+    format_string
+  else
+    (* Need to add format specifiers for missing arguments *)
+    let missing_count = needed_specs - existing_specs in
+         let missing_types = List.rev (list_take missing_count (List.rev arg_types)) in
+    let missing_specs = List.map get_printf_format_specifier missing_types in
+    format_string ^ String.concat "" missing_specs
 
 
 
@@ -2598,7 +2610,9 @@ let generate_ringbuf_handlers_from_registry (registry : Ir.ir_ring_buffer_regist
     let value_type = c_type_from_ir_type rb_decl.rb_value_type in
     let handler_name = match List.assoc_opt ringbuf_name registry.event_handler_registrations with
       | Some handler -> handler
-      | None -> ringbuf_name ^ "_default_handler"
+      | None -> 
+          (* Try callback function naming convention: {ringbuf_name}_callback *)
+          ringbuf_name ^ "_callback"
     in
     sprintf {|
 // Ring buffer event handler for %s
@@ -3039,12 +3053,18 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     let non_empty_parts = List.filter (fun s -> s <> "") parts in
     if non_empty_parts = [] then "" else String.concat "\n" non_empty_parts in
   
+  let dispatch_is_used = List.length all_usage.used_dispatch_functions > 0 in
+  
   let map_operation_functions = if all_usage.uses_map_operations then
-    generate_map_operation_functions used_global_maps ir_multi_prog ~dispatch_used:(List.length all_usage.used_dispatch_functions > 0)
+    generate_map_operation_functions used_global_maps ir_multi_prog ~dispatch_used:dispatch_is_used
   else "" in
   
+  (* Generate ring buffer handlers separately if needed *)
+  let ringbuf_handlers = if not dispatch_is_used || all_usage.uses_map_operations then "" 
+    else generate_ringbuf_handlers_from_registry ir_multi_prog.ring_buffer_registry ~dispatch_used:dispatch_is_used in
+  
   let ringbuf_dispatch_functions = 
-    if List.length all_usage.used_dispatch_functions = 0 then ""
+    if not dispatch_is_used then ""
     else generate_dispatch_functions all_usage.used_dispatch_functions in
   
 
@@ -3209,7 +3229,9 @@ void cleanup_bpf_maps(void) {
 %s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
+
+%s
+|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
