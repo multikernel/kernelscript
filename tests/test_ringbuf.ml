@@ -405,6 +405,49 @@ fn main() -> i32 { return 0 }
     check bool "Should have at least one eBPF program" false true
   )
 
+(** Test eBPF C code generation for pinned ringbuf operations *)
+let test_pinned_ringbuf_ebpf_codegen () =
+  let program = {|
+struct SecurityEvent { 
+  event_id: u32,
+  severity: u32 
+}
+
+pin var security_events : ringbuf<SecurityEvent>(8192)
+
+@xdp fn security_monitor(ctx: *xdp_md) -> xdp_action {
+  var reserved = security_events.reserve()
+  if (reserved != null) {
+    reserved->event_id = 42
+    reserved->severity = 1
+    security_events.submit(reserved)
+  }
+  return XDP_PASS
+}
+
+fn main() -> i32 { return 0 }
+|} in
+  let ast = parse_string program in
+  let ir_multi = generate_ir ast in
+  if List.length ir_multi.programs > 0 then (
+    (* Use the multi-program generation like the real compiler *)
+    let c_code = Ebpf_c_codegen.generate_c_multi_program ir_multi in
+    (* Test that pinned ring buffer uses temporary variable approach *)
+    check bool "eBPF C code should contain pinned_ringbuf temporary variable" true 
+      (contains_substr c_code "pinned_ringbuf");
+    check bool "eBPF C code should contain get_pinned_globals call" true 
+      (contains_substr c_code "get_pinned_globals");
+    check bool "eBPF C code should contain bpf_ringbuf_reserve_dynptr with temp var" true 
+      (contains_substr c_code "bpf_ringbuf_reserve_dynptr(pinned_ringbuf");
+    check bool "eBPF C code should contain bpf_ringbuf_submit_dynptr" true 
+      (contains_substr c_code "bpf_ringbuf_submit_dynptr");
+    (* Test that it doesn't contain the problematic compound expression *)
+    check bool "eBPF C code should not contain address-of compound expression" false 
+      (contains_substr c_code "&({ struct")
+  ) else (
+    check bool "Should have at least one eBPF program" false true
+  )
+
 (** Test that ringbuf programs can be processed through the full pipeline *)
 let test_ringbuf_full_pipeline () =
   let program = {|
@@ -1101,6 +1144,7 @@ let () =
     "code generation", [
       test_case "IR generation" `Quick test_ringbuf_ir_generation;
       test_case "eBPF C code generation" `Quick test_ringbuf_ebpf_codegen;
+      test_case "pinned ringbuf eBPF C code generation" `Quick test_pinned_ringbuf_ebpf_codegen;
       test_case "full pipeline processing" `Quick test_ringbuf_full_pipeline;
     ];
     "on_event functionality", [

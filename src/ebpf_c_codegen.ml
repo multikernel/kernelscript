@@ -2042,7 +2042,19 @@ let generate_ringbuf_operation ctx ringbuf_val op =
   match op with
   | RingbufReserve result_val ->
       (* Generate bpf_ringbuf_reserve_dynptr call - modern dynptr API *)
-      let ringbuf_str = generate_c_value ctx ringbuf_val in
+      (* Handle pinned ring buffers specially to avoid address-of-rvalue issues *)
+      let ringbuf_str = match ringbuf_val.value_desc with
+        | IRVariable name when List.mem name ctx.pinned_globals ->
+            (* For pinned ring buffers, create a temporary pointer variable *)
+            let temp_var = fresh_var ctx "pinned_ringbuf" in
+            emit_line ctx (sprintf "void *%s;" temp_var);
+            emit_line ctx (sprintf "{ struct __pinned_globals *__pg = get_pinned_globals();" );
+            emit_line ctx (sprintf "  %s = __pg ? __pg->%s : NULL; }" temp_var name);
+            temp_var
+        | _ ->
+            (* Regular ring buffer - use address-of *)
+            "&" ^ (generate_c_value ctx ringbuf_val)
+      in
       let result_str = generate_c_value ctx result_val in
       
       (* Calculate proper size based on the result type *)
@@ -2064,27 +2076,20 @@ let generate_ringbuf_operation ctx ringbuf_val op =
                       | _ -> "unknown type"))
       in
       
-      (* Declare dynptr for the reservation - track it for later submit/discard *)
-      let base_name = match result_val.value_desc with
-        | IRRegister reg -> sprintf "ptr_%d" reg
+      (* Get consistent variable name for the result register *)
+      let result_var_name = match result_val.value_desc with
+        | IRRegister reg -> get_meaningful_var_name ctx reg result_val.val_type
         | IRVariable name -> name
         | _ -> "dynptr_data"
       in
-      let dynptr_var = base_name ^ "_dynptr" in
+      
+      (* Declare dynptr for the reservation - track it for later submit/discard *)
+      let dynptr_var = result_var_name ^ "_dynptr" in
       emit_line ctx (sprintf "struct bpf_dynptr %s;" dynptr_var);
       
-      (* Ensure the data pointer variable is declared before the if block *)
-      (match result_val.value_desc with
-       | IRRegister reg ->
-           let c_type = ebpf_type_from_ir_type result_val.val_type in
-           let var_name = get_meaningful_var_name ctx reg result_val.val_type in
-           if not (Hashtbl.mem ctx.declared_registers reg) then (
-             emit_line ctx (sprintf "%s %s;" c_type var_name);
-             Hashtbl.add ctx.declared_registers reg ()
-           )
-       | _ -> ());
+      (* The data pointer variable will be declared by the function's register collection phase *)
       
-      emit_line ctx (sprintf "if (bpf_ringbuf_reserve_dynptr(&%s, %s, 0, &%s) == 0) {" 
+      emit_line ctx (sprintf "if (bpf_ringbuf_reserve_dynptr(%s, %s, 0, &%s) == 0) {" 
                      ringbuf_str size dynptr_var);
       
       (* Get data pointer from dynptr *)
@@ -2337,11 +2342,16 @@ let rec generate_c_instruction ctx ir_instr =
       
   | IRDeclareVariable (dest_val, typ, init_expr_opt) ->
       (* Variable declaration with optional initialization *)
-      let var_name = get_meaningful_var_name ctx 
-        (match dest_val.value_desc with 
-         | IRRegister reg -> reg 
-         | _ -> failwith "IRDeclareVariable target must be a register") 
-        typ in
+      let var_name = match dest_val.value_desc with 
+        | IRRegister reg -> 
+            let name = get_meaningful_var_name ctx reg typ in
+            (* Store the declared name for this register to ensure consistency *)
+            Hashtbl.replace ctx.register_name_hints reg (String.split_on_char '_' name |> List.hd);
+            (* Mark this register as declared *)
+            Hashtbl.add ctx.declared_registers reg ();
+            name
+        | _ -> failwith "IRDeclareVariable target must be a register"
+      in
       
       (* Special handling for different types in variable declarations *)
       (match typ with
@@ -3296,8 +3306,14 @@ let collect_registers_in_function ir_func =
         collect_in_value dest_val; collect_in_value flag_val
     | IRObjectDelete ptr_val ->
         collect_in_value ptr_val
-    | IRRingbufOp (ringbuf_val, _) ->
-        collect_in_value ringbuf_val
+    | IRRingbufOp (ringbuf_val, op) ->
+        collect_in_value ringbuf_val;
+        (* Also collect registers from ring buffer operation arguments *)
+        (match op with
+         | RingbufReserve result_val -> collect_in_value result_val
+         | RingbufSubmit data_val -> collect_in_value data_val  
+         | RingbufDiscard data_val -> collect_in_value data_val
+         | RingbufOnEvent _ -> ())
   in
   List.iter (fun block ->
     List.iter collect_in_instr block.instructions
@@ -3392,20 +3408,16 @@ let generate_c_function ctx ir_func =
           (match dest_val.value_desc with
            | IRRegister reg -> declared_registers := reg :: !declared_registers
            | _ -> ())
-      | IRRingbufOp (_, op) ->
-          (* Collect registers that will be declared by ringbuf operations *)
-          (match op with
-           | RingbufReserve result_val ->
-               (match result_val.value_desc with
-                | IRRegister reg -> declared_registers := reg :: !declared_registers
-                | _ -> ())
-           | _ -> ())
+      (* IRRingbufOp registers are now handled by the regular collection process *)
       | _ -> ()
     ) block.instructions
   ) ir_func.basic_blocks;
   
   (* Declare temporary variables for all registers *)
   let register_variable_map = collect_register_variable_mapping ir_func in
+  
+  (* Add all pre-declared registers to the context's declared_registers hashtable *)
+  List.iter (fun reg -> Hashtbl.add ctx.declared_registers reg ()) !declared_registers;
   
   (* Generate proper variable declarations for all registers *)
   let register_declarations = ref [] in
@@ -3434,6 +3446,7 @@ let generate_c_function ctx ir_func =
                  let var_name = get_meaningful_var_name ctx reg reg_type in
                  let decl = generate_ebpf_c_declaration reg_type var_name in
                  register_declarations := (decl ^ ";") :: !register_declarations;
+                 Hashtbl.add ctx.declared_registers reg ();
                  "" (* Skip the simple type processing below *)
             )
       in
@@ -3441,7 +3454,8 @@ let generate_c_function ctx ir_func =
       if effective_type <> "" then (
         let var_name = get_meaningful_var_name ctx reg reg_type in
         let simple_decl = sprintf "%s %s;" effective_type var_name in
-        register_declarations := simple_decl :: !register_declarations
+        register_declarations := simple_decl :: !register_declarations;
+        Hashtbl.add ctx.declared_registers reg ()
       )
     )
   ) all_registers;
@@ -3766,9 +3780,9 @@ let compile_multi_to_c_with_tail_calls
 
   (* First pass: collect all callbacks *)
   let temp_ctx = create_c_context () in
-  List.iter (fun ir_prog ->
-    generate_c_function temp_ctx ir_prog.entry_function
-  ) ir_multi_prog.programs;
+      List.iter (fun ir_prog ->
+      generate_c_function temp_ctx ir_prog.entry_function
+   ) ir_multi_prog.programs;
   
   (* Emit collected callbacks BEFORE the actual functions *)
   if temp_ctx.pending_callbacks <> [] then (
