@@ -2790,6 +2790,19 @@ let lower_multi_program ast symbol_table source_name =
                     prog_structs = [];
                     prog_pos = attr_func.attr_pos;
                   })
+         | AttributeWithArg (attr_name, _target_func) :: _ ->
+             (* Handle attributes with arguments like @kprobe("sys_read") *)
+             (match attr_name with
+              | "kprobe" -> 
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = Ast.Kprobe;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_pos = attr_func.attr_pos;
+                  }
+              | _ -> None)
          | _ -> None)
     | _ -> None
   ) ast in

@@ -98,7 +98,7 @@ fn get_packet_info(ctx: *xdp_md) -> NetworkEvent {
 }
 
 // Security monitoring program
-@kprobe fn security_monitor() -> i32 {
+@kprobe("sys_openat") fn security_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
   var reserved = security_events.reserve()
   if (reserved != null) {
     // Successfully reserved space - submit the event

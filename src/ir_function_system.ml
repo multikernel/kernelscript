@@ -42,26 +42,19 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | _ -> false
   in
   
-  (* Check if this is a kprobe function with new signature format *)
-  let is_kprobe_new_format = match ir_func.func_program_type with
-    | Some Ast.Kprobe -> 
-        (* New format: parameters don't include pt_regs context *)
-        not (List.exists (fun (_, param_type) -> 
-          match param_type with
-          | IRPointer (IRStruct ("pt_regs", _, _), _) -> true
-          | _ -> false
-        ) ir_func.parameters)
+  (* Check if this is a kprobe function *)
+  let is_kprobe_function = match ir_func.func_program_type with
+    | Some Ast.Kprobe -> true
     | _ -> false
   in
   
-  if ir_func.is_main && not is_struct_ops_function && not is_kprobe_new_format then (
+  if ir_func.is_main && not is_struct_ops_function && not is_kprobe_function then (
     if param_count <> 1 then
       errors := "Main function must have exactly one parameter (context)" :: !errors;
     match ir_func.parameters with
     | [(_, IRContext _)] -> ()
     | [(_, IRPointer (IRContext _, _))] -> ()
     | [(_, IRPointer (IRStruct ("__sk_buff", _, _), _))] -> ()  (* Also recognize __sk_buff as TC context *)
-    | [(_, IRPointer (IRStruct ("pt_regs", _, _), _))] -> ()  (* Also recognize pt_regs as kprobe context *)
     | _ -> errors := "Main function parameter must be a context type" :: !errors;
     
     (* Check return type based on context type *)
@@ -72,28 +65,22 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
       | _ -> false
     in
     
-    let is_kprobe_program = match ir_func.parameters with
-      | [(_, IRPointer (IRStruct ("pt_regs", _, _), _))] -> true  (* Recognize pt_regs as kprobe *)
-      | _ -> false
-    in
-    
     match ir_func.return_type with
-    | Some (IRAction _) when not is_tc_program && not is_kprobe_program -> ()  (* Action types for programs that use actions *)
-    | Some (IRI32) when is_tc_program || is_kprobe_program -> ()  (* int return type for TC and kprobe programs *)
-    | Some (IRU32) when is_tc_program || is_kprobe_program -> ()  (* Allow u32/int for TC and kprobe programs *)
+    | Some (IRAction _) when not is_tc_program -> ()  (* Action types for programs that use actions *)
+    | Some (IRI32) when is_tc_program -> ()  (* int return type for TC programs *)
+    | Some (IRU32) when is_tc_program -> ()  (* Allow u32/int for TC programs *)
     | Some _ when is_tc_program -> errors := "TC programs must return int (i32)" :: !errors;
-    | Some _ when is_kprobe_program -> errors := "Kprobe programs must return int (i32)" :: !errors;
-    | Some _ -> errors := "Main function must return an action type (or int for TC/kprobe programs)" :: !errors;
+    | Some _ -> errors := "Main function must return an action type (or int for TC programs)" :: !errors;
     | None -> errors := "Main function must have a return type" :: !errors
   );
   
-  (* Special validation for kprobe functions with new signature format *)
-  if ir_func.is_main && is_kprobe_new_format then (
-    (* Allow flexible parameter count for new kprobe format *)
+  (* Validation for kprobe functions *)
+  if ir_func.is_main && is_kprobe_function then (
+    (* Kprobe functions support up to 6 parameters (kernel function signature) *)
     if param_count > 6 then
       errors := "Kprobe functions support maximum 6 parameters" :: !errors;
     
-    (* Validate return type for new kprobe format *)
+    (* Validate return type for kprobe functions *)
     match ir_func.return_type with
     | Some (IRI32) -> ()  (* Standard kprobe return type *)
     | Some (IRU32) -> ()  (* Allow u32 as well *)

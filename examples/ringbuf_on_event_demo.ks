@@ -43,7 +43,7 @@ var security_events : ringbuf<SecurityEvent>(8192)
   return XDP_PASS
 }
 
-@kprobe fn security_monitor(ctx: *pt_regs) -> i32 {
+@kprobe("sys_openat") fn security_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
   var reserved = security_events.reserve()
   security_events.submit(reserved)
   return 0

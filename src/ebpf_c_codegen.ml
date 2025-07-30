@@ -1470,7 +1470,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
             sprintf "({ struct %s_config *cfg = get_%s_config(); cfg ? cfg->%s : 0; })" 
               config_name config_name field_name
         | _ -> name
-      (* Check if this is a kprobe function parameter in new format *)
+      (* Check if this is a kprobe function parameter *)
       else if ctx.current_function_context_type = Some "kprobe" then
         (try
           (* Try to use kprobe parameter mapping to generate PT_REGS_PARM* access *)
@@ -3340,17 +3340,13 @@ let generate_c_function ctx ir_func =
   in
   
   let params_str = 
-    (* Special handling for kprobe functions with new signature format *)
+    (* Special handling for kprobe functions *)
     match ir_func.func_program_type with
-    | Some Ast.Kprobe when not (List.exists (fun (_, param_type) -> 
-        match param_type with
-        | IRPointer (IRStruct ("pt_regs", _, _), _) -> true
-        | _ -> false
-      ) ir_func.parameters) ->
-        (* New kprobe format: always use struct pt_regs *ctx parameter *)
+    | Some Ast.Kprobe ->
+        (* Kprobe functions always use struct pt_regs *ctx parameter *)
         "struct pt_regs *ctx"
     | _ ->
-        (* Traditional format: use parameters as-is *)
+        (* Other program types: use parameters as-is *)
         String.concat ", " 
           (List.map (fun (name, param_type) ->
              sprintf "%s %s" (ebpf_type_from_ir_type param_type) name

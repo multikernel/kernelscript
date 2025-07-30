@@ -2936,22 +2936,28 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
           Hashtbl.add ctx.test_functions attr_func.attr_function.func_name ();
         
         (* Extract program type from attribute for context *)
-        let prog_type = match attr_func.attr_list with
+        let (prog_type, kprobe_target) = match attr_func.attr_list with
           | SimpleAttribute prog_type_str :: _ ->
               (match prog_type_str with
-               | "xdp" -> Some Xdp
-               | "tc" -> Some Tc  
-               | "kprobe" -> Some Kprobe
-               | "uprobe" -> Some Uprobe
-               | "tracepoint" -> Some Tracepoint
-               | "lsm" -> Some Lsm
-               | "cgroup_skb" -> Some CgroupSkb
-               | "kfunc" -> None  (* kfuncs don't have program types *)
-               | "private" -> None  (* private functions don't have program types *)
-               | "helper" -> None  (* helper functions don't have program types *)
-               | "test" -> None  (* test functions don't have program types *)
-               | _ -> None)
-          | _ -> None
+               | "xdp" -> (Some Xdp, None)
+               | "tc" -> (Some Tc, None)  
+               | "kprobe" -> 
+                   (* Reject old format: @kprobe without target function *)
+                   type_error ("@kprobe requires target function specification. Use @kprobe(\"function_name\") instead.") attr_func.attr_pos
+               | "uprobe" -> (Some Uprobe, None)
+               | "tracepoint" -> (Some Tracepoint, None)
+               | "lsm" -> (Some Lsm, None)
+               | "cgroup_skb" -> (Some CgroupSkb, None)
+               | "kfunc" -> (None, None)  (* kfuncs don't have program types *)
+               | "private" -> (None, None)  (* private functions don't have program types *)
+               | "helper" -> (None, None)  (* helper functions don't have program types *)
+               | "test" -> (None, None)  (* test functions don't have program types *)
+               | _ -> (None, None))
+          | AttributeWithArg (attr_name, target_func) :: _ ->
+              (match attr_name with
+               | "kprobe" -> (Some Kprobe, Some target_func)
+               | _ -> (None, None))
+          | _ -> (None, None)
         in
         
         (* Validate attributed function signatures based on program type *)
@@ -3003,11 +3009,24 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              
-             (* For kprobe functions, accept only the new function signature format with actual kernel function parameters *)
-             let valid_signature = 
-               (* Accept any number of parameters for new format (kernel function signature) *)
-               List.length params >= 0 && List.length params <= 6  (* x86_64 supports max 6 function parameters *)
-             in
+             (* Validate kprobe function - only modern format supported *)
+             (match kprobe_target with
+             | Some _target_func ->
+                 (* Modern format with target function specified *)
+                 (* Check for invalid pt_regs parameter usage *)
+                 List.iter (fun (_, param_type) ->
+                   match param_type with
+                   | Pointer (UserType "pt_regs") ->
+                       type_error ("@kprobe functions should not use pt_regs parameter. Use kernel function parameters directly.") attr_func.attr_pos
+                   | _ -> ()
+                 ) params;
+                 (* Validate signature against BTF if available *)
+                 if List.length params > 6 then
+                   type_error ("Kprobe functions support maximum 6 parameters") attr_func.attr_pos
+             | None ->
+                 (* This case should never be reached due to earlier validation *)
+                 failwith "Internal error: kprobe without target function should have been rejected earlier"
+             );
 
              (* Allow both i32 (standard eBPF kprobe return) and void (matching kernel function signature) *)
              let valid_return_type = match resolved_return_type with
@@ -3017,8 +3036,8 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                | _ -> false
              in
              
-             if not valid_signature || not valid_return_type then
-               type_error ("@kprobe attributed function must have valid signature (max 6 params) with return type -> i32, u32, or void") attr_func.attr_pos
+             if not valid_return_type then
+               type_error ("@kprobe attributed function must return i32, u32, or void") attr_func.attr_pos
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         

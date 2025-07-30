@@ -459,7 +459,7 @@ var security_events : ringbuf<SecurityEvent>(8192)
   return XDP_PASS
 }
 
-@kprobe fn security_prog(ctx: *pt_regs) -> i32 {
+@kprobe("sys_read") fn security_prog(fd: u32, buf: *u8, count: usize) -> i32 {
   var sec_event = security_events.reserve()
   if (sec_event != null) {
     security_events.submit(sec_event)
@@ -1043,7 +1043,7 @@ fn handle_security(event: *SecurityEvent) -> i32 {
   return XDP_PASS
 }
 
-@kprobe fn security_monitor(ctx: *pt_regs) -> i32 {
+@kprobe("sys_openat") fn security_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
   var sec_event = security_events.reserve()
   if (sec_event != null) {
     sec_event->severity = 1
