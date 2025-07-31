@@ -1,5 +1,5 @@
 (library
  (public_name kernelscript.context)
  (name kernelscript_context)
- (modules context_codegen xdp_codegen tc_codegen kprobe_codegen)
+ (modules context_codegen xdp_codegen tc_codegen kprobe_codegen tracepoint_codegen)
  (libraries unix str)) 

@@ -61,7 +61,7 @@ let create_hardcoded_tc_action_enum () = {
 }
 
 (** Get program template based on eBPF program type *)
-let rec get_program_template prog_type btf_path = 
+let get_program_template prog_type btf_path = 
   let (context_type, return_type, common_types) = match prog_type with
     | "xdp" -> ("xdp_md", "xdp_action", [
         "xdp_md"; "xdp_action"
@@ -89,7 +89,16 @@ let rec get_program_template prog_type btf_path =
   
   (* Extract types from BTF - BTF file is required *)
   let extracted_types = match btf_path with
-    | Some path when Sys.file_exists path -> extract_types_from_btf path common_types
+    | Some path when Sys.file_exists path -> 
+        let binary_types = Btf_binary_parser.parse_btf_file path common_types in
+        (* Convert binary parser types to btf_type_info *)
+        List.map (fun bt -> {
+          name = bt.Btf_binary_parser.name;
+          kind = bt.Btf_binary_parser.kind;
+          size = bt.Btf_binary_parser.size;
+          members = bt.Btf_binary_parser.members;
+          kernel_defined = is_well_known_kernel_type bt.Btf_binary_parser.name;
+        }) binary_types
     | Some path -> failwith (sprintf "BTF file not found: %s" path)
     | None -> failwith "BTF file path is required. Use --btf-vmlinux-path option."
   in
@@ -119,32 +128,57 @@ let rec get_program_template prog_type btf_path =
     function_signatures = function_signatures;
   }
 
-(** Extract specific types from BTF file using binary parser *)
-and extract_types_from_btf btf_path type_names =
-  try
-    printf "Extracting types from BTF file: %s\n" btf_path;
-    let binary_types = Btf_binary_parser.parse_btf_file btf_path type_names in
-    
-    (* Convert binary parser types to btf_type_info *)
-    let converted_types = List.map (fun bt ->
-      {
-        name = bt.Btf_binary_parser.name;
-        kind = bt.Btf_binary_parser.kind;
-        size = bt.Btf_binary_parser.size;
-        members = bt.Btf_binary_parser.members;
-        kernel_defined = is_well_known_kernel_type bt.Btf_binary_parser.name;
-      }
-    ) binary_types in
-    
-    if List.length converted_types > 0 then (
-      printf "Successfully extracted %d types from BTF\n" (List.length converted_types);
-      converted_types
-    ) else (
-      failwith "No types extracted from BTF - requested types not found"
-    )
-  with
-  | exn ->
-      failwith (sprintf "BTF extraction failed: %s" (Printexc.to_string exn))
+(** Get tracepoint program template for a specific category/event *)
+let get_tracepoint_program_template category_event btf_path =
+  (* Parse category and event from the category_event string *)
+  let (category, event) = 
+    if String.contains category_event '/' then
+      let parts = String.split_on_char '/' category_event in
+      match parts with
+      | [cat; evt] -> (cat, evt)
+      | _ -> failwith (sprintf "Invalid tracepoint format '%s'. Use 'category/event'" category_event)
+    else
+      failwith (sprintf "Invalid tracepoint format '%s'. Use 'category/event'" category_event)
+  in
+  
+  (* Determine typedef_name and raw_name based on the user's logic *)
+  let (typedef_name, raw_name) = 
+    if category = "syscalls" && String.starts_with event ~prefix:"sys_enter_" then
+      ("btf_trace_sys_enter", "trace_event_raw_sys_enter")
+    else if category = "syscalls" && String.starts_with event ~prefix:"sys_exit_" then
+      ("btf_trace_sys_exit", "trace_event_raw_sys_exit")
+    else
+      (sprintf "btf_trace_%s" event, sprintf "trace_event_raw_%s" event)
+  in
+  
+  (* Extract the tracepoint structure from BTF *)
+  let common_types = [raw_name; typedef_name] in
+  let extracted_types = match btf_path with
+    | Some path when Sys.file_exists path -> 
+        let binary_types = Btf_binary_parser.parse_btf_file path common_types in
+        (* Convert binary parser types to btf_type_info *)
+        List.map (fun bt -> {
+          name = bt.Btf_binary_parser.name;
+          kind = bt.Btf_binary_parser.kind;
+          size = bt.Btf_binary_parser.size;
+          members = bt.Btf_binary_parser.members;
+          kernel_defined = is_well_known_kernel_type bt.Btf_binary_parser.name;
+        }) binary_types
+    | Some path -> failwith (sprintf "BTF file not found: %s" path)
+    | None -> failwith "BTF file path is required for tracepoint extraction. Use --btf-vmlinux-path option."
+  in
+  
+  (* Create the context type from the extracted struct *)
+  let context_type = sprintf "*%s" raw_name in
+  
+  {
+    program_type = "tracepoint";
+    context_type = context_type;
+    return_type = "i32";
+    includes = ["linux/bpf.h"; "bpf/bpf_helpers.h"; "bpf/bpf_tracing.h"; "linux/trace_events.h"];
+    types = extracted_types;
+    function_signatures = [(sprintf "%s/%s" category event, sprintf "fn(%s) -> i32" context_type)];
+  }
 
 (** Get kprobe program template for a specific target function *)
 let get_kprobe_program_template target_function btf_path =
@@ -312,8 +346,8 @@ let generate_kernelscript_source template project_name =
     | [] -> "0"
   in
   
-  (* Generate function signature comments and actual function definition for kprobe programs *)
-  let (function_signatures_comment, target_function_name, function_definition) = 
+  (* Generate function signature comments and actual function definition for specific program types *)
+  let (function_signatures_comment, target_function_name, function_definition, custom_attribute) = 
     if template.program_type = "kprobe" && template.function_signatures <> [] then
       let signature_lines = List.map (fun (func_name, signature) ->
         sprintf "// Target function: %s -> %s" func_name signature
@@ -325,27 +359,58 @@ let generate_kernelscript_source template project_name =
         | [] -> ("target_function", "fn() -> i32")
       in
       let func_def = generate_kprobe_function_from_signature first_func first_sig in
-      (comment, first_func, func_def)
+      (comment, first_func, func_def, Some (sprintf "@kprobe(\"%s\")" first_func))
+    else if template.program_type = "tracepoint" && template.function_signatures <> [] then
+      let signature_lines = List.map (fun (event_name, signature) ->
+        sprintf "// Tracepoint event: %s -> %s" event_name signature
+      ) template.function_signatures in
+      let comment = sprintf "\n// Tracepoint event signature:\n%s\n" 
+        (String.concat "\n" signature_lines) in
+      let first_event, _first_sig = match template.function_signatures with
+        | (name, sig_str) :: _ -> (name, sig_str)
+        | [] -> ("category/event", "fn(void*) -> i32")
+      in
+      let func_def = sprintf "fn %s_handler(ctx: %s) -> %s" 
+        (String.map (function '/' -> '_' | c -> c) first_event) template.context_type template.return_type in
+      (comment, first_event, func_def, Some (sprintf "@tracepoint(\"%s\")" first_event))
     else 
-      ("", "target_function", sprintf "fn %s_handler(ctx: %s) -> %s" project_name template.context_type template.return_type)
+      ("", "target_function", sprintf "fn %s_handler(ctx: %s) -> %s" project_name template.context_type template.return_type, None)
   in
   
-  (* Customize attach call for kprobe *)
-  let attach_target = if template.program_type = "kprobe" then target_function_name else "eth0" in
-  let attach_comment = if template.program_type = "kprobe" then 
-    "    // Attach kprobe to target kernel function"
-  else 
-    "    // TODO: Update interface name and attachment parameters"
+  (* Use custom attribute if available, otherwise use generic program type attribute *)
+  let attribute_line = match custom_attribute with
+    | Some attr -> attr
+    | None -> "@" ^ template.program_type
   in
   
-  let function_name = if template.program_type = "kprobe" then target_function_name else sprintf "%s_handler" project_name in
+  (* Customize attach call for kprobe/tracepoint *)
+  let attach_target = 
+    if template.program_type = "kprobe" then target_function_name 
+    else if template.program_type = "tracepoint" then target_function_name
+    else "eth0" 
+  in
+  let attach_comment = 
+    if template.program_type = "kprobe" then 
+      "    // Attach kprobe to target kernel function"
+    else if template.program_type = "tracepoint" then
+      "    // Attach tracepoint to target kernel event"
+    else 
+      "    // TODO: Update interface name and attachment parameters"
+  in
+  
+  let function_name = 
+    if template.program_type = "kprobe" then target_function_name 
+    else if template.program_type = "tracepoint" then 
+      String.map (function '/' -> '_' | c -> c) target_function_name ^ "_handler"
+    else sprintf "%s_handler" project_name
+  in
   
   sprintf {|%s
 // Generated by KernelScript compiler with direct BTF parsing
 %s
 %s
 
-@%s
+%s
 %s {
     // TODO: Implement your %s logic here
     
@@ -367,4 +432,4 @@ fn main() -> i32 {
     
     return 0
 }
-|} context_comment function_signatures_comment type_definitions template.program_type function_definition template.program_type sample_return function_name attach_comment attach_target template.program_type template.program_type
+|} context_comment function_signatures_comment type_definitions attribute_line function_definition template.program_type sample_return function_name attach_comment attach_target template.program_type template.program_type

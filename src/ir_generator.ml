@@ -2802,6 +2802,15 @@ let lower_multi_program ast symbol_table source_name =
                     prog_structs = [];
                     prog_pos = attr_func.attr_pos;
                   }
+              | "tracepoint" ->
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = Ast.Tracepoint;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_pos = attr_func.attr_pos;
+                  }
               | _ -> None)
          | _ -> None)
     | _ -> None

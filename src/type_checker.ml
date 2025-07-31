@@ -14,13 +14,10 @@
  * limitations under the License.
  *)
 
-(** Type checker for KernelScript 
-    
-    This module implements static type checking for the KernelScript language,
-    including multi-program awareness for eBPF development.
-*)
+(** Type checker for KernelScript *)
 
 open Ast
+open Printf
 
 (** Type checking exceptions *)
 exception Type_error of string * position
@@ -2945,7 +2942,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                    (* Reject old format: @kprobe without target function *)
                    type_error ("@kprobe requires target function specification. Use @kprobe(\"function_name\") instead.") attr_func.attr_pos
                | "uprobe" -> (Some Uprobe, None)
-               | "tracepoint" -> (Some Tracepoint, None)
+               | "tracepoint" -> 
+                   (* Reject old format: @tracepoint without category/event *)
+                   type_error ("@tracepoint requires category/event specification. Use @tracepoint(\"category/event\") instead.") attr_func.attr_pos
                | "lsm" -> (Some Lsm, None)
                | "cgroup_skb" -> (Some CgroupSkb, None)
                | "kfunc" -> (None, None)  (* kfuncs don't have program types *)
@@ -2956,6 +2955,12 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
           | AttributeWithArg (attr_name, target_func) :: _ ->
               (match attr_name with
                | "kprobe" -> (Some Kprobe, Some target_func)
+               | "tracepoint" -> 
+                   (* Parse category/event from string like "syscalls/sys_enter_read" *)
+                   if String.contains target_func '/' then
+                     (Some Tracepoint, Some target_func)
+                   else
+                     type_error (sprintf "@tracepoint requires category/event format. Use @tracepoint(\"category/event\") instead of @tracepoint(\"%s\")" target_func) attr_func.attr_pos
                | _ -> (None, None))
           | _ -> (None, None)
         in

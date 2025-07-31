@@ -128,14 +128,15 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   printf "🚀 Initializing KernelScript project: %s\n" project_name;
   printf "📋 Type: %s\n" prog_type_or_struct_ops;
   
-  (* Parse program type and target function for kprobe *)
+  (* Parse program type and target function for kprobe/tracepoint *)
   let (prog_type, target_function) = 
     if String.contains prog_type_or_struct_ops '/' then
       let parts = String.split_on_char '/' prog_type_or_struct_ops in
       match parts with
-      | [prog; func] -> (prog, Some func)
+      | [prog; func] when prog = "kprobe" -> (prog, Some func)
+      | [prog; category; event] when prog = "tracepoint" -> (prog, Some (category ^ "/" ^ event))
       | _ -> 
-          printf "❌ Error: Invalid kprobe syntax '%s'. Use kprobe/function_name\n" prog_type_or_struct_ops;
+          printf "❌ Error: Invalid syntax '%s'. Use kprobe/function_name or tracepoint/category/event\n" prog_type_or_struct_ops;
           exit 1
     else
       (prog_type_or_struct_ops, None)
@@ -150,6 +151,13 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   if prog_type = "kprobe" && target_function = None then (
     printf "❌ Error: kprobe requires target function. Use kprobe/function_name\n";
     printf "Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
+    exit 1
+  );
+  
+  (* Validate tracepoint category/event *)
+  if prog_type = "tracepoint" && target_function = None then (
+    printf "❌ Error: tracepoint requires category/event. Use tracepoint/category/event\n";
+    printf "Examples: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
     exit 1
   );
   
@@ -189,6 +197,14 @@ let init_project prog_type_or_struct_ops project_name btf_path =
                printf "✅ Found %d type definitions\n" (List.length template.types);
                Btf_parser.generate_kernelscript_source template project_name
            | None -> failwith "kprobe requires target function")
+      | "tracepoint" ->
+          (match target_function with
+           | Some category_event ->
+               printf "🔧 Extracting types for %s program targeting %s...\n" prog_type category_event;
+               let template = Btf_parser.get_tracepoint_program_template category_event btf_path in
+               printf "✅ Found %d type definitions\n" (List.length template.types);
+               Btf_parser.generate_kernelscript_source template project_name
+           | None -> failwith "tracepoint requires category/event")
       | _ ->
           printf "🔧 Extracting types for %s program...\n" prog_type;
           let template = Btf_parser.get_program_template prog_type btf_path in
@@ -466,6 +482,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
   Kernelscript_context.Xdp_codegen.register ();
   Kernelscript_context.Tc_codegen.register ();
   Kernelscript_context.Kprobe_codegen.register ();
+  Kernelscript_context.Tracepoint_codegen.register ();
   
   try
     Printf.printf "\n🔥 KernelScript Compiler\n";
@@ -598,6 +615,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
           | Ast.Xdp -> "xdp"
           | Ast.Tc -> "tc"
           | Ast.Kprobe -> "kprobe"
+          | Ast.Tracepoint -> "tracepoint"
           | _ -> ""
         in
         if prog_type_str <> "" then
@@ -624,6 +642,9 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
             | "pt_regs" ->
                 Printf.printf "🔧 Integrating BTF pt_regs structure with context codegen\n";
                 Kernelscript_context.Context_codegen.update_context_codegen_with_btf "kprobe" context_btf_type
+            | name when String.starts_with name ~prefix:"trace_event_raw_" ->
+                Printf.printf "🔧 Integrating BTF %s structure with context codegen\n" name;
+                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "tracepoint" context_btf_type
             | _ -> ()
           ) template.types;
           

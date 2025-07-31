@@ -3374,17 +3374,20 @@ let generate_c_function ctx ir_func =
     match ir_func.func_program_type with
     | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
     | Some Ast.Kprobe when ir_func.is_main -> "SEC(\"kprobe\")"  (* Always use kprobe section for kprobe functions *)
+    | Some Ast.Tracepoint when ir_func.is_main -> "SEC(\"tracepoint\")"  (* Always use tracepoint section for tracepoint functions *)
     | _ ->
-        (* For non-struct_ops and non-kprobe functions, only generate SEC if it's a main function *)
+        (* For non-struct_ops, non-kprobe, and non-tracepoint functions, only generate SEC if it's a main function *)
         if ir_func.is_main then
           match ir_func.parameters with
           | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
           | (_, IRContext XdpCtx) :: _ -> "SEC(\"xdp\")"
           | (_, IRContext TcCtx) :: _ -> "SEC(\"tc\")"
           | (_, IRContext KprobeCtx) :: _ -> "SEC(\"kprobe\")"
+          | (_, IRContext TracepointCtx) :: _ -> "SEC(\"tracepoint\")"
           | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> "SEC(\"xdp\")"
           | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
           | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
+          | (_, IRPointer (IRContext TracepointCtx, _)) :: _ -> "SEC(\"tracepoint\")"
           | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
           | _ -> "SEC(\"prog\")"
         else ""
@@ -3542,7 +3545,7 @@ let generate_c_program ?_config_declarations ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_program =
+let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_prog =
   let ctx = create_c_context () in
   
   (* Initialize modular context code generators *)
@@ -3553,34 +3556,34 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   ctx.variable_type_aliases <- variable_type_aliases;
   
   (* Add standard includes *)
-  let program_types = List.map (fun prog -> prog.program_type) ir_multi_program.programs in
+  let program_types = List.map (fun prog -> prog.program_type) ir_multi_prog.programs in
   generate_includes ctx ~program_types ();
   
   (* Generate string type definitions *)
-  generate_string_typedefs ctx ir_multi_program;
+      generate_string_typedefs ctx ir_multi_prog;
   
   (* Generate enum definitions *)
-  generate_enum_definitions ctx ir_multi_program;
+      generate_enum_definitions ctx ir_multi_prog;
   
   (* Generate declarations in original AST order to preserve source order *)
-  generate_declarations_in_source_order ctx ir_multi_program type_aliases;
+      generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
   
   (* Generate struct definitions *)
-  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_program in
+      let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
   generate_struct_definitions ctx struct_defs;
   
   (* Generate config maps from IR multi-program *)
-  if ir_multi_program.global_configs <> [] then
-    List.iter (generate_config_map_definition ctx) ir_multi_program.global_configs;
+      if ir_multi_prog.global_configs <> [] then
+    List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
   
   (* Generate global map definitions *)
-  List.iter (generate_map_definition ctx) ir_multi_program.global_maps;
+      List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
   
   (* Generate global variables BEFORE functions that use them *)
-  generate_global_variables ctx ir_multi_program.global_variables;
+      generate_global_variables ctx ir_multi_prog.global_variables;
   
   (* Generate struct_ops definitions and instances *)
-  generate_struct_ops ctx ir_multi_program;
+      generate_struct_ops ctx ir_multi_prog;
   
   (* With attributed functions, all maps are global - no program-scoped maps *)
   
@@ -3589,7 +3592,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   List.iter (fun ir_prog ->
     (* With attributed functions, each program has only its entry function *)
     generate_c_function temp_ctx ir_prog.entry_function
-  ) ir_multi_program.programs;
+  ) ir_multi_prog.programs;
   
   (* Emit collected callbacks *)
   if temp_ctx.pending_callbacks <> [] then (
@@ -3598,13 +3601,13 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   );
   
   (* Generate kernel functions once - they are shared across all programs *)
-  List.iter (generate_c_function ctx) ir_multi_program.kernel_functions;
+      List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
 
   (* Generate attributed functions (each program has only the entry function) *)
   List.iter (fun ir_prog ->
     (* With attributed functions, each program contains only its entry function - no nested functions *)
     generate_c_function ctx ir_prog.entry_function
-  ) ir_multi_program.programs;
+  ) ir_multi_prog.programs;
   
   (* Add license (required for eBPF) *)
   emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";

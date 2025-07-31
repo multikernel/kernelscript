@@ -55,6 +55,7 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | [(_, IRContext _)] -> ()
     | [(_, IRPointer (IRContext _, _))] -> ()
     | [(_, IRPointer (IRStruct ("__sk_buff", _, _), _))] -> ()  (* Also recognize __sk_buff as TC context *)
+    | [(_, IRPointer (IRStruct (struct_name, _, _), _))] when String.starts_with struct_name ~prefix:"trace_event_raw_" -> ()  (* Recognize tracepoint BTF structs *)
     | _ -> errors := "Main function parameter must be a context type" :: !errors;
     
     (* Check return type based on context type *)

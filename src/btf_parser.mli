@@ -39,6 +39,9 @@ val get_program_template : string -> string option -> program_template
 (** Get kprobe program template for a specific target function *)
 val get_kprobe_program_template : string -> string option -> program_template
 
+(** Get tracepoint program template for a specific target function *)
+val get_tracepoint_program_template : string -> string option -> program_template
+
 (** Check if a type name is a well-known eBPF kernel type *)
 val is_well_known_kernel_type : string -> bool
 

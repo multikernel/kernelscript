@@ -384,6 +384,11 @@
  (modules test_import_system)
  (libraries kernelscript alcotest unix str))
 
+(executable
+ (name test_tracepoint)
+ (modules test_tracepoint)
+ (libraries kernelscript alcotest unix str))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -683,6 +688,7 @@
   test_array_literals.exe
   test_array_init.exe
   test_config_validation.exe
+  test_tracepoint.exe
   test_stdlib.exe
   test_struct_field_access.exe
   test_struct_initialization.exe
@@ -727,6 +733,7 @@
    (run ./test_array_literals.exe)
    (run ./test_array_init.exe)
    (run ./test_config_validation.exe)
+   (run ./test_tracepoint.exe)
    (run ./test_stdlib.exe)
    (run ./test_struct_field_access.exe)
    (run ./test_struct_initialization.exe)
@@ -807,7 +814,8 @@
   ./test_string_literal_bugs.exe
   ./test_nested_if_codegen.exe
   ./test_error_handling.exe
-  ./test_integer_literal_codegen.exe)
+  ./test_integer_literal_codegen.exe
+  ./test_tracepoint.exe)
  (action
   (progn
    (run ./test_ast.exe)
@@ -823,4 +831,5 @@
    (run ./test_string_literal_bugs.exe)
    (run ./test_nested_if_codegen.exe)
    (run ./test_error_handling.exe)
-   (run ./test_integer_literal_codegen.exe)))) 
+   (run ./test_integer_literal_codegen.exe)
+   (run ./test_tracepoint.exe)))) 

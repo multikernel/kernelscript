@@ -35,7 +35,7 @@ var flows : hash<IpAddress, PacketStats>(1024)
 KernelScript uses a simple and clear scoping model that eliminates ambiguity:
 
 - **`@helper` functions**: Kernel-shared functions - accessible by all eBPF programs, compile to eBPF bytecode
-- **Attributed functions** (e.g., `@xdp`, `@tc`): eBPF program entry points - compile to eBPF bytecode
+- **Attributed functions** (e.g., `@xdp`, `@tc`, `@tracepoint`): eBPF program entry points - compile to eBPF bytecode
 - **Regular functions**: User space - functions and data structures compile to native executable
 - **Maps and global configs**: Shared resources accessible from both kernel and user space
 - **No wrapper syntax**: Direct, flat structure without unnecessary nesting
@@ -233,6 +233,121 @@ fn trace_write(fd: u32, buf: *u8, count: usize) -> i32 {
 - Generates parameter mappings to `PT_REGS_PARM*` macros
 - Validates parameter count (maximum 6 on x86_64)
 - Provides meaningful error messages for unknown functions
+
+#### 3.1.2 Tracepoint Functions with BTF Event Structure Extraction
+
+KernelScript automatically extracts tracepoint event structures from BTF (BPF Type Format) for tracepoint functions, providing type-safe access to tracepoint event data through the appropriate `trace_event_raw_*` structures.
+
+```kernelscript
+@tracepoint("sched/sched_switch")
+fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
+    // Direct access to tracepoint event fields with correct types
+    // Compiler automatically extracts structure from BTF:
+    // struct trace_event_raw_sched_switch {
+    //     struct trace_entry ent;
+    //     char prev_comm[16];
+    //     pid_t prev_pid;
+    //     int prev_prio;
+    //     long prev_state;
+    //     char next_comm[16];
+    //     pid_t next_pid;
+    //     int next_prio;
+    //     ...
+    // }
+    
+    print("Task switch: %s[%d] -> %s[%d]", 
+          ctx.prev_comm, ctx.prev_pid, 
+          ctx.next_comm, ctx.next_pid)
+    return 0
+}
+
+@tracepoint("syscalls/sys_enter_read")
+fn sys_enter_read_handler(ctx: *trace_event_raw_sys_enter) -> i32 {
+    // Syscall tracepoints use generic sys_enter structure
+    // struct trace_event_raw_sys_enter {
+    //     struct trace_entry ent;
+    //     long id;
+    //     unsigned long args[6];
+    // }
+    
+    var fd = ctx.args[0]
+    var count = ctx.args[2]
+    print("sys_read: fd=%d, count=%d", fd, count)
+    return 0
+}
+
+@tracepoint("net/netif_rx") 
+fn netif_rx_handler(ctx: *trace_event_raw_netif_rx) -> i32 {
+    // Network tracepoint with packet information
+    print("Network packet received")
+    return 0
+}
+```
+
+**Key Benefits:**
+- **Event Structure Access**: Direct access to tracepoint event fields with correct types
+- **Category/Event Organization**: Clear separation using `category/event` format
+- **BTF Integration**: Automatic extraction of `trace_event_raw_*` structures from kernel BTF
+- **Compile-Time Safety**: Type checking for tracepoint context structures
+- **Flexible Event Types**: Support for scheduler, syscall, network, and custom tracepoints
+
+**BTF Structure Mapping:**
+```kernelscript
+// Scheduler tracepoints: trace_event_raw_<event_name>
+@tracepoint("sched/sched_wakeup")
+fn wakeup_handler(ctx: *trace_event_raw_sched_wakeup) -> i32 {
+    // Access scheduler-specific fields
+    print("Waking up PID %d", ctx.pid)
+    return 0
+}
+
+// Syscall enter tracepoints: trace_event_raw_sys_enter (generic)
+@tracepoint("syscalls/sys_enter_open") 
+fn open_handler(ctx: *trace_event_raw_sys_enter) -> i32 {
+    // Access syscall arguments through args array
+    var filename_ptr = ctx.args[0]
+    var flags = ctx.args[1]
+    print("Opening file with flags %d", flags)
+    return 0
+}
+
+// Syscall exit tracepoints: trace_event_raw_sys_exit (generic)
+@tracepoint("syscalls/sys_exit_read")
+fn read_exit_handler(ctx: *trace_event_raw_sys_exit) -> i32 {
+    // Access return value
+    print("sys_read returned %d", ctx.ret)
+    return 0
+}
+
+// Custom subsystem tracepoints: trace_event_raw_<event_name>
+@tracepoint("block/block_rq_complete")
+fn block_complete_handler(ctx: *trace_event_raw_block_rq_complete) -> i32 {
+    // Access block layer specific fields
+    return 0
+}
+```
+
+**Compiler Implementation:**
+- Automatically determines BTF structure name based on category/event:
+  - `syscalls/sys_enter_*` → `trace_event_raw_sys_enter` 
+  - `syscalls/sys_exit_*` → `trace_event_raw_sys_exit`
+  - `<category>/<event>` → `trace_event_raw_<event>`
+- Extracts tracepoint structure definitions from kernel BTF information
+- Generates appropriate `SEC("tracepoint")` section for eBPF programs
+- Validates tracepoint context parameter types at compile time
+- Provides meaningful error messages for unknown tracepoints
+
+**Project Initialization:**
+```bash
+# Initialize project with specific tracepoint
+kernelscript init tracepoint/sched/sched_switch my_scheduler_tracer
+
+# Initialize project with syscall tracepoint  
+kernelscript init tracepoint/syscalls/sys_enter_read my_syscall_tracer
+
+# The init command automatically extracts BTF structures and generates
+# appropriate KernelScript templates with correct context types
+```
 
 ### 3.2 Named Configuration Blocks
 ```kernelscript
@@ -545,7 +660,7 @@ fn main() -> i32 {
 ### 3.4 Kernel-Userspace Scoping Model
 
 KernelScript uses a simple and intuitive scoping model:
-- **Attributed functions** (e.g., `@xdp`, `@tc`): Kernel space (eBPF) - compiles to eBPF bytecode
+- **Attributed functions** (e.g., `@xdp`, `@tc`, `@tracepoint`): Kernel space (eBPF) - compiles to eBPF bytecode
 - **`@kfunc` functions**: Kernel modules (full privileges) - exposed to eBPF programs via BTF
 - **`@private` functions**: Kernel modules (full privileges) - internal helpers for kfuncs
 - **Regular functions**: User space - compiles to native executable
@@ -2426,7 +2541,7 @@ value = (value % modulus);                  // From: value %= modulus
 KernelScript functions support both traditional unnamed return types and modern named return values. The complete grammar is defined in Section 15 (Complete Formal Grammar).
 
 Key function types:
-- **eBPF program functions**: Attributed with `@xdp`, `@tc`, etc. - compile to eBPF bytecode
+- **eBPF program functions**: Attributed with `@xdp`, `@tc`, `@tracepoint`, etc. - compile to eBPF bytecode
 - **Helper functions**: Attributed with `@helper` - shared across all eBPF programs
 - **Userspace functions**: No attributes - compile to native executable
 
@@ -3837,12 +3952,6 @@ mod test {
     //   test(program_function, test_context) -> return_value
     //   var result = test(packet_filter, xdp_test_ctx)  // Returns XDP action
     //   var retval = test(kprobe_handler, kprobe_test_ctx)  // Returns kprobe return value
-    // 
-    // The test context struct must match the program type being tested:
-    //   - XdpTestContext for @xdp programs
-    //   - TcTestContext for @tc programs  
-    //   - KprobeTestContext for @kprobe programs
-    //   - etc.
     pub fn test(program_function: FunctionRef, test_context: TestContext) -> i32
 }
 ```
@@ -4316,7 +4425,7 @@ global_variable_declaration = [ "pin" ] [ "local" ] "var" identifier [ ":" type_
 *) 
 
 (* Scoping rules for KernelScript:
-   - Attributed functions (e.g., @xdp, @tc): Kernel space (eBPF) - compiles to eBPF bytecode
+   - Attributed functions (e.g., @xdp, @tc, @tracepoint): Kernel space (eBPF) - compiles to eBPF bytecode
    - Regular functions: User space - compiles to native executable  
    - Maps, global configs, and global variables: Shared between both kernel and user space
    
@@ -4507,7 +4616,7 @@ whitespace = " " | "\t" | "\n" | "\r"
 
 **Function Structure:**
 - `function_declaration` defines functions with optional attributes
-- Functions with attributes (e.g., `@xdp`, `@tc`) are eBPF programs
+- Functions with attributes (e.g., `@xdp`, `@tc`, `@tracepoint`) are eBPF programs
 - Functions without attributes are userspace functions
 - `@helper` functions are shared across all eBPF programs
 
