@@ -88,8 +88,8 @@ pin var global_counter : hash<u32, u64>(10000)
 // Per-CPU data with automatic pinning path: /sys/fs/bpf/map_operations_demo/maps/percpu_data  
 pin var percpu_data : percpu_hash<u32, PerCpuData>(256)
 
-// Event stream ring buffer with no preallocation flag
-@flags(no_prealloc) pin var event_stream : hash<u32, u32>(65536)
+// Event stream ring buffer
+var event_stream : ringbuf<Event>(65536)
 
 // Sequential data array - not pinned (local to program)
 var sequential_data : array<u32, ArrayElement>(1024)
@@ -181,18 +181,20 @@ struct ArrayElement {
 // Program 3: Event streaming demonstrating ring buffer usage
 @tracepoint("syscalls/sys_enter_open")
 fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
-    var event = Event {
-        timestamp: 123456, // Fake timestamp
-        event_type: ctx.id,  // Use syscall ID from sys_enter context
-        data: [0],  // Simplified data
-    }
-    
     // Ring buffer output - single writer recommended
     try {
-        //var result = event_stream.output(&event, sizeof(Event))
-        var result = 0
-        if (result != 0) {
-            throw 1  // Ring buffer output failed
+        // Reserve space in the ring buffer
+        var reserved = event_stream.reserve()
+        if (reserved != null) {
+            // Successfully reserved space - populate event data inline
+            reserved->timestamp = 123456  // Fake timestamp
+            reserved->event_type = ctx->id  // Use syscall ID from sys_enter context
+            reserved->data = [0]  // Simplified data
+
+            // Submit the populated event
+            event_stream.submit(reserved)
+        } else {
+            throw 1  // Ring buffer is full
         }
     } catch 1 {
         // Ring buffer full - this will generate performance warnings
