@@ -1,0 +1,28 @@
+opam-version: "2.0"
+name: "kernelscript"
+authors: ["Cong Wang"]
+maintainer: ["Cong Wang <cwang@multikernel.io>"]
+license: "Apache-2.0"
+homepage: "https://github.com/multikernel/kernelscript"
+bug-reports: "https://github.com/multikernel/kernelscript/issues"
+synopsis: "A modern programming language for eBPF development"
+depends: [
+  "ocaml"
+  "dune" {>= "2.9"}
+  "menhir"
+  "alcotest" {with-test}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+] 

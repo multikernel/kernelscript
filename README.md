@@ -332,7 +332,13 @@ sudo ./my_project          # Run the program
 
 ## Getting Started
 
-1. **Install KernelScript:**
+1. **Install system dependencies (Debian/Ubuntu):**
+   ```bash
+   sudo apt update
+   sudo apt install libbpf-dev libelf-dev zlib1g-dev
+   ```
+
+2. **Install KernelScript:**
    ```bash
    git clone https://github.com/multikernel/kernelscript.git
    cd kernelscript
@@ -340,19 +346,19 @@ sudo ./my_project          # Run the program
    eval $(opam env) && dune build && dune install
    ```
 
-2. **Create your first project:**
+3. **Create your first project:**
    ```bash
    kernelscript -- init xdp hello_world
    cd hello_world/
    ```
 
-3. **Edit the generated code:**
+4. **Edit the generated code:**
    ```bash
    # Edit hello_world.ks with your logic
    vim hello_world.ks
    ```
 
-4. **Compile and run:**
+5. **Compile and run:**
    ```bash
    kernelscript compile hello_world/hello_world.ks
    cd hello_world/
