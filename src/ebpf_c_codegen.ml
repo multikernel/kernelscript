@@ -1109,7 +1109,7 @@ let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
 
 (** Generate standard eBPF includes *)
 
-let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) () =
+let generate_includes ctx ?(program_types=[]) () =
   (* Essential kernel types must come first *)
   let base_type_includes = [
     "#include <linux/types.h>";
@@ -1145,19 +1145,6 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
   let unique_context_includes = List.filter (fun inc -> 
     not (List.mem inc all_base_includes)) context_includes in
   
-  (* Only add builtin headers if explicitly requested (for debugging/testing) *)
-  let builtin_includes = if include_builtin_headers then
-    List.fold_left (fun acc prog_type ->
-      match prog_type with
-      | Ast.Xdp -> "#include \"xdp.h\"" :: acc
-      | Ast.Tc -> "#include \"tc.h\"" :: acc
-      | Ast.Kprobe -> "#include \"kprobe.h\"" :: acc
-      | _ -> acc
-    ) [] program_types
-  else
-    [] (* Skip builtin headers - enum constants come from system headers *)
-  in
-  
   (* For kprobe programs, only emit kprobe includes which contain everything needed *)
   let has_kprobe = List.exists (function Ast.Kprobe -> true | _ -> false) program_types in
   if has_kprobe then (
@@ -1188,7 +1175,7 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     emit_blank_line ctx
   ) else (
     (* For non-kprobe programs, use standard processing *)
-    let all_includes = builtin_includes @ standard_includes @ unique_context_includes @ base_type_includes in
+    let all_includes = standard_includes @ unique_context_includes @ base_type_includes in
     List.iter (emit_line ctx) all_includes;
     emit_blank_line ctx;
         
