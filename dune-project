@@ -14,6 +14,8 @@
   ocaml
   dune
   menhir
-  alcotest))
+  alcotest
+  str
+  unix))
 
 (using menhir 2.0) 

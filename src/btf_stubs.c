@@ -57,7 +57,7 @@ static inline struct btf *btf_of_value(value v) {
 
 /* Convert OCaml value to BTF handle */
 static inline value value_of_btf(struct btf *btf) {
-    value v = alloc_custom(&btf_handle_ops, sizeof(struct btf *), 0, 1);
+    value v = caml_alloc_custom(&btf_handle_ops, sizeof(struct btf *), 0, 1);
     *((struct btf **) Data_custom_val(v)) = btf;
     return v;
 }
