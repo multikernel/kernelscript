@@ -152,7 +152,7 @@ let get_tracepoint_program_template category_event btf_path =
   in
   
   (* Extract the tracepoint structure from BTF *)
-  let common_types = [raw_name; typedef_name] in
+  let common_types = [raw_name; typedef_name; "trace_entry"] in
   let extracted_types = match btf_path with
     | Some path when Sys.file_exists path -> 
         let binary_types = Btf_binary_parser.parse_btf_file path common_types in
