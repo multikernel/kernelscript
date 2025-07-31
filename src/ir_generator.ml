@@ -337,7 +337,7 @@ let determine_arrow_access_type ctx obj_val field expr_type_opt =
                   (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
             | Some c_type -> c_type_to_ir_type c_type
             | None -> failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
-  | IRPointer (IRStruct (struct_name, _, _), _) ->
+  | IRPointer (IRStruct (struct_name, _), _) ->
       (* Leverage field mapping infrastructure for context structs *)
       (match struct_name_to_context_type struct_name with
        | Some (ctx_type_str, _) ->
@@ -434,7 +434,7 @@ let expand_context_method ctx method_name _args pos =
 let expand_map_operation ctx map_name operation key_val value_val_opt pos =
   let map_def = Hashtbl.find ctx.maps map_name in
   let map_val = make_ir_value (IRMapRef map_name) 
-    (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) pos in
+    (IRPointer (IRStruct ("map", []), make_bounds_info ())) pos in
   
   match operation with
   | "lookup" ->
@@ -570,7 +570,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                               (* This is a type definition (like impl blocks) - treat as variable *)
                               let ir_type = match expr.expr_type with
                                 | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-                                | None -> IRStruct (name, [], false) (* Default to struct type for impl blocks *)
+                                | None -> IRStruct (name, []) (* Default to struct type for impl blocks *)
                               in
                               make_ir_value (IRVariable name) ir_type expr.expr_pos
                           | _ ->
@@ -801,7 +801,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                 result_val
             | None ->
                 failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
-       | IRStruct (_, _, _) ->
+       | IRStruct (_, _) ->
            (* Handle struct field access *)
            let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
            let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
@@ -842,7 +842,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Handle arrow access for different pointer types *)
       (match obj_val.val_type with
-       | IRPointer (IRStruct (struct_name, _, _), _) ->
+       | IRPointer (IRStruct (struct_name, _), _) ->
            (* Check if this is a context struct that should be treated as context access *)
            (match struct_name_to_context_type struct_name with
             | Some (ctx_type_str, _) ->
@@ -943,7 +943,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-        | None -> IRStruct (struct_name, [], false)
+        | None -> IRStruct (struct_name, [])
       in
       let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
       
@@ -1102,7 +1102,7 @@ and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type
                (match symbol.kind with
                 | Symbol_table.TypeDef _ ->
                     (* This is an impl block - use the name directly *)
-                    let ir_type = IRStruct (impl_name, [], false) in
+                    let ir_type = IRStruct (impl_name, []) in
                     make_ir_value (IRVariable impl_name) ir_type struct_arg.Ast.expr_pos
                 | _ ->
                     (* Regular variable - use normal processing *)
@@ -1987,7 +1987,7 @@ and lower_statement ctx stmt =
            (* Create loop context register *)
            let loop_ctx_reg = allocate_register ctx in
            let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
-             (IRPointer (IRStruct ("loop_ctx", [], false), make_bounds_info ())) stmt.stmt_pos in
+             (IRPointer (IRStruct ("loop_ctx", []), make_bounds_info ())) stmt.stmt_pos in
            
            (* Create the bpf_loop instruction with IR body *)
            let bpf_loop_instr = make_ir_instruction 
@@ -2069,7 +2069,7 @@ and lower_statement ctx stmt =
       (* Placeholder for bpf_loop implementation *)
       let loop_ctx_reg = allocate_register ctx in
       let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
-        (IRPointer (IRStruct ("iter_ctx", [], false), make_bounds_info ())) stmt.stmt_pos in
+        (IRPointer (IRStruct ("iter_ctx", []), make_bounds_info ())) stmt.stmt_pos in
       
       (* Create a separate context for the loop body *)
       let body_ctx = {

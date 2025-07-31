@@ -426,20 +426,20 @@ let test_type_definition_handling () =
   let table = create_symbol_table () in
   
   (* Add struct definition *)
-  let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)], false) in
+  let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)]) in
   add_type_def table struct_def dummy_pos;
   
   (* Add enum definition *)
-  let enum_def = EnumDef ("TestEnum", [("Value1", Some 0); ("Value2", Some 1)], false) in
+  let enum_def = EnumDef ("TestEnum", [("Value1", Some 0); ("Value2", Some 1)]) in
   add_type_def table enum_def dummy_pos;
   
   (* Test lookups *)
   (match lookup_symbol table "PacketInfo" with
-   | Some { kind = TypeDef (StructDef (name, _, _)); _ } -> check string "struct type found" "PacketInfo" name
+   | Some { kind = TypeDef (StructDef (name, _)); _ } -> check string "struct type found" "PacketInfo" name
    | _ -> fail "expected to find PacketInfo");
    
   (match lookup_symbol table "TestEnum" with
-   | Some { kind = TypeDef (EnumDef (name, _, _)); _ } -> check string "enum type found" "TestEnum" name
+   | Some { kind = TypeDef (EnumDef (name, _)); _ } -> check string "enum type found" "TestEnum" name
    | _ -> fail "expected to find TestEnum");
    
   (* Test enum constants *)
@@ -601,10 +601,10 @@ let test_complex_integration () =
   let global_map = create_test_map_decl "global_stats" true in
   add_map_decl table global_map;
   
-  let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)], false) in
+  let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)]) in
   add_type_def table struct_def dummy_pos;
   
-  let enum_def = EnumDef ("xdp_action", [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)], true) in
+  let enum_def = EnumDef ("xdp_action", [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)]) in
   add_type_def table enum_def dummy_pos;
   
   (* Program scope *)

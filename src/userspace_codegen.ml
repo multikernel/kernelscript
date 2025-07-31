@@ -48,8 +48,8 @@ let rec c_type_from_ir_type = function
   | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
   | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
-  | IRStruct (name, _, _) -> sprintf "struct %s" name
-  | IREnum (name, _, _) -> sprintf "enum %s" name
+  | IRStruct (name, _) -> sprintf "struct %s" name
+  | IREnum (name, _) -> sprintf "enum %s" name
   | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
@@ -909,7 +909,7 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
   let enum_map = Hashtbl.create 16 in
   
   let rec collect_from_type = function
-    | IREnum (name, values, _) -> Hashtbl.replace enum_map name values
+    | IREnum (name, values) -> Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
   
@@ -1009,7 +1009,7 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
       let global_symbols = Symbol_table.get_global_symbols st in
       List.iter (fun symbol ->
         match symbol.Symbol_table.kind with
-        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, _kernel_defined)) ->
+        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values)) ->
             let processed_values = List.map (fun (const_name, opt_value) ->
               (const_name, Option.value ~default:0 opt_value)
             ) enum_values in
@@ -1782,7 +1782,7 @@ let generate_truthy_conversion_userspace ctx ir_value =
   | IRPointer (_, _) ->
       (* Pointers: null is falsy, non-null is truthy *)
       sprintf "(%s != NULL)" (generate_c_value_from_ir ctx ir_value)
-  | IREnum (_, _, _) ->
+  | IREnum (_, _) ->
       (* Enums: based on numeric value *)
       sprintf "(%s != 0)" (generate_c_value_from_ir ctx ir_value)
   | _ ->
@@ -2180,7 +2180,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
         | _ -> 
             (* For other cases (direct impl block references), extract the name from the value *)
             (match struct_ops_val.val_type with
-             | IRStruct (name, _, _) -> name
+             | IRStruct (name, _) -> name
              | _ -> failwith "struct_ops register() argument must be an impl block instance")
       in
       (* Generate struct_ops registration code *)
@@ -2356,7 +2356,7 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
         (* Generate argument parsing for struct parameter *)
         let (param_name, param_type) = List.hd ir_func.parameters in
         (match param_type with
-         | IRStruct (struct_name, _, _) ->
+         | IRStruct (struct_name, _) ->
            sprintf "    // Parse command line arguments\n    struct %s %s = parse_arguments(argc, argv);" struct_name param_name
          | _ -> "    // No argument parsing needed")
       else
@@ -2948,7 +2948,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     | Some main_func when List.length main_func.parameters > 0 ->
         let (param_name, param_type) = List.hd main_func.parameters in
         (match param_type with
-         | IRStruct (struct_name, _, _) ->
+         | IRStruct (struct_name, _) ->
            (* Look up the actual struct definition to get the fields *)
            (match List.find_opt (fun s -> s.struct_name = struct_name) userspace_prog.userspace_structs with
             | Some struct_def -> generate_getopt_parsing struct_name param_name struct_def.struct_fields
@@ -3027,7 +3027,6 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
   (* Filter out kernel-defined structs that are provided by kernel headers *)
   let user_defined_ir_structs = List.filter (fun ir_struct ->
-    not ir_struct.kernel_defined && 
     not (Kernel_types.is_well_known_ebpf_type ir_struct.struct_name) &&
     not (Struct_ops_registry.is_known_struct_ops ir_struct.struct_name)
   ) non_config_ir_structs in

@@ -49,10 +49,10 @@ module Xdp = struct
   ]
   
   (** Create XDP action enum AST *)
-  let action_enum = TypeDef (EnumDef ("xdp_action", action_constants, false))
+  let action_enum = TypeDef (EnumDef ("xdp_action", action_constants))
   
   (** Create XDP context struct AST *)
-  let context_struct = TypeDef (StructDef ("xdp_md", context_fields, true))
+  let context_struct = TypeDef (StructDef ("xdp_md", context_fields))
   
   (** All XDP builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]
@@ -96,10 +96,10 @@ module Tc = struct
   ]
   
   (** Create TC action enum AST *)
-  let action_enum = TypeDef (EnumDef ("tc_action", action_constants, false))
+  let action_enum = TypeDef (EnumDef ("tc_action", action_constants))
   
   (** Create TC context struct AST for __sk_buff *)
-  let context_struct = TypeDef (StructDef ("__sk_buff", context_fields, true))
+  let context_struct = TypeDef (StructDef ("__sk_buff", context_fields))
   
   (** All TC builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]
@@ -114,7 +114,7 @@ module Kprobe = struct
   ]
   
   (** Create Kprobe action enum AST *)
-  let action_enum = TypeDef (EnumDef ("KprobeAction", action_constants, true))
+  let action_enum = TypeDef (EnumDef ("KprobeAction", action_constants))
   
   (** All Kprobe builtin AST declarations *)
   let builtin_ast = [action_enum]
@@ -153,7 +153,6 @@ module StructOps = struct
       struct_fields = tcp_congestion_ops_fields;
       struct_pos = test_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "tcp_congestion_ops")];
-      kernel_defined = true;
     }
   
   (** Create BPF iterator ops struct AST *)
@@ -163,7 +162,6 @@ module StructOps = struct
       struct_fields = bpf_iter_ops_fields;
       struct_pos = test_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "bpf_iter_ops")];
-      kernel_defined = true;
     }
   
   (** Create BPF struct_ops test struct AST *)
@@ -173,7 +171,6 @@ module StructOps = struct
       struct_fields = bpf_struct_ops_test_fields;
       struct_pos = test_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "bpf_struct_ops_test")];
-      kernel_defined = true;
     }
   
   (** All struct_ops builtin AST declarations *)

@@ -114,7 +114,6 @@ and ir_struct_def = {
   struct_alignment: int; (* Memory alignment requirements *)
   struct_size: int; (* Total struct size in bytes *)
   struct_pos: ir_position;
-  kernel_defined: bool; (* NEW: Mark if this struct is kernel-defined *)
 }
 
 (** Userspace configuration in IR *)
@@ -135,8 +134,8 @@ and ir_type =
   | IRStr of int (* Fixed-size string str<N> *)
   | IRPointer of ir_type * bounds_info
   | IRArray of ir_type * int * bounds_info
-  | IRStruct of string * (string * ir_type) list * bool (* NEW: bool for kernel_defined *)
-  | IREnum of string * (string * int) list * bool (* NEW: bool for kernel_defined *)
+  | IRStruct of string * (string * ir_type) list
+  | IREnum of string * (string * int) list
   | IRResult of ir_type * ir_type
   | IRContext of context_type
   | IRAction of action_type
@@ -604,7 +603,6 @@ let make_ir_struct_def name fields alignment size pos = {
   struct_alignment = alignment;
   struct_size = size;
   struct_pos = pos;
-  kernel_defined = false;
 }
 
 let make_ir_config_item key value config_type = {
@@ -707,8 +705,8 @@ let rec ast_type_to_ir_type = function
       let bounds = make_bounds_info ~nullable:true () in
       IRPointer (ast_type_to_ir_type t, bounds)
   | Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
-  | Struct name -> IRStruct (name, [], false) (* Fields filled by symbol table, default to user-defined *)
-  | Enum name -> IREnum (name, [], false)     (* Values filled by symbol table, default to user-defined *)
+  | Struct name -> IRStruct (name, []) (* Fields filled by symbol table *)
+  | Enum name -> IREnum (name, [])     (* Values filled by symbol table *)
   | Option t -> 
       let bounds = make_bounds_info ~nullable:true () in
       IRPointer (ast_type_to_ir_type t, bounds)
@@ -719,7 +717,7 @@ let rec ast_type_to_ir_type = function
   | LsmContext -> IRContext LsmCtx
   | CgroupSkbContext -> IRContext CgroupSkbCtx
   | Xdp_action -> IRAction Xdp_actionType
-  | UserType name -> IRStruct (name, [], false) (* Resolved by type checker *)
+  | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (param_types, return_type) -> 
       (* Function types are represented as proper function pointers *)
       let ir_param_types = List.map ast_type_to_ir_type param_types in
@@ -747,17 +745,17 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
               | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
                   (* Create IRTypeAlias to preserve the alias name *)
                   IRTypeAlias (name, ast_type_to_ir_type underlying_type)
-              | Symbol_table.TypeDef (Ast.StructDef (_, fields, kernel_defined)) ->
+              | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
                   (* Resolve struct fields properly with type aliases preserved *)
                   let ir_fields = List.map (fun (field_name, field_type) ->
                     (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                   ) fields in
-                  IRStruct (name, ir_fields, kernel_defined)
-              | Symbol_table.TypeDef (Ast.EnumDef (_, values, kernel_defined)) -> 
+                  IRStruct (name, ir_fields)
+              | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
                     (enum_name, Option.value ~default:0 opt_value)
                   ) values in
-                  IREnum (name, ir_values, kernel_defined)
+                  IREnum (name, ir_values)
               | _ -> ast_type_to_ir_type ast_type)
          | None ->
              (* Fallback to regular conversion *)
@@ -770,17 +768,17 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
               | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
                   (* Create IRTypeAlias to preserve the alias name *)
                   IRTypeAlias (name, ast_type_to_ir_type underlying_type)
-              | Symbol_table.TypeDef (Ast.StructDef (_, fields, kernel_defined)) ->
+              | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
                   (* Resolve struct fields properly with type aliases preserved *)
                   let ir_fields = List.map (fun (field_name, field_type) ->
                     (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                   ) fields in
-                  IRStruct (name, ir_fields, kernel_defined)
-              | Symbol_table.TypeDef (Ast.EnumDef (_, values, kernel_defined)) -> 
+                  IRStruct (name, ir_fields)
+              | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
                     (enum_name, Option.value ~default:0 opt_value)
                   ) values in
-                  IREnum (name, ir_values, kernel_defined)
+                  IREnum (name, ir_values)
               | _ -> ast_type_to_ir_type ast_type)
          | None ->
              (* Fallback to regular conversion *)
@@ -798,11 +796,11 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
       (match Symbol_table.lookup_symbol symbol_table name with
          | Some symbol ->
              (match symbol.kind with
-              | Symbol_table.TypeDef (Ast.EnumDef (_, values, kernel_defined)) -> 
+              | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
                     (enum_name, Option.value ~default:0 opt_value)
                   ) values in
-                  IREnum (name, ir_values, kernel_defined)
+                  IREnum (name, ir_values)
               | _ -> ast_type_to_ir_type ast_type)
          | None -> ast_type_to_ir_type ast_type)
   | _ -> ast_type_to_ir_type ast_type
@@ -835,8 +833,8 @@ let rec string_of_ir_type = function
   | IRStr size -> Printf.sprintf "str<%d>" size
   | IRPointer (t, _) -> Printf.sprintf "*%s" (string_of_ir_type t)
   | IRArray (t, size, _) -> Printf.sprintf "[%s; %d]" (string_of_ir_type t) size
-  | IRStruct (name, _, _) -> Printf.sprintf "struct %s" name
-  | IREnum (name, _, _) -> Printf.sprintf "enum %s" name
+  | IRStruct (name, _) -> Printf.sprintf "struct %s" name
+  | IREnum (name, _) -> Printf.sprintf "enum %s" name
   | IRResult (t1, t2) -> Printf.sprintf "result (%s, %s)" (string_of_ir_type t1) (string_of_ir_type t2)
   | IRTypeAlias (name, _) -> Printf.sprintf "type %s" name
   | IRStructOps (name, _) -> Printf.sprintf "struct_ops %s" name

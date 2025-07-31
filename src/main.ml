@@ -714,7 +714,6 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
             struct_name = btf_type.Btf_parser.name; 
             struct_fields = fields; 
             struct_attributes = []; 
-            kernel_defined = btf_type.Btf_parser.kernel_defined;
             struct_pos = { filename = "btf"; line = 1; column = 1 }
           }
       | "enum" ->
@@ -723,7 +722,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
                 List.map (fun (const_name, const_value) -> (const_name, Some (int_of_string const_value))) members
             | None -> []
           in
-          Ast.TypeDef (Ast.EnumDef (btf_type.Btf_parser.name, enum_values, btf_type.Btf_parser.kernel_defined))
+          Ast.TypeDef (Ast.EnumDef (btf_type.Btf_parser.name, enum_values))
       | _ -> 
           Ast.TypeDef (Ast.TypeAlias (btf_type.Btf_parser.name, Ast.U32))
     ) btf_types in
@@ -734,8 +733,8 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       let user_defined_types = List.fold_left (fun acc decl ->
         match decl with
         | Ast.StructDecl struct_def -> struct_def.struct_name :: acc
-        | Ast.TypeDef (Ast.EnumDef (enum_name, _, _)) -> enum_name :: acc
-        | Ast.TypeDef (Ast.StructDef (struct_name, _, _)) -> struct_name :: acc
+        | Ast.TypeDef (Ast.EnumDef (enum_name, _)) -> enum_name :: acc
+        | Ast.TypeDef (Ast.StructDef (struct_name, _)) -> struct_name :: acc
         | Ast.TypeDef (Ast.TypeAlias (alias_name, _)) -> alias_name :: acc
         | _ -> acc
       ) [] compilation_ast in
@@ -747,12 +746,12 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
               Printf.printf "🔧 Skipping BTF type '%s' - already defined by user\n" struct_def.struct_name;
               false
             ) else true
-        | Ast.TypeDef (Ast.EnumDef (enum_name, _, _)) -> 
+        | Ast.TypeDef (Ast.EnumDef (enum_name, _)) -> 
             if List.mem enum_name user_defined_types then (
               Printf.printf "🔧 Skipping BTF enum '%s' - already defined by user\n" enum_name;
               false
             ) else true
-        | Ast.TypeDef (Ast.StructDef (struct_name, _, _)) -> 
+        | Ast.TypeDef (Ast.StructDef (struct_name, _)) -> 
             if List.mem struct_name user_defined_types then (
               Printf.printf "🔧 Skipping BTF struct '%s' - already defined by user\n" struct_name;
               false

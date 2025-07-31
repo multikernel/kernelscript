@@ -153,9 +153,9 @@ let test_collect_registers_struct_literal () =
   let reg2 = make_ir_value (IRRegister 2) IRU64 pos in
   
   let struct_expr = make_ir_expr (IRStructLiteral ("TestStruct", [("field1", reg1); ("field2", reg2)])) 
-                                 (IRStruct ("TestStruct", [("field1", IRU32); ("field2", IRU64)], false)) pos in
+                                 (IRStruct ("TestStruct", [("field1", IRU32); ("field2", IRU64)])) pos in
   
-      let dest_reg = make_ir_value (IRRegister 3) (IRStruct ("TestStruct", [("field1", IRU32); ("field2", IRU64)], false)) pos in
+      let dest_reg = make_ir_value (IRRegister 3) (IRStruct ("TestStruct", [("field1", IRU32); ("field2", IRU64)])) pos in
   let assign_instr = make_ir_instruction (IRAssign (dest_reg, struct_expr)) pos in
   
   let block = make_ir_basic_block "test_block" [assign_instr] 0 in

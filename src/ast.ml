@@ -52,8 +52,8 @@ type map_flag =
 
 (** Type definitions for structs, enums, and type aliases *)
 type type_def =
-  | StructDef of string * (string * bpf_type) list * bool
-  | EnumDef of string * (string * int option) list * bool
+  | StructDef of string * (string * bpf_type) list
+  | EnumDef of string * (string * int option) list
   | TypeAlias of string * bpf_type
 
 (** BPF type system with extended type definitions *)
@@ -267,7 +267,6 @@ and struct_def = {
   struct_fields: (string * bpf_type) list;
   struct_attributes: attribute list;  (* Added attributes for @struct_ops etc. *)
   struct_pos: position;
-  kernel_defined: bool; (* NEW: Mark if this struct is kernel-defined *)
 }
 
 (** Program definition with local maps and structs *)
@@ -434,11 +433,11 @@ let make_attributed_function attrs func pos = {
 
 let make_type_def def = def
 
-let make_enum_def name values = EnumDef (name, values, false) (* Default to user-defined *)
+let make_enum_def name values = EnumDef (name, values)
 
-let make_kernel_enum_def name values = EnumDef (name, values, true) (* Mark as kernel-defined *)
+let make_kernel_enum_def name values = EnumDef (name, values)
 
-let make_kernel_struct_def name fields = StructDef (name, fields, true) (* Mark as kernel-defined *)
+let make_kernel_struct_def name fields = StructDef (name, fields)
 
 let make_type_alias name bpf_type = TypeAlias (name, bpf_type)
 
@@ -466,7 +465,6 @@ let make_struct_def ?(attributes=[]) name fields pos = {
   struct_fields = fields;
   struct_attributes = attributes;
   struct_pos = pos;
-  kernel_defined = false;
 }
 
 let make_config_field name field_type default pos = {
@@ -806,11 +804,11 @@ let string_of_declaration = function
   | GlobalFunction func -> string_of_function func
   | TypeDef td ->
       let type_str = match td with
-        | StructDef (name, fields, _) ->
+        | StructDef (name, fields) ->
             Printf.sprintf "struct %s {\n  %s\n}" name
               (String.concat "\n  " (List.map (fun (name, typ) ->
                 Printf.sprintf "%s: %s;" name (string_of_bpf_type typ)) fields))
-        | EnumDef (name, values, _) ->
+        | EnumDef (name, values) ->
             Printf.sprintf "enum %s {\n  %s\n}" name
               (String.concat ",\n  " (List.map (fun (name, opt) ->
                 match opt with

@@ -110,7 +110,7 @@ let test_map_operations () =
   let ctx = create_c_context () in
   
   (* Test map lookup *)
-  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) test_pos in
+  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
   let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let dest_val = make_ir_value (IRVariable "result") (IRPointer (IRU64, make_bounds_info ())) test_pos in
   
@@ -125,7 +125,7 @@ let test_literal_map_operations () =
   let ctx = create_c_context () in
   
   (* Test map store with literal key and value *)
-  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) test_pos in
+  let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
   let literal_key = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
   let literal_value = make_ir_value (IRLiteral (IntLit (100, None))) IRU64 test_pos in
   
@@ -501,9 +501,9 @@ let test_type_alias_struct_ordering () =
     Kernelscript.Ir.name = "test";
     program_type = Kernelscript.Ast.Xdp;
     entry_function = {
-      func_name = "test";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", [], true))];
-      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", [], true));
+           func_name = "test";
+     parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
+     return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
       basic_blocks = [];
       total_stack_usage = 0;
       max_loop_depth = 0;
@@ -609,12 +609,65 @@ let test_struct_definition_with_aliases () =
   check bool "struct doesn't use __u32 for source_ip field" false (contains_substr generated_struct "__u32 source_ip");
   ()
 
+(** Test kernel struct filtering to prevent redefinition errors *)
+let test_kernel_struct_filtering () =
+  
+  (* Create test struct definitions that include kernel-defined types *)
+  let user_struct_fields = [
+    ("count", Kernelscript.Ir.IRU64);
+    ("timestamp", Kernelscript.Ir.IRU64)
+  ] in
+  
+  let kernel_sk_buff_fields = [
+    ("data", Kernelscript.Ir.IRU64);
+    ("data_end", Kernelscript.Ir.IRU64);
+    ("len", Kernelscript.Ir.IRU32)
+  ] in
+  
+  let kernel_xdp_md_fields = [
+    ("data", Kernelscript.Ir.IRU64);
+    ("data_end", Kernelscript.Ir.IRU64);
+    ("data_meta", Kernelscript.Ir.IRU64)
+  ] in
+  
+  (* Test struct definitions: user-defined, __sk_buff (kernel), xdp_md (kernel) *)
+  (* Note: kernel types are identified by name using Kernel_types.is_well_known_ebpf_type *)
+  let struct_defs = [
+    ("PacketStats", user_struct_fields);
+    ("__sk_buff", kernel_sk_buff_fields);
+    ("xdp_md", kernel_xdp_md_fields)
+  ] in
+  
+  (* Generate struct definitions using the filtering logic *)
+  let ctx = create_c_context () in
+  generate_struct_definitions ctx struct_defs;
+  
+  let output = String.concat "\n" ctx.output_lines in
+  
+  (* Verify that user-defined struct is generated *)
+  check bool "user struct PacketStats is generated" true (contains_substr output "struct PacketStats {");
+  check bool "user struct has count field" true (contains_substr output "__u64 count;");
+  check bool "user struct has timestamp field" true (contains_substr output "__u64 timestamp;");
+  
+  (* Critical: Verify that kernel-defined structs are NOT generated *)
+  check bool "__sk_buff struct NOT generated" false (contains_substr output "struct __sk_buff {");
+  check bool "xdp_md struct NOT generated" false (contains_substr output "struct xdp_md {");
+  
+  (* Also verify no fields from kernel structs appear in output *)
+  check bool "no __sk_buff len field" false (contains_substr output "len;");
+  check bool "no xdp_md data_meta field" false (contains_substr output "data_meta;");
+  
+  (* Verify that the comment section indicates filtering occurred *)
+  check bool "struct definitions comment present" true (contains_substr output "User-defined struct definitions");
+  
+  ()
+
 (** Test hex literal addressing fix in map operations *)
 let test_hex_literal_addressing_fix () =
   let ctx = create_c_context () in
   
   (* Test map operations with hex literals like 0x7F000001 (the specific bug case) *)
-  let map_val = make_ir_value (IRMapRef "packet_counts") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) test_pos in
+  let map_val = make_ir_value (IRMapRef "packet_counts") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
   
   (* Create hex literal like the one in rate_limiter.ks that caused the bug *)
   let hex_key = make_ir_value (IRLiteral (IntLit (2130706433, Some "0x7F000001"))) IRU32 test_pos in
@@ -683,8 +736,8 @@ let test_complete_type_alias_fix_integration () =
     program_type = Kernelscript.Ast.Xdp;
     entry_function = {
       func_name = "packet_analyzer";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", [], true))];
-      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", [], true));
+      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
+      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
       basic_blocks = [];
       total_stack_usage = 0;
       max_loop_depth = 0;
@@ -750,7 +803,6 @@ let test_string_size_collection_from_userspace_structs () =
     struct_alignment = 1;
     struct_size = 32;
     struct_pos = dummy_pos;
-    kernel_defined = false;
   } in
   
   let userspace_program = {
@@ -803,7 +855,7 @@ let test_declaration_ordering_fix () =
   let map_def = make_ir_map_def "test_map" IRU32 IRU64 IRHash 1024 
     ~ast_key_type:U32 ~ast_value_type:U64 ~ast_map_type:Hash dummy_pos in
   
-  let map_lookup_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", [], false), make_bounds_info ())) dummy_pos in
+  let map_lookup_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) dummy_pos in
   let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 dummy_pos in
   let dest_val = make_ir_value (IRVariable "result") IRU64 dummy_pos in
   
@@ -909,8 +961,8 @@ let test_map_field_access_pointer_fix () =
   (* Create a value that represents a map access result *)
   let key_val = make_ir_value (IRLiteral (IntLit (1, None))) IRU32 dummy_pos in
   let map_access_val = make_ir_value 
-    (IRMapAccess ("buffer_map", key_val, (IRRegister 5, IRPointer (IRStruct ("DataBuffer", [("size", IRU32)], false), make_bounds_info ()))))
-    (IRPointer (IRStruct ("DataBuffer", [("size", IRU32)], false), make_bounds_info ()))
+    (IRMapAccess ("buffer_map", key_val, (IRRegister 5, IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))))
+    (IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))
     dummy_pos in
   
   (* Create field access expression *)
@@ -926,7 +978,7 @@ let test_map_field_access_pointer_fix () =
   check bool "no dot notation for map field access" false (contains_substr c_result ".size");
   
   (* Now test regular struct (non-map) field access to ensure it still uses dot notation *)
-  let regular_val = make_ir_value (IRVariable "my_struct") (IRStruct ("DataBuffer", [("size", IRU32)], false)) dummy_pos in
+  let regular_val = make_ir_value (IRVariable "my_struct") (IRStruct ("DataBuffer", [("size", IRU32)])) dummy_pos in
   let regular_field_expr = make_ir_expr (IRFieldAccess (regular_val, "size")) IRU32 dummy_pos in
   let regular_result = generate_c_expression ctx regular_field_expr in
   
@@ -990,6 +1042,7 @@ let suite =
     ("Type alias struct ordering", `Quick, test_type_alias_struct_ordering);
     ("Struct fields use alias names", `Quick, test_struct_fields_use_alias_names);
     ("Struct definition with aliases", `Quick, test_struct_definition_with_aliases);
+    ("Kernel struct filtering", `Quick, test_kernel_struct_filtering);
     ("Complete type alias fix integration", `Quick, test_complete_type_alias_fix_integration);
     ("Map field access pointer fix", `Quick, test_map_field_access_pointer_fix);
     (* Bug fix regression tests *)

@@ -210,7 +210,7 @@ let builtin_types = [
   TypeDef (EnumDef ("gfp_flag", [
     ("GFP_KERNEL", Some 0x0001);
     ("GFP_ATOMIC", Some 0x0002);
-  ], false));
+  ]));
 ]
 
 (** Get all builtin type definitions *)

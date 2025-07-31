@@ -163,14 +163,14 @@ fn main() -> i32 {
   (* Test that PacketStats is a real struct *)
   let struct_value_type = ip_stats_map.map_value_type in
   (match struct_value_type with
-   | Kernelscript.Ir.IRStruct ("PacketStats", _fields, _) -> 
+   | Kernelscript.Ir.IRStruct ("PacketStats", _fields) -> 
        check bool "PacketStats is IRStruct" true true
    | _ -> 
        fail "PacketStats should be IRStruct");
 
   (* Test struct fields use type aliases correctly *)
   (match struct_value_type with
-   | Kernelscript.Ir.IRStruct ("PacketStats", fields, _) -> 
+   | Kernelscript.Ir.IRStruct ("PacketStats", fields) -> 
        (* Find the 'count' field and verify it's a type alias *)
        let count_field = List.find (fun (name, _) -> name = "count") fields in
        let (_, field_type) = count_field in

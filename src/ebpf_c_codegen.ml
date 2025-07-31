@@ -207,9 +207,9 @@ let rec calculate_type_size ir_type =
   (* These types should never appear in field assignments due to type checking *)
   | IRVoid -> 
       failwith "calculate_type_size: IRVoid should not appear in field assignments"
-  | IRStruct (struct_name, _, _) -> 
+  | IRStruct (struct_name, _) -> 
       failwith ("calculate_type_size: IRStruct should not appear in field assignments, got: " ^ struct_name)
-  | IREnum (enum_name, _, _) -> 
+  | IREnum (enum_name, _) -> 
       failwith ("calculate_type_size: IREnum should not appear in field assignments, got: " ^ enum_name) 
   | IRResult (_, _) ->
       failwith "calculate_type_size: IRResult should not appear in field assignments"
@@ -315,8 +315,8 @@ let rec ebpf_type_from_ir_type = function
   | IRStr size -> sprintf "str_%d_t" size
   | IRPointer (inner_type, _) -> sprintf "%s*" (ebpf_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ebpf_type_from_ir_type inner_type) size
-  | IRStruct (name, _, _) -> sprintf "struct %s" name
-      | IREnum (name, _, _) -> sprintf "enum %s" name
+  | IRStruct (name, _) -> sprintf "struct %s" name
+              | IREnum (name, _) -> sprintf "enum %s" name
 
   | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
@@ -567,7 +567,7 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
   let enum_map = Hashtbl.create 16 in
   
   let rec collect_from_type = function
-    | IREnum (name, values, _) -> Hashtbl.replace enum_map name values
+    | IREnum (name, values) -> Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
   
@@ -655,7 +655,7 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
       let global_symbols = Symbol_table.get_global_symbols st in
       List.iter (fun symbol ->
         match symbol.Symbol_table.kind with
-        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, _kernel_defined)) ->
+        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values)) ->
             let processed_values = List.map (fun (const_name, opt_value) ->
               (const_name, Option.value ~default:0 opt_value)
             ) enum_values in
@@ -726,7 +726,7 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   
   let rec collect_from_type ir_type =
     match ir_type with
-    | IRStruct (name, struct_fields, _) ->
+          | IRStruct (name, struct_fields) ->
         if not (List.mem_assoc name !struct_defs) then (
           (* Only collect structs that actually have fields - ignore empty structs that are likely type aliases *)
           if struct_fields <> [] then
@@ -852,19 +852,21 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
 
 (** Generate struct definitions *)
 let generate_struct_definitions ctx struct_defs =
-  (* Filter out kernel-defined structs based on IR kernel_defined flag *)
-  let user_defined_structs = List.filter (fun (_struct_name, fields) ->
-    (* Check if this struct itself is kernel-defined or has kernel-defined fields *)
+  (* Filter out kernel-defined structs using centralized kernel type knowledge *)
+  let user_defined_structs = List.filter (fun (struct_name, fields) ->
+    (* Check if this struct name is a well-known kernel type *)
+    let is_kernel_type = Kernel_types.is_well_known_ebpf_type struct_name in
+    
+    (* Check if this struct has kernel-defined field types *)
     let has_kernel_field = List.exists (fun (_field_name, field_type) ->
       match field_type with
-      | IRStruct (_, _, kernel_defined) -> kernel_defined
-      | IREnum (_, _, kernel_defined) -> kernel_defined
+      | IRStruct (name, _) -> Kernel_types.is_well_known_ebpf_type name
+      | IREnum (name, _) -> Kernel_types.is_well_known_ebpf_type name
       | _ -> false
     ) fields in
     
-    (* Only filter based on kernel_defined flag from IR, not struct name *)
-    (* User-defined structs should be generated regardless of their name *)
-    not has_kernel_field
+    (* Filter out kernel types and structs with kernel-defined fields *)
+    not is_kernel_type && not has_kernel_field
   ) struct_defs in
   
   if user_defined_structs <> [] then (
@@ -1741,7 +1743,7 @@ let generate_c_expression ctx ir_expr =
        | PacketData ->
            (* Packet data field access - use bpf_dynptr_from_xdp *)
            (match obj_val.val_type with
-            | IRPointer (IRStruct (struct_name, _, _), _) ->
+            | IRPointer (IRStruct (struct_name, _), _) ->
                 (* Note: For field ACCESS (not assignment), we use sizeof(__typeof(field)) 
                    which is calculated by the C compiler, so we don't need calculate_type_size here *)
                 let field_size = sprintf "sizeof(__typeof(((%s*)0)->%s))" 
@@ -1754,7 +1756,7 @@ let generate_c_expression ctx ir_expr =
                | _ when is_map_value_parameter obj_val ->
             (* Map value field access - use bpf_dynptr_from_mem *)
             (match obj_val.val_type with
-             | IRPointer (IRStruct (struct_name, _, _), _) ->
+             | IRPointer (IRStruct (struct_name, _), _) ->
                  (* Note: For field ACCESS (not assignment), we use sizeof(__typeof(field)) 
                     which is calculated by the C compiler, so we don't need calculate_type_size here *)
                  let field_size = sprintf "sizeof(__typeof(((%s*)0)->%s))" 
@@ -2054,7 +2056,7 @@ let generate_ringbuf_operation ctx ringbuf_val op =
       
       (* Calculate proper size based on the result type *)
       let size = match result_val.val_type with
-        | IRPointer (IRStruct (struct_name, _, _), _) ->
+        | IRPointer (IRStruct (struct_name, _), _) ->
             (* Use sizeof for struct types *)
             sprintf "sizeof(struct %s)" struct_name
         | IRPointer (elem_type, _) ->
@@ -2066,7 +2068,7 @@ let generate_ringbuf_operation ctx ringbuf_val op =
                      (match other_type with
                       | IRU32 -> "IRU32"
                       | IRU64 -> "IRU64" 
-                      | IRStruct (name, _, _) -> "IRStruct " ^ name
+                      | IRStruct (name, _) -> "IRStruct " ^ name
                       | IRVoid -> "IRVoid"
                       | _ -> "unknown type"))
       in
@@ -2318,7 +2320,7 @@ let generate_truthy_conversion ctx ir_value =
   | IRPointer (_, _) ->
       (* Pointers: null is falsy, non-null is truthy *)
       sprintf "(%s != NULL)" (generate_c_value ctx ir_value)
-  | IREnum (_, _, _) ->
+  | IREnum (_, _) ->
       (* Enums: based on numeric value *)
       sprintf "(%s != 0)" (generate_c_value ctx ir_value)
   | _ ->
@@ -2508,10 +2510,10 @@ let rec generate_c_instruction ctx ir_instr =
       (* Check if this is a dynptr-backed pointer first *)
       (match Hashtbl.find_opt ctx.dynptr_backed_pointers obj_str with
        | Some dynptr_var ->
-           (* This is a dynptr-backed pointer - use bpf_dynptr_write *)
-           let field_size = calculate_type_size value_val.val_type in
-           (match obj_val.val_type with
-            | IRPointer (IRStruct (struct_name, _, _), _) ->
+        (* This is a dynptr-backed pointer - use bpf_dynptr_write *)
+          let field_size = calculate_type_size value_val.val_type in
+          (match obj_val.val_type with
+           | IRPointer (IRStruct (struct_name, _), _) ->
                 let full_struct_name = sprintf "struct %s" struct_name in
                 emit_line ctx (sprintf "{ %s __tmp_val = %s;" (ebpf_type_from_ir_type value_val.val_type) value_str);
                 emit_line ctx (sprintf "  bpf_dynptr_write(&%s, __builtin_offsetof(%s, %s), &__tmp_val, %d, 0); }" 
@@ -2524,8 +2526,8 @@ let rec generate_c_instruction ctx ir_instr =
            (match detect_memory_region_enhanced obj_val with
                | PacketData ->
             (* Packet data field assignment - use dynptr API for safe write *)
-            (match obj_val.val_type with
-             | IRPointer (IRStruct (struct_name, _, _), _) ->
+           (match obj_val.val_type with
+            | IRPointer (IRStruct (struct_name, _), _) ->
                  let field_size = calculate_type_size value_val.val_type in
                  let full_struct_name = sprintf "struct %s" struct_name in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __pkt_dynptr; bpf_dynptr_from_xdp(&__pkt_dynptr, ctx);");
@@ -2537,7 +2539,7 @@ let rec generate_c_instruction ctx ir_instr =
         | _ when is_map_value_parameter obj_val ->
             (* Map value field assignment - use dynptr API *)
             (match obj_val.val_type with
-             | IRPointer (IRStruct (struct_name, _, _), _) ->
+             | IRPointer (IRStruct (struct_name, _), _) ->
                  let field_size = calculate_type_size value_val.val_type in
                  let full_struct_name = sprintf "struct %s" struct_name in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __mem_dynptr; bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr);" obj_str full_struct_name);
@@ -3336,8 +3338,8 @@ let generate_c_function ctx ir_func =
           | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
           | (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
           | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
-          | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
-          | (_, IRPointer (IRStruct ("xdp_md", _, _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
+          | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
+          | (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
           | _ -> None));
   
   let return_type_str = 
@@ -3383,7 +3385,7 @@ let generate_c_function ctx ir_func =
           | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
           | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
           | (_, IRPointer (IRContext TracepointCtx, _)) :: _ -> "SEC(\"tracepoint\")"
-          | (_, IRPointer (IRStruct ("__sk_buff", _, _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
+          | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
           | _ -> "SEC(\"prog\")"
         else ""
   in
