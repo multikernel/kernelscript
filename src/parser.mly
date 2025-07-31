@@ -151,6 +151,7 @@
 %type <Ast.impl_block_item list> impl_block_items
 %type <Ast.impl_block_item> impl_block_item
 %type <Ast.import_declaration> import_declaration
+%type <string> field_name
 
 /* Start symbol */
 %start program
@@ -443,8 +444,8 @@ primary_expression:
   | literal { make_expr (Literal $1) (make_pos ()) }
   | IDENTIFIER { make_expr (Identifier $1) (make_pos ()) }
   | LPAREN expression RPAREN { $2 }
-  | primary_expression DOT IDENTIFIER { make_expr (FieldAccess ($1, $3)) (make_pos ()) }
-  | primary_expression ARROW IDENTIFIER { make_expr (ArrowAccess ($1, $3)) (make_pos ()) }
+  | primary_expression DOT field_name { make_expr (FieldAccess ($1, $3)) (make_pos ()) }
+  | primary_expression ARROW field_name { make_expr (ArrowAccess ($1, $3)) (make_pos ()) }
   | NEW bpf_type LPAREN RPAREN { make_expr (New $2) (make_pos ()) }
   | NEW bpf_type LPAREN expression RPAREN { make_expr (NewWithFlag ($2, $4)) (make_pos ()) }
 
@@ -495,7 +496,7 @@ struct_literal_fields:
   | struct_literal_field COMMA { [$1] }  /* Allow trailing comma */
 
 struct_literal_field:
-  | IDENTIFIER COLON expression { ($1, $3) }
+  | field_name COLON expression { ($1, $3) }
 
 /* Map Declarations */
 map_declaration:
@@ -565,7 +566,7 @@ struct_fields:
   | struct_field { [$1] }
 
 struct_field:
-  | IDENTIFIER COLON bpf_type { ($1, $3) }
+  | field_name COLON bpf_type { ($1, $3) }
 
 
 /* Enum declaration: enum name { variants } - Fixed to eliminate unused production */
@@ -664,5 +665,10 @@ impl_block_item:
 import_declaration:
   | IMPORT IDENTIFIER FROM STRING
     { make_import_declaration $2 $4 (make_pos ()) }
+
+/* Field name: allows both identifiers and specific keywords as field names */
+field_name:
+  | IDENTIFIER { $1 }
+  | TYPE { "type" }
 
 %% 

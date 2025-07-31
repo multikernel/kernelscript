@@ -608,6 +608,81 @@ struct PacketStats {
   with
   | exn -> fail ("Type alias field access test failed: " ^ Printexc.to_string exn)
 
+(** Test 'type' keyword as field name - basic usage *)
+let test_type_keyword_as_field_name () =
+  let input = {|
+    struct trace_entry {
+        type: u16,
+        flags: u8,
+        pid: u32
+    }
+    
+    fn test_function() -> i32 {
+        var entry: trace_entry = trace_entry {
+            type: 42,
+            flags: 1,
+            pid: 1234
+        }
+        
+        var entry_type = entry.type
+        return entry_type
+    }
+  |} in
+  
+  try
+    let ast = parse_string input in
+    
+    (* Verify struct definition with 'type' field *)
+    match ast with
+    | [StructDecl struct_def; GlobalFunction func_def] ->
+        (* Check struct has 'type' field *)
+        let type_field_exists = List.exists (fun (field_name, _) -> 
+          field_name = "type"
+        ) struct_def.struct_fields in
+        check bool "'type' field exists in struct" true type_field_exists;
+        
+        (* Verify we can access the symbol table without errors *)
+        let symbol_table = create_symbol_table () in
+        process_declaration symbol_table (StructDecl struct_def);
+        process_declaration symbol_table (GlobalFunction func_def);
+        
+        check bool "'type' keyword successfully used as field name" true true
+        
+    | _ -> 
+        fail "Expected struct declaration and function declaration"
+  with
+  | exn -> fail ("'type' keyword field name test failed: " ^ Printexc.to_string exn)
+
+(** Test BTF trace_entry struct with 'type' field *)
+let test_btf_trace_entry_struct () =
+  let input = {|
+    struct trace_entry {
+        type: u16,
+        flags: u8,
+        preempt_count: u8,
+        pid: u32
+    }
+  |} in
+  
+  try
+    let ast = parse_string input in
+    match ast with
+    | [StructDecl struct_def] ->
+        check string "struct name" "trace_entry" struct_def.struct_name;
+        
+        (* Verify all fields are present *)
+        let field_names = List.map fst struct_def.struct_fields in
+        check bool "'type' field present" true (List.mem "type" field_names);
+        check bool "'flags' field present" true (List.mem "flags" field_names);
+        check bool "'preempt_count' field present" true (List.mem "preempt_count" field_names);
+        check bool "'pid' field present" true (List.mem "pid" field_names);
+        
+        check bool "BTF trace_entry struct with 'type' field parsed successfully" true true
+    | _ ->
+        fail "Expected single struct declaration"
+  with
+  | exn -> fail ("BTF trace_entry struct test failed: " ^ Printexc.to_string exn)
+
 (** Test runner *)
 let tests = [
   "top-level struct eBPF parameter", `Quick, test_toplevel_struct_ebpf_parameter;
@@ -626,6 +701,8 @@ let tests = [
   "struct field assignment C generation", `Quick, test_struct_field_assignment_c_generation;
   "struct field assignment errors", `Quick, test_struct_field_assignment_errors;
   "type alias field access", `Quick, test_type_alias_field_access;
+  "type keyword as field name", `Quick, test_type_keyword_as_field_name;
+  "BTF trace_entry struct", `Quick, test_btf_trace_entry_struct;
 ]
 
 let () = Alcotest.run "Struct Field Access and Assignment Tests" [
