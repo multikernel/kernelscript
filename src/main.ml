@@ -38,7 +38,7 @@ let rec parse_args () =
       printf "    Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
       printf "    struct_ops: tcp_congestion_ops | bpf_iter_ops | bpf_struct_ops_test | custom_name\n";
       printf "    project_name: Name of the project directory to create\n";
-      printf "    --btf-vmlinux-path: Path to BTF vmlinux file for type/struct_ops extraction\n\n";
+      printf "    --btf-vmlinux-path: Path to BTF vmlinux file (default: /sys/kernel/btf/vmlinux)\n\n";
       printf "  compile <input_file> [options]\n";
       printf "    Compile KernelScript source to C code\n";
       printf "    -o, --output <dir>            Specify output directory\n";
@@ -46,7 +46,7 @@ let rec parse_args () =
       printf "    --no-makefile                 Don't generate Makefile\n";
       printf "    --test                        Compile in test mode (only @test functions become main)\n";
       printf "    --builtin-path <path>         Specify path to builtin KernelScript files\n";
-      printf "    --btf-vmlinux-path <path>     Specify path to BTF vmlinux file\n";
+      printf "    --btf-vmlinux-path <path>     Path to BTF vmlinux file (default: /sys/kernel/btf/vmlinux)\n";
       exit 0
   | _ :: "init" :: rest -> parse_init_args rest
   | _ :: "compile" :: rest -> parse_compile_args rest
@@ -64,7 +64,12 @@ and parse_init_args args =
     | [] ->
         (match (prog_type_opt, project_name_opt) with
          | (Some prog_type, Some project_name) ->
-             Init { prog_type; project_name; btf_path = btf_path_opt }
+             (* Set default BTF path if none provided *)
+             let final_btf_path = match btf_path_opt with
+               | Some path -> Some path
+               | None -> Some "/sys/kernel/btf/vmlinux"
+             in
+             Init { prog_type; project_name; btf_path = final_btf_path }
          | (None, _) ->
              printf "Error: Missing program type for init command\n";
              exit 1
@@ -93,7 +98,12 @@ and parse_compile_args args =
     | [] ->
                  (match input_file_opt with
           | Some input_file ->
-              Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path = btf_path; test_mode }
+              (* Set default BTF path if none provided *)
+              let final_btf_path = match btf_path with
+                | Some path -> Some path
+                | None -> Some "/sys/kernel/btf/vmlinux"
+              in
+              Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path = final_btf_path; test_mode }
          | None ->
              printf "Error: No input file specified for compile command\n";
              exit 1)
