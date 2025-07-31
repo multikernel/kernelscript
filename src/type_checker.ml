@@ -199,10 +199,6 @@ let type_error msg pos = raise (Type_error (msg, pos))
 (** Resolve user types to built-in types and type aliases *)
 let rec resolve_user_type ctx = function
   | UserType "xdp_md" -> Xdp_md
-  | UserType "UprobeContext" -> UprobeContext
-  | UserType "TracepointContext" -> TracepointContext
-  | UserType "LsmContext" -> LsmContext
-  | UserType "CgroupSkbContext" -> CgroupSkbContext
   | UserType "xdp_action" -> Xdp_action
   | UserType "__sk_buff" -> Struct "__sk_buff"
   | UserType "int" -> I32
@@ -949,10 +945,7 @@ and type_check_arrow_access ctx obj field pos =
     | Pointer (Struct name) | Pointer (UserType name) -> name
     (* Map context types to their corresponding struct names *)
     | Pointer Xdp_md -> "xdp_md"
-    | Pointer UprobeContext -> "pt_regs"
     | Pointer TracepointContext -> "trace_entry"
-    | Pointer LsmContext -> "task_struct"
-    | Pointer CgroupSkbContext -> "__sk_buff"
     | _ -> 
         type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
   in
@@ -2425,10 +2418,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
                | "xdp" -> Some Xdp
                | "tc" -> Some Tc  
                | "kprobe" -> Some Kprobe
-               | "uprobe" -> Some Uprobe
                | "tracepoint" -> Some Tracepoint
-               | "lsm" -> Some Lsm
-               | "cgroup_skb" -> Some CgroupSkb
                | "kfunc" -> None  (* kfuncs don't have program types *)
                | "private" -> None  (* private functions don't have program types *)
                | "helper" -> None  (* helper functions don't have program types *)
@@ -2941,12 +2931,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                | "kprobe" -> 
                    (* Reject old format: @kprobe without target function *)
                    type_error ("@kprobe requires target function specification. Use @kprobe(\"function_name\") instead.") attr_func.attr_pos
-               | "uprobe" -> (Some Uprobe, None)
                | "tracepoint" -> 
                    (* Reject old format: @tracepoint without category/event *)
                    type_error ("@tracepoint requires category/event specification. Use @tracepoint(\"category/event\") instead.") attr_func.attr_pos
-               | "lsm" -> (Some Lsm, None)
-               | "cgroup_skb" -> (Some CgroupSkb, None)
                | "kfunc" -> (None, None)  (* kfuncs don't have program types *)
                | "private" -> (None, None)  (* private functions don't have program types *)
                | "helper" -> (None, None)  (* helper functions don't have program types *)
@@ -3316,10 +3303,7 @@ and populate_multi_program_context ast multi_prog_analysis =
                | "xdp" -> Some Xdp
                | "tc" -> Some Tc
                | "kprobe" -> Some Kprobe
-               | "uprobe" -> Some Uprobe
                | "tracepoint" -> Some Tracepoint
-               | "lsm" -> Some Lsm
-               | "cgroup_skb" -> Some CgroupSkb
                | _ -> None)
           | _ -> None
         in

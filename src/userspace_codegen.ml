@@ -525,7 +525,7 @@ let extract_function_calls_from_ir_function ir_func =
 let get_program_type_from_attributes attr_list =
   List.fold_left (fun acc attr ->
     match attr with
-    | Ast.SimpleAttribute attr_name when List.mem attr_name ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] ->
+    | Ast.SimpleAttribute attr_name when List.mem attr_name ["xdp"; "tc"; "kprobe"; "tracepoint"] ->
         Some attr_name
     | _ -> acc
   ) None attr_list

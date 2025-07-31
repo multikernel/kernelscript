@@ -226,7 +226,6 @@ let test_program_types () =
     ("xdp", Xdp);
     ("tc", Tc);
     ("kprobe", Kprobe);
-    ("uprobe", Uprobe);
     ("tracepoint", Tracepoint);
   ] in
   

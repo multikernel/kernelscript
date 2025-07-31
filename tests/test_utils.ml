@@ -105,21 +105,6 @@ module Tc = struct
   let builtin_ast = [action_enum; context_struct]
 end
 
-(** Kprobe-related test types and constants *)
-module Kprobe = struct
-  (** Kprobe action enum values *)
-  let action_constants = [
-    ("KPROBE_CONTINUE", Some 0);
-    ("KPROBE_FAULT", Some 1);
-  ]
-  
-  (** Create Kprobe action enum AST *)
-  let action_enum = TypeDef (EnumDef ("KprobeAction", action_constants))
-  
-  (** All Kprobe builtin AST declarations *)
-  let builtin_ast = [action_enum]
-end
-
 (** Struct_ops-related test types and constants *)
 module StructOps = struct
   (** TCP congestion control operations struct fields *)
@@ -208,7 +193,7 @@ module Helpers = struct
     }
   
   (** Create symbol table with test builtin types *)
-  let create_test_symbol_table ?(include_xdp=true) ?(include_tc=true) ?(include_kprobe=true) ?(include_struct_ops=true) ast =
+  let create_test_symbol_table ?(include_xdp=true) ?(include_tc=true) ?(include_struct_ops=true) ast =
     (* Register context codegens for tests *)
     if include_xdp then Kernelscript_context.Xdp_codegen.register ();
     if include_tc then Kernelscript_context.Tc_codegen.register ();
@@ -216,7 +201,6 @@ module Helpers = struct
     let builtin_asts = 
       (if include_xdp then [Xdp.builtin_ast] else []) @
       (if include_tc then [Tc.builtin_ast] else []) @
-      (if include_kprobe then [Kprobe.builtin_ast] else []) @
       (if include_struct_ops then [StructOps.builtin_ast] else [])
     in
     let table = Kernelscript.Symbol_table.create_symbol_table () in
@@ -227,18 +211,17 @@ module Helpers = struct
     table
   
   (** Create a type checking context with test builtin types *)
-  let create_test_type_context ?(include_xdp=true) ?(include_tc=true) ?(include_kprobe=true) ?(include_struct_ops=true) ast =
-    let symbol_table = create_test_symbol_table ~include_xdp ~include_tc ~include_kprobe ~include_struct_ops ast in
+  let create_test_type_context ?(include_xdp=true) ?(include_tc=true) ?(include_struct_ops=true) ast =
+    let symbol_table = create_test_symbol_table ~include_xdp ~include_tc ~include_struct_ops ast in
     let combined_ast = ast @ (if include_struct_ops then StructOps.builtin_ast else []) in
     Kernelscript.Type_checker.create_context symbol_table combined_ast
 end
 
 (** All builtin AST declarations for comprehensive testing *)
-let all_builtin_ast = Xdp.builtin_ast @ Tc.builtin_ast @ Kprobe.builtin_ast @ StructOps.builtin_ast
+let all_builtin_ast = Xdp.builtin_ast @ Tc.builtin_ast @ StructOps.builtin_ast
 
 (** Get builtin AST for a specific program type *)
 let get_builtin_ast_for_program_type = function
   | Xdp -> Xdp.builtin_ast
   | Tc -> Tc.builtin_ast
-  | Kprobe -> Kprobe.builtin_ast
   | _ -> [] (* Other program types don't have builtin definitions yet *) 

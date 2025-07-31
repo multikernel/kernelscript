@@ -48,32 +48,11 @@ let get_execution_context = function
       execution_stage = "packet_receive_late";
       can_drop_packets = true;
     }
-  | CgroupSkb -> {
-      program_type = CgroupSkb;
-      hook_point = "cgroup_skb_filter";
-      stack_layer = 3;  (* LATEST - after TC *)
-      execution_stage = "cgroup_filtering";
-      can_drop_packets = true;
-    }
-  | Lsm -> {
-      program_type = Lsm;
-      hook_point = "security_hooks (various points)";
-      stack_layer = 0;  (* NOT in linear packet path - scattered throughout kernel *)
-      execution_stage = "security_enforcement";
-      can_drop_packets = true;
-    }
   | Kprobe -> {
       program_type = Kprobe;
       hook_point = "kernel_function_entry/exit";
       stack_layer = 0;  (* Can run anywhere - not in packet path *)
       execution_stage = "dynamic_tracing";
-      can_drop_packets = false;
-    }
-  | Uprobe -> {
-      program_type = Uprobe;
-      hook_point = "user_function_entry/exit";
-      stack_layer = 0;  (* Userspace *)
-      execution_stage = "user_tracing";
       can_drop_packets = false;
     }
   | Tracepoint -> {
@@ -133,10 +112,7 @@ let extract_programs (ast: declaration list) : program_def list =
                     | "xdp" -> Xdp
                     | "tc" -> Tc  
                     | "kprobe" -> Kprobe
-                    | "uprobe" -> Uprobe
                     | "tracepoint" -> Tracepoint
-                    | "lsm" -> Lsm
-                    | "cgroup_skb" -> CgroupSkb
                     | "struct_ops" -> StructOps
                     | _ -> failwith ("Unknown program type: " ^ prog_type_str)
                   in
@@ -463,10 +439,7 @@ let get_program_types_from_ast (ast: declaration list) : program_type list =
               | "xdp" -> Xdp :: acc
               | "tc" -> Tc :: acc  
               | "kprobe" -> Kprobe :: acc
-              | "uprobe" -> Uprobe :: acc
               | "tracepoint" -> Tracepoint :: acc
-              | "lsm" -> Lsm :: acc
-              | "cgroup_skb" -> CgroupSkb :: acc
               | _ -> acc)
          | _ -> acc)
     | _ -> acc

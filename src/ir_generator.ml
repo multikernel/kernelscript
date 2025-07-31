@@ -329,10 +329,7 @@ let determine_arrow_access_type ctx obj_val field expr_type_opt =
           | XdpCtx -> "xdp"
           | TcCtx -> "tc"
           | KprobeCtx -> "kprobe"
-          | UprobeCtx -> "uprobe"
           | TracepointCtx -> "tracepoint"
-          | LsmCtx -> "lsm"
-          | CgroupSkbCtx -> "cgroup_skb"
        in
                   (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
             | Some c_type -> c_type_to_ir_type c_type
@@ -380,10 +377,7 @@ let ir_context_type_to_string = function
   | XdpCtx -> "xdp"
   | TcCtx -> "tc"
   | KprobeCtx -> "kprobe"
-  | UprobeCtx -> "uprobe"
   | TracepointCtx -> "tracepoint"
-  | LsmCtx -> "lsm"
-  | CgroupSkbCtx -> "cgroup_skb"
 
 (** Map context field names to IR access types using BTF-integrated context codegen *)
 (* No longer needed - we use BTF field names directly *)
@@ -2776,10 +2770,7 @@ let lower_multi_program ast symbol_table source_name =
                     | "xdp" -> Ast.Xdp
                     | "tc" -> Ast.Tc  
                     | "kprobe" -> Ast.Kprobe
-                    | "uprobe" -> Ast.Uprobe
                     | "tracepoint" -> Ast.Tracepoint
-                    | "lsm" -> Ast.Lsm
-                    | "cgroup_skb" -> Ast.CgroupSkb
                     | _ -> failwith ("Unknown program type: " ^ prog_type_str)
                   in
                   Some {

@@ -30,9 +30,6 @@ module Program_type = struct
     | Tc -> Format.fprintf fmt "Tc"
     | Tracepoint -> Format.fprintf fmt "Tracepoint"
     | Kprobe -> Format.fprintf fmt "Kprobe"
-    | Uprobe -> Format.fprintf fmt "Uprobe"
-    | Lsm -> Format.fprintf fmt "Lsm"
-    | CgroupSkb -> Format.fprintf fmt "CgroupSkb"
     | StructOps -> Format.fprintf fmt "StructOps"
 end
 

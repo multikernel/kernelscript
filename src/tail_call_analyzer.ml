@@ -56,10 +56,7 @@ let extract_program_type attr_list =
        | "xdp" -> Some Xdp
        | "tc" -> Some Tc
        | "kprobe" -> Some Kprobe
-       | "uprobe" -> Some Uprobe
        | "tracepoint" -> Some Tracepoint
-       | "lsm" -> Some Lsm
-       | "cgroup_skb" -> Some CgroupSkb
        | _ -> None)
   | _ -> None
 

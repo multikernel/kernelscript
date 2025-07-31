@@ -35,7 +35,7 @@ type attribute =
 
 (** Program types supported by KernelScript *)
 type program_type = 
-  | Xdp | Tc | Kprobe | Uprobe | Tracepoint | Lsm | CgroupSkb | StructOps
+  | Xdp | Tc | Kprobe | Tracepoint | StructOps
 
 (** Map types for eBPF maps *)
 type map_type =
@@ -73,8 +73,8 @@ and bpf_type =
   | Function of bpf_type list * bpf_type
   | Map of bpf_type * bpf_type * map_type * int  (* key_type, value_type, map_type, size *)
   (* Built-in context types *)
-  | Xdp_md | UprobeContext 
-  | TracepointContext | LsmContext | CgroupSkbContext
+  | Xdp_md
+  | TracepointContext
   | Xdp_action
   (* Program reference types *)
   | ProgramRef of program_type
@@ -550,10 +550,7 @@ let string_of_program_type = function
   | Xdp -> "xdp"
   | Tc -> "tc"
   | Kprobe -> "kprobe"
-  | Uprobe -> "uprobe"
   | Tracepoint -> "tracepoint"
-  | Lsm -> "lsm"
-  | CgroupSkb -> "cgroup_skb"
   | StructOps -> "struct_ops"
 
 let string_of_map_type = function
@@ -602,10 +599,7 @@ let rec string_of_bpf_type = function
         (string_of_map_type map_type)
         size
   | Xdp_md -> "xdp_md"
-  | UprobeContext -> "UprobeContext"
   | TracepointContext -> "TracepointContext"
-  | LsmContext -> "LsmContext"
-  | CgroupSkbContext -> "CgroupSkbContext"
   | Xdp_action -> "xdp_action"
   | ProgramRef pt -> string_of_program_type pt
   | ProgramHandle -> "ProgramHandle"

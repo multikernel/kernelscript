@@ -145,7 +145,7 @@ and ir_type =
   | IRRingbuf of ir_type * int (* Ring buffer object: (value_type, size) *)
 
 and context_type = 
-  | XdpCtx | TcCtx | KprobeCtx | UprobeCtx | TracepointCtx | LsmCtx | CgroupSkbCtx
+  | XdpCtx | TcCtx | KprobeCtx | TracepointCtx
 
 and action_type =
   | Xdp_actionType | TcActionType | GenericActionType
@@ -712,10 +712,7 @@ let rec ast_type_to_ir_type = function
       IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
   | Xdp_md -> IRContext XdpCtx
-  | UprobeContext -> IRContext UprobeCtx
   | TracepointContext -> IRContext TracepointCtx
-  | LsmContext -> IRContext LsmCtx
-  | CgroupSkbContext -> IRContext CgroupSkbCtx
   | Xdp_action -> IRAction Xdp_actionType
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (param_types, return_type) -> 
@@ -840,8 +837,7 @@ let rec string_of_ir_type = function
   | IRStructOps (name, _) -> Printf.sprintf "struct_ops %s" name
   | IRContext ctx -> Printf.sprintf "context %s" (match ctx with
     | XdpCtx -> "xdp" | TcCtx -> "tc" | KprobeCtx -> "kprobe"
-    | UprobeCtx -> "uprobe" | TracepointCtx -> "tracepoint"
-    | LsmCtx -> "lsm" | CgroupSkbCtx -> "cgroup_skb")
+    | TracepointCtx -> "tracepoint")
   | IRAction action -> Printf.sprintf "action %s" (match action with
     | Xdp_actionType -> "xdp" | TcActionType -> "tc"
     | GenericActionType -> "generic")
