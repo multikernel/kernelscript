@@ -46,12 +46,19 @@ enum tc_action {
   TC_ACT_REDIRECT = 7,
 }
 
-// Tracepoint context struct (from BTF)
+// Base trace entry struct
 struct trace_entry {
   entry_type: u16,
   flags: u8,
   preempt_count: u8,
   pid: i32,
+}
+
+// Tracepoint context struct (from BTF) - sys_enter structure
+struct trace_event_raw_sys_enter {
+  ent: trace_entry,
+  id: i64,
+  args: u64[6],
 }
 
 // This example demonstrates comprehensive map operations with multi-program analysis
@@ -172,10 +179,11 @@ struct ArrayElement {
 }
 
 // Program 3: Event streaming demonstrating ring buffer usage
-@tracepoint fn event_logger(ctx: *trace_entry) -> i32 {
+@tracepoint("syscalls/sys_enter_open")
+fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
     var event = Event {
         timestamp: 123456, // Fake timestamp
-        event_type: ctx->entry_type,
+        event_type: ctx.id,  // Use syscall ID from sys_enter context
         data: [0],  // Simplified data
     }
     
@@ -195,7 +203,8 @@ struct ArrayElement {
 }
 
 // Program 4: Sequential access pattern demonstration
-@kprobe fn data_processor(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
+@kprobe("vfs_read")
+fn data_processor(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
         var element = sequential_data[i]
