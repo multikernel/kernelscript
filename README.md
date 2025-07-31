@@ -242,19 +242,19 @@ Create a new KernelScript project with template code:
 
 ```bash
 # Create XDP project
-kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux xdp my_packet_filter
+kernelscript init xdp my_packet_filter
 
 # Create TC project  
-kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux tc my_traffic_shaper
+kernelscript init tc my_traffic_shaper
 
 # Create kprobe project
-kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux kprobe my_tracer
+kernelscript init kprobe/sys_read my_tracer
 
 # Create project with custom BTF path
 kernelscript init --btf-vmlinux-path /custom/path/vmlinux xdp my_project
 
 # Create struct_ops project
-kernelscript init --btf-vmlinux-path /sys/kernel/btf/vmlinux tcp_congestion_ops my_congestion_control
+kernelscript init tcp_congestion_ops my_congestion_control
 ```
 
 After initialization, you get:
@@ -269,16 +269,10 @@ my_project/
 - `xdp` - XDP programs for packet processing
 - `tc` - Traffic control programs  
 - `kprobe` - Kernel function tracing
-- `uprobe` - User function tracing
 - `tracepoint` - Kernel tracepoint programs
-- `lsm` - Linux Security Module programs
-- `cgroup_skb` - Cgroup socket buffer programs
 
 **Available struct_ops:**
 - `tcp_congestion_ops` - TCP congestion control
-- `bpf_iter_ops` - BPF iterator operations
-- `bpf_struct_ops_test` - Test struct operations
-- Custom struct_ops names
 
 
 ### Compile KernelScript Programs
@@ -348,7 +342,7 @@ sudo ./my_project          # Run the program
 
 3. **Create your first project:**
    ```bash
-   kernelscript -- init xdp hello_world
+   kernelscript init xdp hello_world
    cd hello_world/
    ```
 

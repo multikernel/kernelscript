@@ -34,9 +34,10 @@ let rec parse_args () =
       printf "Subcommands:\n";
       printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>]\n";
       printf "    Initialize a new KernelScript project\n";
-      printf "    prog_type: xdp | tc | kprobe/target_function | uprobe | tracepoint | lsm | cgroup_skb\n";
+      printf "    prog_type: xdp | tc | kprobe/target_function | tracepoint/category/event\n";
       printf "    Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
-      printf "    struct_ops: tcp_congestion_ops | bpf_iter_ops | bpf_struct_ops_test | custom_name\n";
+      printf "    tracepoint: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
+      printf "    struct_ops: tcp_congestion_ops\n";
       printf "    project_name: Name of the project directory to create\n";
       printf "    --btf-vmlinux-path: Path to BTF vmlinux file (default: /sys/kernel/btf/vmlinux)\n\n";
       printf "  compile <input_file> [options]\n";
@@ -300,10 +301,7 @@ cd %s && make run
         | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
         | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
         | "kprobe" -> "Kprobe programs allow dynamic tracing of kernel functions."
-        | "uprobe" -> "Uprobe programs enable tracing of userspace functions."
         | "tracepoint" -> "Tracepoint programs provide static tracing points in the kernel."
-        | "lsm" -> "LSM programs implement security policies and access control."
-        | "cgroup_skb" -> "Cgroup SKB programs filter network packets based on cgroup membership."
         | _ -> "eBPF program for kernel-level processing."
       )
     ) in
