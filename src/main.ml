@@ -143,7 +143,7 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   in
   
   (* Check if this is a struct_ops or a regular program type *)
-  let valid_program_types = ["xdp"; "tc"; "kprobe"; "uprobe"; "tracepoint"; "lsm"; "cgroup_skb"] in
+  let valid_program_types = ["xdp"; "tc"; "kprobe"; "tracepoint"] in
   let is_struct_ops = Struct_ops_registry.is_known_struct_ops prog_type in
   let is_program_type = List.mem prog_type valid_program_types in
   

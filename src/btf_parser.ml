@@ -63,28 +63,13 @@ let create_hardcoded_tc_action_enum () = {
 (** Get program template based on eBPF program type *)
 let get_program_template prog_type btf_path = 
   let (context_type, return_type, common_types) = match prog_type with
-    | "xdp" -> ("xdp_md", "xdp_action", [
+    | "xdp" -> ("*xdp_md", "xdp_action", [
         "xdp_md"; "xdp_action"
       ])
-    | "tc" -> ("__sk_buff", "i32", [
+    | "tc" -> ("*__sk_buff", "i32", [
         "__sk_buff"
       ])
-    | "kprobe" -> ("pt_regs", "i32", [
-        "pt_regs"
-      ])
-    | "uprobe" -> ("pt_regs", "i32", [
-        "pt_regs"
-      ])
-    | "tracepoint" -> ("trace_entry", "i32", [
-        "trace_entry"
-      ])
-    | "lsm" -> ("task_struct", "i32", [
-        "task_struct"; "file"; "inode"
-      ])
-    | "cgroup_skb" -> ("__sk_buff", "i32", [
-        "__sk_buff"
-      ])
-    | _ -> ("GenericContext", "i32", [])
+    | _ -> failwith (sprintf "Unsupported program type '%s' for generic template. Use specific template functions for kprobe/tracepoint." prog_type)
   in
   
   (* Extract types from BTF - BTF file is required *)
