@@ -52,7 +52,6 @@ let generate_tracepoint_includes () = [
   "#include <linux/types.h>";
   "#include <bpf/bpf_helpers.h>";
   "#include <bpf/bpf_tracing.h>";
-  "#include <linux/trace_events.h>";
 ]
 
 (** Generate field access for tracepoint context *)

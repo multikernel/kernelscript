@@ -852,9 +852,9 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
 
 (** Generate struct definitions *)
 let generate_struct_definitions ctx struct_defs =
-  (* Filter out kernel-defined structs that are provided by kernel headers *)
-  let user_defined_structs = List.filter (fun (struct_name, fields) ->
-    (* Check if any field indicates this is a kernel-defined struct *)
+  (* Filter out kernel-defined structs based on IR kernel_defined flag *)
+  let user_defined_structs = List.filter (fun (_struct_name, fields) ->
+    (* Check if this struct itself is kernel-defined or has kernel-defined fields *)
     let has_kernel_field = List.exists (fun (_field_name, field_type) ->
       match field_type with
       | IRStruct (_, _, kernel_defined) -> kernel_defined
@@ -862,8 +862,9 @@ let generate_struct_definitions ctx struct_defs =
       | _ -> false
     ) fields in
     
-    (* Include all user-defined structs (no special treatment for struct_ops) *)
-    not has_kernel_field && not (Kernel_types.is_well_known_ebpf_type struct_name)
+    (* Only filter based on kernel_defined flag from IR, not struct name *)
+    (* User-defined structs should be generated regardless of their name *)
+    not has_kernel_field
   ) struct_defs in
   
   if user_defined_structs <> [] then (
@@ -1129,6 +1130,7 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
       | Ast.Xdp -> Some "xdp"
       | Ast.Tc -> Some "tc"
       | Ast.Kprobe -> Some "kprobe"
+      | Ast.Tracepoint -> Some "tracepoint"
       | _ -> None
     in
     match context_type with
@@ -1176,7 +1178,13 @@ let generate_includes ctx ?(program_types=[]) ?(include_builtin_headers=false) (
     ] in
     let additional_includes = List.filter (fun inc -> 
       not (List.mem inc kprobe_includes)) all_additional_includes in
+    
+    (* Add context-specific includes for non-kprobe programs *)
+    let filtered_context_includes = List.filter (fun inc -> 
+      not (List.mem inc kprobe_includes) && not (List.mem inc additional_includes)) unique_context_includes in
+    
     List.iter (emit_line ctx) additional_includes;
+    List.iter (emit_line ctx) filtered_context_includes;
     emit_blank_line ctx
   ) else (
     (* For non-kprobe programs, use standard processing *)
@@ -3551,6 +3559,8 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   (* Initialize modular context code generators *)
   Kernelscript_context.Xdp_codegen.register ();
   Kernelscript_context.Tc_codegen.register ();
+  Kernelscript_context.Kprobe_codegen.register ();
+  Kernelscript_context.Tracepoint_codegen.register ();
   
   (* Store variable type aliases for later lookup *)
   ctx.variable_type_aliases <- variable_type_aliases;
@@ -3667,6 +3677,12 @@ let compile_multi_to_c_with_tail_calls
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
+  
+  (* Initialize modular context code generators *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  Kernelscript_context.Kprobe_codegen.register ();
+  Kernelscript_context.Tracepoint_codegen.register ();
   
   (* Generate headers and includes *)
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
