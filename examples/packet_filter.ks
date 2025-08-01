@@ -28,5 +28,14 @@ enum xdp_action {
 fn main() -> i32 {
   var prog = load(packet_filter)
   attach(prog, "eth0", 0)
+  
+  print("Packet filter attached to eth0")
+  print("Filtering incoming packets...")
+  
+  // In a real application, this would run indefinitely
+  // For demonstration, we detach after setup
+  detach(prog)
+  print("Packet filter detached")
+  
   return 0
 } 

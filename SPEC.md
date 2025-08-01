@@ -812,12 +812,65 @@ fn main() -> i32 {
   - **Cgroup**: target = cgroup path ("/sys/fs/cgroup/test"), flags = unused (0)
 - Returns 0 on success, negative error code on failure
 
+**`detach(handle: ProgramHandle) -> void`**
+- Detaches the program from its current attachment point using its handle
+- Automatically determines the correct detachment method based on program type:
+  - **XDP**: Uses `bpf_xdp_detach()` with stored interface and flags
+  - **TC**: Uses `bpf_tc_detach()` with stored interface and direction
+  - **Kprobe/Tracepoint**: Destroys the stored `bpf_link` handle
+- No return value (void) - logs errors to stderr if detachment fails
+- Safe to call multiple times on the same handle (no-op if already detached)
+- Automatically cleans up internal attachment tracking
+
 **Safety Benefits:**
 - **Compile-time enforcement**: Cannot call `attach()` without first calling `load()` - the type system prevents this
 - **Implementation abstraction**: Users work with `ProgramHandle` instead of raw file descriptors
 - **Resource safety**: Program handles abstract away the underlying resource management
+- **Automatic cleanup**: `detach()` handles all program types uniformly and cleans up tracking data
+- **Idempotent operations**: Safe to call `detach()` multiple times without side effects
 
-#### 3.5.3 Advanced Usage Patterns
+#### 3.5.3 Lifecycle Best Practices
+
+**Proper Cleanup Patterns:**
+```kernelscript
+fn main() -> i32 {
+    var prog1 = load(filter)
+    var prog2 = load(monitor)
+    
+    // Attach programs
+    var result1 = attach(prog1, "eth0", 0)
+    var result2 = attach(prog2, "eth0", 1)
+    
+    // Error handling with partial cleanup
+    if (result1 != 0 || result2 != 0) {
+        // Clean up any successful attachments before returning
+        if (result1 == 0) detach(prog1)
+        if (result2 == 0) detach(prog2)
+        return 1
+    }
+    
+    // Normal operation...
+    print("Programs running...")
+    
+    // Proper shutdown: detach in reverse order
+    detach(prog2)  // Last attached, first detached
+    detach(prog1)
+    
+    return 0
+}
+```
+
+**Multi-Program Detachment Order:**
+- Always detach programs in **reverse order** of attachment
+- This ensures dependencies are cleaned up properly
+- Example: if `filter` depends on `monitor`, detach `monitor` first
+
+**Error Recovery:**
+- Use conditional detachment for partial failure scenarios
+- Safe to call `detach()` multiple times on the same handle
+- Always clean up successful attachments before returning error codes
+
+#### 3.5.4 Advanced Usage Patterns
 
 **Configuration Between Load and Attach:**
 ```kernelscript
@@ -855,6 +908,13 @@ fn main(args: Args) -> i32 {
     
     if (result == 0) {
         print("Filter attached successfully")
+        
+        // Simulate running the program (in real usage, this might be an event loop)
+        print("Filter is processing packets...")
+        
+        // Proper cleanup when shutting down
+        detach(prog_handle)
+        print("Filter detached successfully")
     } else {
         print("Failed to attach filter")
         return 1
@@ -2749,6 +2809,14 @@ fn main() -> i32 {
     attach(filter_handle, "eth0", 0)
     attach(monitor_handle, "eth0", 1)
     
+    print("Multiple programs attached to eth0")
+    print("Running packet processing pipeline...")
+    
+    // Proper cleanup - detach in reverse order (best practice)
+    detach(monitor_handle)
+    detach(filter_handle)
+    print("All programs detached successfully")
+    
     return 0
 }
 ```
@@ -3196,7 +3264,7 @@ fn main() -> i32 {
 fn main() -> i32 {
     try {
         var prog = load(packet_filter)
-    attach(prog, "eth0", 0)
+        attach(prog, "eth0", 0)
         print("Program attached successfully")
         return 0
         
@@ -4085,6 +4153,13 @@ fn main(args: Args) -> i32 {
     
     if (filter_result != 0 || monitor_result != 0) {
         print("Failed to attach programs to interface: ", args.interface)
+        // Clean up any successful attachments
+        if (filter_result == 0) {
+            detach(filter_handle)
+        }
+        if (monitor_result == 0) {
+            detach(monitor_handle)
+        }
         return 1
     }
     
@@ -4099,12 +4174,20 @@ fn main(args: Args) -> i32 {
     }
     
     // Monitor system health using config stats
-    while (true) {
+    var iteration_count = 0
+    while (iteration_count < 100) {  // Run for limited time in example
         if (system.packets_dropped > 1000 && !args.quiet_mode) {
             print("High drop rate detected: ", system.packets_dropped)
         }
         sleep(10000)
+        iteration_count += 1
     }
+    
+    // Proper cleanup when shutting down
+    print("Shutting down, detaching programs...")
+    detach(monitor_handle)  // Detach in reverse order
+    detach(filter_handle)
+    print("All programs detached successfully")
     
     return 0
 }

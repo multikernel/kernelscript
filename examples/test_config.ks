@@ -55,5 +55,7 @@ fn main(args: Args) -> i32 {
     }
     var prog = load(packet_filter)
     attach(prog, args.interface, 0)
+    
+    detach(prog)    
     return 0
 } 

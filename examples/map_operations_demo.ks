@@ -239,5 +239,16 @@ fn main() -> i32 {
     attach(prog3, "sys_enter_open", 0)
     attach(prog4, "vfs_read", 0)
     
+    print("Map operations demo: All programs attached")
+    print("Traffic monitor & stats on eth0, event logger on sys_enter_open, data processor on vfs_read")
+    print("Demonstrating coordinated map operations...")
+    
+    // Detach in reverse order
+    detach(prog4)
+    detach(prog3)
+    detach(prog2)
+    detach(prog1)
+    print("All map operation demo programs detached")
+    
     return 0
 }

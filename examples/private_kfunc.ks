@@ -50,4 +50,13 @@ fn xdp_main(ctx: *xdp_md) -> xdp_action {
 fn main() -> i32 {
     var prog = load(xdp_main)
     attach(prog, "lo", 0)
+    
+    print("TCP monitor attached with private kfunc capabilities")
+    print("Monitoring TCP connections on loopback...")
+    
+    // Demonstrate the private kfunc functionality
+    detach(prog)
+    print("TCP monitor detached")
+    
+    return 0
 }

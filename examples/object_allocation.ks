@@ -85,5 +85,12 @@ fn main() -> i32 {
     var prog = load(packet_inspector)
     attach(prog, "eth0", 0)
     
+    print("Object allocation demo program attached to eth0")
+    print("Demonstrating dynamic memory management...")
+    
+    // Show object allocation working
+    detach(prog)
+    print("Object allocation demo program detached")
+    
     return 0
 } 

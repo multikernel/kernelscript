@@ -67,5 +67,12 @@ fn main() -> i32 {
   var prog = load(packet_filter)
   attach(prog, "lo", 0)
   
+  print("Break/continue demo program attached to loopback")
+  print("Demonstrating break and continue functionality...")
+  
+  // Show break/continue working
+  detach(prog)
+  print("Break/continue demo program detached")
+  
   return 0
 } 

@@ -1179,7 +1179,6 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
             | _ ->
                 (* Regular function call handling *)
                 let arg_vals = List.map (lower_expression ctx) args in
-                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
                 let call_target = match callee_expr.Ast.expr_desc with
                   | Ast.Identifier name ->
                       if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
@@ -1191,6 +1190,7 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
                       let callee_val = lower_expression ctx callee_expr in
                       FunctionPointerCall callee_val
                 in
+                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
                 let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
                 emit_instruction ctx instr;
                 (target_type, None))
@@ -1215,7 +1215,6 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
             | _ ->
                 (* Regular function call handling *)
                 let arg_vals = List.map (lower_expression ctx) args in
-                let result_val = make_ir_value (IRRegister reg) inferred_type expr.Ast.expr_pos in
                 let call_target = match callee_expr.Ast.expr_desc with
                   | Ast.Identifier name ->
                       if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
@@ -1227,6 +1226,7 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
                       let callee_val = lower_expression ctx callee_expr in
                       FunctionPointerCall callee_val
                 in
+                let result_val = make_ir_value (IRRegister reg) inferred_type expr.Ast.expr_pos in
                 let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
                 emit_instruction ctx instr;
                 (inferred_type, None))
@@ -1307,8 +1307,30 @@ and declare_const_variable ctx _name reg target_type expr pos =
 and lower_statement ctx stmt =
   match stmt.stmt_desc with
   | Ast.ExprStmt expr ->
-      let _ = lower_expression ctx expr in
-      ()
+      (* Handle expression statements elegantly - check for void-returning function calls *)
+      (match expr.expr_desc with
+       | Ast.Call (callee_expr, args) ->
+           (* Check if this is a direct call to a void-returning builtin function *)
+           (match callee_expr.expr_desc with
+            | Ast.Identifier name ->
+                (match Stdlib.get_builtin_function_signature name with
+                 | Some (_, Ast.Void) ->
+                     (* Void-returning builtin - generate call without result assignment *)
+                     let arg_vals = List.map (lower_expression ctx) args in
+                     let instr = make_ir_instruction (IRCall (DirectCall name, arg_vals, None)) expr.expr_pos in
+                     emit_instruction ctx instr
+                 | _ ->
+                     (* Non-void or non-builtin - use normal expression handling *)
+                     let _ = lower_expression ctx expr in
+                     ())
+            | _ ->
+                (* Complex callee - use normal expression handling *)
+                let _ = lower_expression ctx expr in
+                ())
+       | _ ->
+           (* Non-function call expression - use normal handling *)
+           let _ = lower_expression ctx expr in
+           ())
       
   | Ast.Assignment (name, expr) ->
       let value = lower_expression ctx expr in

@@ -174,5 +174,13 @@ fn type_error_examples() {
 fn main() -> i32 {
   var prog = load(packet_analyzer)
   attach(prog, "eth0", 0)
+  
+  print("Type checking demo program attached to eth0")
+  print("Demonstrating comprehensive type checking capabilities...")
+  
+  // Show type checking working properly
+  detach(prog)
+  print("Type checking demo program detached")
+  
   return 0
 } 

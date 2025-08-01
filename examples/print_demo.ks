@@ -38,5 +38,13 @@ fn main() -> i32 {
     print("Userspace: Logger initialized successfully")
     var prog = load(simple_logger)
     attach(prog, "lo", 0)
+    
+    print("Userspace: Print demo program attached")
+    print("Userspace: Demonstrating kernel/userspace print coordination...")
+    
+    // Show print functionality working
+    detach(prog)
+    print("Userspace: Print demo program detached")
+    
     return 0
 } 

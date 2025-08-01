@@ -83,5 +83,13 @@ fn process_key(key: u32) -> u32 {
 fn main() -> i32 {
     var prog = load(error_test)
     attach(prog, "eth0", 0)
+    
+    print("Error handling demo program attached to eth0")
+    print("Testing error handling capabilities...")
+    
+    // Demonstrate the error handling is working
+    detach(prog)
+    print("Error handling demo program detached")
+    
     return 0
 } 

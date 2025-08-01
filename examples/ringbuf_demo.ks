@@ -166,6 +166,13 @@ fn main() -> i32 {
   
   if (net_result != 0 || sec_result != 0) {
     print("Failed to attach eBPF programs")
+    // Clean up any successful attachments before returning
+    if (net_result == 0) {
+      detach(network_prog)
+    }
+    if (sec_result == 0) {
+      detach(security_prog)
+    }
     return 1
   }
   
@@ -175,6 +182,13 @@ fn main() -> i32 {
   
   // Start processing ring buffer events using the builtin dispatch() function
   dispatch(network_events, security_events)
+  
+  print("Event processing finished, cleaning up...")
+  
+  // Detach programs in reverse order
+  detach(security_prog)
+  detach(network_prog)
+  print("All programs detached successfully")
   
   return 0
 }

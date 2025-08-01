@@ -54,4 +54,13 @@ fn main() -> i32 {
     packet_count = 666
     print("After assignment packet_count = %u", packet_count)
     attach(prog, "lo", 0)
+    
+    print("Local/global vars demo program attached to loopback")
+    print("Demonstrating local and global variable scoping...")
+    
+    // Show variable scoping working
+    detach(prog)
+    print("Local/global vars demo program detached")
+    
+    return 0
 }

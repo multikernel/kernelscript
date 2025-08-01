@@ -48,5 +48,13 @@ fn validate_packet(size: u32) -> bool {
 fn main() -> i32 {
     var prog = load(packet_filter)
     attach(prog, "lo", 0)
+    
+    print("Tail call demo program attached to loopback")
+    print("Demonstrating tail call functionality...")
+    
+    // Show tail call mechanism working
+    detach(prog)
+    print("Tail call demo program detached")
+    
     return 0
 }

@@ -61,5 +61,14 @@ fn main(args: Args) -> i32 {
   network.limit = args.limit
   var prog = load(rate_limiter)
   attach(prog, args.interface, 0)
+  
+  print("Rate limiter attached to %s with limit %d", args.interface, args.limit)
+  print("Monitoring and rate limiting traffic...")
+  
+  // In a real application, this would run continuously
+  // For demonstration, detach after setup
+  detach(prog)
+  print("Rate limiter detached")
+  
   return 0
 }

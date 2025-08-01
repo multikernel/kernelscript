@@ -45,5 +45,13 @@ struct PacketInfo {
 fn main() -> i32 {
   var prog = load(packet_filter)
   attach(prog, "lo", 0)
+  
+  print("Pattern-based packet filter attached to loopback")
+  print("Testing pattern matching capabilities...")
+  
+  // Demonstrate pattern matching functionality
+  detach(prog)
+  print("Pattern filter detached")
+  
   return 0
 } 

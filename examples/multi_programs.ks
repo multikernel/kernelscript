@@ -63,5 +63,13 @@ fn main() -> i32 {
   attach(prog1, "eth0", 0)
   attach(prog2, "eth0", 0)
   
+  print("Multiple XDP programs attached to eth0")
+  print("Counter and filter working together...")
+  
+  // Detach in reverse order (good practice)
+  detach(prog2)
+  detach(prog1)
+  print("All programs detached")
+  
   return 0
 } 

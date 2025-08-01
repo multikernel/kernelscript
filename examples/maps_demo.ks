@@ -148,5 +148,14 @@ fn main() -> i32 {
   var prog2 = load(packet_analyzer)
   attach(prog1, "lo", 0)
   attach(prog2, "lo", 0)
+  
+  print("Maps demo: Traffic shaper and packet analyzer attached to loopback")
+  print("Demonstrating shared map operations between programs...")
+  
+  // Detach in reverse order
+  detach(prog2)
+  detach(prog1)
+  print("Maps demo programs detached")
+  
   return 0
 }

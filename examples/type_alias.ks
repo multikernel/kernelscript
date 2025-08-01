@@ -32,5 +32,13 @@ type EthBuffer = u8[14]
 fn main() -> i32 {
     var prog = load(test_type_aliases)
     attach(prog, "eth0", 0)
+    
+    print("Type alias demo program attached to eth0")
+    print("Demonstrating type alias capabilities...")
+    
+    // Show type alias functionality
+    detach(prog)
+    print("Type alias demo program detached")
+    
     return 0
 } 

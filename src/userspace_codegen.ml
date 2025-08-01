@@ -443,6 +443,7 @@ type kfunc_dependency_info = {
 type function_usage = {
   mutable uses_load: bool;
   mutable uses_attach: bool;
+  mutable uses_detach: bool;
   mutable uses_map_operations: bool;
   mutable used_maps: string list;
   mutable used_dispatch_functions: int list;
@@ -451,6 +452,7 @@ type function_usage = {
 let create_function_usage () = {
   uses_load = false;
   uses_attach = false;
+  uses_detach = false;
   uses_map_operations = false;
   used_maps = [];
   used_dispatch_functions = [];
@@ -722,6 +724,7 @@ let track_function_usage ctx instr =
            (match func_name with
             | "load" -> ctx.function_usage.uses_load <- true
             | "attach" -> ctx.function_usage.uses_attach <- true
+            | "detach" -> ctx.function_usage.uses_detach <- true
             | "dispatch" -> 
                 let num_buffers = List.length args in
                 if not (List.mem num_buffers ctx.function_usage.used_dispatch_functions) then
@@ -1921,6 +1924,13 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       (* Use the program handle variable directly instead of extracting program name *)
                       ("attach_bpf_program_by_fd", [program_handle; normalized_target; flags])
                   | _ -> failwith "attach expects exactly three arguments")
+             | "detach" ->
+                 (* Special handling for detach: takes only program handle *)
+                 ctx.function_usage.uses_detach <- true;
+                 (match c_args with
+                  | [program_handle] ->
+                      ("detach_bpf_program_by_fd", [program_handle])
+                  | _ -> failwith "detach expects exactly one argument")
              | "dispatch" ->
                  (* Special handling for dispatch: generate ring buffer polling *)
                  (* Track usage of dispatch function *)
@@ -2903,6 +2913,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     {
       uses_load = acc_usage.uses_load || func_usage.uses_load;
       uses_attach = acc_usage.uses_attach || func_usage.uses_attach;
+      uses_detach = acc_usage.uses_detach || func_usage.uses_detach;
       uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
       used_maps = List.fold_left (fun acc map_name ->
         if List.mem map_name acc then acc else map_name :: acc
@@ -2918,7 +2929,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     List.mem map.map_name all_usage.used_maps
   ) global_maps in
 
-  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach in
+  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach in
   let base_includes = generate_headers_for_maps ~uses_bpf_functions global_maps in
   let additional_includes = {|#include <stdbool.h>
 #include <stdint.h>
@@ -2929,6 +2940,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
 #include <setjmp.h>
 #include <linux/bpf.h>
 #include <sys/resource.h>
+#include <pthread.h>
 
 /* Generated from KernelScript IR */
 |} in
@@ -3120,10 +3132,90 @@ void cleanup_bpf_maps(void) {
   let bpf_helper_functions = 
     let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies ir_multi_prog.global_variables in
     
+    (* Global attachment storage (generated only when attach/detach are used) *)
+    let attachment_storage = if all_usage.uses_attach || all_usage.uses_detach then
+      {|// Global attachment storage for tracking active program attachments
+struct attachment_entry {
+    int prog_fd;
+    char target[128];
+    uint32_t flags;
+    struct bpf_link *link;    // For kprobe/tracepoint programs (NULL for XDP)
+    int ifindex;              // For XDP programs (0 for kprobe/tracepoint)
+    enum bpf_prog_type type;
+    struct attachment_entry *next;
+};
+
+static struct attachment_entry *attached_programs = NULL;
+static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Helper function to find attachment entry
+static struct attachment_entry *find_attachment(int prog_fd) {
+    pthread_mutex_lock(&attachment_mutex);
+    struct attachment_entry *current = attached_programs;
+    while (current) {
+        if (current->prog_fd == prog_fd) {
+            pthread_mutex_unlock(&attachment_mutex);
+            return current;
+        }
+        current = current->next;
+    }
+    pthread_mutex_unlock(&attachment_mutex);
+    return NULL;
+}
+
+// Helper function to remove attachment entry
+static void remove_attachment(int prog_fd) {
+    pthread_mutex_lock(&attachment_mutex);
+    struct attachment_entry **current = &attached_programs;
+    while (*current) {
+        if ((*current)->prog_fd == prog_fd) {
+            struct attachment_entry *to_remove = *current;
+            *current = (*current)->next;
+            free(to_remove);
+            break;
+        }
+        current = &(*current)->next;
+    }
+    pthread_mutex_unlock(&attachment_mutex);
+}
+
+// Helper function to add attachment entry
+static int add_attachment(int prog_fd, const char *target, uint32_t flags, 
+                         struct bpf_link *link, int ifindex, enum bpf_prog_type type) {
+    struct attachment_entry *entry = malloc(sizeof(struct attachment_entry));
+    if (!entry) {
+        fprintf(stderr, "Failed to allocate memory for attachment entry\n");
+        return -1;
+    }
+    
+    entry->prog_fd = prog_fd;
+    strncpy(entry->target, target, sizeof(entry->target) - 1);
+    entry->target[sizeof(entry->target) - 1] = '\0';
+    entry->flags = flags;
+    entry->link = link;
+    entry->ifindex = ifindex;
+    entry->type = type;
+    
+    pthread_mutex_lock(&attachment_mutex);
+    entry->next = attached_programs;
+    attached_programs = entry;
+    pthread_mutex_unlock(&attachment_mutex);
+    
+    return 0;
+}
+|}
+    else "" in
+
     let attach_function = if all_usage.uses_attach then
       {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
     if (prog_fd < 0) {
         fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);
+        return -1;
+    }
+    
+    // Check if program is already attached
+    if (find_attachment(prog_fd)) {
+        fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
         return -1;
     }
     
@@ -3151,6 +3243,14 @@ void cleanup_bpf_maps(void) {
                 return -1;
             }
             
+            // Store XDP attachment (no bpf_link for XDP)
+            if (add_attachment(prog_fd, target, flags, NULL, ifindex, BPF_PROG_TYPE_XDP) != 0) {
+                // If storage fails, detach and return error
+                bpf_xdp_detach(ifindex, flags, NULL);
+                return -1;
+            }
+            
+            printf("XDP attached to interface: %s\n", target);
             return 0;
         }
         case BPF_PROG_TYPE_KPROBE: {
@@ -3186,9 +3286,14 @@ void cleanup_bpf_maps(void) {
                 return -1;
             }
             
-            // For now, close immediately - in a production system you'd store this for cleanup
-            bpf_link__destroy(link);
-            printf("✅ Kprobe attached to function: %s\n", target);
+            // Store kprobe attachment for later cleanup
+            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_KPROBE) != 0) {
+                // If storage fails, destroy link and return error
+                bpf_link__destroy(link);
+                return -1;
+            }
+            
+            printf("Kprobe attached to function: %s\n", target);
             
             return 0;
         }
@@ -3237,8 +3342,14 @@ void cleanup_bpf_maps(void) {
                 return -1;
             }
             
-            // For now, close immediately - in a production system you'd store this for cleanup
-            bpf_link__destroy(link);
+            // Store tracepoint attachment for later cleanup
+            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_TRACEPOINT) != 0) {
+                // If storage fails, destroy link and return error
+                bpf_link__destroy(link);
+                free(target_copy);
+                return -1;
+            }
+            
             printf("Tracepoint attached to: %s:%s\n", category, name);
             
             free(target_copy);
@@ -3283,8 +3394,13 @@ void cleanup_bpf_maps(void) {
                 return -1;
             }
             
-            // For now, close immediately - in a production system you'd store this for cleanup
-            bpf_link__destroy(link);
+            // Store raw tracepoint attachment for later cleanup
+            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_RAW_TRACEPOINT) != 0) {
+                // If storage fails, destroy link and return error
+                bpf_link__destroy(link);
+                return -1;
+            }
+            
             printf("Raw tracepoint attached to: %s\n", event_name);
             
             return 0;
@@ -3295,10 +3411,72 @@ void cleanup_bpf_maps(void) {
     }
 }|}
     else "" in
+
+    let detach_function = if all_usage.uses_detach then
+      {|void detach_bpf_program_by_fd(int prog_fd) {
+    if (prog_fd < 0) {
+        fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);
+        return;
+    }
+    
+    // Find the attachment entry
+    struct attachment_entry *entry = find_attachment(prog_fd);
+    if (!entry) {
+        fprintf(stderr, "No active attachment found for program fd %d\n", prog_fd);
+        return;
+    }
+    
+    // Detach based on program type
+    switch (entry->type) {
+        case BPF_PROG_TYPE_XDP: {
+            int ret = bpf_xdp_detach(entry->ifindex, entry->flags, NULL);
+            if (ret) {
+                fprintf(stderr, "Failed to detach XDP program from interface: %s\n", strerror(errno));
+            } else {
+                printf("XDP detached from interface index: %d\n", entry->ifindex);
+            }
+            break;
+        }
+        case BPF_PROG_TYPE_KPROBE: {
+            if (entry->link) {
+                bpf_link__destroy(entry->link);
+                printf("Kprobe detached from: %s\n", entry->target);
+            } else {
+                fprintf(stderr, "Invalid kprobe link for program fd %d\n", prog_fd);
+            }
+            break;
+        }
+        case BPF_PROG_TYPE_TRACEPOINT: {
+            if (entry->link) {
+                bpf_link__destroy(entry->link);
+                printf("Tracepoint detached from: %s\n", entry->target);
+            } else {
+                fprintf(stderr, "Invalid tracepoint link for program fd %d\n", prog_fd);
+            }
+            break;
+        }
+        case BPF_PROG_TYPE_RAW_TRACEPOINT: {
+            if (entry->link) {
+                bpf_link__destroy(entry->link);
+                printf("Raw tracepoint detached from: %s\n", entry->target);
+            } else {
+                fprintf(stderr, "Invalid raw tracepoint link for program fd %d\n", prog_fd);
+            }
+            break;
+        }
+        default:
+            fprintf(stderr, "Unsupported program type for detachment: %d\n", entry->type);
+            break;
+    }
+    
+    // Remove from tracking
+    remove_attachment(prog_fd);
+}|}
+    else "" in
     
     let bpf_obj_decl = "" in  (* Skeleton now handles the BPF object *)
     
-    let functions_list = List.filter (fun s -> s <> "") [load_function; attach_function] in
+    let functions_list = List.filter (fun s -> s <> "") [attachment_storage; load_function; attach_function; detach_function] in
     if functions_list = [] && bpf_obj_decl = "" then ""
     else
       sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 

@@ -40,6 +40,13 @@ fn main() -> i32 {
     var prog = load(packet_monitor)
     attach(prog, "eth0", 0)
     
+    print("Userspace example program attached to eth0")
+    print("Demonstrating userspace coordination...")
+    
+    // Show userspace functionality working
+    detach(prog)
+    print("Userspace example program detached")
+    
     return 0
 }
 

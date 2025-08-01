@@ -134,6 +134,17 @@ let builtin_functions = [
     validate = None;
   };
   {
+    name = "detach";
+    param_types = [ProgramHandle]; (* program handle only *)
+    return_type = Void; (* void - no return value *)
+    description = "Detach a loaded eBPF program from its current attachment";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "detach_bpf_program_by_fd";
+    kernel_impl = "";
+    validate = None;
+  };
+  {
     name = "register";
     param_types = []; (* Custom validation handles type checking *)
     return_type = U32; (* Returns 0 on success *)

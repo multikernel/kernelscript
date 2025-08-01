@@ -87,5 +87,13 @@ fn test_large_packet() -> i32 {
 fn main() -> i32 {
   var prog = load(packet_filter)
   attach(prog, "eth0", 0)
+  
+  print("Test functions demo program attached to eth0")
+  print("Demonstrating @test attribute functionality...")
+  
+  // Show test function system working
+  detach(prog)
+  print("Test functions demo program detached")
+  
   return 0
 } 

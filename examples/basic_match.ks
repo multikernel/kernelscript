@@ -95,6 +95,16 @@ fn packet_classifier(ctx: *xdp_md) -> xdp_action {
 fn main() -> i32 {
     var prog = load(packet_classifier)
     attach(prog, "lo", 0)
+    
+    print("Packet classifier attached to loopback interface")
+    print("Processing packets with pattern matching...")
+    
+    // In a real application, the program would run here
+    // For demonstration, we detach after showing the lifecycle
+    detach(prog)
+    print("Packet classifier detached")
+    
+    return 0
 }
 
  

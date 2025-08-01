@@ -394,6 +394,11 @@
  (modules test_kprobe)
  (libraries kernelscript alcotest unix str))
 
+(executable
+ (name test_detach_api)
+ (modules test_detach_api)
+ (libraries kernelscript alcotest test_utils str))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -627,6 +632,10 @@
  (alias runtest_import_system)
  (action (run ./test_import_system.exe)))
 
+(rule
+ (alias runtest_detach_api)
+ (action (run ./test_detach_api.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -696,6 +705,7 @@
   test_tracepoint.exe
   test_kprobe.exe
   test_stdlib.exe
+  test_detach_api.exe
   test_struct_field_access.exe
   test_struct_initialization.exe
   test_error_handling.exe
@@ -742,6 +752,7 @@
    (run ./test_tracepoint.exe)
    (run ./test_kprobe.exe)
    (run ./test_stdlib.exe)
+   (run ./test_detach_api.exe)
    (run ./test_struct_field_access.exe)
    (run ./test_struct_initialization.exe)
    (run ./test_error_handling.exe)
@@ -841,4 +852,5 @@
    (run ./test_error_handling.exe)
    (run ./test_integer_literal_codegen.exe)
    (run ./test_tracepoint.exe)
-   (run ./test_kprobe.exe)))) 
+   (run ./test_kprobe.exe)
+   (run ./test_detach_api.exe)))) 

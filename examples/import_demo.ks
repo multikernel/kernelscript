@@ -34,5 +34,13 @@ fn main() -> i32 {
     
     var prog = load(intelligent_filter)
     attach(prog, "eth0", 0)
+    
+    print("Packet processor with imported utilities attached to eth0")
+    print("Processing packets with external functions...")
+    
+    // Demonstrate the import functionality
+    detach(prog)
+    print("Packet processor detached")
+    
     return 0
 } 
