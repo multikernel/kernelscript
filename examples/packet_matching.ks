@@ -45,13 +45,6 @@ enum IpProtocol {
     SCTP = 132
 }
 
-// XDP action constants for packet disposition
-enum PacketAction {
-    PASS = 2,
-    DROP = 1,
-    REDIRECT = 4,
-    ABORTED = 0
-}
 
 // TCP port classification
 enum WellKnownPorts {
