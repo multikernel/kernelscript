@@ -641,7 +641,7 @@ let test_kernel_struct_filtering () =
   
   (* Generate struct definitions using the filtering logic *)
   let ctx = create_c_context () in
-  generate_struct_definitions ctx struct_defs;
+  generate_struct_definitions ~btf_path:None ctx struct_defs;
   
   let output = String.concat "\n" ctx.output_lines in
   

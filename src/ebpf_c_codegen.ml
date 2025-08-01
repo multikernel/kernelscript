@@ -848,17 +848,17 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
   List.rev !struct_defs
 
 (** Generate struct definitions *)
-let generate_struct_definitions ctx struct_defs =
+let generate_struct_definitions ?(btf_path=None) ctx struct_defs =
   (* Filter out kernel-defined structs using centralized kernel type knowledge *)
   let user_defined_structs = List.filter (fun (struct_name, fields) ->
     (* Check if this struct name is a well-known kernel type *)
-    let is_kernel_type = Kernel_types.is_well_known_ebpf_type struct_name in
+    let is_kernel_type = Kernel_types.is_well_known_ebpf_type ?btf_path struct_name in
     
     (* Check if this struct has kernel-defined field types *)
     let has_kernel_field = List.exists (fun (_field_name, field_type) ->
       match field_type with
-      | IRStruct (name, _) -> Kernel_types.is_well_known_ebpf_type name
-      | IREnum (name, _) -> Kernel_types.is_well_known_ebpf_type name
+      | IRStruct (name, _) -> Kernel_types.is_well_known_ebpf_type ?btf_path name
+      | IREnum (name, _) -> Kernel_types.is_well_known_ebpf_type ?btf_path name
       | _ -> false
     ) fields in
     
@@ -3539,7 +3539,7 @@ let generate_c_program ?_config_declarations ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ir_multi_prog =
+let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(btf_path=None) ir_multi_prog =
   let ctx = create_c_context () in
   
   (* Initialize modular context code generators *)
@@ -3566,7 +3566,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   
   (* Generate struct definitions *)
       let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
-  generate_struct_definitions ctx struct_defs;
+  generate_struct_definitions ~btf_path ctx struct_defs;
   
   (* Generate config maps from IR multi-program *)
       if ir_multi_prog.global_configs <> [] then
@@ -3659,7 +3659,7 @@ let generate_prog_array_map ctx prog_array_size =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
-    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None)
+    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None)
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -3759,7 +3759,7 @@ let compile_multi_to_c_with_tail_calls
   
   (* Generate struct definitions *)
   let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
-  generate_struct_definitions ctx struct_defs;
+  generate_struct_definitions ~btf_path ctx struct_defs;
   
   (* Generate global map definitions BEFORE functions that use them *)
   List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
@@ -3834,10 +3834,10 @@ let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
 
-let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ir_multi_program =
+let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
   (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
       let (c_code, final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-        ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ir_multi_program in
+        ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ~btf_path ir_multi_program in
   
   (* Tail call analysis results calculated and stored *)
   (c_code, final_tail_call_analysis)
