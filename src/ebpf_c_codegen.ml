@@ -1109,72 +1109,39 @@ let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
 (** Generate standard eBPF includes *)
 
 let generate_includes ctx ?(program_types=[]) () =
-  (* Essential kernel types must come first *)
-  let base_type_includes = [
-    "#include <linux/types.h>";
+  (* Use vmlinux.h which contains all kernel types from BTF *)
+  let vmlinux_includes = [
+    "#include \"vmlinux.h\"";
   ] in
   
+  (* Only include essential eBPF helpers, vmlinux.h provides all kernel types *)
   let standard_includes = [
-    "#include <linux/bpf.h>";
     "#include <bpf/bpf_helpers.h>";
-    "#include <linux/if_ether.h>";
-    "#include <linux/ip.h>";
-    "#include <linux/in.h>";
-    "#include <linux/if_xdp.h>";
   ] in
   
-  (* Get context-specific includes *)
-  let context_includes = List.fold_left (fun acc prog_type ->
-    let context_type = match prog_type with
-      | Ast.Xdp -> Some "xdp"
-      | Ast.Tc -> Some "tc"
-      | Ast.Kprobe -> Some "kprobe"
-      | Ast.Tracepoint -> Some "tracepoint"
-      | _ -> None
-    in
-    match context_type with
-    | Some ctx_type -> 
-        let includes = Kernelscript_context.Context_codegen.get_context_includes ctx_type in
-        acc @ includes
-    | None -> acc
-  ) [] program_types in
+  (* When using vmlinux.h, we don't need context-specific kernel headers *)
+  (* vmlinux.h contains all kernel types, so we only need eBPF helpers *)
+  let context_includes = [] in (* No additional kernel headers needed with vmlinux.h *)
   
   (* Remove duplicates between all include sets *)
-  let all_base_includes = base_type_includes @ standard_includes in
+  let all_base_includes = vmlinux_includes @ standard_includes in
   let unique_context_includes = List.filter (fun inc -> 
     not (List.mem inc all_base_includes)) context_includes in
   
   (* For kprobe programs, only emit kprobe includes which contain everything needed *)
   let has_kprobe = List.exists (function Ast.Kprobe -> true | _ -> false) program_types in
   if has_kprobe then (
-    (* Emit ONLY kprobe includes which contain architecture definition and all needed headers *)
-    let kprobe_includes = Kernelscript_context.Context_codegen.get_context_includes "kprobe" in
-    List.iter (emit_line ctx) kprobe_includes;
-    emit_blank_line ctx;
-    
-    (* Add additional standard includes that aren't in kprobe includes *)
-    let all_additional_includes = [
-      "#include <linux/types.h>";
-      "#include <linux/bpf.h>";
+    (* With vmlinux.h, we only need it and eBPF helpers, no additional kernel headers *)
+    let vmlinux_and_helpers = [
+      "#include \"vmlinux.h\"";
       "#include <bpf/bpf_helpers.h>";
-      "#include <linux/if_ether.h>";
-      "#include <linux/ip.h>";
-      "#include <linux/in.h>";
-      "#include <linux/if_xdp.h>";
     ] in
-    let additional_includes = List.filter (fun inc -> 
-      not (List.mem inc kprobe_includes)) all_additional_includes in
     
-    (* Add context-specific includes for non-kprobe programs *)
-    let filtered_context_includes = List.filter (fun inc -> 
-      not (List.mem inc kprobe_includes) && not (List.mem inc additional_includes)) unique_context_includes in
-    
-    List.iter (emit_line ctx) additional_includes;
-    List.iter (emit_line ctx) filtered_context_includes;
+    List.iter (emit_line ctx) vmlinux_and_helpers;
     emit_blank_line ctx
   ) else (
-    (* For non-kprobe programs, use standard processing *)
-    let all_includes = standard_includes @ unique_context_includes @ base_type_includes in
+    (* For non-kprobe programs, use vmlinux.h and standard processing *)
+    let all_includes = vmlinux_includes @ standard_includes @ unique_context_includes in
     List.iter (emit_line ctx) all_includes;
     emit_blank_line ctx;
         

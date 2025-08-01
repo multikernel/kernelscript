@@ -115,7 +115,7 @@ let test_ebpf_compilation () =
     check bool "contains SEC xdp" true
       (contains_pattern ebpf_code "SEC(\"xdp\")");
     check bool "contains includes" true
-      (contains_pattern ebpf_code "#include.*linux/bpf.h");
+      (contains_pattern ebpf_code "#include.*vmlinux.h");
     check bool "contains license" true
       (contains_pattern ebpf_code "SEC(\"license\")");
     

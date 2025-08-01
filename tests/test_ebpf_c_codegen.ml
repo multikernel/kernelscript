@@ -231,7 +231,7 @@ let test_complete_program () =
   let c_code = compile_multi_to_c multi_ir in
   
   (* Verify the generated C code contains expected elements *)
-  check bool "program contains linux/bpf.h include" true (contains_substr c_code "#include <linux/bpf.h>");
+  check bool "program contains vmlinux.h include" true (contains_substr c_code "#include \"vmlinux.h\"");
   check bool "program contains map name" true (contains_substr c_code "packet_count");
   check bool "program contains maps section" true (contains_substr c_code "SEC(\".maps\")");
   check bool "program contains xdp section" true (contains_substr c_code "SEC(\"xdp\")");
