@@ -68,12 +68,19 @@ let tc_field_mappings = [
 
 (** Generate TC-specific includes *)
 let generate_tc_includes () = [
-  "#include <linux/bpf.h>";
-  "#include <bpf/bpf_helpers.h>";
-  "#include <linux/if_ether.h>";
-  "#include <linux/ip.h>";
-  "#include <linux/in.h>";
-  "#include <linux/pkt_cls.h>";
+  "/* TC action constants - defined inline to avoid header conflicts with vmlinux.h */";
+  "#ifndef TC_ACT_UNSPEC";
+  "#define TC_ACT_UNSPEC        (-1)";
+  "#define TC_ACT_OK            0";
+  "#define TC_ACT_RECLASSIFY    1";
+  "#define TC_ACT_SHOT          2";
+  "#define TC_ACT_PIPE          3";
+  "#define TC_ACT_STOLEN        4";
+  "#define TC_ACT_QUEUED        5";
+  "#define TC_ACT_REPEAT        6";
+  "#define TC_ACT_REDIRECT      7";
+  "#define TC_ACT_TRAP          8";
+  "#endif";
 ]
 
 (** Generate field access for TC context *)

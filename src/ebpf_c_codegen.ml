@@ -1119,32 +1119,42 @@ let generate_includes ctx ?(program_types=[]) () =
     "#include <bpf/bpf_helpers.h>";
   ] in
   
-  (* When using vmlinux.h, we don't need context-specific kernel headers *)
-  (* vmlinux.h contains all kernel types, so we only need eBPF helpers *)
-  let context_includes = [] in (* No additional kernel headers needed with vmlinux.h *)
+  (* Get context-specific includes for macros not in vmlinux.h *)
+  let context_includes = List.fold_left (fun acc prog_type ->
+    let context_type = match prog_type with
+      | Ast.Tc -> Some "tc"
+      | _ -> None
+    in
+    match context_type with
+    | Some ctx_type -> 
+        let includes = Kernelscript_context.Context_codegen.get_context_includes ctx_type in
+        acc @ includes
+    | None -> acc
+  ) [] program_types in
   
   (* Remove duplicates between all include sets *)
   let all_base_includes = vmlinux_includes @ standard_includes in
   let unique_context_includes = List.filter (fun inc -> 
     not (List.mem inc all_base_includes)) context_includes in
   
-  (* For kprobe programs, only emit kprobe includes which contain everything needed *)
+  (* For kprobe programs, still use vmlinux.h but include context-specific macro headers *)
   let has_kprobe = List.exists (function Ast.Kprobe -> true | _ -> false) program_types in
   if has_kprobe then (
-    (* With vmlinux.h, we only need it and eBPF helpers, no additional kernel headers *)
+    (* Use vmlinux.h and context-specific headers for macros *)
     let vmlinux_and_helpers = [
       "#include \"vmlinux.h\"";
       "#include <bpf/bpf_helpers.h>";
     ] in
     
     List.iter (emit_line ctx) vmlinux_and_helpers;
+    List.iter (emit_line ctx) unique_context_includes;
     emit_blank_line ctx
   ) else (
     (* For non-kprobe programs, use vmlinux.h and standard processing *)
     let all_includes = vmlinux_includes @ standard_includes @ unique_context_includes in
     List.iter (emit_line ctx) all_includes;
     emit_blank_line ctx;
-        
+
     (* Use proper kernel implementation: extern declarations and macros *)
     emit_line ctx "extern void *bpf_obj_new_impl(__u64 local_type_id__k, void *meta__ign) __ksym;";
     emit_line ctx "extern void bpf_obj_drop_impl(void *p__alloc, void *meta__ign) __ksym;";
