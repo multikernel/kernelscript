@@ -2299,7 +2299,7 @@ let convert_match_return_calls_to_tail_calls ir_function =
   { ir_function with basic_blocks = updated_blocks }
 
 (** Lower AST function to IR function *)
-let lower_function ctx prog_name ?(program_type = None) (func_def : Ast.function_def) =
+let lower_function ctx prog_name ?(program_type = None) ?(func_target = None) (func_def : Ast.function_def) =
   ctx.current_function <- Some func_def.func_name;
   
   (* Reset for new function *)
@@ -2399,6 +2399,9 @@ let lower_function ctx prog_name ?(program_type = None) (func_def : Ast.function
   
   (* Set the program type for the function *)
   ir_function.func_program_type <- program_type;
+  
+  (* Set the target for the function (for kprobe/tracepoint) *)
+  ir_function.func_target <- func_target;
   
   (* Convert IRReturnCall actions to IRReturnTailCall in IRMatchReturn instructions *)
   convert_match_return_calls_to_tail_calls ir_function
@@ -2521,7 +2524,7 @@ let lower_userspace_function ctx func_def =
   );
   
   ctx.is_userspace <- true;
-  let ir_function = lower_function ctx func_def.Ast.func_name ~program_type:None func_def in
+  let ir_function = lower_function ctx func_def.Ast.func_name ~program_type:None ~func_target:None func_def in
   ctx.is_userspace <- false;
   ir_function
 
@@ -2686,7 +2689,13 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
     (* For attributed functions (single function programs), the function IS the entry function *)
     (* But struct_ops functions should NOT be marked as main functions *)
     let is_attributed_entry = (List.length prog_def.prog_functions = 1 && index = 0 && prog_def.prog_type <> Ast.StructOps) in
-    let temp_func = lower_function ctx prog_def.prog_name ~program_type:(Some prog_def.prog_type) func in
+    (* Extract target from attributed function if available *)
+    let func_target = 
+      (* This is a hack to find the original attributed function and extract the target *)
+      (* For now, we'll pass None and fix this in the eBPF codegen *)
+      None 
+    in
+    let temp_func = lower_function ctx prog_def.prog_name ~program_type:(Some prog_def.prog_type) ~func_target func in
     if is_attributed_entry then
       (* Mark the attributed function as entry by updating the is_main field *)
       { temp_func with is_main = true }
@@ -2950,7 +2959,7 @@ let lower_multi_program ast symbol_table source_name =
   Hashtbl.iter (fun map_name map_def -> 
     Hashtbl.add kernel_ctx.maps map_name map_def
   ) ctx.maps;
-  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None) all_kernel_shared_functions in
+  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None ~func_target:None) all_kernel_shared_functions in
   
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->

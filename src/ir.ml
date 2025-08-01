@@ -414,6 +414,7 @@ and ir_function = {
   mutable tail_call_index_map: (string, int) Hashtbl.t; (* Map function name to ProgArray index *)
   mutable is_tail_callable: bool; (* Whether this function can be tail-called *)
   mutable func_program_type: program_type option; (* For attributed functions *)
+  mutable func_target: string option; (* Target for kprobe/tracepoint functions (e.g., "sched/sched_switch") *)
 }
 
 and visibility = Public | Private
@@ -534,6 +535,7 @@ let make_ir_function name params return_type blocks ?(total_stack_usage = 0)
   tail_call_index_map = Hashtbl.create 16;
   is_tail_callable = false;
   func_program_type = None;
+  func_target = None;
 }
 
 let make_ir_map_def name ir_key_type ir_value_type map_type max_entries 

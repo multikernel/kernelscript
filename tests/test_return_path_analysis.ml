@@ -77,6 +77,7 @@ let test_all_paths_return () =
     tail_call_index_map = Hashtbl.create 16;
     is_tail_callable = false;
     func_program_type = None;
+    func_target = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
@@ -118,6 +119,7 @@ let test_missing_return_branch () =
     tail_call_index_map = Hashtbl.create 16;
     is_tail_callable = false;
     func_program_type = None;
+    func_target = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
@@ -144,6 +146,7 @@ let test_no_return () =
     tail_call_index_map = Hashtbl.create 16;
     is_tail_callable = false;
     func_program_type = None;
+    func_target = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in
@@ -198,6 +201,7 @@ let test_multiple_exit_blocks_all_return () =
     tail_call_index_map = Hashtbl.create 16;
     is_tail_callable = false;
     func_program_type = None;
+    func_target = None;
   } in
   
   let return_info = ReturnAnalysis.analyze_returns test_function in

@@ -1909,8 +1909,17 @@ let rec generate_c_instruction_from_ir ctx instruction =
                  ctx.function_usage.uses_attach <- true;
                  (match c_args with
                   | [program_handle; target; flags] ->
+                      (* KernelScript uses "category/name" format for tracepoints, convert to libbpf "category:name" format *)
+                      let normalized_target = 
+                        if String.contains target '/' then
+                          (* Convert KernelScript "sched/sched_switch" to libbpf "sched:sched_switch" *)
+                          String.map (function '/' -> ':' | c -> c) target
+                        else
+                          (* For non-tracepoint targets (XDP interfaces, kprobe functions, raw tracepoints), use as-is *)
+                          target
+                      in
                       (* Use the program handle variable directly instead of extracting program name *)
-                      ("attach_bpf_program_by_fd", [program_handle; target; flags])
+                      ("attach_bpf_program_by_fd", [program_handle; normalized_target; flags])
                   | _ -> failwith "attach expects exactly three arguments")
              | "dispatch" ->
                  (* Special handling for dispatch: generate ring buffer polling *)
@@ -3180,6 +3189,103 @@ void cleanup_bpf_maps(void) {
             // For now, close immediately - in a production system you'd store this for cleanup
             bpf_link__destroy(link);
             printf("✅ Kprobe attached to function: %s\n", target);
+            
+            return 0;
+        }
+        case BPF_PROG_TYPE_TRACEPOINT: {
+            // For regular tracepoint programs, target is in libbpf format "category:name" (converted from KernelScript "category/name")
+            // Use libbpf high-level API for tracepoint attachment
+            
+            // Get the bpf_program struct from the object and file descriptor
+            struct bpf_program *prog = NULL;
+
+            // Find the program object corresponding to this fd
+            // We need to get the program from the skeleton object
+            if (!obj) {
+                fprintf(stderr, "eBPF skeleton not loaded for tracepoint attachment\n");
+                return -1;
+            }
+
+            bpf_object__for_each_program(prog, obj->obj) {
+                if (bpf_program__fd(prog) == prog_fd) {
+                    break;
+                }
+            }
+
+            if (!prog) {
+                fprintf(stderr, "Failed to find bpf_program for fd %d\n", prog_fd);
+                return -1;
+            }
+
+            // Parse the target string to extract category and name
+            // Internal format: "category:name" (converted from KernelScript "category/name")
+            char *target_copy = strdup(target);
+            char *category = strtok(target_copy, ":");
+            char *name = strtok(NULL, ":");
+            
+            if (!category || !name) {
+                fprintf(stderr, "Invalid tracepoint target format: '%s'. Expected 'category:name' format (converted from KernelScript 'category/name')\n", target);
+                free(target_copy);
+                return -1;
+            }
+
+            // Use libbpf's high-level tracepoint attachment API
+            struct bpf_link *link = bpf_program__attach_tracepoint(prog, category, name);
+            if (!link) {
+                fprintf(stderr, "Failed to attach tracepoint to '%s:%s': %s\n", category, name, strerror(errno));
+                free(target_copy);
+                return -1;
+            }
+            
+            // For now, close immediately - in a production system you'd store this for cleanup
+            bpf_link__destroy(link);
+            printf("Tracepoint attached to: %s:%s\n", category, name);
+            
+            free(target_copy);
+            return 0;
+        }
+        case BPF_PROG_TYPE_RAW_TRACEPOINT: {
+            // For raw tracepoint programs, target should be just the event name (e.g., "sched_switch")
+            // Extract event name from "category:event" format if needed
+            
+            char *event_name = target;
+            char *colon_pos = strchr(target, ':');
+            if (colon_pos) {
+                // Skip past the colon to get just the event name
+                event_name = colon_pos + 1;
+            }
+            
+            // Get the bpf_program struct from the object and file descriptor
+            struct bpf_program *prog = NULL;
+
+            // Find the program object corresponding to this fd
+            // We need to get the program from the skeleton object
+            if (!obj) {
+                fprintf(stderr, "eBPF skeleton not loaded for raw tracepoint attachment\n");
+                return -1;
+            }
+
+            bpf_object__for_each_program(prog, obj->obj) {
+                if (bpf_program__fd(prog) == prog_fd) {
+                    break;
+                }
+            }
+
+            if (!prog) {
+                fprintf(stderr, "Failed to find bpf_program for fd %d\n", prog_fd);
+                return -1;
+            }
+
+            // Use libbpf's high-level raw tracepoint attachment API with just the event name
+            struct bpf_link *link = bpf_program__attach_raw_tracepoint(prog, event_name);
+            if (!link) {
+                fprintf(stderr, "Failed to attach raw tracepoint to '%s': %s\n", event_name, strerror(errno));
+                return -1;
+            }
+            
+            // For now, close immediately - in a production system you'd store this for cleanup
+            bpf_link__destroy(link);
+            printf("Raw tracepoint attached to: %s\n", event_name);
             
             return 0;
         }

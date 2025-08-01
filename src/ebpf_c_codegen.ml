@@ -3345,7 +3345,30 @@ let generate_c_function ctx ir_func =
     match ir_func.func_program_type with
     | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
     | Some Ast.Kprobe when ir_func.is_main -> "SEC(\"kprobe\")"  (* Always use kprobe section for kprobe functions *)
-    | Some Ast.Tracepoint when ir_func.is_main -> "SEC(\"tracepoint\")"  (* Always use tracepoint section for tracepoint functions *)
+    | Some Ast.Tracepoint when ir_func.is_main -> 
+        (* For tracepoint functions, generate specific SEC based on function name *)
+        (match ir_func.func_target with
+         | Some target -> 
+             (* If we have the target, convert KernelScript format to raw tracepoint format *)
+             if String.contains target '/' then
+               let event_name = String.map (function '/' -> '_' | c -> c) target in
+               sprintf "SEC(\"raw_tracepoint/%s\")" event_name
+             else
+               sprintf "SEC(\"raw_tracepoint/%s\")" target
+         | None ->
+             (* Fallback: try to extract from function name *)
+             let func_name = ir_func.func_name in
+             if String.contains func_name '_' then
+               (* Function name like "sched_sched_switch_handler" -> extract "sched_switch" *)
+               let parts = String.split_on_char '_' func_name in
+               (match parts with
+                | category :: event :: "handler" :: _ -> 
+                    sprintf "SEC(\"raw_tracepoint/%s_%s\")" category event
+                | category :: event :: _ when List.length parts >= 2 ->
+                    sprintf "SEC(\"raw_tracepoint/%s_%s\")" category event
+                | _ -> "SEC(\"raw_tracepoint\")")
+             else
+               "SEC(\"raw_tracepoint\")")
     | _ ->
         (* For non-struct_ops, non-kprobe, and non-tracepoint functions, only generate SEC if it's a main function *)
         if ir_func.is_main then

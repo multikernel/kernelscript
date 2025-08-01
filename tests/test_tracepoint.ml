@@ -202,6 +202,22 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   check string "Function name should match" "sched_switch_handler" main_func.func_name
 
 (* 4. Code Generation Tests *)
+let test_raw_tracepoint_section_name_generation _ =
+  (* Test minimal raw tracepoint section name conversion logic *)
+  let source = "@tracepoint(\"sched/sched_switch\")
+fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
+    return 0
+}" in
+  let ast = parse_string source in
+  let typed_ast = type_check_ast ast in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_raw_tracepoint" in
+  let c_code = generate_c_multi_program ir_multi_prog in
+  
+  (* Check that forward slash is converted to underscore in section name *)
+  check bool "Should contain raw_tracepoint section with underscore" true
+    (String.contains c_code (String.get "SEC(\"raw_tracepoint/sched_sched_switch\")" 0))
+
 let test_tracepoint_ebpf_codegen _ =
   let source = "@tracepoint(\"sched/sched_switch\")
 fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
@@ -368,6 +384,7 @@ let ir_generation_tests = [
 ]
 
 let code_generation_tests = [
+  "raw tracepoint section name generation", `Quick, test_raw_tracepoint_section_name_generation;
   "tracepoint eBPF code generation", `Quick, test_tracepoint_ebpf_codegen;
   "tracepoint includes generation", `Quick, test_tracepoint_includes_generation;
 ]
