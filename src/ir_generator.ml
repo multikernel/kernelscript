@@ -48,6 +48,8 @@ type ir_context = {
   mutable current_function: string option;
   (* Symbol table reference *)
   symbol_table: Symbol_table.symbol_table;
+  (* Helper function names to avoid tail call conversion *)
+  helper_functions: (string, unit) Hashtbl.t;
   (* Assignment optimization info *)
   mutable assignment_optimizations: Map_assignment.optimization_info option;
   (* Constant environment for loop analysis *)
@@ -70,7 +72,7 @@ type ir_context = {
 }
 
 (** Create new IR generation context *)
-let create_context ?(global_variables = []) symbol_table = {
+let create_context ?(global_variables = []) ?(helper_functions = []) symbol_table = {
   variables = Hashtbl.create 32;
   next_register = 0;
   current_block = [];
@@ -93,6 +95,9 @@ let create_context ?(global_variables = []) symbol_table = {
                      tbl);
   map_origin_variables = Hashtbl.create 32;
   variable_types = Hashtbl.create 32;
+  helper_functions = (let tbl = Hashtbl.create 16 in
+                     List.iter (fun helper_name -> Hashtbl.add tbl helper_name ()) helper_functions;
+                     tbl);
 }
 
 (** Allocate a new register for intermediate values *)
@@ -1602,9 +1607,14 @@ and lower_statement ctx stmt =
                               (* Check if this is a simple function call that could be a tail call *)
                               (match callee_expr.expr_desc with
                                | Ast.Identifier name ->
-                                   (* This will be converted to tail call by tail call analyzer *)
-                                   let arg_vals = List.map (lower_expression ctx) args in
-                                   IRReturnCall (name, arg_vals)
+                                   (* Check if this is a helper function - if so, treat as regular call *)
+                                   if Hashtbl.mem ctx.helper_functions name then
+                                     let ret_val = lower_expression ctx expr in
+                                     IRReturnValue ret_val
+                                   else
+                                     (* This will be converted to tail call by tail call analyzer *)
+                                     let arg_vals = List.map (lower_expression ctx) args in
+                                     IRReturnCall (name, arg_vals)
                                | _ ->
                                    (* Function pointer call - treat as regular return *)
                                    let ret_val = lower_expression ctx expr in
@@ -1627,8 +1637,13 @@ and lower_statement ctx stmt =
                                     (* Check if this is a simple function call that could be a tail call *)
                                     (match callee_expr.expr_desc with
                                      | Ast.Identifier name ->
-                                         let arg_vals = List.map (lower_expression ctx) args in
-                                         IRReturnCall (name, arg_vals)
+                                         (* Check if this is a helper function - if so, treat as regular call *)
+                                         if Hashtbl.mem ctx.helper_functions name then
+                                           let ret_val = lower_expression ctx return_expr in
+                                           IRReturnValue ret_val
+                                         else
+                                           let arg_vals = List.map (lower_expression ctx) args in
+                                           IRReturnCall (name, arg_vals)
                                      | _ ->
                                          (* Function pointer call - treat as regular return *)
                                          let ret_val = lower_expression ctx return_expr in
@@ -1645,8 +1660,13 @@ and lower_statement ctx stmt =
                                 | Ast.Call (callee_expr, args) ->
                                     (match callee_expr.expr_desc with
                                      | Ast.Identifier name ->
-                                         let arg_vals = List.map (lower_expression ctx) args in
-                                         IRReturnCall (name, arg_vals)
+                                         (* Check if this is a helper function - if so, treat as regular call *)
+                                         if Hashtbl.mem ctx.helper_functions name then
+                                           let ret_val = lower_expression ctx expr in
+                                           IRReturnValue ret_val
+                                         else
+                                           let arg_vals = List.map (lower_expression ctx) args in
+                                           IRReturnCall (name, arg_vals)
                                      | _ ->
                                          let ret_val = lower_expression ctx expr in
                                          IRReturnValue ret_val)
@@ -2953,8 +2973,11 @@ let lower_multi_program ast symbol_table source_name =
   (* Combine regular kernel functions with helper functions *)
   let all_kernel_shared_functions = kernel_shared_functions @ helper_functions in
   
+  (* Extract helper function names for context *)
+  let helper_function_names = List.map (fun func -> func.Ast.func_name) helper_functions in
+  
   (* Lower kernel functions once - they are shared across all programs *)
-  let kernel_ctx = create_context ~global_variables:ir_global_variables symbol_table in
+  let kernel_ctx = create_context ~global_variables:ir_global_variables ~helper_functions:helper_function_names symbol_table in
   (* Copy maps from main context to kernel context *)
   Hashtbl.iter (fun map_name map_def -> 
     Hashtbl.add kernel_ctx.maps map_name map_def
@@ -2964,7 +2987,7 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
-    let prog_ctx = create_context ~global_variables:ir_global_variables symbol_table in
+    let prog_ctx = create_context ~global_variables:ir_global_variables ~helper_functions:helper_function_names symbol_table in
     (* Copy maps from main context to program context *)
     Hashtbl.iter (fun map_name map_def -> 
       Hashtbl.add prog_ctx.maps map_name map_def

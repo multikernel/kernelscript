@@ -380,6 +380,116 @@ let test_tail_calls_in_if_statements _ =
   (* Verify index mapping contains the target *)
   check bool "drop_handler should be in mapping" true (Hashtbl.mem analysis.index_mapping "drop_handler")
 
+(** Test helper functions are NOT converted to tail calls - regression test for helper tail call bug *)
+let test_helper_functions_not_tail_called _ =
+  (* Create helper functions with @helper attribute *)
+  let rate_limit_syn_helper = make_test_func "rate_limit_syn" [("ip", U32)] (Some (make_unnamed_return Xdp_action)) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  let rate_limit_dns_helper = make_test_func "rate_limit_dns" [("ip", U32)] (Some (make_unnamed_return Xdp_action)) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  (* Create eBPF function that calls helpers in return position within match expression *)
+  let protocol_var = make_expr (Identifier "protocol") make_test_position in
+  let src_ip_var = make_expr (Identifier "src_ip") make_test_position in
+  
+  (* Helper calls in return position - this was the problematic pattern *)
+  let syn_helper_call = make_expr (Call (make_expr (Identifier "rate_limit_syn") make_test_position, [src_ip_var])) make_test_position in
+  let dns_helper_call = make_expr (Call (make_expr (Identifier "rate_limit_dns") make_test_position, [src_ip_var])) make_test_position in
+  let xdp_drop_const = make_expr (Identifier "XDP_DROP") make_test_position in
+  
+  let match_arms = [
+    { arm_pattern = ConstantPattern (IntLit (6, None)); arm_body = SingleExpr syn_helper_call; arm_pos = make_test_position }; (* TCP *)
+    { arm_pattern = ConstantPattern (IntLit (17, None)); arm_body = SingleExpr dns_helper_call; arm_pos = make_test_position }; (* UDP *)
+    { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
+  ] in
+  
+  let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
+  
+  let ddos_protection = make_test_func "ddos_protection" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
+    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (6, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("src_ip", Some U32, Some (make_expr (Literal (IntLit (0xc0a80101, None))) make_test_position))) make_test_position;
+    make_stmt (Return (Some match_expr)) make_test_position
+  ] in
+  
+  (* Mark helpers with @helper attribute - this is critical *)
+  let attr_syn_helper = make_test_attr_func [SimpleAttribute "helper"] rate_limit_syn_helper in
+  let attr_dns_helper = make_test_attr_func [SimpleAttribute "helper"] rate_limit_dns_helper in
+  let attr_ddos_protection = make_test_attr_func [SimpleAttribute "xdp"] ddos_protection in
+  
+  let ast = [AttributedFunction attr_syn_helper; AttributedFunction attr_dns_helper; AttributedFunction attr_ddos_protection] in
+  let analysis = analyze_tail_calls ast in
+  
+  (* Critical assertions: helper functions should NOT create tail call dependencies *)
+  check int "helper functions should not create tail call dependencies" 0 (List.length analysis.dependencies);
+  
+  (* No prog_array should be needed since only helpers are called *)
+  check int "prog_array_size should be 0 when only helpers called" 0 analysis.prog_array_size;
+  
+  (* Verify that helper function names are not in the index mapping *)
+  check bool "rate_limit_syn should NOT be in tail call mapping" false (Hashtbl.mem analysis.index_mapping "rate_limit_syn");
+  check bool "rate_limit_dns should NOT be in tail call mapping" false (Hashtbl.mem analysis.index_mapping "rate_limit_dns");
+  () (* Close the function *)
+
+(** Test mixed scenario: helpers and actual eBPF programs - regression test for proper differentiation *)
+let test_mixed_helpers_and_tail_calls _ =
+  (* Helper function *)
+  let log_packet_helper = make_test_func "log_packet" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  (* Actual eBPF program that can be tail called *)
+  let process_tcp_program = make_test_func "process_tcp" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
+    make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position
+  ] in
+  
+  (* Main eBPF function that calls both helper and eBPF program *)
+  let protocol_var = make_expr (Identifier "protocol") make_test_position in
+  let ctx_var = make_expr (Identifier "ctx") make_test_position in
+  
+  let helper_call = make_expr (Call (make_expr (Identifier "log_packet") make_test_position, [ctx_var])) make_test_position in
+  let program_call = make_expr (Call (make_expr (Identifier "process_tcp") make_test_position, [ctx_var])) make_test_position in
+  let xdp_drop_const = make_expr (Identifier "XDP_DROP") make_test_position in
+  
+  let match_arms = [
+    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr helper_call; arm_pos = make_test_position }; (* Call helper *)
+    { arm_pattern = ConstantPattern (IntLit (6, None)); arm_body = SingleExpr program_call; arm_pos = make_test_position }; (* Call eBPF program *)
+    { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
+  ] in
+  
+  let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
+  
+  let packet_classifier = make_test_func "packet_classifier" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
+    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (6, None))) make_test_position))) make_test_position;
+    make_stmt (Return (Some match_expr)) make_test_position
+  ] in
+  
+  (* Mark helper with @helper, others with @xdp *)
+  let attr_helper = make_test_attr_func [SimpleAttribute "helper"] log_packet_helper in
+  let attr_program = make_test_attr_func [SimpleAttribute "xdp"] process_tcp_program in
+  let attr_classifier = make_test_attr_func [SimpleAttribute "xdp"] packet_classifier in
+  
+  let ast = [AttributedFunction attr_helper; AttributedFunction attr_program; AttributedFunction attr_classifier] in
+  let analysis = analyze_tail_calls ast in
+  
+  (* Should have exactly 1 dependency: packet_classifier -> process_tcp (NOT to the helper) *)
+  check int "should have 1 tail call dependency (only to eBPF program)" 1 (List.length analysis.dependencies);
+  
+  (* prog_array should have size 1 (only for the eBPF program) *)
+  check int "prog_array_size should be 1 (only eBPF program)" 1 analysis.prog_array_size;
+  
+  (* Verify specific dependency *)
+  let dep = List.hd analysis.dependencies in
+  check string "caller should be packet_classifier" "packet_classifier" dep.caller;
+  check string "target should be process_tcp (NOT helper)" "process_tcp" dep.target;
+
+  (* Verify mapping contents *)
+  check bool "process_tcp should be in tail call mapping" true (Hashtbl.mem analysis.index_mapping "process_tcp");
+  check bool "log_packet helper should NOT be in tail call mapping" false (Hashtbl.mem analysis.index_mapping "log_packet");
+  () (* Close the function *)
+
 let suite = [
   "test_tail_call_detection", `Quick, test_tail_call_detection;
   "test_program_type_compatibility", `Quick, test_program_type_compatibility;
@@ -392,6 +502,8 @@ let suite = [
   "nested_match_tail_calls", `Quick, test_nested_match_tail_calls;
   "match_with_mixed_tail_calls", `Quick, test_match_with_mixed_tail_calls;
   "test_tail_calls_in_if_statements", `Quick, test_tail_calls_in_if_statements;
+  "test_helper_functions_not_tail_called", `Quick, test_helper_functions_not_tail_called;
+  "test_mixed_helpers_and_tail_calls", `Quick, test_mixed_helpers_and_tail_calls;
 ]
 
 let () = Alcotest.run "Tail Call Tests" [("main", suite)] 
