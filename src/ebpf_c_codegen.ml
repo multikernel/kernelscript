@@ -3347,18 +3347,11 @@ let generate_c_function ctx ir_func =
     | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
     | Some Ast.Kprobe when ir_func.is_main -> "SEC(\"kprobe\")"  (* Always use kprobe section for kprobe functions *)
     | Some Ast.Tracepoint when ir_func.is_main -> 
-        (* For tracepoint functions, generate specific SEC based on function name *)
+        (* For tracepoint functions, generate specific SEC based on target *)
         (match ir_func.func_target with
          | Some target -> 
-             (* If we have the target, convert KernelScript format to raw tracepoint format *)
-             if String.contains target '/' then
-               (* For raw tracepoints, extract just the event name (part after slash) *)
-               let parts = String.split_on_char '/' target in
-               (match parts with
-                | [_category; event] -> sprintf "SEC(\"raw_tracepoint/%s\")" event
-                | _ -> sprintf "SEC(\"raw_tracepoint/%s\")" target)
-             else
-               sprintf "SEC(\"raw_tracepoint/%s\")" target
+             (* Convert KernelScript "category/event" format to regular tracepoint SEC format *)
+             sprintf "SEC(\"tracepoint/%s\")" target
          | None ->
              (* This should not happen now that we properly pass targets through *)
              failwith "Tracepoint function is missing target information")

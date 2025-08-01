@@ -220,11 +220,11 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
 let test_multiple_tracepoint_targets _ =
   (* Test various tracepoint targets to ensure they all work correctly *)
   let test_cases = [
-    ("sched/sched_switch", "SEC(\"raw_tracepoint/sched_switch\")");
-    ("net/netif_rx", "SEC(\"raw_tracepoint/netif_rx\")");
-    ("syscalls/sys_enter_read", "SEC(\"raw_tracepoint/sys_enter_read\")");
-    ("syscalls/sys_exit_write", "SEC(\"raw_tracepoint/sys_exit_write\")");
-    ("irq/irq_handler_entry", "SEC(\"raw_tracepoint/irq_handler_entry\")");
+    ("sched/sched_switch", "SEC(\"tracepoint/sched/sched_switch\")");
+    ("net/netif_rx", "SEC(\"tracepoint/net/netif_rx\")");
+    ("syscalls/sys_enter_read", "SEC(\"tracepoint/syscalls/sys_enter_read\")");
+    ("syscalls/sys_exit_write", "SEC(\"tracepoint/syscalls/sys_exit_write\")");
+    ("irq/irq_handler_entry", "SEC(\"tracepoint/irq/irq_handler_entry\")");
   ] in
   
   List.iter (fun (target, expected_sec) ->
@@ -255,21 +255,21 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Ensure correct SEC() is generated *)
-  check bool "Should generate correct SEC(raw_tracepoint/sched_switch)" true
-    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_switch\")") c_code 0 >= 0);
+  check bool "Should generate correct SEC(tracepoint/sched/sched_switch)" true
+    (Str.search_forward (Str.regexp_string "SEC(\"tracepoint/sched/sched_switch\")") c_code 0 >= 0);
   
   (* Ensure buggy SEC() is NOT generated *)
-  check bool "Should NOT generate buggy SEC(raw_tracepoint/sched_sched)" true
+  check bool "Should NOT generate any raw_tracepoint SEC format" true
     (try 
-       let _ = Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_sched\")") c_code 0 in
-       false  (* Found the buggy pattern - test should fail *)
+       let _ = Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/") c_code 0 in
+       false  (* Found raw_tracepoint - test should fail *)
      with Not_found -> 
-       true   (* Didn't find the buggy pattern - test should pass *)
+       true   (* No raw_tracepoint found - test should pass *)
     )
 
 (* 4. Code Generation Tests *)
-let test_raw_tracepoint_section_name_generation _ =
-  (* Test correct raw tracepoint section name generation *)
+let test_tracepoint_section_name_generation _ =
+  (* Test correct tracepoint section name generation *)
   let source = "@tracepoint(\"sched/sched_switch\")
 fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
     return 0
@@ -277,12 +277,12 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_raw_tracepoint" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_tracepoint" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Check that the correct SEC() is generated with just the event name *)
-  check bool "Should contain correct raw_tracepoint/sched_switch section" true
-    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_switch\")") c_code 0 >= 0)
+  (* Check that the correct SEC() is generated with the full path *)
+  check bool "Should contain correct tracepoint/sched/sched_switch section" true
+    (Str.search_forward (Str.regexp_string "SEC(\"tracepoint/sched/sched_switch\")") c_code 0 >= 0)
 
 let test_tracepoint_ebpf_codegen _ =
   let source = "@tracepoint(\"sched/sched_switch\")
@@ -296,8 +296,8 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Check for tracepoint-specific C code elements *)
-  check bool "Should contain correct raw_tracepoint SEC" true 
-    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_switch\")") c_code 0 >= 0);
+  check bool "Should contain correct tracepoint SEC" true
+    (Str.search_forward (Str.regexp_string "SEC(\"tracepoint/sched/sched_switch\")") c_code 0 >= 0);
   check bool "Should contain function definition" true
     (String.contains c_code (String.get "sched_switch_handler" 0));
   check bool "Should contain struct parameter" true
@@ -408,8 +408,8 @@ fn sys_enter_open_handler(ctx: *trace_event_raw_sys_enter) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Comprehensive end-to-end validation *)
-  check bool "Contains correct raw_tracepoint section" true
-    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sys_enter_open\")") c_code 0 >= 0);
+  check bool "Contains correct tracepoint section" true
+    (Str.search_forward (Str.regexp_string "SEC(\"tracepoint/syscalls/sys_enter_open\")") c_code 0 >= 0);
   check bool "Contains function name" true
     (String.contains c_code (String.get "sys_enter_open_handler" 0));
   check bool "Contains context struct" true
@@ -453,7 +453,7 @@ let ir_generation_tests = [
 ]
 
 let code_generation_tests = [
-  "raw tracepoint section name generation", `Quick, test_raw_tracepoint_section_name_generation;
+  "tracepoint section name generation", `Quick, test_tracepoint_section_name_generation;
   "tracepoint eBPF code generation", `Quick, test_tracepoint_ebpf_codegen;
   "tracepoint includes generation", `Quick, test_tracepoint_includes_generation;
 ]

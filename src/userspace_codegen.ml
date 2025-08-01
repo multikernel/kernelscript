@@ -3297,15 +3297,25 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             
             return 0;
         }
-        case BPF_PROG_TYPE_RAW_TRACEPOINT: {
-            // For raw tracepoint programs, target should be just the event name (e.g., "sched_switch")
-            // Extract event name from "category:event" format if needed
+        case BPF_PROG_TYPE_TRACEPOINT: {
+            // For regular tracepoint programs, target should be in "category:event" format (e.g., "sched:sched_switch")
+            // Split into category and event name for attachment
             
-            char *event_name = target;
-            char *colon_pos = strchr(target, ':');
+            // Make a copy of target since we need to modify it
+            char target_copy[256];
+            strncpy(target_copy, target, sizeof(target_copy) - 1);
+            target_copy[sizeof(target_copy) - 1] = '\0';
+            
+            char *category = target_copy;
+            char *event_name = NULL;
+            char *colon_pos = strchr(target_copy, ':');
             if (colon_pos) {
-                // Skip past the colon to get just the event name
+                // Null-terminate category and get event name
+                *colon_pos = '\0';
                 event_name = colon_pos + 1;
+            } else {
+                fprintf(stderr, "Invalid tracepoint target format: '%s'. Expected 'category:event'\n", target);
+                return -1;
             }
             
             // Get the bpf_program struct from the object and file descriptor
@@ -3314,7 +3324,7 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             // Find the program object corresponding to this fd
             // We need to get the program from the skeleton object
             if (!obj) {
-                fprintf(stderr, "eBPF skeleton not loaded for raw tracepoint attachment\n");
+                fprintf(stderr, "eBPF skeleton not loaded for tracepoint attachment\n");
                 return -1;
             }
 
@@ -3329,21 +3339,21 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
                 return -1;
             }
 
-            // Use libbpf's high-level raw tracepoint attachment API with just the event name
-            struct bpf_link *link = bpf_program__attach_raw_tracepoint(prog, event_name);
+            // Use libbpf's high-level tracepoint attachment API with category and event name
+            struct bpf_link *link = bpf_program__attach_tracepoint(prog, category, event_name);
             if (!link) {
-                fprintf(stderr, "Failed to attach raw tracepoint to '%s': %s\n", event_name, strerror(errno));
+                fprintf(stderr, "Failed to attach tracepoint to '%s:%s': %s\n", category, event_name, strerror(errno));
                 return -1;
             }
             
-            // Store raw tracepoint attachment for later cleanup
-            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_RAW_TRACEPOINT) != 0) {
+            // Store tracepoint attachment for later cleanup
+            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_TRACEPOINT) != 0) {
                 // If storage fails, destroy link and return error
                 bpf_link__destroy(link);
                 return -1;
             }
             
-            printf("Raw tracepoint attached to: %s\n", event_name);
+            printf("Tracepoint attached to: %s:%s\n", category, event_name);
             
             return 0;
         }
@@ -3388,12 +3398,12 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             }
             break;
         }
-        case BPF_PROG_TYPE_RAW_TRACEPOINT: {
+        case BPF_PROG_TYPE_TRACEPOINT: {
             if (entry->link) {
                 bpf_link__destroy(entry->link);
-                printf("Raw tracepoint detached from: %s\n", entry->target);
+                printf("Tracepoint detached from: %s\n", entry->target);
             } else {
-                fprintf(stderr, "Invalid raw tracepoint link for program fd %d\n", prog_fd);
+                fprintf(stderr, "Invalid tracepoint link for program fd %d\n", prog_fd);
             }
             break;
         }
