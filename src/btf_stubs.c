@@ -577,6 +577,40 @@ value btf_extract_function_signatures_stub(value btf_handle, value function_name
     CAMLreturn(result_list);
 }
 
+/* Extract all kernel-defined struct names from BTF */
+value btf_extract_kernel_struct_names_stub(value btf_handle) {
+    CAMLparam1(btf_handle);
+    CAMLlocal2(result, cons);
+    
+    struct btf *btf = btf_of_value(btf_handle);
+    if (!btf) {
+        CAMLreturn(Val_emptylist);
+    }
+    
+    result = Val_emptylist;
+    __u32 nr_types = btf__type_cnt(btf);
+    
+    /* Iterate through all BTF types */
+    for (__u32 i = 1; i < nr_types; i++) {
+        const struct btf_type *type = btf__type_by_id(btf, i);
+        if (!type) continue;
+        
+        /* Check if it's a struct type */
+        if (btf_kind(type) == BTF_KIND_STRUCT) {
+            const char *type_name = btf__name_by_offset(btf, type->name_off);
+            if (type_name && strlen(type_name) > 0) {
+                /* Create a new cons cell */
+                cons = caml_alloc(2, 0);
+                Store_field(cons, 0, caml_copy_string(type_name));
+                Store_field(cons, 1, result);
+                result = cons;
+            }
+        }
+    }
+    
+    CAMLreturn(result);
+}
+
 /* Free BTF handle */
 value btf_free_stub(value btf_handle) {
     CAMLparam1(btf_handle);

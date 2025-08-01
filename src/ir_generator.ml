@@ -2976,8 +2976,15 @@ let lower_multi_program ast symbol_table source_name =
         failwith "Only one main() function is allowed";
       
       (* Extract struct definitions from AST (single source of truth) *)
+      (* Filter out kernel-only structs that should not be in userspace code *)
       let struct_definitions = List.filter_map (function
-        | Ast.StructDecl struct_def -> Some struct_def
+        | Ast.StructDecl struct_def -> 
+            (* Check if the struct has @kernel_only marker in comments/attributes *)
+            let is_kernel_only = List.exists (function
+              | Ast.SimpleAttribute "kernel_only" -> true
+              | _ -> false
+            ) struct_def.struct_attributes in
+            if is_kernel_only then None else Some struct_def
         | _ -> None
       ) ast in
       

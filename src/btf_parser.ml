@@ -38,7 +38,7 @@ type program_template = {
 
 
 (** Check if a type name is a well-known kernel type *)
-let is_well_known_kernel_type = Kernel_types.is_well_known_ebpf_type
+let is_well_known_kernel_type ?btf_path = Kernel_types.is_well_known_ebpf_type ?btf_path
 
 (** Create hardcoded enum definitions for constants that can't be extracted from BTF *)
 let create_hardcoded_tc_action_enum () = {
@@ -82,7 +82,7 @@ let get_program_template prog_type btf_path =
           kind = bt.Btf_binary_parser.kind;
           size = bt.Btf_binary_parser.size;
           members = bt.Btf_binary_parser.members;
-          kernel_defined = is_well_known_kernel_type bt.Btf_binary_parser.name;
+          kernel_defined = is_well_known_kernel_type ?btf_path bt.Btf_binary_parser.name;
         }) binary_types
     | Some path -> failwith (sprintf "BTF file not found: %s" path)
     | None -> failwith "BTF file path is required. Use --btf-vmlinux-path option."
@@ -147,7 +147,7 @@ let get_tracepoint_program_template category_event btf_path =
           kind = bt.Btf_binary_parser.kind;
           size = bt.Btf_binary_parser.size;
           members = bt.Btf_binary_parser.members;
-          kernel_defined = is_well_known_kernel_type bt.Btf_binary_parser.name;
+          kernel_defined = is_well_known_kernel_type ?btf_path bt.Btf_binary_parser.name;
         }) binary_types
     | Some path -> failwith (sprintf "BTF file not found: %s" path)
     | None -> failwith "BTF file path is required for tracepoint extraction. Use --btf-vmlinux-path option."
@@ -310,7 +310,11 @@ let generate_kernelscript_source template project_name =
              let member_strings = List.map (fun (name, typ) ->
                sprintf "    %s: %s," name typ
              ) members in
-             sprintf "struct %s {\n%s\n}" type_info.name (String.concat "\n" member_strings)
+             (* Mark kernel-defined structs for eBPF-only usage *)
+             let kernel_marker = if type_info.kernel_defined then
+               "// @kernel_only - This struct is only for eBPF compilation, not userspace\n"
+             else "" in
+             sprintf "%sstruct %s {\n%s\n}" kernel_marker type_info.name (String.concat "\n" member_strings)
          | None ->
              sprintf "// %s type (placeholder)" type_info.name)
     | "enum" ->

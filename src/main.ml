@@ -713,7 +713,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
           Ast.StructDecl { 
             struct_name = btf_type.Btf_parser.name; 
             struct_fields = fields; 
-            struct_attributes = []; 
+            struct_attributes = if btf_type.Btf_parser.kernel_defined then [Ast.SimpleAttribute "kernel_only"] else []; 
             struct_pos = { filename = "btf"; line = 1; column = 1 }
           }
       | "enum" ->
@@ -975,7 +975,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ~symbol_table updated_optimized_ir ~output_dir:actual_output_dir input_file;
+      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ~symbol_table ?btf_path:btf_vmlinux_path updated_optimized_ir ~output_dir:actual_output_dir input_file;
     
     (* Output directory already created earlier *)
     

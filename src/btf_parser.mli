@@ -43,7 +43,7 @@ val get_kprobe_program_template : string -> string option -> program_template
 val get_tracepoint_program_template : string -> string option -> program_template
 
 (** Check if a type name is a well-known eBPF kernel type *)
-val is_well_known_kernel_type : string -> bool
+val is_well_known_kernel_type : ?btf_path:string -> string -> bool
 
 (** Extract struct_ops definitions from BTF and generate KernelScript code *)
 val extract_struct_ops_definitions : string option -> string list -> string list

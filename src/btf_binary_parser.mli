@@ -34,4 +34,9 @@ val parse_btf_file : string -> string list -> btf_type_info list
     @param btf_path Path to the binary BTF file
     @param function_names List of kernel function names to extract signatures for
     @return List of (function_name, signature) pairs *)
-val extract_kernel_function_signatures : string -> string list -> (string * string) list 
+val extract_kernel_function_signatures : string -> string list -> (string * string) list
+
+(** Extract all kernel-defined struct names from BTF file.
+    @param btf_path Path to the binary BTF file
+    @return List of kernel struct names *)
+val extract_all_kernel_struct_names : string -> string list 
