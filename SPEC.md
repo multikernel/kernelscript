@@ -174,8 +174,8 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
-attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | 
-                 "lsm" | "cgroup_skb" | "socket_filter" | "sk_lookup" | "struct_ops" | "kfunc" | "private" | "helper" | "test"
+attribute_name = "xdp" | "tc" | "kprobe" | "tracepoint" |
+                 "struct_ops" | "kfunc" | "private" | "helper" | "test"
 attribute_args = string_literal | identifier
 
 parameter_list = parameter { "," parameter }
@@ -871,9 +871,6 @@ fn ingress_monitor(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
 
 @tc
 fn egress_monitor(ctx: *__sk_buff) -> int { return 0 }  // TC_ACT_OK
-
-@lsm("socket_connect")
-fn security_check(ctx: LsmContext) -> i32 { return 0 }
 
 // Struct_ops example using impl block approach
 struct tcp_congestion_ops {
@@ -3292,11 +3289,11 @@ pin var global_config : array<ConfigKey, ConfigValue>(64)
 // Multiple eBPF programs working together
 @xdp fn network_monitor(ctx: *xdp_md) -> xdp_action {
     // Access global maps directly
-    var flow_key = extract_flow_key(ctx)?
+    var flow_key = extract_flow_key(ctx)
     global_flows[flow_key] += 1
     
     // Use named config for decisions
-    if monitoring.enable_stats {
+    if (monitoring.enable_stats) {
         monitoring.packets_processed += 1
     }
     
@@ -3306,21 +3303,20 @@ pin var global_config : array<ConfigKey, ConfigValue>(64)
     return XDP_PASS
 }
 
-program security_filter : lsm("socket_connect") {
-    fn main(ctx: LsmContext) -> i32 {
-        var flow_key = extract_flow_key_from_socket(ctx)?
+@lsm("socket_connect")
+fn security_filter(ctx: LsmContext) -> i32 {
+    var flow_key = extract_flow_key_from_socket(ctx)
         
-        // Check global flow statistics for threat detection
-        if (global_flows[flow_key] != null) {
-            var flow_stats = global_flows[flow_key]
-            if (flow_stats.is_suspicious()) {
-                global_events.submit(EVENT_THREAT_DETECTED { flow_key })
-                return -EPERM  // Block connection
-            }
+    // Check global flow statistics for threat detection
+    if (global_flows[flow_key] != none) {
+        var flow_stats = global_flows[flow_key]
+        if (flow_stats.is_suspicious()) {
+            global_events.submit(EVENT_THREAT_DETECTED { flow_key })
+            return -EPERM  // Block connection
         }
-        
-        return 0  // Allow connection
     }
+        
+    return 0  // Allow connection
 }
 
 struct SystemCoordinator {
@@ -4406,8 +4402,8 @@ flag_expression = identifier | ( identifier { "|" identifier } )
 (* eBPF program function attributes *)
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
-attribute_name = "xdp" | "tc" | "kprobe" | "uprobe" | "tracepoint" | "lsm" | 
-                 "cgroup_skb" | "socket_filter" | "sk_lookup" | "raw_tracepoint" | "struct_ops" | "kfunc" | "helper" | "private" | "test"
+attribute_name = "xdp" | "tc" | "kprobe" | "tracepoint" |
+                 "struct_ops" | "kfunc" | "helper" | "private" | "test"
 attribute_args = string_literal | identifier 
 
 (* Named configuration declarations *)
