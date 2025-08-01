@@ -3297,64 +3297,6 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             
             return 0;
         }
-        case BPF_PROG_TYPE_TRACEPOINT: {
-            // For regular tracepoint programs, target is in libbpf format "category:name" (converted from KernelScript "category/name")
-            // Use libbpf high-level API for tracepoint attachment
-            
-            // Get the bpf_program struct from the object and file descriptor
-            struct bpf_program *prog = NULL;
-
-            // Find the program object corresponding to this fd
-            // We need to get the program from the skeleton object
-            if (!obj) {
-                fprintf(stderr, "eBPF skeleton not loaded for tracepoint attachment\n");
-                return -1;
-            }
-
-            bpf_object__for_each_program(prog, obj->obj) {
-                if (bpf_program__fd(prog) == prog_fd) {
-                    break;
-                }
-            }
-
-            if (!prog) {
-                fprintf(stderr, "Failed to find bpf_program for fd %d\n", prog_fd);
-                return -1;
-            }
-
-            // Parse the target string to extract category and name
-            // Internal format: "category:name" (converted from KernelScript "category/name")
-            char *target_copy = strdup(target);
-            char *category = strtok(target_copy, ":");
-            char *name = strtok(NULL, ":");
-            
-            if (!category || !name) {
-                fprintf(stderr, "Invalid tracepoint target format: '%s'. Expected 'category:name' format (converted from KernelScript 'category/name')\n", target);
-                free(target_copy);
-                return -1;
-            }
-
-            // Use libbpf's high-level tracepoint attachment API
-            struct bpf_link *link = bpf_program__attach_tracepoint(prog, category, name);
-            if (!link) {
-                fprintf(stderr, "Failed to attach tracepoint to '%s:%s': %s\n", category, name, strerror(errno));
-                free(target_copy);
-                return -1;
-            }
-            
-            // Store tracepoint attachment for later cleanup
-            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_TRACEPOINT) != 0) {
-                // If storage fails, destroy link and return error
-                bpf_link__destroy(link);
-                free(target_copy);
-                return -1;
-            }
-            
-            printf("Tracepoint attached to: %s:%s\n", category, name);
-            
-            free(target_copy);
-            return 0;
-        }
         case BPF_PROG_TYPE_RAW_TRACEPOINT: {
             // For raw tracepoint programs, target should be just the event name (e.g., "sched_switch")
             // Extract event name from "category:event" format if needed
@@ -3443,15 +3385,6 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
                 printf("Kprobe detached from: %s\n", entry->target);
             } else {
                 fprintf(stderr, "Invalid kprobe link for program fd %d\n", prog_fd);
-            }
-            break;
-        }
-        case BPF_PROG_TYPE_TRACEPOINT: {
-            if (entry->link) {
-                bpf_link__destroy(entry->link);
-                printf("Tracepoint detached from: %s\n", entry->target);
-            } else {
-                fprintf(stderr, "Invalid tracepoint link for program fd %d\n", prog_fd);
             }
             break;
         }
