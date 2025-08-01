@@ -56,9 +56,7 @@ let generate_kprobe_includes () = [
   "#define __TARGET_ARCH_x86";
   "#endif";
   "";
-  "#include <linux/types.h>";
   "#include <bpf/bpf_tracing.h>";
-  "#include <linux/ptrace.h>";
 ]
 
 (** Generate field access for kprobe context *)

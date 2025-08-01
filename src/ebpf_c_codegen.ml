@@ -1123,6 +1123,7 @@ let generate_includes ctx ?(program_types=[]) () =
   let context_includes = List.fold_left (fun acc prog_type ->
     let context_type = match prog_type with
       | Ast.Tc -> Some "tc"
+      | Ast.Kprobe -> Some "kprobe"
       | _ -> None
     in
     match context_type with
