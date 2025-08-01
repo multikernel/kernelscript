@@ -51,6 +51,7 @@ let test_function_parameters _ =
   (* Create program containing this function *)
   let prog_def = {
     prog_name = "test_prog";
+    prog_target = None;
     prog_type = Xdp;
     prog_maps = [];
     prog_structs = [];
@@ -127,6 +128,7 @@ let test_program_function_calls _ =
   (* Create program with both functions *)
   let prog_def = {
     prog_name = "test_prog";
+    prog_target = None;
     prog_type = Xdp;
     prog_maps = [];
     prog_structs = [];
@@ -195,6 +197,7 @@ let test_multiple_parameters _ =
   
   let prog_def = {
     prog_name = "test_prog";
+    prog_target = None;
     prog_type = Xdp;
     prog_maps = [];
     prog_structs = [];

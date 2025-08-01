@@ -814,7 +814,8 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Create a program structure for safety analysis *)
     let safety_program = {
-      Ast.prog_name = base_name;
+              Ast.prog_name = base_name;
+        prog_target = None;
       prog_type = Xdp; (* Default - not used by safety checker *)
       prog_functions = all_functions;
       prog_maps = all_maps;

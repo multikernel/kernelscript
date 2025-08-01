@@ -122,6 +122,7 @@ let extract_programs (ast: declaration list) : program_def list =
                     prog_functions = [attr_func.attr_function];
                     prog_maps = [];
                     prog_structs = [];
+                    prog_target = None;
                     prog_pos = attr_func.attr_pos;
                   })
          | _ -> None)

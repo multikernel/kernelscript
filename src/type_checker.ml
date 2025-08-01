@@ -2567,6 +2567,7 @@ let typed_program_to_program tprog original_prog =
     prog_functions = List.map typed_function_to_function tprog.tprog_functions;
     prog_maps = original_prog.prog_maps;  (* Preserve original map declarations *)
     prog_structs = original_prog.prog_structs;  (* Preserve original struct declarations *)
+    prog_target = original_prog.prog_target;  (* Preserve original target *)
     prog_pos = tprog.tprog_pos }
 
 (** Convert typed AST back to annotated AST declarations *)

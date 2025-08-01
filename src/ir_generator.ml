@@ -2731,12 +2731,8 @@ let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
     (* For attributed functions (single function programs), the function IS the entry function *)
     (* But struct_ops functions should NOT be marked as main functions *)
     let is_attributed_entry = (List.length prog_def.prog_functions = 1 && index = 0 && prog_def.prog_type <> Ast.StructOps) in
-    (* Extract target from attributed function if available *)
-    let func_target = 
-      (* This is a hack to find the original attributed function and extract the target *)
-      (* For now, we'll pass None and fix this in the eBPF codegen *)
-      None 
-    in
+    (* Extract target from program definition *)
+    let func_target = prog_def.prog_target in
     let temp_func = lower_function ctx prog_def.prog_name ~program_type:(Some prog_def.prog_type) ~func_target func in
     if is_attributed_entry then
       (* Mark the attributed function as entry by updating the is_main field *)
@@ -2830,9 +2826,10 @@ let lower_multi_program ast symbol_table source_name =
                     prog_functions = [attr_func.attr_function];
                     prog_maps = [];
                     prog_structs = [];
+                    prog_target = None;
                     prog_pos = attr_func.attr_pos;
                   })
-         | AttributeWithArg (attr_name, _target_func) :: _ ->
+         | AttributeWithArg (attr_name, target_func) :: _ ->
              (* Handle attributes with arguments like @kprobe("sys_read") *)
              (match attr_name with
               | "kprobe" -> 
@@ -2842,6 +2839,7 @@ let lower_multi_program ast symbol_table source_name =
                     prog_functions = [attr_func.attr_function];
                     prog_maps = [];
                     prog_structs = [];
+                    prog_target = Some target_func;
                     prog_pos = attr_func.attr_pos;
                   }
               | "tracepoint" ->
@@ -2851,6 +2849,7 @@ let lower_multi_program ast symbol_table source_name =
                     prog_functions = [attr_func.attr_function];
                     prog_maps = [];
                     prog_structs = [];
+                    prog_target = Some target_func;
                     prog_pos = attr_func.attr_pos;
                   }
               | _ -> None)
@@ -2871,6 +2870,7 @@ let lower_multi_program ast symbol_table source_name =
             prog_functions = [func];
             prog_maps = [];
             prog_structs = [];
+            prog_target = None; (* struct_ops don't have targets *)
             prog_pos = func.func_pos;
           }
       | Ast.ImplStaticField (_, _) -> None  (* Static fields are not programs *)

@@ -185,6 +185,7 @@ module Helpers = struct
   let make_test_program name prog_type main_func =
     {
       prog_name = name;
+      prog_target = None;
       prog_type = prog_type;
       prog_functions = [main_func];
       prog_maps = [];

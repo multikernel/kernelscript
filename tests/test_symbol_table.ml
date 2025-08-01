@@ -88,7 +88,8 @@ let create_test_function name params return_type =
 
 let create_test_program name functions =
   {
-    prog_name = name;
+          prog_name = name;
+      prog_target = None;
     prog_type = Xdp;
     prog_functions = functions;
     prog_maps = [];

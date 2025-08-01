@@ -276,6 +276,7 @@ type program_def = {
   prog_functions: function_def list;
   prog_maps: map_declaration list; (* Maps local to this program *)
   prog_structs: struct_def list; (* Structs local to this program *)
+  prog_target: string option; (* Target for kprobe/tracepoint programs *)
   prog_pos: position;
 }
 
@@ -402,6 +403,7 @@ let make_program name prog_type functions pos = {
   prog_functions = functions;
   prog_maps = [];
   prog_structs = [];
+  prog_target = None;
   prog_pos = pos;
 }
 
@@ -411,6 +413,7 @@ let make_program_with_maps name prog_type functions maps pos = {
   prog_functions = functions;
   prog_maps = maps;
   prog_structs = [];
+  prog_target = None;
   prog_pos = pos;
 }
 
@@ -420,6 +423,7 @@ let make_program_with_all name prog_type functions maps structs pos = {
   prog_functions = functions;
   prog_maps = maps;
   prog_structs = structs;
+  prog_target = None;
   prog_pos = pos;
 }
 

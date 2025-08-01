@@ -201,9 +201,75 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   check bool "Function should be marked as main" true main_func.is_main;
   check string "Function name should match" "sched_switch_handler" main_func.func_name
 
+(* NEW: Target Propagation Tests *)
+let test_tracepoint_target_propagation _ =
+  let source = "@tracepoint(\"sched/sched_switch\")
+fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
+    return 0
+}" in
+  let ast = parse_string source in
+  let typed_ast = type_check_ast ast in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_tracepoint" in
+  let program = List.hd ir_multi_prog.programs in
+  let main_func = program.entry_function in
+  
+  (* Test that the target is properly propagated through IR generation *)
+  check (option string) "Function should have correct target" (Some "sched/sched_switch") main_func.func_target
+
+let test_multiple_tracepoint_targets _ =
+  (* Test various tracepoint targets to ensure they all work correctly *)
+  let test_cases = [
+    ("sched/sched_switch", "SEC(\"raw_tracepoint/sched_switch\")");
+    ("net/netif_rx", "SEC(\"raw_tracepoint/netif_rx\")");
+    ("syscalls/sys_enter_read", "SEC(\"raw_tracepoint/sys_enter_read\")");
+    ("syscalls/sys_exit_write", "SEC(\"raw_tracepoint/sys_exit_write\")");
+    ("irq/irq_handler_entry", "SEC(\"raw_tracepoint/irq_handler_entry\")");
+  ] in
+  
+  List.iter (fun (target, expected_sec) ->
+    let source = Printf.sprintf "@tracepoint(\"%s\")
+fn handler(ctx: *trace_event_raw_context) -> i32 {
+    return 0
+}" target in
+    let ast = parse_string source in
+    let typed_ast = type_check_ast ast in
+    let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+    let ir_multi_prog = generate_ir typed_ast symbol_table "test" in
+    let c_code = generate_c_multi_program ir_multi_prog in
+    
+    check bool (Printf.sprintf "Should generate %s for target %s" expected_sec target) true
+      (Str.search_forward (Str.regexp_string expected_sec) c_code 0 >= 0)
+  ) test_cases
+
+let test_sched_switch_bug_regression _ =
+  (* Regression test: Ensure we don't generate the buggy SEC("raw_tracepoint/sched_sched") *)
+  let source = "@tracepoint(\"sched/sched_switch\")
+fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
+    return 0
+}" in
+  let ast = parse_string source in
+  let typed_ast = type_check_ast ast in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_regression" in
+  let c_code = generate_c_multi_program ir_multi_prog in
+  
+  (* Ensure correct SEC() is generated *)
+  check bool "Should generate correct SEC(raw_tracepoint/sched_switch)" true
+    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_switch\")") c_code 0 >= 0);
+  
+  (* Ensure buggy SEC() is NOT generated *)
+  check bool "Should NOT generate buggy SEC(raw_tracepoint/sched_sched)" true
+    (try 
+       let _ = Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_sched\")") c_code 0 in
+       false  (* Found the buggy pattern - test should fail *)
+     with Not_found -> 
+       true   (* Didn't find the buggy pattern - test should pass *)
+    )
+
 (* 4. Code Generation Tests *)
 let test_raw_tracepoint_section_name_generation _ =
-  (* Test minimal raw tracepoint section name conversion logic *)
+  (* Test correct raw tracepoint section name generation *)
   let source = "@tracepoint(\"sched/sched_switch\")
 fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
     return 0
@@ -214,9 +280,9 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_raw_tracepoint" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Check that forward slash is converted to underscore in section name *)
-  check bool "Should contain raw_tracepoint section with underscore" true
-    (String.contains c_code (String.get "SEC(\"raw_tracepoint/sched_sched_switch\")" 0))
+  (* Check that the correct SEC() is generated with just the event name *)
+  check bool "Should contain correct raw_tracepoint/sched_switch section" true
+    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_switch\")") c_code 0 >= 0)
 
 let test_tracepoint_ebpf_codegen _ =
   let source = "@tracepoint(\"sched/sched_switch\")
@@ -230,8 +296,8 @@ fn sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Check for tracepoint-specific C code elements *)
-  check bool "Should contain SEC(\"tracepoint\")" true 
-    (String.contains c_code (String.get "SEC(\"tracepoint\")" 0));
+  check bool "Should contain correct raw_tracepoint SEC" true 
+    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sched_switch\")") c_code 0 >= 0);
   check bool "Should contain function definition" true
     (String.contains c_code (String.get "sched_switch_handler" 0));
   check bool "Should contain struct parameter" true
@@ -342,8 +408,8 @@ fn sys_enter_open_handler(ctx: *trace_event_raw_sys_enter) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Comprehensive end-to-end validation *)
-  check bool "Contains tracepoint section" true
-    (String.contains c_code (String.get "SEC(\"tracepoint\")" 0));
+  check bool "Contains correct raw_tracepoint section" true
+    (Str.search_forward (Str.regexp_string "SEC(\"raw_tracepoint/sys_enter_open\")") c_code 0 >= 0);
   check bool "Contains function name" true
     (String.contains c_code (String.get "sys_enter_open_handler" 0));
   check bool "Contains context struct" true
@@ -381,6 +447,9 @@ let type_checking_tests = [
 let ir_generation_tests = [
   "tracepoint IR generation", `Quick, test_tracepoint_ir_generation;
   "tracepoint function signature validation", `Quick, test_tracepoint_function_signature_validation;
+  "tracepoint target propagation", `Quick, test_tracepoint_target_propagation;
+  "multiple tracepoint targets", `Quick, test_multiple_tracepoint_targets;
+  "sched_switch bug regression", `Quick, test_sched_switch_bug_regression;
 ]
 
 let code_generation_tests = [
