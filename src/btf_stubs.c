@@ -29,6 +29,17 @@
 /* #define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__) */
 #define DEBUG_PRINT(...)
 
+/* BTF integer encoding macros (if not already defined in libbpf) */
+#ifndef BTF_INT_ENCODING
+#define BTF_INT_ENCODING(VAL)  (((VAL) & 0x0f000000) >> 24)
+#endif
+#ifndef BTF_INT_OFFSET
+#define BTF_INT_OFFSET(VAL)    (((VAL) & 0x00ff0000) >> 16)
+#endif
+#ifndef BTF_INT_BITS
+#define BTF_INT_BITS(VAL)      ((VAL) & 0x000000ff)
+#endif
+
 /* Custom block for BTF handle */
 #define BTF_HANDLE_TAG 0
 
@@ -267,14 +278,23 @@ static char* resolve_type_to_string(struct btf *btf, int type_id) {
     }
     
     switch (kind) {
-        case BTF_KIND_INT:
+        case BTF_KIND_INT: {
+            /* Check encoding to determine if signed or unsigned */
+            __u32 *info_ptr = (__u32 *)(t + 1);
+            __u32 info = *info_ptr;
+            __u32 encoding = BTF_INT_ENCODING(info);
+            
+            /* BTF_INT_SIGNED is defined as 0x1 in BTF specification */
+            int is_signed = (encoding & 0x1) != 0;
+            
             switch (t->size) {
-                case 1: return strdup("u8");
-                case 2: return strdup("u16");
-                case 4: return strdup("u32");
-                case 8: return strdup("u64");
-                default: return strdup("u32");
+                case 1: return strdup(is_signed ? "i8" : "u8");
+                case 2: return strdup(is_signed ? "i16" : "u16");
+                case 4: return strdup(is_signed ? "i32" : "u32");
+                case 8: return strdup(is_signed ? "i64" : "u64");
+                default: return strdup(is_signed ? "i32" : "u32");
             }
+        }
         case BTF_KIND_STRUCT:
         case BTF_KIND_UNION:
         case BTF_KIND_ENUM: {
