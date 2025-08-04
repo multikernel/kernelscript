@@ -2929,7 +2929,9 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
           | SimpleAttribute prog_type_str :: _ ->
               (match prog_type_str with
                | "xdp" -> (Some Xdp, None)
-               | "tc" -> (Some Tc, None)  
+               | "tc" -> 
+                   (* Reject old format: @tc without direction specification *)
+                   type_error ("@tc requires direction specification. Use @tc(\"ingress\") or @tc(\"egress\") instead.") attr_func.attr_pos
 
                | "probe" -> 
                    (* Reject old format: @probe without target function *)
@@ -2944,6 +2946,12 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                | _ -> (None, None))
           | AttributeWithArg (attr_name, target_func) :: _ ->
               (match attr_name with
+               | "tc" ->
+                   (* Parse TC direction from string like "ingress" or "egress" *)
+                   if target_func = "ingress" || target_func = "egress" then
+                     (Some Tc, Some target_func)
+                   else
+                     type_error (sprintf "@tc requires direction \"ingress\" or \"egress\". Use @tc(\"ingress\") or @tc(\"egress\") instead of @tc(\"%s\")" target_func) attr_func.attr_pos
                | "probe" -> 
                    (* Determine probe type based on whether target contains offset *)
                    let probe_type = if String.contains target_func '+' then Kprobe else Fprobe in
@@ -3312,8 +3320,12 @@ and populate_multi_program_context ast multi_prog_analysis =
           | SimpleAttribute prog_type_str :: _ ->
               (match prog_type_str with
                | "xdp" -> Some Xdp
+               | "tracepoint" -> Some Tracepoint
+               | _ -> None)
+          | AttributeWithArg (attr_name, _) :: _ ->
+              (match attr_name with
                | "tc" -> Some Tc
-
+               | "probe" -> Some (Probe Fprobe) (* Default to Fprobe for enhancement *)
                | "tracepoint" -> Some Tracepoint
                | _ -> None)
           | _ -> None

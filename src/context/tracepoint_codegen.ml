@@ -69,6 +69,12 @@ let map_tracepoint_action_constant = function
   | -1 -> Some "-1"  (* Error *)
   | _ -> None
 
+(** Generate tracepoint section name with target event *)
+let generate_tracepoint_section_name target =
+  match target with
+  | Some event_name -> sprintf "SEC(\"tracepoint/%s\")" event_name
+  | None -> "SEC(\"tracepoint\")" (* Fallback for cases without target *)
+
 (** Create tracepoint code generator *)
 let create () = {
   name = "Tracepoint";
@@ -79,6 +85,7 @@ let create () = {
   generate_field_access = generate_tracepoint_field_access;
   map_action_constant = map_tracepoint_action_constant;
   generate_function_signature = None;
+  generate_section_name = Some generate_tracepoint_section_name;
 }
 
 (** Register this codegen with the context registry *)

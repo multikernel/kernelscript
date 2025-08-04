@@ -128,7 +128,8 @@ fn get_timestamp() -> u64 {
 }
 
 // TC program demonstrating different map usage patterns
-@tc fn traffic_shaper(ctx: *__sk_buff) -> int {
+@tc("ingress")
+fn traffic_shaper(ctx: *__sk_buff) -> int {
   var cpu = get_cpu_id()
   var bytes = get_packet_len_tc(ctx)
   

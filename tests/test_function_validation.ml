@@ -60,7 +60,7 @@ fn main(x: u32) -> i32 {
 (** Test that @tc fn main is also rejected *)
 let test_tc_attributed_main_rejection () =
   let program_text = {|
-@tc fn main(ctx: TcContext) -> TcAction {
+@tc("ingress") fn main(ctx: TcContext) -> TcAction {
   return 0
 }
 |} in

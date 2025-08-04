@@ -45,6 +45,12 @@ let map_fprobe_action_constant = function
   | -1 -> Some "-1"  (* Error *)
   | _ -> None
 
+(** Generate fprobe section name with target function *)
+let generate_fprobe_section_name target =
+  match target with
+  | Some func_name -> sprintf "SEC(\"fentry/%s\")" func_name
+  | None -> "SEC(\"fentry\")" (* Fallback for cases without target *)
+
 (** Create fprobe code generator *)
 let create () = {
   name = "Fprobe";
@@ -55,6 +61,7 @@ let create () = {
   generate_field_access = generate_fprobe_field_access;
   map_action_constant = map_fprobe_action_constant;
   generate_function_signature = Some generate_fprobe_function_signature;
+  generate_section_name = Some generate_fprobe_section_name;
 }
 
 (** Register this codegen with the context registry *)

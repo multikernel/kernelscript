@@ -74,6 +74,12 @@ let map_kprobe_action_constant = function
   | -1 -> Some "-1"  (* Error *)
   | _ -> None
 
+(** Generate kprobe section name with target function *)
+let generate_kprobe_section_name target =
+  match target with
+  | Some func_name -> sprintf "SEC(\"kprobe/%s\")" func_name
+  | None -> "SEC(\"kprobe\")" (* Fallback for cases without target *)
+
 (** Create kprobe code generator *)
 let create () = {
   name = "Kprobe";
@@ -84,6 +90,7 @@ let create () = {
   generate_field_access = generate_kprobe_field_access;
   map_action_constant = map_kprobe_action_constant;
   generate_function_signature = None;
+  generate_section_name = Some generate_kprobe_section_name;
 }
 
 (** Register this codegen with the context registry *)

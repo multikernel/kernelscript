@@ -200,7 +200,7 @@ let test_tc_context_field_types () =
       TC_ACT_REDIRECT = 7,
     }
     
-    @tc fn test_tc_context_fields(ctx: *__sk_buff) -> tc_action {
+    @tc("ingress") fn test_tc_context_fields(ctx: *__sk_buff) -> tc_action {
       var data_ptr = ctx->data
       var data_end_ptr = ctx->data_end
       var packet_size = data_end_ptr - data_ptr

@@ -233,7 +233,7 @@ var xdp_map : hash<u32, u64>(1024)
   let tc_program = {|
 var tc_map : array<u32, u64>(256)
 
-@tc fn tc_test(ctx: TcContext) -> TcAction {
+@tc("ingress") fn tc_test(ctx: TcContext) -> TcAction {
   return 0
 }
 |} in

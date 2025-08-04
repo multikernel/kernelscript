@@ -139,7 +139,8 @@ struct ArrayElement {
 }
 
 // Program 2: Writer workload demonstrating conflict detection
-@tc fn stats_updater(ctx: *__sk_buff) -> i32 {
+@tc("ingress")
+fn stats_updater(ctx: *__sk_buff) -> i32 {
     var ifindex = ctx->ifindex
     
     // Potential write conflict with other programs

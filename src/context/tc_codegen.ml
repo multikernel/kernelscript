@@ -104,6 +104,15 @@ let map_tc_action_constant = function
   | 7 -> Some "TC_ACT_REDIRECT"
   | _ -> None
 
+(** Generate TC section name with direction support *)
+let generate_tc_section_name target =
+  (* TC direction parameter is required - no defaults *)
+  match target with
+  | Some "ingress" -> "SEC(\"tc/ingress\")"
+  | Some "egress" -> "SEC(\"tc/egress\")"
+  | Some direction -> failwith ("Invalid TC direction: " ^ direction ^ ". Must be 'ingress' or 'egress'")
+  | None -> failwith "TC direction parameter is required. Use @tc(\"ingress\") or @tc(\"egress\")"
+
 (** Create TC code generator *)
 let create () = {
   name = "TC";
@@ -114,6 +123,7 @@ let create () = {
   generate_field_access = generate_tc_field_access;
   map_action_constant = map_tc_action_constant;
   generate_function_signature = None;
+  generate_section_name = Some generate_tc_section_name;
 }
 
 (** Register this codegen with the context registry *)

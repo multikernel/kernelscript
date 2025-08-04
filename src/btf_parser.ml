@@ -284,7 +284,7 @@ let generate_kprobe_function_from_signature func_name signature =
   sprintf "fn %s(%s) -> %s" func_name params_str return_type
 
 (** Generate KernelScript source code from template *)
-let generate_kernelscript_source template project_name =
+let generate_kernelscript_source ?extra_param template project_name =
   let context_comment = match template.program_type with
     | "xdp" -> "// XDP (eXpress Data Path) program for high-performance packet processing"
     | "tc" -> "// TC (Traffic Control) program for network traffic shaping and filtering"
@@ -362,6 +362,12 @@ let generate_kernelscript_source template project_name =
       let func_def = sprintf "fn %s_handler(ctx: %s) -> %s" 
         (String.map (function '/' -> '_' | c -> c) first_event) template.context_type template.return_type in
       (comment, first_event, func_def, Some (sprintf "@tracepoint(\"%s\")" first_event))
+    else if template.program_type = "tc" && extra_param <> None then
+      let direction = match extra_param with Some d -> d | None -> "ingress" in
+      let comment = sprintf "\n// TC %s traffic control program\n" direction in
+      let func_name = sprintf "%s_%s_handler" project_name direction in
+      let func_def = sprintf "fn %s(ctx: %s) -> %s" func_name template.context_type template.return_type in
+      (comment, direction, func_def, Some (sprintf "@tc(\"%s\")" direction))
     else 
       ("", "target_function", sprintf "fn %s_handler(ctx: %s) -> %s" project_name template.context_type template.return_type, None)
   in
@@ -391,7 +397,17 @@ let generate_kernelscript_source template project_name =
     if template.program_type = "kprobe" then target_function_name 
     else if template.program_type = "tracepoint" then 
       String.map (function '/' -> '_' | c -> c) target_function_name ^ "_handler"
+    else if template.program_type = "tc" && extra_param <> None then
+      let direction = match extra_param with Some d -> d | None -> "ingress" in
+      sprintf "%s_%s_handler" project_name direction
     else sprintf "%s_handler" project_name
+  in
+  
+  let program_description = 
+    if template.program_type = "tc" && extra_param <> None then
+      let direction = match extra_param with Some d -> d | None -> "ingress" in
+      sprintf "TC %s" direction
+    else template.program_type
   in
   
   sprintf {|%s
@@ -421,4 +437,4 @@ fn main() -> i32 {
     
     return 0
 }
-|} context_comment function_signatures_comment type_definitions attribute_line function_definition template.program_type sample_return function_name attach_comment attach_target template.program_type template.program_type
+|} context_comment function_signatures_comment type_definitions attribute_line function_definition template.program_type sample_return function_name attach_comment attach_target program_description program_description

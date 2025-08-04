@@ -52,4 +52,4 @@ val extract_struct_ops_definitions : string option -> string list -> string list
 val generate_struct_ops_template : string option -> string list -> string -> string
 
 (** Generate KernelScript source code from template *)
-val generate_kernelscript_source : program_template -> string -> string 
+val generate_kernelscript_source : ?extra_param:string -> program_template -> string -> string 

@@ -283,7 +283,7 @@ fn packet_monitor(ctx: *xdp_md) -> xdp_action {
 
 // Quality of Service (QoS) packet marking
 // Demonstrates match for traffic prioritization
-@tc
+@tc("ingress")
 fn qos_packet_marker(ctx: *__sk_buff) -> int {
     var protocol = get_ip_protocol_tc(ctx)
     

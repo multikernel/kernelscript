@@ -41,6 +41,7 @@ type context_codegen = {
   generate_field_access: string -> string -> string;
   map_action_constant: int -> string option;
   generate_function_signature: (string -> (string * string) list -> string -> string) option;
+  generate_section_name: (string option -> string) option; (* Optional function to generate SEC(...) attribute with target *)
 }
 
 (** Register a context code generator *)
@@ -79,4 +80,7 @@ val get_context_field_c_type : string -> string -> string option
 val register_btf_context_codegen : string -> btf_type_info -> unit
 
 (** Update context codegen with BTF information if available *)
-val update_context_codegen_with_btf : string -> btf_type_info -> unit 
+val update_context_codegen_with_btf : string -> btf_type_info -> unit
+
+(** Generate section name for a context type with optional direction *)
+val generate_context_section_name : string -> string option -> string option 

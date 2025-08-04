@@ -34,8 +34,8 @@ let rec parse_args () =
       printf "Subcommands:\n";
       printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>]\n";
       printf "    Initialize a new KernelScript project\n";
-      printf "    prog_type: xdp | tc | probe/target_function | tracepoint/category/event\n";
-      printf "    Examples: probe/sys_read, probe/vfs_write, probe/tcp_sendmsg\n";
+      printf "    prog_type: xdp | tc/direction | probe/target_function | tracepoint/category/event\n";
+      printf "    Examples: tc/ingress, tc/egress, probe/sys_read, probe/vfs_write, probe/tcp_sendmsg\n";
       printf "    tracepoint: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
       printf "    struct_ops: tcp_congestion_ops\n";
       printf "    project_name: Name of the project directory to create\n";
@@ -145,9 +145,10 @@ let init_project prog_type_or_struct_ops project_name btf_path =
       let parts = String.split_on_char '/' prog_type_or_struct_ops in
       match parts with
       | [prog; func] when prog = "probe" -> (prog, Some func)
+      | [prog; direction] when prog = "tc" -> (prog, Some direction)
       | [prog; category; event] when prog = "tracepoint" -> (prog, Some (category ^ "/" ^ event))
       | _ -> 
-          printf "❌ Error: Invalid syntax '%s'. Use probe/function_name or tracepoint/category/event\n" prog_type_or_struct_ops;
+          printf "❌ Error: Invalid syntax '%s'. Use tc/direction, probe/function_name or tracepoint/category/event\n" prog_type_or_struct_ops;
           exit 1
     else
       (prog_type_or_struct_ops, None)
@@ -170,6 +171,23 @@ let init_project prog_type_or_struct_ops project_name btf_path =
     printf "❌ Error: tracepoint requires category/event. Use tracepoint/category/event\n";
     printf "Examples: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
     exit 1
+  );
+  
+  (* Validate TC direction *)
+  if prog_type = "tc" && target_function = None then (
+    printf "❌ Error: tc requires direction. Use tc/direction\n";
+    printf "Examples: tc/ingress, tc/egress\n";
+    exit 1
+  );
+  
+  if prog_type = "tc" && target_function <> None then (
+    match target_function with
+    | Some direction when direction = "ingress" || direction = "egress" -> ()
+    | Some direction -> 
+        printf "❌ Error: Invalid TC direction '%s'. Must be 'ingress' or 'egress'\n" direction;
+        printf "Examples: tc/ingress, tc/egress\n";
+        exit 1
+    | None -> ()
   );
   
   if not is_struct_ops && not is_program_type then (
@@ -216,6 +234,14 @@ let init_project prog_type_or_struct_ops project_name btf_path =
                printf "✅ Found %d type definitions\n" (List.length template.types);
                Btf_parser.generate_kernelscript_source template project_name
            | None -> failwith "tracepoint requires category/event")
+      | "tc" ->
+          (match target_function with
+           | Some direction ->
+               printf "🔧 Extracting types for %s program with %s direction...\n" prog_type direction;
+               let template = Btf_parser.get_program_template prog_type btf_path in
+               printf "✅ Found %d type definitions\n" (List.length template.types);
+               Btf_parser.generate_kernelscript_source ~extra_param:direction template project_name
+           | None -> failwith "tc requires direction")
       | _ ->
           printf "🔧 Extracting types for %s program...\n" prog_type;
           let template = Btf_parser.get_program_template prog_type btf_path in
@@ -272,6 +298,22 @@ If you provided --btf-vmlinux-path during initialization, the struct definition 
 During compilation, the definition is verified against BTF to ensure compatibility.
 |} project_name description project_name project_name project_name project_name project_name prog_type description prog_type
     ) else (
+      let program_description = match prog_type with
+        | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
+        | "tc" -> 
+            (match target_function with
+             | Some direction -> sprintf "TC programs enable traffic control and packet filtering in the Linux networking stack. This program operates on %s traffic." direction
+             | None -> "TC programs enable traffic control and packet filtering in the Linux networking stack.")
+        | "probe" -> 
+            (match target_function with
+             | Some func_name -> sprintf "Probe programs allow dynamic tracing of kernel functions with intelligent fprobe/kprobe selection. This program traces the '%s' function." func_name
+             | None -> "Probe programs allow dynamic tracing of kernel functions with intelligent fprobe/kprobe selection.")
+        | "tracepoint" -> 
+            (match target_function with
+             | Some category_event -> sprintf "Tracepoint programs provide static tracing points in the kernel. This program traces the '%s' tracepoint." category_event
+             | None -> "Tracepoint programs provide static tracing points in the kernel.")
+        | _ -> "eBPF program for kernel-level processing."
+      in
       sprintf {|# %s
 
 A KernelScript %s program.
@@ -297,13 +339,7 @@ cd %s && make run
 ## Program Type: %s
 
 %s
-|} project_name prog_type project_name project_name project_name project_name project_name prog_type (match prog_type with
-        | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
-        | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
-        | "probe" -> "Probe programs allow dynamic tracing of kernel functions with intelligent fprobe/kprobe selection."
-        | "tracepoint" -> "Tracepoint programs provide static tracing points in the kernel."
-        | _ -> "eBPF program for kernel-level processing."
-      )
+|} project_name prog_type project_name project_name project_name project_name project_name prog_type program_description
     ) in
   
   let readme_filename = project_name ^ "/README.md" in

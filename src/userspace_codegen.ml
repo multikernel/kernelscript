@@ -2942,6 +2942,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
 #include <sys/resource.h>
 #include <pthread.h>
 
+/* TCX attachment constants - defined inline to ensure availability */
+#ifndef BPF_TCX_INGRESS
+#define BPF_TCX_INGRESS  44
+#endif
+#ifndef BPF_TCX_EGRESS
+#define BPF_TCX_EGRESS   45
+#endif
+
 /* Generated from KernelScript IR */
 |} in
   
@@ -3399,6 +3407,56 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             
             return 0;
         }
+        case BPF_PROG_TYPE_SCHED_CLS: {
+            // For TC (Traffic Control) programs, target should be the interface name (e.g., "eth0")
+            
+            int ifindex = if_nametoindex(target);
+            if (ifindex == 0) {
+                fprintf(stderr, "Failed to get interface index for '%s'\n", target);
+                return -1;
+            }
+            
+            // Get the bpf_program struct from the object and file descriptor
+            struct bpf_program *prog = NULL;
+
+            // Find the program object corresponding to this fd
+            if (!obj) {
+                fprintf(stderr, "eBPF skeleton not loaded for TC attachment\n");
+                return -1;
+            }
+
+            bpf_object__for_each_program(prog, obj->obj) {
+                if (bpf_program__fd(prog) == prog_fd) {
+                    break;
+                }
+            }
+
+            if (!prog) {
+                fprintf(stderr, "Failed to find bpf_program for fd %d\n", prog_fd);
+                return -1;
+            }
+
+            // Set up TCX options using LIBBPF_OPTS macro
+            LIBBPF_OPTS(bpf_tcx_opts, tcx_opts);
+
+            // Use libbpf's TC attachment API
+            struct bpf_link *link = bpf_program__attach_tcx(prog, ifindex, &tcx_opts);
+            if (!link) {
+                fprintf(stderr, "Failed to attach TC program to interface '%s': %s\n", target, strerror(errno));
+                return -1;
+            }
+            
+            // Store TC attachment for later cleanup (flags no longer needed for direction)
+            if (add_attachment(prog_fd, target, 0, link, ifindex, BPF_PROG_TYPE_SCHED_CLS) != 0) {
+                // If storage fails, destroy link and return error
+                bpf_link__destroy(link);
+                return -1;
+            }
+            
+            printf("TC program attached to interface: %s\n", target);
+            
+            return 0;
+        }
         default:
             fprintf(stderr, "Unsupported program type for attachment: %d\n", info.type);
             return -1;
@@ -3455,6 +3513,15 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
                 printf("Tracepoint detached from: %s\n", entry->target);
             } else {
                 fprintf(stderr, "Invalid tracepoint link for program fd %d\n", prog_fd);
+            }
+            break;
+        }
+        case BPF_PROG_TYPE_SCHED_CLS: {
+            if (entry->link) {
+                bpf_link__destroy(entry->link);
+                printf("TC program detached from interface: %s\n", entry->target);
+            } else {
+                fprintf(stderr, "Invalid TC program link for program fd %d\n", prog_fd);
             }
             break;
         }

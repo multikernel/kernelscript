@@ -289,9 +289,9 @@ fn vfs_read_handler(ctx: *pt_regs) -> i32 {
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Check for kprobe section *)
-  check bool "Should contain SEC(\"kprobe\")" true
-    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+  (* Check for kprobe section with target function and offset *)
+  check bool "Should contain SEC(\"kprobe/vfs_read+0x10\")" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe/vfs_read+0x10\")") c_code 0); true with Not_found -> false);
   (* Should contain pt_regs parameter for kprobe *)
   check bool "Should contain struct pt_regs *ctx" true
     (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false)
@@ -353,8 +353,8 @@ fn vfs_read_handler(ctx: *pt_regs) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Check for kprobe-specific C code elements *)
-  check bool "Should contain SEC(\"kprobe\")" true 
-    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+  check bool "Should contain SEC(\"kprobe/vfs_read+0x20\")" true 
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe/vfs_read+0x20\")") c_code 0); true with Not_found -> false);
   check bool "Should contain function definition" true
     (try ignore (Str.search_forward (Str.regexp_string "vfs_read_handler") c_code 0); true with Not_found -> false);
   check bool "Should contain pt_regs parameter" true
@@ -392,8 +392,8 @@ fn vfs_write_handler(ctx: *pt_regs) -> i32 {
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Check for kprobe-specific elements *)
-  check bool "Should contain SEC(\"kprobe\")" true
-    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+  check bool "Should contain SEC(\"kprobe/vfs_write+0x8\")" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe/vfs_write+0x8\")") c_code 0); true with Not_found -> false);
   check bool "Should contain struct pt_regs *ctx parameter" true
     (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false);
   check bool "Should include bpf/bpf_tracing.h for kprobe" true
@@ -514,7 +514,7 @@ fn sys_open_handler(ctx: *pt_regs) -> i32 {
   
   (* Comprehensive end-to-end validation for kprobe *)
   check bool "Contains kprobe section" true
-    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe/sys_open+0x4\")") c_code 0); true with Not_found -> false);
   check bool "Contains function name" true
     (try ignore (Str.search_forward (Str.regexp_string "sys_open_handler") c_code 0); true with Not_found -> false);
   check bool "Contains pt_regs parameter" true
@@ -565,7 +565,7 @@ fn sys_write_handler(ctx: *pt_regs) -> i32 {
   check bool "Contains fentry section for sys_read" true
     (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/sys_read\")") c_code 0); true with Not_found -> false);
   check bool "Contains kprobe section for sys_write" true
-    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false)
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe/sys_write+0x8\")") c_code 0); true with Not_found -> false)
 
 (** Test Suite Configuration *)
 let parsing_tests = [

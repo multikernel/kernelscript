@@ -68,7 +68,7 @@ fn monitor(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn analyzer(ctx: *__sk_buff) -> int {
     update_counters(1)  // Same kernel-shared function
     return 0  // TC_ACT_OK
@@ -217,9 +217,49 @@ fn arbitrary_address() -> i32 {
 **Key Benefits:**
 - **Intelligent Probe Selection**: Automatically chooses fprobe for function entrance (better performance) or kprobe for arbitrary addresses
 - **Type Safety**: Function entrance probes have correct types extracted from kernel BTF information
-- **No Magic Numbers**: Direct parameter access for function entrance probes
-- **Self-Documenting**: Function signature matches the actual kernel function for entrance probes
-- **Compile-Time Validation**: Invalid parameter access caught at compile time
+
+#### 3.1.2 Traffic Control (TC) Programs with Direction Support
+
+TC programs must specify traffic direction for proper kernel attachment point selection.
+
+```kernelscript
+// Ingress traffic control (packets entering the interface)
+@tc("ingress")
+fn ingress_filter(ctx: *__sk_buff) -> int {
+    var packet_size = ctx->len
+    
+    // Drop oversized packets at ingress
+    if (packet_size > 1500) {
+        return TC_ACT_SHOT  // Drop packet
+    }
+    
+    return TC_ACT_OK  // Allow packet
+}
+
+// Egress traffic control (packets leaving the interface)  
+@tc("egress")
+fn egress_shaper(ctx: *__sk_buff) -> int {
+    var protocol = ctx->protocol
+    
+    // Shape traffic based on protocol at egress
+    if (protocol == ETH_P_IP) {
+        // Apply rate limiting logic
+        return TC_ACT_PIPE  // Continue processing
+    }
+    
+    return TC_ACT_OK  // Allow packet
+}
+```
+
+**TC Direction Specification:**
+- **@tc("ingress")**: Attaches to ingress hook (packets entering interface)
+- **@tc("egress")**: Attaches to egress hook (packets leaving interface)
+- Direction parameter is **required** - no default direction is assumed
+
+**Key Benefits:**
+- **Explicit Direction Control**: Clear specification of traffic direction for precise attachment
+- **Type Safety**: All TC programs use standard __sk_buff context with compile-time validation
+- **Kernel Integration**: Direct mapping to kernel TC ingress/egress hooks
 
 **Probe Type Selection:**
 - `@probe("function_name")` → Uses **fprobe** for function entrance with direct parameter access
@@ -726,7 +766,7 @@ fn packet_analyzer(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn flow_tracker(ctx: *__sk_buff) -> int {
     // Track flow information using shared config
     if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
@@ -795,7 +835,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn flow_monitor(ctx: *__sk_buff) -> int {
     return 0  // TC_ACT_OK
 }
@@ -827,7 +867,7 @@ fn main() -> i32 {
 - First parameter must be a ProgramHandle returned from load()
 - Target and flags interpretation depends on program type:
   - **XDP**: target = interface name ("eth0"), flags = XDP attachment flags
-  - **TC**: target = interface name ("eth0"), flags = direction (ingress/egress)
+  - **TC**: target = interface name ("eth0"), direction determined from @tc("ingress"/"egress") attribute
   - **Kprobe**: target = function name ("sys_read"), flags = unused (0)
   - **Cgroup**: target = cgroup path ("/sys/fs/cgroup/test"), flags = unused (0)
 - Returns 0 on success, negative error code on failure
@@ -949,7 +989,7 @@ fn main(args: Args) -> i32 {
 @xdp
 fn ingress_monitor(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
 
-@tc
+@tc("egress")
 fn egress_monitor(ctx: *__sk_buff) -> int { return 0 }  // TC_ACT_OK
 
 // Struct_ops example using impl block approach
@@ -1245,7 +1285,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn traffic_shaper(ctx: *__sk_buff) -> int {
     var packet = ctx.packet()
     
@@ -1301,7 +1341,7 @@ fn ddos_protection(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn connection_tracker(ctx: *__sk_buff) -> int {
     var tcp_info = extract_tcp_info(ctx)  // Reuse same helper
     if (tcp_info != null) {
@@ -1435,7 +1475,7 @@ fn high_level_filter(packet: *u8, len: u32) -> i32 {
 }
 
 // eBPF usage
-@tc
+@tc("ingress")
 fn traffic_analyzer(ctx: *__sk_buff) -> int {
     var packet = ctx.packet()
     
@@ -2342,7 +2382,7 @@ fn ingress_monitor(ctx: *xdp_md) -> xdp_action {
 }
 
 // Program 2: Automatically has access to the same global maps
-@tc
+@tc("egress")
 fn egress_monitor(ctx: *__sk_buff) -> int {
     var flow_key = extract_flow_key(ctx)?
     
@@ -2802,7 +2842,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn flow_monitor(ctx: *__sk_buff) -> int {
     // Can call the same kernel-shared functions
     if (!validate_packet(ctx.packet())) {
@@ -2907,7 +2947,7 @@ fn main_filter(ctx: *xdp_md) -> xdp_action {
     return specialized_filter(ctx)   // ✅ Same type (@xdp), return position
 }
 
-@tc
+@tc("ingress")
 fn ingress_handler(ctx: *__sk_buff) -> int {
     return security_check(ctx)       // ✅ Same type (@tc), return position  
 }
@@ -4016,7 +4056,7 @@ mod program {
     // Attach a program to a target with optional flags using its handle
     // - First parameter must be a ProgramHandle returned from load()
     // - For XDP: target is interface name (e.g., "eth0"), flags are XDP attachment flags
-    // - For TC: target is interface name, flags indicate direction (ingress/egress)
+    // - For TC: target is interface name, direction determined from @tc attribute
     // - For Kprobe: target is function name (e.g., "sys_read"), flags are unused (0)
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
     pub fn attach(handle: ProgramHandle, target: string, flags: u32) -> u32
@@ -4120,7 +4160,7 @@ fn simple_filter(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 
-@tc
+@tc("ingress")
 fn security_monitor(ctx: *__sk_buff) -> int {
     var packet = ctx.packet()
     if (packet == null) {

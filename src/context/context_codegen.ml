@@ -43,6 +43,7 @@ type context_codegen = {
   generate_field_access: string -> string -> string; (* ctx_var -> field_name -> C expression *)
   map_action_constant: int -> string option; (* Map integer to action constant *)
   generate_function_signature: (string -> (string * string) list -> string -> string) option; (* func_name -> parameters -> return_type -> signature *)
+  generate_section_name: (string option -> string) option; (* Optional function to generate SEC(...) attribute with target *)
 }
 
 (** Registry for context code generators *)
@@ -232,6 +233,7 @@ let create_context_codegen_from_btf ctx_type_name btf_type_info =
     generate_field_access;
     map_action_constant;
     generate_function_signature = None;
+    generate_section_name = None;
   }
 
 (** Register context codegen from BTF type information *)
@@ -272,4 +274,13 @@ let update_context_codegen_with_btf ctx_type_name btf_type_info =
         ctx_type_name (List.length btf_only_fields)
   | None ->
       (* No existing codegen, create new one from BTF *)
-      register_btf_context_codegen ctx_type_name btf_type_info 
+      register_btf_context_codegen ctx_type_name btf_type_info
+
+(** Generate section name for a context type with optional direction *)
+let generate_context_section_name ctx_type direction =
+  match get_context_codegen ctx_type with
+  | Some codegen -> 
+      (match codegen.generate_section_name with
+       | Some section_fn -> Some (section_fn direction)
+       | None -> None)
+  | None -> None 

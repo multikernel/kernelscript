@@ -91,7 +91,8 @@ fn log_packet(info: PacketInfo) -> u32 {
     }
 }
 
-@tc fn traffic_monitor(ctx: *__sk_buff) -> i32 {
+@tc("ingress")
+fn traffic_monitor(ctx: *__sk_buff) -> i32 {
     var packet_protocol = ctx->protocol
     
     // Access global map (visible from all programs)

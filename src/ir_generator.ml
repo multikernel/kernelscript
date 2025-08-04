@@ -2829,10 +2829,20 @@ let lower_multi_program ast symbol_table source_name =
                     prog_target = None;
                     prog_pos = attr_func.attr_pos;
                   })
-         | AttributeWithArg (attr_name, target_func) :: _ ->
-             (* Handle attributes with arguments like @kprobe("sys_read") *)
+                  | AttributeWithArg (attr_name, target_func) :: _ ->
+             (* Handle attributes with arguments like @tc("ingress"), @probe("sys_read") *)
              (match attr_name with
-              | "probe" -> 
+              | "tc" ->
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = Ast.Tc;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_target = Some target_func;
+                    prog_pos = attr_func.attr_pos;
+                  }
+              | "probe" ->
                   (* Determine probe type based on whether target contains offset *)
                   let probe_kind = if String.contains target_func '+' then Ast.Kprobe else Ast.Fprobe in
                   Some {

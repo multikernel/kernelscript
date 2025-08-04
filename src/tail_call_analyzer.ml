@@ -54,8 +54,13 @@ let extract_program_type attr_list =
   | SimpleAttribute prog_type_str :: _ ->
       (match prog_type_str with
        | "xdp" -> Some Xdp
-       | "tc" -> Some Tc
        | "kprobe" -> Some (Probe Kprobe)
+       | "tracepoint" -> Some Tracepoint
+       | _ -> None)
+  | AttributeWithArg (attr_name, _) :: _ ->
+      (match attr_name with
+       | "tc" -> Some Tc
+       | "probe" -> Some (Probe Fprobe) (* Default to Fprobe for tail call compatibility *)
        | "tracepoint" -> Some Tracepoint
        | _ -> None)
   | _ -> None

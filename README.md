@@ -86,7 +86,8 @@ KernelScript supports all major eBPF program types with typed contexts:
 }
 
 // TC program for traffic control
-@tc fn traffic_shaper(ctx: *__sk_buff) -> i32 {
+@tc("ingress")
+fn traffic_shaper(ctx: *__sk_buff) -> i32 {
     if (ctx->len > 1000) {
         return TC_ACT_SHOT  // Drop large packets
     }
@@ -212,7 +213,8 @@ pin var shared_counter : hash<u32, u32>(1024)
 }
 
 // TC program reads counter
-@tc fn packet_reader(ctx: *__sk_buff) -> int {
+@tc("ingress")
+fn packet_reader(ctx: *__sk_buff) -> int {
     var count = shared_counter[1]
     if (count > 1000) {
         return TC_ACT_SHOT  // Rate limiting
@@ -245,7 +247,7 @@ Create a new KernelScript project with template code:
 kernelscript init xdp my_packet_filter
 
 # Create TC project  
-kernelscript init tc my_traffic_shaper
+kernelscript init tc/egress my_traffic_shaper
 
 # Create probe project
 kernelscript init probe/sys_read my_tracer

@@ -93,6 +93,10 @@ let map_xdp_action_constant = function
   | 4 -> Some "XDP_TX"
   | _ -> None
 
+(** Generate XDP section name *)
+let generate_xdp_section_name _target =
+  "SEC(\"xdp\")"
+
 (** Create XDP code generator *)
 let create () = {
   name = "XDP";
@@ -103,6 +107,7 @@ let create () = {
   generate_field_access = generate_xdp_field_access;
   map_action_constant = map_xdp_action_constant;
   generate_function_signature = None;
+  generate_section_name = Some generate_xdp_section_name;
 }
 
 (** Register this codegen with the context registry *)

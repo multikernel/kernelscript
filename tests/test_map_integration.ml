@@ -385,7 +385,7 @@ var xdp_stats : hash<u32, u64>(1024)
     ("tc", {|
 var tc_stats : hash<u32, u64>(1024)
 
-@tc fn tc_test(ctx: *__sk_buff) -> int {
+@tc("ingress") fn tc_test(ctx: *__sk_buff) -> int {
   tc_stats[1] = tc_stats[2]
   return 0
 }
@@ -401,7 +401,10 @@ var tc_stats : hash<u32, u64>(1024)
       
       match compile_to_c_code ast with
       | Some c_code ->
-          let expected_section = "SEC(\"" ^ prog_type ^ "\")" in
+          let expected_section = match prog_type with
+            | "tc" -> "SEC(\"tc/ingress\")" (* TC uses modern TCX sections *)
+            | _ -> "SEC(\"" ^ prog_type ^ "\")"
+          in
           let has_correct_section = string_contains_substring c_code expected_section in
           
           check bool ("has " ^ prog_type ^ " section") true has_correct_section;

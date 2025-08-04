@@ -3544,38 +3544,33 @@ let generate_c_function ctx ir_func =
     (* Check if this is a struct_ops function first *)
     match ir_func.func_program_type with
     | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
-    | Some (Ast.Probe probe_type) when ir_func.is_main -> 
-        (match probe_type with
-         | Ast.Fprobe -> 
-             (* fentry programs need the target function in the section name *)
-             (match ir_func.func_target with
-              | Some target -> sprintf "SEC(\"fentry/%s\")" target
-              | None -> failwith "Fprobe function is missing target information")
-         | Ast.Kprobe -> "SEC(\"kprobe\")")  (* Use kprobe section for offset-capable probes *)
-    | Some Ast.Tracepoint when ir_func.is_main -> 
-        (* For tracepoint functions, generate specific SEC based on target *)
-        (match ir_func.func_target with
-         | Some target -> 
-             (* Convert KernelScript "category/event" format to regular tracepoint SEC format *)
-             sprintf "SEC(\"tracepoint/%s\")" target
-         | None ->
-             (* This should not happen now that we properly pass targets through *)
-             failwith "Tracepoint function is missing target information")
     | _ ->
-        (* For non-struct_ops, non-probe, and non-tracepoint functions, only generate SEC if it's a main function *)
+        (* Generate section name using context-specific modules for all other cases *)
         if ir_func.is_main then
-          match ir_func.parameters with
-          | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
-          | (_, IRContext XdpCtx) :: _ -> "SEC(\"xdp\")"
-          | (_, IRContext TcCtx) :: _ -> "SEC(\"tc\")"
-          | (_, IRContext KprobeCtx) :: _ -> "SEC(\"kprobe\")"
-          | (_, IRContext TracepointCtx) :: _ -> "SEC(\"tracepoint\")"
-          | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> "SEC(\"xdp\")"
-          | (_, IRPointer (IRContext TcCtx, _)) :: _ -> "SEC(\"tc\")"
-          | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> "SEC(\"kprobe\")"
-          | (_, IRPointer (IRContext TracepointCtx, _)) :: _ -> "SEC(\"tracepoint\")"
-          | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> "SEC(\"tc\")"  (* Handle __sk_buff as TC context *)
-          | _ -> "SEC(\"prog\")"
+          let context_type = match ir_func.func_program_type, ir_func.parameters with
+            (* Use program type to determine context for attributed functions *)
+            | Some (Ast.Probe Ast.Fprobe), _ -> Some "fprobe"
+            | Some (Ast.Probe Ast.Kprobe), _ -> Some "kprobe"
+            | Some Ast.Tracepoint, _ -> Some "tracepoint"
+            (* Fall back to parameter-based detection for context functions *)
+            | _, (_, IRContext XdpCtx) :: _ -> Some "xdp"
+            | _, (_, IRContext TcCtx) :: _ -> Some "tc"
+            | _, (_, IRContext KprobeCtx) :: _ -> Some "kprobe"
+            | _, (_, IRContext TracepointCtx) :: _ -> Some "tracepoint"
+            | _, (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
+            | _, (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
+            | _, (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
+            | _, (_, IRPointer (IRContext TracepointCtx, _)) :: _ -> Some "tracepoint"
+            | _, (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc" (* Handle __sk_buff as TC context *)
+            | _, [] -> None (* Parameterless function *)
+            | _, _ -> None (* Other context types *)
+          in
+          match context_type with
+          | Some ctx_type ->
+              (match Kernelscript_context.Context_codegen.generate_context_section_name ctx_type ir_func.func_target with
+               | Some section -> section
+               | None -> "SEC(\"prog\")")
+          | None -> "SEC(\"prog\")"
         else ""
   in
   
