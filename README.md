@@ -329,14 +329,15 @@ sudo ./my_project          # Run the program
 1. **Install system dependencies (Debian/Ubuntu):**
    ```bash
    sudo apt update
-   sudo apt install libbpf-dev libelf-dev zlib1g-dev
+   sudo apt install libbpf-dev libelf-dev zlib1g-dev opam bpftool
    ```
 
 2. **Install KernelScript:**
    ```bash
    git clone https://github.com/multikernel/kernelscript.git
    cd kernelscript
-   opam install . --deps-only
+   opam init
+   opam install . --deps-only --with-test
    eval $(opam env) && dune build && dune install
    ```
 
