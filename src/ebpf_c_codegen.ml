@@ -1106,9 +1106,55 @@ let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
   (* Function has side effects on ctx, no return value needed *)
   ()
 
+(** Check if IR multi-program contains object allocation instructions *)
+let rec check_object_allocation_usage_in_instrs instrs =
+  List.exists (fun instr ->
+    match instr.instr_desc with
+    | IRObjectNew (_, _) | IRObjectDelete _ -> true
+    | IRIf (_, then_body, else_body) ->
+        (check_object_allocation_usage_in_instrs then_body) ||
+        (match else_body with
+         | Some else_instrs -> check_object_allocation_usage_in_instrs else_instrs
+         | None -> false)
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        (List.exists (fun (_, then_body) ->
+          check_object_allocation_usage_in_instrs then_body
+        ) conditions_and_bodies) ||
+        (match final_else with
+         | Some else_instrs -> check_object_allocation_usage_in_instrs else_instrs
+         | None -> false)
+    | IRBpfLoop (_, _, _, _, body_instrs) ->
+        check_object_allocation_usage_in_instrs body_instrs
+    | IRTry (try_instrs, catch_clauses) ->
+        (check_object_allocation_usage_in_instrs try_instrs) ||
+        (List.exists (fun clause ->
+          check_object_allocation_usage_in_instrs clause.catch_body
+        ) catch_clauses)
+    | IRDefer defer_instrs ->
+        check_object_allocation_usage_in_instrs defer_instrs
+    | _ -> false
+  ) instrs
+
+let check_object_allocation_usage_in_function ir_func =
+  List.exists (fun block ->
+    check_object_allocation_usage_in_instrs block.instructions
+  ) ir_func.basic_blocks
+
+let check_object_allocation_usage ir_multi_prog =
+  (* Check all programs *)
+  (List.exists (fun ir_prog ->
+    check_object_allocation_usage_in_function ir_prog.entry_function
+  ) ir_multi_prog.programs) ||
+  (* Check kernel functions *)
+  (List.exists check_object_allocation_usage_in_function ir_multi_prog.kernel_functions)
+
+(** Check if a single IR program contains object allocation instructions *)
+let check_object_allocation_usage_in_program ir_prog =
+  check_object_allocation_usage_in_function ir_prog.entry_function
+
 (** Generate standard eBPF includes *)
 
-let generate_includes ctx ?(program_types=[]) () =
+let generate_includes ctx ?(program_types=[]) ?(ir_multi_prog=None) ?(ir_program=None) () =
   (* Use vmlinux.h which contains all kernel types from BTF *)
   let vmlinux_includes = [
     "#include \"vmlinux.h\"";
@@ -1156,34 +1202,43 @@ let generate_includes ctx ?(program_types=[]) () =
     List.iter (emit_line ctx) all_includes;
     emit_blank_line ctx;
 
-    (* Use proper kernel implementation: extern declarations and macros *)
-    emit_line ctx "extern void *bpf_obj_new_impl(__u64 local_type_id__k, void *meta__ign) __ksym;";
-    emit_line ctx "extern void bpf_obj_drop_impl(void *p__alloc, void *meta__ign) __ksym;";
-    emit_blank_line ctx;
+    (* Only include object allocation code if the program actually uses new() or delete() *)
+    let uses_object_allocation = match ir_multi_prog, ir_program with
+      | Some multi_prog, _ -> check_object_allocation_usage multi_prog
+      | None, Some single_prog -> check_object_allocation_usage_in_program single_prog
+      | None, None -> false  (* Conservative: don't include if we can't analyze *)
+    in
     
-    (* Use exact kernel implementation for proper typeof handling *)
-    emit_line ctx "#define ___concat(a, b) a ## b";
-    emit_line ctx "#ifdef __clang__";
-    emit_line ctx "#define ___bpf_typeof(type) ((typeof(type) *) 0)";
-    emit_line ctx "#else";
-    emit_line ctx "#define ___bpf_typeof1(type, NR) ({                                         \\";
-    emit_line ctx "        extern typeof(type) *___concat(bpf_type_tmp_, NR);                  \\";
-    emit_line ctx "        ___concat(bpf_type_tmp_, NR);                                       \\";
-    emit_line ctx "})";
-    emit_line ctx "#define ___bpf_typeof(type) ___bpf_typeof1(type, __COUNTER__)";
-    emit_line ctx "#endif";
-    emit_blank_line ctx;
-    
-    (* Add BPF_TYPE_ID_LOCAL constant *)
-    emit_line ctx "#ifndef BPF_TYPE_ID_LOCAL";
-    emit_line ctx "#define BPF_TYPE_ID_LOCAL 1";
-    emit_line ctx "#endif";
-    emit_blank_line ctx;
-    
-    emit_line ctx "#define bpf_core_type_id_kernel(type) __builtin_btf_type_id(*(type*)0, 0)";
-    emit_line ctx "#define bpf_obj_new(type) ((type *)bpf_obj_new_impl(bpf_core_type_id_kernel(type), NULL))";
-    emit_line ctx "#define bpf_obj_drop(ptr) bpf_obj_drop_impl(ptr, NULL)";
-    emit_blank_line ctx
+    if uses_object_allocation then (
+      (* Use proper kernel implementation: extern declarations and macros *)
+      emit_line ctx "extern void *bpf_obj_new_impl(__u64 local_type_id__k, void *meta__ign) __ksym;";
+      emit_line ctx "extern void bpf_obj_drop_impl(void *p__alloc, void *meta__ign) __ksym;";
+      emit_blank_line ctx;
+      
+      (* Use exact kernel implementation for proper typeof handling *)
+      emit_line ctx "#define ___concat(a, b) a ## b";
+      emit_line ctx "#ifdef __clang__";
+      emit_line ctx "#define ___bpf_typeof(type) ((typeof(type) *) 0)";
+      emit_line ctx "#else";
+      emit_line ctx "#define ___bpf_typeof1(type, NR) ({                                         \\";
+      emit_line ctx "        extern typeof(type) *___concat(bpf_type_tmp_, NR);                  \\";
+      emit_line ctx "        ___concat(bpf_type_tmp_, NR);                                       \\";
+      emit_line ctx "})";
+      emit_line ctx "#define ___bpf_typeof(type) ___bpf_typeof1(type, __COUNTER__)";
+      emit_line ctx "#endif";
+      emit_blank_line ctx;
+      
+      (* Add BPF_TYPE_ID_LOCAL constant *)
+      emit_line ctx "#ifndef BPF_TYPE_ID_LOCAL";
+      emit_line ctx "#define BPF_TYPE_ID_LOCAL 1";
+      emit_line ctx "#endif";
+      emit_blank_line ctx;
+      
+      emit_line ctx "#define bpf_core_type_id_kernel(type) __builtin_btf_type_id(*(type*)0, 0)";
+      emit_line ctx "#define bpf_obj_new(type) ((type *)bpf_obj_new_impl(bpf_core_type_id_kernel(type), NULL))";
+      emit_line ctx "#define bpf_obj_drop(ptr) bpf_obj_drop_impl(ptr, NULL)";
+      emit_blank_line ctx
+    )
   )
 
 (** Generate map definitions *)
@@ -3466,7 +3521,7 @@ let generate_c_program ?_config_declarations ir_prog =
   
   (* Add standard includes *)
   let program_types = [ir_prog.program_type] in
-  generate_includes ctx ~program_types ();
+  generate_includes ctx ~program_types ~ir_program:(Some ir_prog) ();
   
   (* Generate string type definitions *)
   let temp_multi_prog = {
@@ -3539,7 +3594,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   
   (* Add standard includes *)
   let program_types = List.map (fun prog -> prog.program_type) ir_multi_prog.programs in
-  generate_includes ctx ~program_types ();
+  generate_includes ctx ~program_types ~ir_multi_prog:(Some ir_multi_prog) ();
   
   (* Generate string type definitions *)
       generate_string_typedefs ctx ir_multi_prog;
@@ -3658,7 +3713,7 @@ let compile_multi_to_c_with_tail_calls
   
   (* Generate headers and includes *)
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
-  generate_includes ctx ~program_types ();
+  generate_includes ctx ~program_types ~ir_multi_prog:(Some ir_multi_prog) ();
   
   (* Generate dynptr safety macros and helper functions *)
   emit_line ctx "/* eBPF Dynptr API integration for enhanced pointer safety */";
