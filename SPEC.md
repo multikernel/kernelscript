@@ -174,7 +174,7 @@ ebpf_program = attribute_list "fn" identifier "(" parameter_list ")" "->" return
 
 attribute_list = attribute { attribute }
 attribute = "@" attribute_name [ "(" attribute_args ")" ]
-attribute_name = "xdp" | "tc" | "kprobe" | "tracepoint" |
+attribute_name = "xdp" | "tc" | "probe" | "tracepoint" |
                  "struct_ops" | "kfunc" | "private" | "helper" | "test"
 attribute_args = string_literal | identifier
 
@@ -185,44 +185,64 @@ return_type = type_annotation
 
 **Note:** eBPF programs are now simple attributed functions. All configuration is done through global named config blocks.
 
-#### 3.1.1 Advanced Kprobe Functions with BTF Signature Extraction
+#### 3.1.1 Advanced Probe Functions with BTF Signature Extraction and Intelligent Probe Type Selection
 
-KernelScript automatically extracts kernel function signatures from BTF (BPF Type Format) for kprobe functions, eliminating the need for `KprobeContext` and providing type-safe access to function parameters.
+KernelScript automatically extracts kernel function signatures from BTF (BPF Type Format) for probe functions and intelligently chooses between fprobe (function entrance) and kprobe (arbitrary address) based on the target specification.
 
 ```kernelscript
-@kprobe("sys_read")
-fn new_style(fd: u32, buf: *u8, count: usize) -> i32 {
+// Function entrance probe (uses fprobe)
+@probe("sys_read")
+fn function_entrance(fd: u32, buf: *u8, count: usize) -> i32 {
     // Direct access to function parameters with correct types
     // Compiler automatically extracts signature from BTF:
     // long sys_read(unsigned int fd, char __user *buf, size_t count)
+    // Uses fprobe for better performance at function entrance
     
     print("Reading %d bytes from fd %d", count, fd)
+    return 0
+}
+
+// Arbitrary address probe (uses kprobe)  
+@probe("vfs_read+109")
+fn arbitrary_address() -> i32 {
+    // Probes specific instruction offset within vfs_read
+    // Uses kprobe for arbitrary address probing
+    // No direct parameters available at arbitrary addresses
+    
+    print("Probing vfs_read at offset +109")
     return 0
 }
 ```
 
 **Key Benefits:**
-- **Type Safety**: Parameters have correct types extracted from kernel BTF information
-- **No Magic Numbers**: Direct parameter access instead of `ctx.arg_*(index)`
-- **Self-Documenting**: Function signature matches the actual kernel function
+- **Intelligent Probe Selection**: Automatically chooses fprobe for function entrance (better performance) or kprobe for arbitrary addresses
+- **Type Safety**: Function entrance probes have correct types extracted from kernel BTF information
+- **No Magic Numbers**: Direct parameter access for function entrance probes
+- **Self-Documenting**: Function signature matches the actual kernel function for entrance probes
 - **Compile-Time Validation**: Invalid parameter access caught at compile time
 
-**BTF Signature Mapping:**
+**Probe Type Selection:**
+- `@probe("function_name")` → Uses **fprobe** for function entrance with direct parameter access
+- `@probe("function_name+offset")` → Uses **kprobe** for arbitrary address probing
+
+**BTF Signature Mapping for Function Entrance:**
 ```kernelscript
 // Kernel function: long sys_openat(int dfd, const char __user *filename, int flags, umode_t mode)
-@kprobe("sys_openat")
+@probe("sys_openat")
 fn trace_openat(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
-    // Parameters automatically mapped to PT_REGS_PARM1, PT_REGS_PARM2, etc.
+    // Direct parameter access with fprobe (no PT_REGS needed)
     print("Opening file with flags %d", flags)
     return 0
 }
 
-// Kernel function: long sys_write(unsigned int fd, const char __user *buf, size_t count)
-@kprobe("sys_write")
-fn trace_write(fd: u32, buf: *u8, count: usize) -> i32 {
-    // Type-safe parameter access
-    if (count > 1024) {
-        print("Large write detected: %d bytes to fd %d", count, fd)
+// For arbitrary address probing:
+@probe("sys_write+50")  
+fn trace_write_offset() -> i32 {
+    // Uses kprobe for arbitrary offset - no direct parameters available
+    print("Probing sys_write at offset +50")
+    return 0
+}
+
     }
     return 0
 }
@@ -1940,7 +1960,7 @@ struct PersonInfo {
 }
 
 // Kernel space usage - kprobe with BTF-extracted function signature
-@kprobe("sys_open")
+@probe("sys_open")
 fn user_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
     var process_name: ProcessName = get_current_process_name()
     var file_path: FilePath = get_file_path_from_filename(filename)
@@ -2381,7 +2401,7 @@ fn security_analyzer(ctx: LsmContext) -> i32 {
 pin var global_counters : array<u32, GlobalCounter>(256)
 pin var event_stream : hash<u32, Event>(1024)
 
-@kprobe("sys_read")
+@probe("sys_read")
 fn producer(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
@@ -2401,7 +2421,7 @@ fn producer(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }
 
-@kprobe("sys_write")
+@probe("sys_write")
 fn consumer(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
@@ -4335,7 +4355,7 @@ fn measure_write_time() -> u64 {
     return bpf_ktime_get_ns()
 }
 
-@kprobe("sys_read")
+@probe("sys_read")
 fn perf_monitor(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     var call_info = CallInfo {
@@ -4371,7 +4391,7 @@ fn perf_monitor_return(ret_value: isize) -> i32 {
     return 0
 }
 
-@kprobe("sys_write")
+@probe("sys_write")
 fn write_monitor(fd: u32, buf: *u8, count: usize) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     var duration = measure_write_time()  // No context needed

@@ -48,8 +48,8 @@ let get_execution_context = function
       execution_stage = "packet_receive_late";
       can_drop_packets = true;
     }
-  | Kprobe -> {
-      program_type = Kprobe;
+  | Probe _ -> {
+      program_type = Probe Kprobe;  (* Both fprobe and kprobe have similar characteristics *)
       hook_point = "kernel_function_entry/exit";
       stack_layer = 0;  (* Can run anywhere - not in packet path *)
       execution_stage = "dynamic_tracing";
@@ -111,7 +111,7 @@ let extract_programs (ast: declaration list) : program_def list =
                   let prog_type = match prog_type_str with
                     | "xdp" -> Xdp
                     | "tc" -> Tc  
-                    | "kprobe" -> Kprobe
+                    | "kprobe" -> Probe Kprobe
                     | "tracepoint" -> Tracepoint
                     | "struct_ops" -> StructOps
                     | _ -> failwith ("Unknown program type: " ^ prog_type_str)
@@ -439,7 +439,7 @@ let get_program_types_from_ast (ast: declaration list) : program_type list =
              (match prog_type_str with
               | "xdp" -> Xdp :: acc
               | "tc" -> Tc :: acc  
-              | "kprobe" -> Kprobe :: acc
+              | "kprobe" -> Probe Kprobe :: acc
               | "tracepoint" -> Tracepoint :: acc
               | _ -> acc)
          | _ -> acc)

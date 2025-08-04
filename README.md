@@ -93,8 +93,8 @@ KernelScript supports all major eBPF program types with typed contexts:
     return TC_ACT_OK
 }
 
-// Kprobe for kernel function tracing
-@kprobe fn trace_syscall(ctx: *pt_regs) -> i32 {
+// Probe for kernel function tracing
+@probe fn trace_syscall(ctx: *pt_regs) -> i32 {
     // Trace system call entry
     return 0
 }
@@ -247,8 +247,8 @@ kernelscript init xdp my_packet_filter
 # Create TC project  
 kernelscript init tc my_traffic_shaper
 
-# Create kprobe project
-kernelscript init kprobe/sys_read my_tracer
+# Create probe project
+kernelscript init probe/sys_read my_tracer
 
 # Create project with custom BTF path
 kernelscript init --btf-vmlinux-path /custom/path/vmlinux xdp my_project
@@ -268,7 +268,7 @@ my_project/
 **Available program types:**
 - `xdp` - XDP programs for packet processing
 - `tc` - Traffic control programs  
-- `kprobe` - Kernel function tracing
+- `probe` - Kernel function probing
 - `tracepoint` - Kernel tracepoint programs
 
 **Available struct_ops:**

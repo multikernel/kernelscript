@@ -40,6 +40,7 @@ type context_codegen = {
   generate_includes: unit -> string list;
   generate_field_access: string -> string -> string;
   map_action_constant: int -> string option;
+  generate_function_signature: (string -> (string * string) list -> string -> string) option;
 }
 
 (** Register a context code generator *)
@@ -62,6 +63,9 @@ val map_context_action_constant : string -> int -> string option
 
 (** Get all action constants for a context type *)
 val get_context_action_constants : string -> (string * int) list
+
+(** Generate custom function signature for a context type *)
+val generate_context_function_signature : string -> string -> (string * string) list -> string -> string option
 
 (** Get struct field definitions for a context type *)
 val get_context_struct_fields : string -> (string * string) list

@@ -27,7 +27,7 @@ open Kernelscript.Ebpf_c_codegen
 let dummy_loc = {
   line = 1;
   column = 1;
-  filename = "test_kprobe.ks";
+  filename = "test_probe.ks";
 }
 
 let make_return_stmt value = {
@@ -42,8 +42,8 @@ let make_return_stmt value = {
   stmt_pos = dummy_loc;
 }
 
-(** Mock BTF data for kprobe testing *)
-module MockKprobeBTF = struct
+(** Mock BTF data for probe testing *)
+module MockProbeBTF = struct
   (* Simple mock kernel function signatures for testing *)
   type mock_kernel_function = {
     name: string;
@@ -73,8 +73,8 @@ end
 (** Test Cases *)
 
 (* 1. Parser Tests *)
-let test_kprobe_attribute_parsing _ =
-  let source = "@kprobe(\"sys_read\")
+let test_probe_attribute_parsing _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
@@ -85,13 +85,13 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
       check int "Should have one attribute" 1 (List.length attr_func.attr_list);
       (match List.hd attr_func.attr_list with
        | AttributeWithArg (name, arg) ->
-           check string "Attribute name" "kprobe" name;
+           check string "Attribute name" "probe" name;
            check string "Attribute argument" "sys_read" arg
        | _ -> fail "Expected AttributeWithArg")
   | _ -> fail "Expected AttributedFunction"
 
-let test_kprobe_multiple_parameters _ =
-  let source = "@kprobe(\"vfs_write\")
+let test_probe_multiple_parameters _ =
+  let source = "@probe(\"vfs_write\")
 fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
     return 0
 }" in
@@ -103,14 +103,14 @@ fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
       check int "Should have four parameters" 4 (List.length attr_func.attr_function.func_params);
       (match List.hd attr_func.attr_list with
        | AttributeWithArg (name, arg) ->
-           check string "Attribute name" "kprobe" name;
+           check string "Attribute name" "probe" name;
            check string "Attribute argument" "vfs_write" arg
        | _ -> fail "Expected AttributeWithArg")
   | _ -> fail "Expected AttributedFunction"
 
-let test_kprobe_parsing_errors _ =
+let test_probe_parsing_errors _ =
   (* Test invalid format without target function *)
-  let source = "@kprobe
+  let source = "@probe
 fn invalid_handler(fd: u32) -> i32 {
     return 0
 }" in
@@ -118,13 +118,13 @@ fn invalid_handler(fd: u32) -> i32 {
   try
     let ast = parse_string source in
     let _ = type_check_ast ast in
-    fail "Should have failed parsing old kprobe format"
+    fail "Should have failed parsing old format"
   with
   | _ -> check bool "Correctly rejected old format" true true
 
-let test_kprobe_missing_target_function _ =
-  (* Test @kprobe without target function specification *)
-  let source = "@kprobe(\"\")
+let test_probe_missing_target_function _ =
+  (* Test @probe without target function specification *)
+  let source = "@probe(\"\")
 fn empty_target_handler(fd: u32) -> i32 {
     return 0
 }" in
@@ -136,8 +136,8 @@ fn empty_target_handler(fd: u32) -> i32 {
   | _ -> check bool "Correctly rejected empty target function" true true
 
 (* 2. Type Checking Tests *)
-let test_kprobe_type_checking _ =
-  let source = "@kprobe(\"sys_read\")
+let test_probe_type_checking _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
@@ -145,8 +145,8 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
   let typed_ast = type_check_ast ast in
   check int "Type checking should succeed" 1 (List.length typed_ast)
 
-let test_kprobe_parameter_validation _ =
-  let source = "@kprobe(\"sys_read\")
+let test_probe_parameter_validation _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
@@ -171,7 +171,7 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
        | _ -> fail "Expected exactly three parameters")
   | _ -> fail "Expected AttributedFunction"
 
-let test_kprobe_return_type_validation _ =
+let test_probe_return_type_validation _ =
   (* Test valid return types for kprobe *)
   let test_cases = [
     ("i32", "fn handler() -> i32 { return 0 }");
@@ -180,15 +180,15 @@ let test_kprobe_return_type_validation _ =
   ] in
   
   List.iter (fun (ret_type, func_def) ->
-    let source = "@kprobe(\"sys_read\")\n" ^ func_def in
+    let source = "@probe(\"sys_read\")\n" ^ func_def in
     let ast = parse_string source in
     let typed_ast = type_check_ast ast in
     check int (Printf.sprintf "Type checking should succeed for %s return type" ret_type) 1 (List.length typed_ast)
   ) test_cases
 
-let test_kprobe_too_many_parameters _ =
+let test_probe_too_many_parameters _ =
   (* Test rejection of functions with more than 6 parameters *)
-  let source = "@kprobe(\"invalid_function\")
+  let source = "@probe(\"invalid_function\")
 fn too_many_params(p1: u32, p2: u32, p3: u32, p4: u32, p5: u32, p6: u32, p7: u32) -> i32 {
     return 0
 }" in
@@ -199,9 +199,9 @@ fn too_many_params(p1: u32, p2: u32, p3: u32, p4: u32, p5: u32, p6: u32, p7: u32
   with
   | _ -> check bool "Correctly rejected too many parameters" true true
 
-let test_kprobe_pt_regs_rejection _ =
+let test_probe_pt_regs_rejection _ =
   (* Test rejection of direct pt_regs parameter usage *)
-  let source = "@kprobe(\"sys_read\")
+  let source = "@probe(\"sys_read\")
 fn invalid_handler(ctx: *pt_regs) -> i32 {
     return 0
 }" in
@@ -213,45 +213,45 @@ fn invalid_handler(ctx: *pt_regs) -> i32 {
   | _ -> check bool "Correctly rejected pt_regs parameter" true true
 
 (* 3. IR Generation Tests *)
-let test_kprobe_ir_generation _ =
-  let source = "@kprobe(\"sys_read\")
+let test_probe_ir_generation _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   check int "Should generate one program" 1 (List.length ir_multi_prog.programs);
   let program = List.hd ir_multi_prog.programs in
   check string "Program name" "sys_read_handler" program.name;
   check bool "Program type should be Kprobe" true 
-    (match program.program_type with Kprobe -> true | _ -> false)
+    (match program.program_type with Probe _ -> true | _ -> false)
 
-let test_kprobe_complex_parameters _ =
-  let source = "@kprobe(\"tcp_sendmsg\")
+let test_probe_complex_parameters _ =
+  let source = "@probe(\"tcp_sendmsg\")
 fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe_complex" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe_complex" in
   check int "Should generate one program" 1 (List.length ir_multi_prog.programs);
   let program = List.hd ir_multi_prog.programs in
   check string "Program name" "tcp_sendmsg_handler" program.name;
   check bool "Program type should be Kprobe" true 
-    (match program.program_type with Kprobe -> true | _ -> false)
+    (match program.program_type with Probe _ -> true | _ -> false)
 
-let test_kprobe_function_signature_validation _ =
-  let source = "@kprobe(\"vfs_write\")
+let test_probe_function_signature_validation _ =
+  let source = "@probe(\"vfs_write\")
 fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   let program = List.hd ir_multi_prog.programs in
   let main_func = program.entry_function in
   
@@ -260,103 +260,147 @@ fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
   check string "Function name should match" "vfs_write_handler" main_func.func_name
 
 (* 4. Code Generation Tests *)
-let test_kprobe_section_name_generation _ =
-  let source = "@kprobe(\"sys_read\")
+let test_fprobe_section_name_generation _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
+  let c_code = generate_c_multi_program ir_multi_prog in
+  
+  (* Check for fentry section with target function *)
+  check bool "Should contain SEC(\"fentry/sys_read\")" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/sys_read\")") c_code 0); true with Not_found -> false);
+  (* Should NOT contain pt_regs parameter for fprobe *)
+  check bool "Should NOT contain struct pt_regs *ctx" false
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false)
+
+let test_kprobe_section_name_generation _ =
+  let source = "@probe(\"vfs_read+0x10\")
+fn vfs_read_handler(ctx: *pt_regs) -> i32 {
+    return 0
+}" in
+  let ast = parse_string source in
+  let typed_ast = type_check_ast ast in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Check for kprobe section *)
   check bool "Should contain SEC(\"kprobe\")" true
-    (String.contains c_code (String.get "SEC(\"kprobe\")" 0))
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+  (* Should contain pt_regs parameter for kprobe *)
+  check bool "Should contain struct pt_regs *ctx" true
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false)
 
-let test_kprobe_complex_section_generation _ =
-  let source = "@kprobe(\"tcp_sendmsg\")
+let test_fprobe_complex_section_generation _ =
+  let source = "@probe(\"tcp_sendmsg\")
 fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_complex_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_complex_probe" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Check for kprobe section *)
-  check bool "Should contain SEC(\"kprobe\")" true
-    (String.contains c_code (String.get "SEC(\"kprobe\")" 0));
+  (* Check for fentry section with target function *)
+  check bool "Should contain SEC(\"fentry/tcp_sendmsg\")" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/tcp_sendmsg\")") c_code 0); true with Not_found -> false);
   check bool "Should contain tcp_sendmsg_handler function" true
-    (String.contains c_code (String.get "tcp_sendmsg_handler" 0))
+    (try ignore (Str.search_forward (Str.regexp_string "tcp_sendmsg_handler") c_code 0); true with Not_found -> false);
+  (* Should have direct parameters, not pt_regs *)
+  check bool "Should contain direct parameters" true
+    (try ignore (Str.search_forward (Str.regexp_string "struct sock* sk") c_code 0); true 
+     with Not_found -> 
+       try ignore (Str.search_forward (Str.regexp_string "struct sock *sk") c_code 0); true 
+       with Not_found -> false)
 
-let test_kprobe_ebpf_codegen _ =
-  let source = "@kprobe(\"sys_read\")
+let test_fprobe_ebpf_codegen _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
+  let c_code = generate_c_multi_program ir_multi_prog in
+  
+  (* Check for fprobe-specific C code elements *)
+  check bool "Should contain SEC(\"fentry/sys_read\")" true 
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/sys_read\")") c_code 0); true with Not_found -> false);
+  check bool "Should contain function definition" true
+    (try ignore (Str.search_forward (Str.regexp_string "sys_read_handler") c_code 0); true with Not_found -> false);
+  check bool "Should contain direct parameters" true
+    (try ignore (Str.search_forward (Str.regexp_string "__u32 fd") c_code 0); true 
+     with Not_found -> 
+       try ignore (Str.search_forward (Str.regexp_string "u32 fd") c_code 0); true 
+       with Not_found -> false)
+
+let test_kprobe_ebpf_codegen _ =
+  let source = "@probe(\"vfs_read+0x20\")
+fn vfs_read_handler(ctx: *pt_regs) -> i32 {
+    return 0
+}" in
+  let ast = parse_string source in
+  let typed_ast = type_check_ast ast in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
   (* Check for kprobe-specific C code elements *)
   check bool "Should contain SEC(\"kprobe\")" true 
-    (String.contains c_code (String.get "SEC(\"kprobe\")" 0));
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
   check bool "Should contain function definition" true
-    (String.contains c_code (String.get "sys_read_handler" 0));
+    (try ignore (Str.search_forward (Str.regexp_string "vfs_read_handler") c_code 0); true with Not_found -> false);
   check bool "Should contain pt_regs parameter" true
-    (String.contains c_code (String.get "struct pt_regs *ctx" 0))
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false)
 
-let test_kprobe_includes_generation _ =
-  let source = "@kprobe(\"sys_read\")
+let test_fprobe_includes_generation _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Check for kprobe-specific includes *)
-  check bool "Should include bpf/bpf_tracing.h" true
-    (String.contains c_code (String.get "bpf/bpf_tracing.h" 0));
-  check bool "Should include linux/ptrace.h" true
-    (String.contains c_code (String.get "linux/ptrace.h" 0));
-  check bool "Should define __TARGET_ARCH_x86" true
-    (String.contains c_code (String.get "__TARGET_ARCH_x86" 0))
+  (* Check for fprobe-specific includes *)
+  check bool "Should include bpf/bpf_helpers.h" true
+    (try ignore (Str.search_forward (Str.regexp_string "bpf/bpf_helpers.h") c_code 0); true with Not_found -> false);
+  check bool "Should include vmlinux.h" true
+    (try ignore (Str.search_forward (Str.regexp_string "vmlinux.h") c_code 0); true with Not_found -> false);
+  (* fprobe should NOT need linux/ptrace.h *)
+  check bool "Should NOT include linux/ptrace.h for fprobe" false
+    (try ignore (Str.search_forward (Str.regexp_string "linux/ptrace.h") c_code 0); true with Not_found -> false)
 
 let test_kprobe_pt_regs_parm_macros _ =
-  let source = "@kprobe(\"vfs_write\")
-fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
-    var local_file = file
-    var local_buf = buf
-    var local_count = count
-    var local_pos = pos
+  let source = "@probe(\"vfs_write+0x8\")
+fn vfs_write_handler(ctx: *pt_regs) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
-  let ir_multi_prog = generate_ir typed_ast symbol_table "test_kprobe" in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Check for PT_REGS_PARM macro usage *)
-  check bool "Should contain PT_REGS_PARM1" true
-    (String.contains c_code (String.get "PT_REGS_PARM1" 0));
-  check bool "Should contain PT_REGS_PARM2" true
-    (String.contains c_code (String.get "PT_REGS_PARM2" 0));
-  check bool "Should contain PT_REGS_PARM3" true
-    (String.contains c_code (String.get "PT_REGS_PARM3" 0));
-  check bool "Should contain PT_REGS_PARM4" true
-    (String.contains c_code (String.get "PT_REGS_PARM4" 0))
+  (* Check for kprobe-specific elements *)
+  check bool "Should contain SEC(\"kprobe\")" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+  check bool "Should contain struct pt_regs *ctx parameter" true
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false);
+  check bool "Should include bpf/bpf_tracing.h for kprobe" true
+    (try ignore (Str.search_forward (Str.regexp_string "bpf/bpf_tracing.h") c_code 0); true with Not_found -> false)
 
 (* 5. Template Generation Tests *)
-let test_kprobe_target_function_parsing _ =
+let test_probe_target_function_parsing _ =
   (* Test target function extraction logic *)
   let test_cases = [
     ("sys_read", "sys_read");
@@ -370,7 +414,7 @@ let test_kprobe_target_function_parsing _ =
     check string (Printf.sprintf "Target function for %s" input) expected input
   ) test_cases
 
-let test_kprobe_parameter_mapping_logic _ =
+let test_probe_parameter_mapping_logic _ =
   (* Test parameter mapping to PT_REGS_PARM macros *)
   let test_cases = [
     (0, "PT_REGS_PARM1");
@@ -395,8 +439,8 @@ let test_kprobe_parameter_mapping_logic _ =
   ) test_cases
 
 (* 6. Error Handling Tests *)
-let test_kprobe_invalid_return_type _ =
-  let source = "@kprobe(\"sys_read\")
+let test_probe_invalid_return_type _ =
+  let source = "@probe(\"sys_read\")
 fn invalid_return_handler(fd: u32) -> str<64> {
     return \"invalid\"
 }" in
@@ -410,8 +454,8 @@ fn invalid_return_handler(fd: u32) -> str<64> {
   with
   | _ -> check bool "Correctly rejected invalid return type" true true
 
-let test_kprobe_invalid_parameter_count _ =
-  let source = "@kprobe(\"invalid_function\")
+let test_probe_invalid_parameter_count _ =
+  let source = "@probe(\"invalid_function\")
 fn seven_params_handler(p1: u32, p2: u32, p3: u32, p4: u32, p5: u32, p6: u32, p7: u32) -> i32 {
     return 0
 }" in
@@ -423,8 +467,8 @@ fn seven_params_handler(p1: u32, p2: u32, p3: u32, p4: u32, p5: u32, p6: u32, p7
   with
   | _ -> check bool "Correctly rejected too many parameters" true true
 
-let test_kprobe_empty_target_function _ =
-  let source = "@kprobe(\"\")
+let test_probe_empty_target_function _ =
+  let source = "@probe(\"\")
 fn empty_target_handler() -> i32 {
     return 0
 }" in
@@ -436,8 +480,8 @@ fn empty_target_handler() -> i32 {
   | _ -> check bool "Correctly rejected empty target function" true true
 
 (* 7. Integration Tests *)
-let test_kprobe_end_to_end_syscall _ =
-  let source = "@kprobe(\"sys_open\")
+let test_fprobe_end_to_end_syscall _ =
+  let source = "@probe(\"sys_open\")
 fn sys_open_handler(filename: *u8, flags: i32, mode: u16) -> i32 {
     return 0
 }" in
@@ -447,18 +491,39 @@ fn sys_open_handler(filename: *u8, flags: i32, mode: u16) -> i32 {
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_syscall" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  (* Comprehensive end-to-end validation *)
-  check bool "Contains kprobe section" true
-    (String.contains c_code (String.get "SEC(\"kprobe\")" 0));
+  (* Comprehensive end-to-end validation for fprobe *)
+  check bool "Contains fentry section" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/sys_open\")") c_code 0); true with Not_found -> false);
   check bool "Contains function name" true
-    (String.contains c_code (String.get "sys_open_handler" 0));
-  check bool "Contains pt_regs parameter" true
-    (String.contains c_code (String.get "struct pt_regs *ctx" 0));
+    (try ignore (Str.search_forward (Str.regexp_string "sys_open_handler") c_code 0); true with Not_found -> false);
+  check bool "Should NOT contain pt_regs parameter for fprobe" false
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false);
   check bool "Contains return statement" true
-    (String.contains c_code (String.get "return 0" 0))
+    (try ignore (Str.search_forward (Str.regexp_string "return 0") c_code 0); true with Not_found -> false)
 
-let test_kprobe_network_function _ =
-  let source = "@kprobe(\"tcp_sendmsg\")
+let test_kprobe_end_to_end_syscall _ =
+  let source = "@probe(\"sys_open+0x4\")
+fn sys_open_handler(ctx: *pt_regs) -> i32 {
+    return 0
+}" in
+  let ast = parse_string source in
+  let typed_ast = type_check_ast ast in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
+  let ir_multi_prog = generate_ir typed_ast symbol_table "test_syscall" in
+  let c_code = generate_c_multi_program ir_multi_prog in
+  
+  (* Comprehensive end-to-end validation for kprobe *)
+  check bool "Contains kprobe section" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false);
+  check bool "Contains function name" true
+    (try ignore (Str.search_forward (Str.regexp_string "sys_open_handler") c_code 0); true with Not_found -> false);
+  check bool "Contains pt_regs parameter" true
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false);
+  check bool "Contains return statement" true
+    (try ignore (Str.search_forward (Str.regexp_string "return 0") c_code 0); true with Not_found -> false)
+
+let test_fprobe_network_function _ =
+  let source = "@probe(\"tcp_sendmsg\")
 fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
     return 0
 }" in
@@ -468,21 +533,21 @@ fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_network" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  check bool "End-to-end kprobe works for network functions" true
-    (String.contains c_code (String.get "tcp_sendmsg_handler" 0));
-  check bool "Contains kprobe section" true
-    (String.contains c_code (String.get "SEC(\"kprobe\")" 0));
-  check bool "Contains struct pt_regs parameter" true
-    (String.contains c_code (String.get "struct pt_regs *ctx" 0))
+  check bool "End-to-end fprobe works for network functions" true
+    (try ignore (Str.search_forward (Str.regexp_string "tcp_sendmsg_handler") c_code 0); true with Not_found -> false);
+  check bool "Contains fentry section" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/tcp_sendmsg\")") c_code 0); true with Not_found -> false);
+  check bool "Should NOT contain struct pt_regs parameter for fprobe" false
+    (try ignore (Str.search_forward (Str.regexp_string "struct pt_regs *ctx") c_code 0); true with Not_found -> false)
 
-let test_kprobe_multiple_functions _ =
-  let source = "@kprobe(\"sys_read\")
+let test_probe_multiple_functions _ =
+  let source = "@probe(\"sys_read\")
 fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
     return 0
 }
 
-@kprobe(\"sys_write\")
-fn sys_write_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+@probe(\"sys_write+0x8\")
+fn sys_write_handler(ctx: *pt_regs) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -493,58 +558,67 @@ fn sys_write_handler(fd: u32, buf: *u8, count: usize) -> i32 {
   
   check int "Should generate two programs" 2 (List.length ir_multi_prog.programs);
   check bool "Contains both function names" true
-    (String.contains c_code (String.get "sys_read_handler" 0) &&
-     String.contains c_code (String.get "sys_write_handler" 0))
+    (try ignore (Str.search_forward (Str.regexp_string "sys_read_handler") c_code 0);
+         ignore (Str.search_forward (Str.regexp_string "sys_write_handler") c_code 0); true 
+     with Not_found -> false);
+  (* Check for both fprobe and kprobe sections *)
+  check bool "Contains fentry section for sys_read" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"fentry/sys_read\")") c_code 0); true with Not_found -> false);
+  check bool "Contains kprobe section for sys_write" true
+    (try ignore (Str.search_forward (Str.regexp_string "SEC(\"kprobe\")") c_code 0); true with Not_found -> false)
 
 (** Test Suite Configuration *)
 let parsing_tests = [
-  "kprobe attribute parsing", `Quick, test_kprobe_attribute_parsing;
-  "kprobe multiple parameters", `Quick, test_kprobe_multiple_parameters;
-  "kprobe parsing errors", `Quick, test_kprobe_parsing_errors;
-  "kprobe missing target function", `Quick, test_kprobe_missing_target_function;
+  "probe attribute parsing", `Quick, test_probe_attribute_parsing;
+  "probe multiple parameters", `Quick, test_probe_multiple_parameters;
+  "probe parsing errors", `Quick, test_probe_parsing_errors;
+  "probe missing target function", `Quick, test_probe_missing_target_function;
 ]
 
 let type_checking_tests = [
-  "kprobe type checking", `Quick, test_kprobe_type_checking;
-  "kprobe parameter validation", `Quick, test_kprobe_parameter_validation;
-  "kprobe return type validation", `Quick, test_kprobe_return_type_validation;
-  "kprobe too many parameters", `Quick, test_kprobe_too_many_parameters;
-  "kprobe pt_regs rejection", `Quick, test_kprobe_pt_regs_rejection;
+  "probe type checking", `Quick, test_probe_type_checking;
+  "probe parameter validation", `Quick, test_probe_parameter_validation;
+  "probe return type validation", `Quick, test_probe_return_type_validation;
+  "probe too many parameters", `Quick, test_probe_too_many_parameters;
+  "probe pt_regs rejection", `Quick, test_probe_pt_regs_rejection;
 ]
 
 let ir_generation_tests = [
-  "kprobe IR generation", `Quick, test_kprobe_ir_generation;
-  "kprobe complex parameters", `Quick, test_kprobe_complex_parameters;
-  "kprobe function signature validation", `Quick, test_kprobe_function_signature_validation;
+  "probe IR generation", `Quick, test_probe_ir_generation;
+  "probe complex parameters", `Quick, test_probe_complex_parameters;
+  "probe function signature validation", `Quick, test_probe_function_signature_validation;
 ]
 
 let code_generation_tests = [
+  "fprobe section name generation", `Quick, test_fprobe_section_name_generation;
   "kprobe section name generation", `Quick, test_kprobe_section_name_generation;
-  "kprobe complex section generation", `Quick, test_kprobe_complex_section_generation;
+  "fprobe complex section generation", `Quick, test_fprobe_complex_section_generation;
+  "fprobe eBPF code generation", `Quick, test_fprobe_ebpf_codegen;
   "kprobe eBPF code generation", `Quick, test_kprobe_ebpf_codegen;
-  "kprobe includes generation", `Quick, test_kprobe_includes_generation;
+  "fprobe includes generation", `Quick, test_fprobe_includes_generation;
   "kprobe PT_REGS_PARM macros", `Quick, test_kprobe_pt_regs_parm_macros;
 ]
 
 let template_generation_tests = [
-  "kprobe target function parsing", `Quick, test_kprobe_target_function_parsing;
-  "kprobe parameter mapping logic", `Quick, test_kprobe_parameter_mapping_logic;
+  "probe target function parsing", `Quick, test_probe_target_function_parsing;
+  "probe parameter mapping logic", `Quick, test_probe_parameter_mapping_logic;
 ]
 
 let error_handling_tests = [
-  "kprobe invalid return type", `Quick, test_kprobe_invalid_return_type;
-  "kprobe invalid parameter count", `Quick, test_kprobe_invalid_parameter_count;
-  "kprobe empty target function", `Quick, test_kprobe_empty_target_function;
+  "probe invalid return type", `Quick, test_probe_invalid_return_type;
+  "probe invalid parameter count", `Quick, test_probe_invalid_parameter_count;
+  "probe empty target function", `Quick, test_probe_empty_target_function;
 ]
 
 let integration_tests = [
+  "fprobe end-to-end syscall", `Quick, test_fprobe_end_to_end_syscall;
   "kprobe end-to-end syscall", `Quick, test_kprobe_end_to_end_syscall;
-  "kprobe network function", `Quick, test_kprobe_network_function;
-  "kprobe multiple functions", `Quick, test_kprobe_multiple_functions;
+  "fprobe network function", `Quick, test_fprobe_network_function;
+  "probe multiple functions", `Quick, test_probe_multiple_functions;
 ]
 
 let () =
-  run "KernelScript Kprobe Tests" [
+  run "KernelScript Probe Tests" [
     "parsing", parsing_tests;
     "type checking", type_checking_tests;
     "IR generation", ir_generation_tests;

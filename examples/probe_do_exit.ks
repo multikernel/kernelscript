@@ -1,21 +1,21 @@
 // Kprobe Example: Monitor process exit events
 // 
-// This example demonstrates how to use kprobe to intercept and monitor
+// This example demonstrates how to use probe to intercept and monitor
 // the do_exit() kernel function, which is called when a process exits.
 // We print the exit code parameter to see why processes are exiting.
 
 // Target kernel function signature:
-// do_exit(code: u64) -> void
+// do_exit(code: i64) -> void
 // 
 // The 'code' parameter contains the exit status/signal that caused
-// the process to exit.
+// the process to exit. In the kernel, it's declared as 'long' (signed 64-bit).
 
 
-@kprobe("do_exit")
-fn do_exit(code: u64) -> void {
+@probe("do_exit")
+fn do_exit(code: i64) -> void {
     // Print the exit code parameter
     // This will show us the exit status/signal for the exiting process
-    print("Process exiting with code: %u", code)    
+    print("Process exiting with code: %ld", code)
     return 0
 }
 
@@ -24,7 +24,7 @@ fn main() -> i32 {
     var result = attach(prog, "do_exit", 0)
     
     if (result == 0) {
-        print("kprobe program attached to do_exit successfully")
+        print("probe program attached to do_exit successfully")
         print("Monitoring process exits...")
         
         // In a real scenario, you would wait for events or run for a specific time
@@ -32,9 +32,9 @@ fn main() -> i32 {
         
         // Detach the program
         detach(prog)
-        print("kprobe program detached")
+        print("probe program detached")
     } else {
-        print("Failed to attach kprobe program")
+        print("Failed to attach probe program")
         return 1
     }
     

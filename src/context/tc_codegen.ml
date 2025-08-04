@@ -113,6 +113,7 @@ let create () = {
   generate_includes = generate_tc_includes;
   generate_field_access = generate_tc_field_access;
   map_action_constant = map_tc_action_constant;
+  generate_function_signature = None;
 }
 
 (** Register this codegen with the context registry *)

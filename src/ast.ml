@@ -33,9 +33,14 @@ type attribute =
   | SimpleAttribute of string  (* @xdp *)
   | AttributeWithArg of string * string  (* @kprobe("sys_read") *)
 
+(** Probe types for distinguishing between fprobe and kprobe *)
+type probe_type = 
+  | Fprobe    (* Function entrance/exit probe - no offset *)
+  | Kprobe    (* Kernel probe with offset support *)
+
 (** Program types supported by KernelScript *)
 type program_type = 
-  | Xdp | Tc | Kprobe | Tracepoint | StructOps
+  | Xdp | Tc | Probe of probe_type | Tracepoint | StructOps
 
 (** Map types for eBPF maps *)
 type map_type =
@@ -553,7 +558,8 @@ let string_of_position pos =
 let string_of_program_type = function
   | Xdp -> "xdp"
   | Tc -> "tc"
-  | Kprobe -> "kprobe"
+  | Probe Fprobe -> "fprobe"
+  | Probe Kprobe -> "kprobe"
   | Tracepoint -> "tracepoint"
   | StructOps -> "struct_ops"
 

@@ -78,6 +78,7 @@ let create () = {
   generate_includes = generate_tracepoint_includes;
   generate_field_access = generate_tracepoint_field_access;
   map_action_constant = map_tracepoint_action_constant;
+  generate_function_signature = None;
 }
 
 (** Register this codegen with the context registry *)

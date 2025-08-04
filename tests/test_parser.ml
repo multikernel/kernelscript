@@ -225,7 +225,7 @@ let test_program_types () =
   let program_types = [
     ("xdp", Xdp);
     ("tc", Tc);
-    ("kprobe", Kprobe);
+    ("probe", Probe Fprobe);  (* @probe without offset defaults to fprobe *)
     ("tracepoint", Tracepoint);
   ] in
   

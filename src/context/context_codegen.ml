@@ -42,6 +42,7 @@ type context_codegen = {
   generate_includes: unit -> string list;
   generate_field_access: string -> string -> string; (* ctx_var -> field_name -> C expression *)
   map_action_constant: int -> string option; (* Map integer to action constant *)
+  generate_function_signature: (string -> (string * string) list -> string -> string) option; (* func_name -> parameters -> return_type -> signature *)
 }
 
 (** Registry for context code generators *)
@@ -94,6 +95,15 @@ let get_context_action_constants ctx_type =
       in
       List.rev (collect_constants [] 0)
   | None -> []
+
+(** Generate custom function signature for a context type *)
+let generate_context_function_signature ctx_type func_name parameters return_type =
+  match get_context_codegen ctx_type with
+  | Some codegen ->
+      (match codegen.generate_function_signature with
+      | Some gen_func -> Some (gen_func func_name parameters return_type)
+      | None -> None)
+  | None -> None
 
 (** Get struct field definitions for a context type as (name, c_type) pairs *)
 let get_context_struct_fields ctx_type =
@@ -221,6 +231,7 @@ let create_context_codegen_from_btf ctx_type_name btf_type_info =
     generate_includes;
     generate_field_access;
     map_action_constant;
+    generate_function_signature = None;
   }
 
 (** Register context codegen from BTF type information *)

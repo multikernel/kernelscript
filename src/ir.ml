@@ -716,6 +716,7 @@ let rec ast_type_to_ir_type = function
   | Xdp_md -> IRContext XdpCtx
   | TracepointContext -> IRContext TracepointCtx
   | Xdp_action -> IRAction Xdp_actionType
+  | UserType "usize" -> IRU64 (* usize maps to 64-bit unsigned integer *)
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (param_types, return_type) -> 
       (* Function types are represented as proper function pointers *)

@@ -55,7 +55,7 @@ let extract_program_type attr_list =
       (match prog_type_str with
        | "xdp" -> Some Xdp
        | "tc" -> Some Tc
-       | "kprobe" -> Some Kprobe
+       | "kprobe" -> Some (Probe Kprobe)
        | "tracepoint" -> Some Tracepoint
        | _ -> None)
   | _ -> None

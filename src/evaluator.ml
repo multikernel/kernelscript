@@ -1006,7 +1006,7 @@ let eval_program ctx prog =
           ("data_end", PointerValue 0x2000);
           ("ingress_ifindex", IntValue 1);
         ])
-      | Kprobe -> ContextValue ("kprobe", [
+      | Probe _ -> ContextValue ("kprobe", [
           ("ip", IntValue 0xdeadbeef);
           ("ax", IntValue 0);
         ])

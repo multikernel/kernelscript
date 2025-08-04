@@ -34,8 +34,8 @@ let rec parse_args () =
       printf "Subcommands:\n";
       printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>]\n";
       printf "    Initialize a new KernelScript project\n";
-      printf "    prog_type: xdp | tc | kprobe/target_function | tracepoint/category/event\n";
-      printf "    Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
+      printf "    prog_type: xdp | tc | probe/target_function | tracepoint/category/event\n";
+      printf "    Examples: probe/sys_read, probe/vfs_write, probe/tcp_sendmsg\n";
       printf "    tracepoint: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
       printf "    struct_ops: tcp_congestion_ops\n";
       printf "    project_name: Name of the project directory to create\n";
@@ -139,29 +139,29 @@ let init_project prog_type_or_struct_ops project_name btf_path =
   printf "🚀 Initializing KernelScript project: %s\n" project_name;
   printf "📋 Type: %s\n" prog_type_or_struct_ops;
   
-  (* Parse program type and target function for kprobe/tracepoint *)
+  (* Parse program type and target function for probe/tracepoint *)
   let (prog_type, target_function) = 
     if String.contains prog_type_or_struct_ops '/' then
       let parts = String.split_on_char '/' prog_type_or_struct_ops in
       match parts with
-      | [prog; func] when prog = "kprobe" -> (prog, Some func)
+      | [prog; func] when prog = "probe" -> (prog, Some func)
       | [prog; category; event] when prog = "tracepoint" -> (prog, Some (category ^ "/" ^ event))
       | _ -> 
-          printf "❌ Error: Invalid syntax '%s'. Use kprobe/function_name or tracepoint/category/event\n" prog_type_or_struct_ops;
+          printf "❌ Error: Invalid syntax '%s'. Use probe/function_name or tracepoint/category/event\n" prog_type_or_struct_ops;
           exit 1
     else
       (prog_type_or_struct_ops, None)
   in
   
   (* Check if this is a struct_ops or a regular program type *)
-  let valid_program_types = ["xdp"; "tc"; "kprobe"; "tracepoint"] in
+  let valid_program_types = ["xdp"; "tc"; "probe"; "tracepoint"] in
   let is_struct_ops = Struct_ops_registry.is_known_struct_ops prog_type in
   let is_program_type = List.mem prog_type valid_program_types in
   
-  (* Validate kprobe target function *)
-  if prog_type = "kprobe" && target_function = None then (
-    printf "❌ Error: kprobe requires target function. Use kprobe/function_name\n";
-    printf "Examples: kprobe/sys_read, kprobe/vfs_write, kprobe/tcp_sendmsg\n";
+  (* Validate probe target function *)
+  if prog_type = "probe" && target_function = None then (
+    printf "❌ Error: probe requires target function. Use probe/function_name\n";
+    printf "Examples: probe/sys_read, probe/vfs_write, probe/tcp_sendmsg\n";
     exit 1
   );
   
@@ -200,14 +200,14 @@ let init_project prog_type_or_struct_ops project_name btf_path =
       content
     ) else (
       match prog_type with
-      | "kprobe" ->
+      | "probe" ->
           (match target_function with
            | Some func_name ->
                printf "🔧 Extracting types for %s program targeting %s...\n" prog_type func_name;
                let template = Btf_parser.get_kprobe_program_template func_name btf_path in
                printf "✅ Found %d type definitions\n" (List.length template.types);
                Btf_parser.generate_kernelscript_source template project_name
-           | None -> failwith "kprobe requires target function")
+           | None -> failwith "probe requires target function")
       | "tracepoint" ->
           (match target_function with
            | Some category_event ->
@@ -300,7 +300,7 @@ cd %s && make run
 |} project_name prog_type project_name project_name project_name project_name project_name prog_type (match prog_type with
         | "xdp" -> "XDP programs provide high-performance packet processing at the driver level."
         | "tc" -> "TC programs enable traffic control and packet filtering in the Linux networking stack."
-        | "kprobe" -> "Kprobe programs allow dynamic tracing of kernel functions."
+        | "probe" -> "Probe programs allow dynamic tracing of kernel functions with intelligent fprobe/kprobe selection."
         | "tracepoint" -> "Tracepoint programs provide static tracing points in the kernel."
         | _ -> "eBPF program for kernel-level processing."
       )
@@ -487,10 +487,11 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
   let current_phase = ref "Parsing" in
   
   (* Initialize context code generators *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  Kernelscript_context.Kprobe_codegen.register ();
-  Kernelscript_context.Tracepoint_codegen.register ();
+      Kernelscript_context.Xdp_codegen.register ();
+    Kernelscript_context.Tc_codegen.register ();
+    Kernelscript_context.Kprobe_codegen.register ();
+    Kernelscript_context.Tracepoint_codegen.register ();
+    Kernelscript_context.Fprobe_codegen.register ();
   
   try
     Printf.printf "\n🔥 KernelScript Compiler\n";
@@ -622,7 +623,8 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
         let prog_type_str = match prog_type with
           | Ast.Xdp -> "xdp"
           | Ast.Tc -> "tc"
-          | Ast.Kprobe -> "kprobe"
+          | Ast.Probe Ast.Kprobe -> "kprobe"
+          | Ast.Probe Ast.Fprobe -> "fprobe"
           | Ast.Tracepoint -> "tracepoint"
           | _ -> ""
         in

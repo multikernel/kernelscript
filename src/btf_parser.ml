@@ -348,7 +348,7 @@ let generate_kernelscript_source template project_name =
         | [] -> ("target_function", "fn() -> i32")
       in
       let func_def = generate_kprobe_function_from_signature first_func first_sig in
-      (comment, first_func, func_def, Some (sprintf "@kprobe(\"%s\")" first_func))
+      (comment, first_func, func_def, Some (sprintf "@probe(\"%s\")" first_func))
     else if template.program_type = "tracepoint" && template.function_signatures <> [] then
       let signature_lines = List.map (fun (event_name, signature) ->
         sprintf "// Tracepoint event: %s -> %s" event_name signature

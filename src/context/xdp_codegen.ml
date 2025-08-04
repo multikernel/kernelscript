@@ -102,6 +102,7 @@ let create () = {
   generate_includes = generate_xdp_includes;
   generate_field_access = generate_xdp_field_access;
   map_action_constant = map_xdp_action_constant;
+  generate_function_signature = None;
 }
 
 (** Register this codegen with the context registry *)

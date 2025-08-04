@@ -1300,7 +1300,10 @@ let generate_includes ctx ?(program_types=[]) ?(ir_multi_prog=None) ?(ir_program
   let context_includes = List.fold_left (fun acc prog_type ->
     let context_type = match prog_type with
       | Ast.Tc -> Some "tc"
-      | Ast.Kprobe -> Some "kprobe"
+      | Ast.Probe probe_type -> 
+            (match probe_type with
+            | Ast.Kprobe -> Some "kprobe"  (* Only kprobe needs pt_regs includes *)
+            | Ast.Fprobe -> Some "fprobe")  (* Fprobe needs BPF tracing includes *)
       | _ -> None
     in
     match context_type with
@@ -1316,7 +1319,7 @@ let generate_includes ctx ?(program_types=[]) ?(ir_multi_prog=None) ?(ir_program
     not (List.mem inc all_base_includes)) context_includes in
   
   (* For kprobe programs, still use vmlinux.h but include context-specific macro headers *)
-  let has_kprobe = List.exists (function Ast.Kprobe -> true | _ -> false) program_types in
+  let has_kprobe = List.exists (function Ast.Probe Ast.Kprobe -> true | _ -> false) program_types in
   if has_kprobe then (
     (* Use vmlinux.h and context-specific headers for macros *)
     let vmlinux_and_helpers = [
@@ -3488,7 +3491,10 @@ let generate_c_function ctx ir_func =
   (* Determine current function's context type from first parameter or program type *)
   ctx.current_function_context_type <- 
     (match ir_func.func_program_type with
-     | Some Ast.Kprobe -> Some "kprobe"  (* Always kprobe for kprobe functions *)
+             | Some (Ast.Probe probe_type) -> 
+            (match probe_type with
+             | Ast.Kprobe -> Some "kprobe"  (* Only kprobe uses pt_regs context *)
+             | Ast.Fprobe -> None)  (* Fprobe uses direct parameters *)
      | _ ->
          (* Fall back to parameter-based detection *)
          (match ir_func.parameters with
@@ -3505,7 +3511,7 @@ let generate_c_function ctx ir_func =
   let return_type_str = 
     (* Special handling for kprobe functions: always use int return type for eBPF compatibility *)
     match ir_func.func_program_type with
-    | Some Ast.Kprobe -> "__s32"  (* eBPF kprobe programs must return int *)
+    | Some (Ast.Probe _) -> "__s32"  (* eBPF probe programs must return int *)
     | _ ->
         match ir_func.return_type with
         | Some ret_type -> ebpf_type_from_ir_type ret_type
@@ -3515,9 +3521,17 @@ let generate_c_function ctx ir_func =
   let params_str = 
     (* Special handling for kprobe functions *)
     match ir_func.func_program_type with
-    | Some Ast.Kprobe ->
-        (* Kprobe functions always use struct pt_regs *ctx parameter *)
-        "struct pt_regs *ctx"
+      | Some (Ast.Probe probe_type) ->
+        (match probe_type with
+          | Ast.Kprobe ->
+              (* Kprobe with offset uses struct pt_regs *ctx parameter *)
+              "struct pt_regs *ctx"
+          | Ast.Fprobe ->
+              (* Fprobe uses actual function parameters *)
+              String.concat ", " 
+                (List.map (fun (name, param_type) ->
+                  sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
+                ) ir_func.parameters))
     | _ ->
         (* Other program types: use parameters as-is *)
         String.concat ", " 
@@ -3530,7 +3544,14 @@ let generate_c_function ctx ir_func =
     (* Check if this is a struct_ops function first *)
     match ir_func.func_program_type with
     | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
-    | Some Ast.Kprobe when ir_func.is_main -> "SEC(\"kprobe\")"  (* Always use kprobe section for kprobe functions *)
+    | Some (Ast.Probe probe_type) when ir_func.is_main -> 
+        (match probe_type with
+         | Ast.Fprobe -> 
+             (* fentry programs need the target function in the section name *)
+             (match ir_func.func_target with
+              | Some target -> sprintf "SEC(\"fentry/%s\")" target
+              | None -> failwith "Fprobe function is missing target information")
+         | Ast.Kprobe -> "SEC(\"kprobe\")")  (* Use kprobe section for offset-capable probes *)
     | Some Ast.Tracepoint when ir_func.is_main -> 
         (* For tracepoint functions, generate specific SEC based on target *)
         (match ir_func.func_target with
@@ -3541,7 +3562,7 @@ let generate_c_function ctx ir_func =
              (* This should not happen now that we properly pass targets through *)
              failwith "Tracepoint function is missing target information")
     | _ ->
-        (* For non-struct_ops, non-kprobe, and non-tracepoint functions, only generate SEC if it's a main function *)
+        (* For non-struct_ops, non-probe, and non-tracepoint functions, only generate SEC if it's a main function *)
         if ir_func.is_main then
           match ir_func.parameters with
           | [] -> "SEC(\"prog\")"  (* Default section for parameterless functions *)
@@ -3559,7 +3580,32 @@ let generate_c_function ctx ir_func =
   in
   
   emit_line ctx section_attr;
-  emit_line ctx (sprintf "%s %s(%s) {" return_type_str ir_func.func_name params_str);
+  
+  (* Try to generate custom function signature through context codegen system *)
+  let context_type = match ir_func.func_program_type with
+    | Some (Ast.Probe Ast.Fprobe) -> Some "fprobe"
+    | Some (Ast.Probe Ast.Kprobe) -> Some "kprobe"
+    | Some Ast.Tracepoint -> Some "tracepoint"
+    | _ -> None
+  in
+  
+  let custom_signature = match context_type with
+    | Some ctx_type ->
+        let string_parameters = List.map (fun (name, ir_type) -> 
+          (name, ebpf_type_from_ir_type ir_type)) ir_func.parameters in
+        Kernelscript_context.Context_codegen.generate_context_function_signature 
+          ctx_type ir_func.func_name string_parameters return_type_str
+    | None -> None
+  in
+  
+  (match custom_signature with
+   | Some signature ->
+       emit_line ctx signature;
+       emit_line ctx "{";
+   | None ->
+       (* Regular function signature for standard functions *)
+       emit_line ctx (sprintf "%s %s(%s) {" return_type_str ir_func.func_name params_str));
+  
   increase_indent ctx;
   
   (* Function parameters are handled directly via IRVariable - no register mapping needed *)
@@ -3648,6 +3694,7 @@ let generate_c_program ?_config_declarations ir_prog =
   (* Initialize modular context code generators *)
   Kernelscript_context.Xdp_codegen.register ();
   Kernelscript_context.Tc_codegen.register ();
+  Kernelscript_context.Fprobe_codegen.register ();
   
   (* Add standard includes *)
   let program_types = [ir_prog.program_type] in
@@ -3722,6 +3769,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
   Kernelscript_context.Tc_codegen.register ();
   Kernelscript_context.Kprobe_codegen.register ();
   Kernelscript_context.Tracepoint_codegen.register ();
+  Kernelscript_context.Fprobe_codegen.register ();
   
   (* Store variable type aliases for later lookup *)
   ctx.variable_type_aliases <- variable_type_aliases;
@@ -3844,6 +3892,7 @@ let compile_multi_to_c_with_tail_calls
   Kernelscript_context.Tc_codegen.register ();
   Kernelscript_context.Kprobe_codegen.register ();
   Kernelscript_context.Tracepoint_codegen.register ();
+  Kernelscript_context.Fprobe_codegen.register ();
   
   (* Generate headers and includes *)
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in

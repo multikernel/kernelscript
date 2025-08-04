@@ -42,9 +42,9 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | _ -> false
   in
   
-  (* Check if this is a kprobe function *)
+  (* Check if this is a probe function *)
   let is_kprobe_function = match ir_func.func_program_type with
-    | Some Ast.Kprobe -> true
+    | Some (Ast.Probe _) -> true
     | _ -> false
   in
   

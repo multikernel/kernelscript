@@ -92,7 +92,8 @@ fn get_timestamp() -> u64 {
 }
 
 // Security monitoring program
-@kprobe("sys_openat") fn security_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
+@probe("sys_openat")
+fn security_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
   var reserved = security_events.reserve()
   if (reserved != null) {
     // Successfully reserved space - populate security event inline

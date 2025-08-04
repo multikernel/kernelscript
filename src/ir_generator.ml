@@ -2341,7 +2341,7 @@ let convert_match_return_calls_to_tail_calls ir_function =
   { ir_function with basic_blocks = updated_blocks }
 
 (** Lower AST function to IR function *)
-let lower_function ctx prog_name ?(program_type = None) ?(func_target = None) (func_def : Ast.function_def) =
+let lower_function ctx prog_name ?(program_type : program_type option = None) ?(func_target = None) (func_def : Ast.function_def) =
   ctx.current_function <- Some func_def.func_name;
   
   (* Reset for new function *)
@@ -2352,9 +2352,9 @@ let lower_function ctx prog_name ?(program_type = None) ?(func_target = None) (f
   ctx.blocks <- [];
   ctx.stack_usage <- 0;
   
-  (* Register kprobe parameter mappings before processing the function *)
+  (* Register kprobe parameter mappings ONLY for kprobe programs *)
   (match program_type with
-  | Some Ast.Kprobe ->
+  | Some (Ast.Probe Ast.Kprobe) ->
       let parameters = List.map (fun (param_name, param_type) ->
         let param_type_str = match param_type with
           | Ast.U8 -> "u8" | Ast.U16 -> "u16" | Ast.U32 -> "u32" | Ast.U64 -> "u64"
@@ -2816,7 +2816,7 @@ let lower_multi_program ast symbol_table source_name =
                   let prog_type = match prog_type_str with
                     | "xdp" -> Ast.Xdp
                     | "tc" -> Ast.Tc  
-                    | "kprobe" -> Ast.Kprobe
+
                     | "tracepoint" -> Ast.Tracepoint
                     | _ -> failwith ("Unknown program type: " ^ prog_type_str)
                   in
@@ -2832,10 +2832,12 @@ let lower_multi_program ast symbol_table source_name =
          | AttributeWithArg (attr_name, target_func) :: _ ->
              (* Handle attributes with arguments like @kprobe("sys_read") *)
              (match attr_name with
-              | "kprobe" -> 
+              | "probe" -> 
+                  (* Determine probe type based on whether target contains offset *)
+                  let probe_kind = if String.contains target_func '+' then Ast.Kprobe else Ast.Fprobe in
                   Some {
                     Ast.prog_name = attr_func.attr_function.func_name;
-                    prog_type = Ast.Kprobe;
+                    prog_type = Ast.Probe probe_kind;
                     prog_functions = [attr_func.attr_function];
                     prog_maps = [];
                     prog_structs = [];

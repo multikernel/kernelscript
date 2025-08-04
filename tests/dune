@@ -390,8 +390,8 @@
  (libraries kernelscript alcotest unix str))
 
 (executable
- (name test_kprobe)
- (modules test_kprobe)
+ (name test_probe)
+ (modules test_probe)
  (libraries kernelscript alcotest unix str))
 
 (executable
@@ -703,7 +703,7 @@
   test_array_init.exe
   test_config_validation.exe
   test_tracepoint.exe
-  test_kprobe.exe
+  test_probe.exe
   test_stdlib.exe
   test_detach_api.exe
   test_struct_field_access.exe
@@ -750,7 +750,7 @@
    (run ./test_array_init.exe)
    (run ./test_config_validation.exe)
    (run ./test_tracepoint.exe)
-   (run ./test_kprobe.exe)
+   (run ./test_probe.exe)
    (run ./test_stdlib.exe)
    (run ./test_detach_api.exe)
    (run ./test_struct_field_access.exe)
@@ -834,7 +834,7 @@
   ./test_error_handling.exe
   ./test_integer_literal_codegen.exe
   ./test_tracepoint.exe
-  ./test_kprobe.exe)
+  ./test_probe.exe)
  (action
   (progn
    (run ./test_ast.exe)
@@ -852,5 +852,5 @@
    (run ./test_error_handling.exe)
    (run ./test_integer_literal_codegen.exe)
    (run ./test_tracepoint.exe)
-   (run ./test_kprobe.exe)
+   (run ./test_probe.exe)
    (run ./test_detach_api.exe)))) 

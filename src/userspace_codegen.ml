@@ -3254,8 +3254,8 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             return 0;
         }
         case BPF_PROG_TYPE_KPROBE: {
-            // For kprobe programs, target should be the kernel function name (e.g., "sys_read")
-            // Use libbpf high-level API for kprobe attachment
+            // For probe programs, target should be the kernel function name (e.g., "sys_read")
+            // Use libbpf high-level API for probe attachment
             
             // Get the bpf_program struct from the object and file descriptor
             struct bpf_program *prog = NULL;
@@ -3264,7 +3264,7 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
             // Find the program object corresponding to this fd
             // We need to get the program from the skeleton object
             if (!obj) {
-                fprintf(stderr, "eBPF skeleton not loaded for kprobe attachment\n");
+                fprintf(stderr, "eBPF skeleton not loaded for probe attachment\n");
                 return -1;
             }
 
@@ -3279,21 +3279,63 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
                 return -1;
             }
 
-            // Use libbpf's high-level kprobe attachment API
+            // BPF_PROG_TYPE_KPROBE programs always use kprobe attachment
+            // (these are generated from @probe("target+offset"))
             struct bpf_link *link = bpf_program__attach_kprobe(prog, false, target);
             if (!link) {
                 fprintf(stderr, "Failed to attach kprobe to function '%s': %s\n", target, strerror(errno));
                 return -1;
             }
+            printf("Kprobe attached to function: %s\n", target);
             
-            // Store kprobe attachment for later cleanup
+            // Store probe attachment for later cleanup
             if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_KPROBE) != 0) {
                 // If storage fails, destroy link and return error
                 bpf_link__destroy(link);
                 return -1;
             }
             
-            printf("Kprobe attached to function: %s\n", target);
+            return 0;
+        }
+        case BPF_PROG_TYPE_TRACING: {
+            // For fentry/fexit programs (BPF_PROG_TYPE_TRACING)
+            // These are loaded with SEC("fentry/target") or SEC("fexit/target")
+            
+            // Get the bpf_program struct from the object and file descriptor
+            struct bpf_program *prog = NULL;
+
+            // Find the program object corresponding to this fd
+            if (!obj) {
+                fprintf(stderr, "eBPF skeleton not loaded for tracing program attachment\n");
+                return -1;
+            }
+
+            bpf_object__for_each_program(prog, obj->obj) {
+                if (bpf_program__fd(prog) == prog_fd) {
+                    break;
+                }
+            }
+
+            if (!prog) {
+                fprintf(stderr, "Failed to find bpf_program for fd %d\n", prog_fd);
+                return -1;
+            }
+
+            // For fentry/fexit programs, use bpf_program__attach_trace
+            struct bpf_link *link = bpf_program__attach_trace(prog);
+            if (!link) {
+                fprintf(stderr, "Failed to attach fentry/fexit program to function '%s': %s\n", target, strerror(errno));
+                return -1;
+            }
+            
+            printf("Fentry/fexit program attached to function: %s\n", target);
+            
+            // Store tracing attachment for later cleanup
+            if (add_attachment(prog_fd, target, flags, link, 0, BPF_PROG_TYPE_TRACING) != 0) {
+                // If storage fails, destroy link and return error
+                bpf_link__destroy(link);
+                return -1;
+            }
             
             return 0;
         }
@@ -3395,6 +3437,15 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
                 printf("Kprobe detached from: %s\n", entry->target);
             } else {
                 fprintf(stderr, "Invalid kprobe link for program fd %d\n", prog_fd);
+            }
+            break;
+        }
+        case BPF_PROG_TYPE_TRACING: {
+            if (entry->link) {
+                bpf_link__destroy(entry->link);
+                printf("Fentry/fexit program detached from: %s\n", entry->target);
+            } else {
+                fprintf(stderr, "Invalid tracing program link for program fd %d\n", prog_fd);
             }
             break;
         }

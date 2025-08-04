@@ -202,6 +202,7 @@ let rec resolve_user_type ctx = function
   | UserType "xdp_action" -> Xdp_action
   | UserType "__sk_buff" -> Struct "__sk_buff"
   | UserType "int" -> I32
+  | UserType "usize" -> U64  (* usize maps to 64-bit unsigned integer *)
   | UserType name ->
       (* Look up type alias in the context *)
       (try
@@ -2417,7 +2418,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
               (match prog_type_str with
                | "xdp" -> Some Xdp
                | "tc" -> Some Tc  
-               | "kprobe" -> Some Kprobe
+
                | "tracepoint" -> Some Tracepoint
                | "kfunc" -> None  (* kfuncs don't have program types *)
                | "private" -> None  (* private functions don't have program types *)
@@ -2929,9 +2930,10 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
               (match prog_type_str with
                | "xdp" -> (Some Xdp, None)
                | "tc" -> (Some Tc, None)  
-               | "kprobe" -> 
-                   (* Reject old format: @kprobe without target function *)
-                   type_error ("@kprobe requires target function specification. Use @kprobe(\"function_name\") instead.") attr_func.attr_pos
+
+               | "probe" -> 
+                   (* Reject old format: @probe without target function *)
+                   type_error ("@probe requires target function specification. Use @probe(\"function_name\") instead.") attr_func.attr_pos
                | "tracepoint" -> 
                    (* Reject old format: @tracepoint without category/event *)
                    type_error ("@tracepoint requires category/event specification. Use @tracepoint(\"category/event\") instead.") attr_func.attr_pos
@@ -2942,7 +2944,10 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                | _ -> (None, None))
           | AttributeWithArg (attr_name, target_func) :: _ ->
               (match attr_name with
-               | "kprobe" -> (Some Kprobe, Some target_func)
+               | "probe" -> 
+                   (* Determine probe type based on whether target contains offset *)
+                   let probe_type = if String.contains target_func '+' then Kprobe else Fprobe in
+                   (Some (Probe probe_type), Some target_func)
                | "tracepoint" -> 
                    (* Parse category/event from string like "syscalls/sys_enter_read" *)
                    if String.contains target_func '/' then
@@ -2996,13 +3001,18 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                    (* TC validation failed - detailed diagnostics available in error message *)
                type_error ("@tc attributed function must have signature (ctx: *__sk_buff) -> int") attr_func.attr_pos
              )
-         | Some Kprobe ->
+         | Some (Probe probe_type) ->
              let params = attr_func.attr_function.func_params in
              let resolved_return_type = match get_return_type attr_func.attr_function.func_return_type with
                | Some ret_type -> Some (resolve_user_type ctx ret_type)
                | None -> None in
              
-             (* Validate kprobe function - only modern format supported *)
+             let probe_type_name = match probe_type with
+               | Fprobe -> "fprobe"
+               | Kprobe -> "kprobe"
+             in
+             
+             (* Validate probe function - only modern format supported *)
              (match kprobe_target with
              | Some _target_func ->
                  (* Modern format with target function specified *)
@@ -3010,27 +3020,27 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                  List.iter (fun (_, param_type) ->
                    match param_type with
                    | Pointer (UserType "pt_regs") ->
-                       type_error ("@kprobe functions should not use pt_regs parameter. Use kernel function parameters directly.") attr_func.attr_pos
+                       type_error (sprintf "@%s functions should not use pt_regs parameter. Use kernel function parameters directly." probe_type_name) attr_func.attr_pos
                    | _ -> ()
                  ) params;
                  (* Validate signature against BTF if available *)
                  if List.length params > 6 then
-                   type_error ("Kprobe functions support maximum 6 parameters") attr_func.attr_pos
+                   type_error (sprintf "%s functions support maximum 6 parameters" (String.capitalize_ascii probe_type_name)) attr_func.attr_pos
              | None ->
                  (* This case should never be reached due to earlier validation *)
-                 failwith "Internal error: kprobe without target function should have been rejected earlier"
+                 failwith (sprintf "Internal error: %s without target function should have been rejected earlier" probe_type_name)
              );
 
-             (* Allow both i32 (standard eBPF kprobe return) and void (matching kernel function signature) *)
+             (* Allow both i32 (standard eBPF probe return) and void (matching kernel function signature) *)
              let valid_return_type = match resolved_return_type with
-               | Some I32 -> true   (* Standard eBPF kprobe return type *)
+               | Some I32 -> true   (* Standard eBPF probe return type *)
                | Some Void -> true  (* Allow void to match kernel function signatures *)
                | Some U32 -> true   (* Allow u32 as alternative to i32 *)
                | _ -> false
              in
              
              if not valid_return_type then
-               type_error ("@kprobe attributed function must return i32, u32, or void") attr_func.attr_pos
+               type_error (sprintf "@%s attributed function must return i32, u32, or void" probe_type_name) attr_func.attr_pos
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         
@@ -3303,7 +3313,7 @@ and populate_multi_program_context ast multi_prog_analysis =
               (match prog_type_str with
                | "xdp" -> Some Xdp
                | "tc" -> Some Tc
-               | "kprobe" -> Some Kprobe
+
                | "tracepoint" -> Some Tracepoint
                | _ -> None)
           | _ -> None

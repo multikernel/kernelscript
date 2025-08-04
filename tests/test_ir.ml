@@ -29,7 +29,8 @@ module Program_type = struct
     | Xdp -> Format.fprintf fmt "Xdp"
     | Tc -> Format.fprintf fmt "Tc"
     | Tracepoint -> Format.fprintf fmt "Tracepoint"
-    | Kprobe -> Format.fprintf fmt "Kprobe"
+    | Probe Kprobe -> Format.fprintf fmt "Kprobe"
+    | Probe Fprobe -> Format.fprintf fmt "Fprobe"
     | StructOps -> Format.fprintf fmt "StructOps"
 end
 
