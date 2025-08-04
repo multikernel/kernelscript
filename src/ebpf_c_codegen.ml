@@ -2671,14 +2671,13 @@ let rec generate_c_instruction ctx ir_instr =
       (* Check if this is a dynptr-backed pointer first *)
       (match Hashtbl.find_opt ctx.dynptr_backed_pointers obj_str with
        | Some dynptr_var ->
-        (* This is a dynptr-backed pointer - use bpf_dynptr_write *)
-          let field_size = calculate_type_size value_val.val_type in
+        (* This is a dynptr-backed pointer - use DYNPTR_SAFE_WRITE macro *)
           (match obj_val.val_type with
            | IRPointer (IRStruct (struct_name, _), _) ->
                 let full_struct_name = sprintf "struct %s" struct_name in
-                emit_line ctx (sprintf "{ %s __tmp_val = %s;" (ebpf_type_from_ir_type value_val.val_type) value_str);
-                emit_line ctx (sprintf "  bpf_dynptr_write(&%s, __builtin_offsetof(%s, %s), &__tmp_val, %d, 0); }" 
-                         dynptr_var full_struct_name field_name field_size)
+                let c_type = ebpf_type_from_ir_type value_val.val_type in
+                emit_line ctx (sprintf "DYNPTR_SAFE_WRITE(&%s, __builtin_offsetof(%s, %s), %s, %s);" 
+                         dynptr_var full_struct_name field_name value_str c_type)
             | _ ->
                 (* Fallback to direct assignment for non-struct types *)
                 emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str))
@@ -2686,25 +2685,25 @@ let rec generate_c_instruction ctx ir_instr =
            (* Not a dynptr-backed pointer - use enhanced semantic analysis for field assignment *)
            (match detect_memory_region_enhanced obj_val with
                | PacketData ->
-            (* Packet data field assignment - use dynptr API for safe write *)
+            (* Packet data field assignment - use DYNPTR_SAFE_WRITE macro *)
            (match obj_val.val_type with
             | IRPointer (IRStruct (struct_name, _), _) ->
-                 let field_size = calculate_type_size value_val.val_type in
                  let full_struct_name = sprintf "struct %s" struct_name in
+                 let c_type = ebpf_type_from_ir_type value_val.val_type in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __pkt_dynptr; bpf_dynptr_from_xdp(&__pkt_dynptr, ctx);");
                  emit_line ctx (sprintf "  __u32 __field_offset = (%s - ctx->data) + __builtin_offsetof(%s, %s);" obj_str full_struct_name field_name);
-                 emit_line ctx (sprintf "  bpf_dynptr_write(&__pkt_dynptr, __field_offset, &%s, %d, 0); }" value_str field_size)
+                 emit_line ctx (sprintf "  DYNPTR_SAFE_WRITE(&__pkt_dynptr, __field_offset, %s, %s); }" value_str c_type)
              | _ ->
                  emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str))
         
         | _ when is_map_value_parameter obj_val ->
-            (* Map value field assignment - use dynptr API *)
+            (* Map value field assignment - use DYNPTR_SAFE_WRITE macro *)
             (match obj_val.val_type with
              | IRPointer (IRStruct (struct_name, _), _) ->
-                 let field_size = calculate_type_size value_val.val_type in
                  let full_struct_name = sprintf "struct %s" struct_name in
+                 let c_type = ebpf_type_from_ir_type value_val.val_type in
                  emit_line ctx (sprintf "{ struct bpf_dynptr __mem_dynptr; bpf_dynptr_from_mem(%s, sizeof(%s), 0, &__mem_dynptr);" obj_str full_struct_name);
-                 emit_line ctx (sprintf "  bpf_dynptr_write(&__mem_dynptr, __builtin_offsetof(%s, %s), &%s, %d, 0); }" full_struct_name field_name value_str field_size)
+                 emit_line ctx (sprintf "  DYNPTR_SAFE_WRITE(&__mem_dynptr, __builtin_offsetof(%s, %s), %s, %s); }" full_struct_name field_name value_str c_type)
              | _ ->
                  emit_line ctx (sprintf "if (%s) { %s->%s = %s; }" obj_str obj_str field_name value_str))
         
