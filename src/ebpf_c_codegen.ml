@@ -1152,6 +1152,137 @@ let check_object_allocation_usage ir_multi_prog =
 let check_object_allocation_usage_in_program ir_prog =
   check_object_allocation_usage_in_function ir_prog.entry_function
 
+(** Check if dynptr functionality is used in IR instructions *)
+let rec check_dynptr_usage_in_instrs instrs =
+  List.exists (fun instr ->
+    match instr.instr_desc with
+    | IRRingbufOp (_, _) -> true  (* Ring buffer operations always use dynptr *)
+    | IRStructFieldAssignment (obj_val, _, _) ->
+        (* Struct field assignments on packet data or map values use dynptr *)
+        (match detect_memory_region_enhanced obj_val with
+         | PacketData | MapValue -> true
+         | _ -> false)
+    | IRAssign (_, expr) ->
+        (* Check if assignment expressions use enhanced memory access patterns *)
+        check_dynptr_usage_in_expr expr
+    | IRCall (_, args, _) ->
+        (* Check function call arguments for enhanced memory patterns *)
+        List.exists check_dynptr_usage_in_value args
+    | IRIf (condition, then_body, else_body) ->
+        (check_dynptr_usage_in_value condition) ||
+        (check_dynptr_usage_in_instrs then_body) ||
+        (match else_body with
+         | Some else_instrs -> check_dynptr_usage_in_instrs else_instrs
+         | None -> false)
+    | IRIfElseChain (conditions_and_bodies, final_else) ->
+        (List.exists (fun (condition, then_body) ->
+          (check_dynptr_usage_in_value condition) ||
+          (check_dynptr_usage_in_instrs then_body)
+        ) conditions_and_bodies) ||
+        (match final_else with
+         | Some else_instrs -> check_dynptr_usage_in_instrs else_instrs
+         | None -> false)
+    | IRBpfLoop (_, _, _, _, body_instrs) ->
+        check_dynptr_usage_in_instrs body_instrs
+    | _ -> false
+  ) instrs
+
+and check_dynptr_usage_in_expr expr =
+  match expr.expr_desc with
+  | IRValue value -> check_dynptr_usage_in_value value
+  | IRBinOp (left, _, right) ->
+      (check_dynptr_usage_in_value left) || (check_dynptr_usage_in_value right)
+  | IRUnOp (IRDeref, value) ->
+      (* Dereference operations on packet data or map values use dynptr *)
+      (match detect_memory_region_enhanced value with
+       | PacketData | MapValue -> true
+       | _ -> false)
+  | IRUnOp (_, value) -> check_dynptr_usage_in_value value
+  | IRFieldAccess (obj_value, _) ->
+      (* Field access on packet data or map values uses dynptr *)
+      (match detect_memory_region_enhanced obj_value with
+       | PacketData | MapValue -> true
+       | _ -> false)
+  | IRCast (value, _) -> check_dynptr_usage_in_value value
+  | _ -> false
+
+and check_dynptr_usage_in_value value =
+  match value.value_desc with
+  | IRMapAccess (_, _, _) -> true  (* Map access may use enhanced patterns *)
+  | IRContextField (_, _) -> true  (* Context field access may use enhanced patterns *)
+  | _ -> false
+
+(** Check if dynptr functionality is used in a function *)
+let check_dynptr_usage_in_function ir_func =
+  List.exists (fun basic_block ->
+    check_dynptr_usage_in_instrs basic_block.instructions
+  ) ir_func.basic_blocks
+
+(** Check if dynptr functionality is used in a multi-program *)
+let check_dynptr_usage ir_multi_prog =
+  (* Conservative approach: include dynptr for XDP/TC programs or any enhanced memory access *)
+  (List.exists (fun ir_prog ->
+    match ir_prog.program_type with
+    | Xdp | Tc -> true  (* XDP/TC commonly use packet data access *)
+    | _ -> check_dynptr_usage_in_function ir_prog.entry_function
+  ) ir_multi_prog.programs) ||
+  (* Check kernel functions *)
+  (List.exists check_dynptr_usage_in_function ir_multi_prog.kernel_functions)
+
+(** Check if a single IR program uses dynptr functionality *)
+let check_dynptr_usage_in_program ir_prog =
+  match ir_prog.program_type with
+  | Xdp | Tc -> true  (* XDP/TC commonly use packet data access *)
+  | _ -> check_dynptr_usage_in_function ir_prog.entry_function
+
+(** Generate dynptr safety macros and helper functions *)
+let generate_dynptr_macros ctx =
+  emit_line ctx "/* eBPF Dynptr API integration for enhanced pointer safety */";
+  emit_line ctx "/* Using system-provided bpf_dynptr_* helper functions from bpf_helpers.h */";
+  emit_blank_line ctx;
+  
+  (* Generate enhanced dynptr safety macros *)
+  emit_line ctx "/* Enhanced dynptr safety macros */";
+  emit_line ctx "#define DYNPTR_SAFE_ACCESS(dynptr, offset, size, type) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        type *__ptr = (type*)bpf_dynptr_data(dynptr, offset, sizeof(type)); \\";
+  emit_line ctx "        __ptr ? *__ptr : (type){0}; \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
+  
+  emit_line ctx "#define DYNPTR_SAFE_WRITE(dynptr, offset, value, type) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        type __tmp = (value); \\";
+  emit_line ctx "        bpf_dynptr_write(dynptr, offset, &__tmp, sizeof(type), 0); \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
+  
+  emit_line ctx "#define DYNPTR_SAFE_READ(dst, dynptr, offset, type) \\";
+  emit_line ctx "    bpf_dynptr_read(dst, sizeof(type), dynptr, offset, 0)";
+  emit_blank_line ctx;
+  
+  (* Fallback macros for regular pointers *)
+  emit_line ctx "/* Fallback macros for regular pointer operations */";
+  emit_line ctx "#define SAFE_DEREF(ptr) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        typeof(*ptr) __val = {0}; \\";
+  emit_line ctx "        if (ptr) { \\";
+  emit_line ctx "            __builtin_memcpy(&__val, ptr, sizeof(__val)); \\";
+  emit_line ctx "        } \\";
+  emit_line ctx "        __val; \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx;
+  
+  emit_line ctx "#define SAFE_PTR_ACCESS(ptr, field) \\";
+  emit_line ctx "    ({ \\";
+  emit_line ctx "        typeof((ptr)->field) __val = {0}; \\";
+  emit_line ctx "        if (ptr) { \\";
+  emit_line ctx "            __val = (ptr)->field; \\";
+  emit_line ctx "        } \\";
+  emit_line ctx "        __val; \\";
+  emit_line ctx "    })";
+  emit_blank_line ctx
+
 (** Generate standard eBPF includes *)
 
 let generate_includes ctx ?(program_types=[]) ?(ir_multi_prog=None) ?(ir_program=None) () =
@@ -3523,6 +3654,10 @@ let generate_c_program ?_config_declarations ir_prog =
   let program_types = [ir_prog.program_type] in
   generate_includes ctx ~program_types ~ir_program:(Some ir_prog) ();
   
+  (* Generate dynptr safety macros only if needed for single program *)
+  let uses_dynptr = check_dynptr_usage_in_program ir_prog in
+  if uses_dynptr then generate_dynptr_macros ctx;
+  
   (* Generate string type definitions *)
   let temp_multi_prog = {
     source_name = ir_prog.name;
@@ -3715,52 +3850,9 @@ let compile_multi_to_c_with_tail_calls
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
   generate_includes ctx ~program_types ~ir_multi_prog:(Some ir_multi_prog) ();
   
-  (* Generate dynptr safety macros and helper functions *)
-  emit_line ctx "/* eBPF Dynptr API integration for enhanced pointer safety */";
-  emit_line ctx "/* Using system-provided bpf_dynptr_* helper functions from bpf_helpers.h */";
-  emit_blank_line ctx;
-  
-  (* Generate enhanced dynptr safety macros *)
-  emit_line ctx "/* Enhanced dynptr safety macros */";
-  emit_line ctx "#define DYNPTR_SAFE_ACCESS(dynptr, offset, size, type) \\";
-  emit_line ctx "    ({ \\";
-  emit_line ctx "        type *__ptr = (type*)bpf_dynptr_data(dynptr, offset, sizeof(type)); \\";
-  emit_line ctx "        __ptr ? *__ptr : (type){0}; \\";
-  emit_line ctx "    })";
-  emit_blank_line ctx;
-  
-  emit_line ctx "#define DYNPTR_SAFE_WRITE(dynptr, offset, value, type) \\";
-  emit_line ctx "    ({ \\";
-  emit_line ctx "        type __tmp = (value); \\";
-  emit_line ctx "        bpf_dynptr_write(dynptr, offset, &__tmp, sizeof(type), 0); \\";
-  emit_line ctx "    })";
-  emit_blank_line ctx;
-  
-  emit_line ctx "#define DYNPTR_SAFE_READ(dst, dynptr, offset, type) \\";
-  emit_line ctx "    bpf_dynptr_read(dst, sizeof(type), dynptr, offset, 0)";
-  emit_blank_line ctx;
-  
-  (* Fallback macros for regular pointers *)
-  emit_line ctx "/* Fallback macros for regular pointer operations */";
-  emit_line ctx "#define SAFE_DEREF(ptr) \\";
-  emit_line ctx "    ({ \\";
-  emit_line ctx "        typeof(*ptr) __val = {0}; \\";
-  emit_line ctx "        if (ptr) { \\";
-  emit_line ctx "            __builtin_memcpy(&__val, ptr, sizeof(__val)); \\";
-  emit_line ctx "        } \\";
-  emit_line ctx "        __val; \\";
-  emit_line ctx "    })";
-  emit_blank_line ctx;
-  
-  emit_line ctx "#define SAFE_PTR_ACCESS(ptr, field) \\";
-  emit_line ctx "    ({ \\";
-  emit_line ctx "        typeof((ptr)->field) __val = {0}; \\";
-  emit_line ctx "        if (ptr) { \\";
-  emit_line ctx "            __val = (ptr)->field; \\";
-  emit_line ctx "        } \\";
-  emit_line ctx "        __val; \\";
-  emit_line ctx "    })";
-  emit_blank_line ctx;
+  (* Generate dynptr safety macros and helper functions only if needed *)
+  let uses_dynptr = check_dynptr_usage ir_multi_prog in
+  if uses_dynptr then generate_dynptr_macros ctx;
   
   (* Store variable type aliases for later lookup *)
   ctx.variable_type_aliases <- variable_type_aliases;
