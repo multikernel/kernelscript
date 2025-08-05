@@ -399,6 +399,11 @@
  (modules test_detach_api)
  (libraries kernelscript alcotest test_utils str))
 
+(executable
+ (name test_tc)
+ (modules test_tc)
+ (libraries kernelscript alcotest unix str))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -636,6 +641,10 @@
  (alias runtest_detach_api)
  (action (run ./test_detach_api.exe)))
 
+(rule
+ (alias runtest_tc)
+ (action (run ./test_tc.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -704,6 +713,7 @@
   test_config_validation.exe
   test_tracepoint.exe
   test_probe.exe
+  test_tc.exe
   test_stdlib.exe
   test_detach_api.exe
   test_struct_field_access.exe
@@ -751,6 +761,7 @@
    (run ./test_config_validation.exe)
    (run ./test_tracepoint.exe)
    (run ./test_probe.exe)
+   (run ./test_tc.exe)
    (run ./test_stdlib.exe)
    (run ./test_detach_api.exe)
    (run ./test_struct_field_access.exe)
@@ -834,7 +845,8 @@
   ./test_error_handling.exe
   ./test_integer_literal_codegen.exe
   ./test_tracepoint.exe
-  ./test_probe.exe)
+  ./test_probe.exe
+  ./test_tc.exe)
  (action
   (progn
    (run ./test_ast.exe)
@@ -853,4 +865,5 @@
    (run ./test_integer_literal_codegen.exe)
    (run ./test_tracepoint.exe)
    (run ./test_probe.exe)
+   (run ./test_tc.exe)
    (run ./test_detach_api.exe)))) 
