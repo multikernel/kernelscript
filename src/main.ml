@@ -571,6 +571,16 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     ) resolved_imports;
     Printf.printf "\n";
     
+    (* Phase 1.6: Include Processing *)
+    Printf.printf "Phase 1.6: Include Processing\n";
+    let includes = Include_resolver.get_includes ast in
+    let expanded_ast = Include_resolver.process_includes ast input_file in
+    Printf.printf "✅ Processed %d includes, expanded to %d declarations\n" (List.length includes) (List.length expanded_ast);
+    List.iter (fun include_decl -> 
+      Printf.printf "   📄 Header: %s\n" include_decl.Ast.include_path
+    ) includes;
+    Printf.printf "\n";
+    
     (* Determine output directory early *)
     let actual_output_dir = match output_dir with
       | Some dir -> dir
@@ -606,16 +616,17 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     in
     copy_python_files resolved_imports actual_output_dir;
     
-    (* Store original AST before any filtering *)
-    let original_ast = ast in
+    (* Store original AST before any filtering and use expanded AST with includes *)
+    let _original_ast = ast in
+    let ast_with_includes = expanded_ast in  (* Use expanded AST with included declarations *)
     
     (* Test mode: Filter AST for @test functions *)
       let filtered_ast = if test_mode then
-    Test_codegen.filter_ast_for_testing ast input_file
-    else original_ast in
+    Test_codegen.filter_ast_for_testing ast_with_includes input_file
+    else ast_with_includes in
     
-    (* For regular eBPF compilation, always use original AST *)
-    let compilation_ast = original_ast in
+    (* Use the filtered AST (which includes expanded includes) for compilation *)
+    let compilation_ast = filtered_ast in
     
     (* Extract base name for project name *)
     let base_name = Filename.remove_extension (Filename.basename input_file) in

@@ -73,6 +73,7 @@
   let lookup_keyword = function
     | "fn" -> FN
     | "extern" -> EXTERN
+    | "include" -> INCLUDE
     | "pin" -> PIN
     | "type" -> TYPE
     | "struct" -> STRUCT

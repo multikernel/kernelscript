@@ -89,9 +89,9 @@ fn main(args: Args) -> i32 {
 }
 ```
 
-### 1.4 Unified Import System
+### 1.4 Unified Import and Include System
 
-KernelScript supports importing both KernelScript modules and external language modules using a unified syntax. Import behavior is automatically determined by file extension:
+KernelScript supports both importing modules and including headers using distinct keywords for different use cases:
 
 ```kernelscript
 // Import KernelScript modules (.ks files)
@@ -132,6 +132,30 @@ fn main() -> i32 {
 }
 ```
 
+#### Include System for Headers (.kh files)
+
+```kernelscript
+// Include KernelScript headers (.kh files) - declarations only, flattened into global namespace
+include "generated/common_kfuncs.kh"           // extern kfunc declarations
+include "generated/xdp_kfuncs.kh"              // XDP-specific kfuncs  
+include "types/networking.kh"                  // Type definitions
+
+@xdp
+fn packet_processor(ctx: *xdp_md) -> xdp_action {
+    // Direct access to included extern kfuncs (no namespace)
+    var timestamp = bpf_ktime_get_ns()          // From common_kfuncs.kh
+    bpf_xdp_adjust_head(ctx, -14)               // From xdp_kfuncs.kh
+    
+    return XDP_PASS
+}
+```
+
+**Key Distinctions:**
+- **`import name from "file"`**: Creates namespace, works with full implementations (.ks/.py files)
+- **`include "file"`**: Flattens into global namespace, works with headers only (.kh files)
+- **Use cases**: Import for libraries/modules, include for extern declarations and types
+- **Validation**: Include validates that .kh files contain only declarations (no function bodies)
+
 ## 2. Lexical Structure
 
 ### 2.1 Keywords
@@ -141,7 +165,7 @@ pin         type        struct      enum        if          else
 while       loop        break       continue    return      import
 pub         priv        impl        true        false       null
 try         catch       throw       defer       delete      match
-extern
+extern      include
 ```
 
 **Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
@@ -4824,6 +4848,9 @@ import_declaration = "import" identifier "from" string_literal
 (* External kernel function declarations - for importing existing kernel kfuncs *)
 extern_declaration = "extern" identifier "(" parameter_list ")" [ "->" type_annotation ]
 
+(* Include declarations - for KernelScript headers (.kh files) *)
+include_declaration = "include" string_literal
+
 (* Examples:
    import utils from "./common/utils.ks"          // KernelScript import
    import ml_analysis from "./ml/threat.py"       // Python import (userspace only)
@@ -4831,9 +4858,13 @@ extern_declaration = "extern" identifier "(" parameter_list ")" [ "->" type_anno
    extern bpf_ktime_get_ns() -> u64               // Import existing kernel kfunc
    extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32  // Import with parameters
    
+   include "common_kfuncs.kh"                    // Include header with extern declarations
+   include "types/networking.kh"                 // Include header with type definitions
+   
    Import behavior is determined by file extension:
    - .ks files: Import KernelScript symbols (functions, types, maps, configs)  
    - .py files: Import Python functions with automatic FFI bridging (userspace only)
+   - .kh files: Include headers with declarations only (flattened into global namespace)
 *) 
 
 (* Identifiers and basic tokens *)

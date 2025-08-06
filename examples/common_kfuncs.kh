@@ -1,0 +1,8 @@
+// Common kernel function declarations
+extern bpf_ktime_get_ns() -> u64
+extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32
+extern bpf_get_current_pid_tgid() -> u64
+
+// Common type definitions
+type Timestamp = u64
+type ProcessId = u32

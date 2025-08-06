@@ -2905,6 +2905,12 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
         in
         Hashtbl.replace ctx.functions extern_decl.extern_name (param_types, return_type);
         Hashtbl.replace ctx.function_scopes extern_decl.extern_name Kernel (* Extern kfuncs run in kernel space *);
+    | IncludeDecl include_decl ->
+        (* Include declarations are processed in main.ml Phase 1.6 before type checking *)
+        (* By the time we reach this point, includes should already be expanded into the AST *)
+        (* This case should rarely be hit, but we handle it gracefully *)
+        let _ = include_decl in  (* Suppress unused variable warning *)
+        ()
   ) ast;
   
   (* Second pass: type check attributed functions and global functions with multi-program awareness *)

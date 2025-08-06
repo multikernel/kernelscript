@@ -351,6 +351,12 @@ type extern_kfunc_declaration = {
   extern_pos: position;
 }
 
+(** Include declaration - for KernelScript headers (.kh files) *)
+type include_declaration = {
+  include_path: string;        (* Path to .kh file *)
+  include_pos: position;
+}
+
 (** Top-level declarations *)
 type declaration =
   | AttributedFunction of attributed_function
@@ -363,6 +369,7 @@ type declaration =
   | ImplBlock of impl_block
   | ImportDecl of import_declaration
   | ExternKfuncDecl of extern_kfunc_declaration
+  | IncludeDecl of include_declaration
 
 (** Complete AST *)
 type ast = declaration list
@@ -454,6 +461,11 @@ let make_extern_kfunc_declaration name params return_type pos = {
   extern_params = params;
   extern_return_type = return_type;
   extern_pos = pos;
+}
+
+let make_include_declaration path pos = {
+  include_path = path;
+  include_pos = pos;
 }
 
 let make_type_def def = def
@@ -904,6 +916,8 @@ let string_of_declaration = function
         | None -> ""
       in
       Printf.sprintf "extern %s(%s)%s;" extern_decl.extern_name params_str return_str
+  | IncludeDecl include_decl ->
+      Printf.sprintf "include \"%s\"" include_decl.include_path
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

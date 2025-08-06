@@ -1,0 +1,6 @@
+// XDP-specific kernel function declarations
+extern bpf_xdp_adjust_head(ctx: *xdp_md, delta: i32) -> i32
+extern bpf_xdp_adjust_tail(ctx: *xdp_md, delta: i32) -> i32
+
+// XDP-specific types
+type XdpAction = u32

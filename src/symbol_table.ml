@@ -526,6 +526,13 @@ and process_declaration_accumulate table declaration =
         (Function (param_types, return_type)) 
         Public extern_decl.extern_pos;
       table
+      
+  | Ast.IncludeDecl include_decl ->
+      (* Include declarations are processed in main.ml Phase 1.6 before symbol table building *)
+      (* By the time we reach this point, includes should already be expanded into the AST *)
+      (* This case should rarely be hit, but we handle it gracefully *)
+      let _ = include_decl in  (* Suppress unused variable warning *)
+      table
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
@@ -613,6 +620,13 @@ and process_declaration table = function
       add_symbol table extern_decl.extern_name 
         (Function (param_types, return_type)) 
         Public extern_decl.extern_pos
+      
+  | Ast.IncludeDecl include_decl ->
+      (* Include declarations are processed in main.ml Phase 1.6 before symbol table building *)
+      (* By the time we reach this point, includes should already be expanded into the AST *)
+      (* This case should rarely be hit, but we handle it gracefully *)
+      let _ = include_decl in  (* Suppress unused variable warning *)
+      ()
       
   | Ast.ImplBlock impl_block ->
       (* Add the impl block itself as a struct_ops symbol *)
