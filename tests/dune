@@ -19,6 +19,11 @@
  (libraries kernelscript alcotest))
 
 (executable
+ (name test_extern)
+ (modules test_extern)
+ (libraries kernelscript alcotest str))
+
+(executable
  (name test_lexer)
  (modules test_lexer)
  (libraries kernelscript alcotest test_utils))
@@ -722,6 +727,7 @@
   test_function_scope.exe
   test_function_validation.exe
   test_kfunc_attribute.exe
+  test_extern.exe
   test_private_attribute.exe
   test_enum.exe
   test_type_alias.exe
@@ -770,6 +776,7 @@
    (run ./test_function_scope.exe)
    (run ./test_function_validation.exe)
    (run ./test_kfunc_attribute.exe)
+   (run ./test_extern.exe)
    (run ./test_private_attribute.exe)
    (run ./test_enum.exe)
    (run ./test_type_alias.exe)

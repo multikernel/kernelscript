@@ -151,6 +151,7 @@ let validate_ast ast =
           | ImplStaticField (_, expr) -> validate_expr expr
         ) impl_block.impl_items
     | ImportDecl _ -> true (* Import declarations are always valid once parsed *)
+    | ExternKfuncDecl _ -> true (* Extern kfunc declarations are always valid once parsed *)
   in
   
   List.for_all validate_declaration ast

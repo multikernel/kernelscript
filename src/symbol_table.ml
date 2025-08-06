@@ -514,6 +514,18 @@ and process_declaration_accumulate table declaration =
         (ImportedModule (import_decl.source_type, import_decl.source_path)) 
         Public import_decl.import_pos;
       table
+      
+  | Ast.ExternKfuncDecl extern_decl ->
+      (* Add extern kfunc as a function symbol *)
+      let return_type = match extern_decl.extern_return_type with
+        | Some typ -> typ
+        | None -> Ast.Void
+      in
+      let param_types = List.map snd extern_decl.extern_params in
+      add_symbol table extern_decl.extern_name 
+        (Function (param_types, return_type)) 
+        Public extern_decl.extern_pos;
+      table
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
@@ -590,6 +602,17 @@ and process_declaration table = function
       add_symbol table import_decl.module_name 
         (ImportedModule (import_decl.source_type, import_decl.source_path)) 
         Public import_decl.import_pos
+      
+  | Ast.ExternKfuncDecl extern_decl ->
+      (* Add extern kfunc as a function symbol *)
+      let return_type = match extern_decl.extern_return_type with
+        | Some typ -> typ
+        | None -> Ast.Void
+      in
+      let param_types = List.map snd extern_decl.extern_params in
+      add_symbol table extern_decl.extern_name 
+        (Function (param_types, return_type)) 
+        Public extern_decl.extern_pos
       
   | Ast.ImplBlock impl_block ->
       (* Add the impl block itself as a struct_ops symbol *)

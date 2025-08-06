@@ -141,6 +141,7 @@ pin         type        struct      enum        if          else
 while       loop        break       continue    return      import
 pub         priv        impl        true        false       null
 try         catch       throw       defer       delete      match
+extern
 ```
 
 **Note**: The `pin` keyword is used for both maps and global variables to enable filesystem persistence.
@@ -1240,11 +1241,113 @@ fn advanced_security_monitor(ctx: LsmContext) -> i32 {
 }
 ```
 
-### 3.7 Helper Functions (@helper)
+### 3.7 External Kernel Functions (extern)
+
+KernelScript supports importing existing kernel functions using the `extern` keyword. These are kernel functions that already exist in the running kernel (discovered via BTF) and can be called directly from eBPF programs without requiring custom kernel modules.
+
+#### 3.7.1 extern Declaration and Usage
+
+External kernel functions are declared using the `extern` keyword and provide type-safe access to kernel-provided kfuncs:
+
+```kernelscript
+// Import existing kernel functions via extern declarations
+extern bpf_ktime_get_ns() -> u64
+extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32
+extern bpf_get_current_pid_tgid() -> u64
+extern bpf_get_current_comm(buf: *u8, buf_size: u32) -> i32
+
+// eBPF programs can call extern functions directly
+@xdp
+fn packet_tracer(ctx: *xdp_md) -> xdp_action {
+    // Get current timestamp using extern kfunc
+    var timestamp = bpf_ktime_get_ns()
+    
+    // Get current process ID using extern kfunc
+    var pid_tgid = bpf_get_current_pid_tgid()
+    var pid = (pid_tgid >> 32) as u32
+    
+    // Get process name
+    var comm: u8[16]
+    bpf_get_current_comm(&comm[0], 16)
+    
+    // Print debug information
+    bpf_trace_printk(&"packet from pid %d\n"[0], 18)
+    
+    return XDP_PASS
+}
+```
+
+#### 3.7.2 extern vs @kfunc Comparison
+
+| Aspect | `extern` | `@kfunc` |
+|--------|----------|----------|
+| **Definition** | Declaration of existing kernel function | User-defined kernel function |
+| **Implementation** | Already exists in kernel | Implemented in generated kernel module |
+| **BTF Registration** | Already registered | Registered by compiler |
+| **Compilation** | Declaration only | Full implementation + module |
+| **Usage** | Import existing kernel APIs | Create custom kernel functionality |
+| **Performance** | Direct kernel function call | BTF-mediated call to module |
+
+#### 3.7.3 extern Declaration Rules
+
+- **Declaration only**: `extern` functions must not have function bodies
+- **Type safety**: Parameter and return types must match kernel BTF signatures
+- **eBPF only**: `extern` functions can only be called from eBPF programs, not userspace
+- **Kernel availability**: Functions must exist in the target kernel version
+
+```kernelscript
+// ✅ Valid extern declaration
+extern bpf_ktime_get_ns() -> u64
+
+// ❌ Invalid - extern cannot have function body
+extern invalid_function() -> u32 {
+    return 42  // Error: extern functions cannot have bodies
+}
+
+// ❌ Invalid - extern functions cannot be called from userspace
+fn userspace_function() -> u64 {
+    return bpf_ktime_get_ns()  // Error: extern kfuncs only callable from eBPF
+}
+```
+
+#### 3.7.4 BTF Integration and Discovery
+
+The compiler can automatically discover available kernel functions from BTF:
+
+```bash
+# Automatic extern generation from kernel BTF
+kernelscript init --kfuncs xdp my_xdp
+
+# Generated extern_kfuncs.ks would contain:
+# extern bpf_ktime_get_ns() -> u64
+# extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32
+# extern bpf_get_current_pid_tgid() -> u64
+# ... (all available kernel kfuncs)
+```
+
+#### 3.7.5 Common extern kfunc Examples
+
+```kernelscript
+extern bpf_ktime_get_ns() -> u64
+extern bpf_get_current_pid_tgid() -> u64
+extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32
+
+@tc("ingress")
+fn network_monitor(ctx: *__sk_buff) -> i32 {
+    var timestamp = bpf_ktime_get_ns()
+    var pid_tgid = bpf_get_current_pid_tgid()
+
+    // Process monitoring logic here
+    bpf_trace_printk("Processing packet at %llu from PID %d\n", 40)
+    return 0  // TC_ACT_OK
+}
+```
+
+### 3.8 Helper Functions (@helper)
 
 KernelScript supports kernel-shared helper functions using the `@helper` attribute. These functions compile to eBPF bytecode and are shared across all eBPF programs within the same compilation unit, providing a way to reuse common logic without duplicating code.
 
-#### 3.7.1 @helper Declaration and Usage
+#### 3.8.1 @helper Declaration and Usage
 
 Helper functions are declared using the `@helper` attribute and can be called from any eBPF program:
 
@@ -1301,7 +1404,7 @@ fn traffic_shaper(ctx: *__sk_buff) -> int {
 }
 ```
 
-#### 3.7.2 @helper vs Other Function Types
+#### 3.8.2 @helper vs Other Function Types
 
 | Aspect | `@helper` | `@kfunc` | `@xdp/@tc/etc` | Regular `fn` |
 |--------|-----------|----------|----------------|--------------|
@@ -1311,7 +1414,7 @@ fn traffic_shaper(ctx: *__sk_buff) -> int {
 | **Shared Across Programs** | Yes | Yes | No | No |
 | **Memory Access** | eBPF-restricted | Unrestricted kernel | eBPF-restricted | Userspace-restricted |
 
-#### 3.7.3 Code Organization Benefits
+#### 3.8.3 Code Organization Benefits
 
 Using `@helper` functions provides several benefits:
 
@@ -1351,11 +1454,11 @@ fn connection_tracker(ctx: *__sk_buff) -> int {
 }
 ```
 
-### 3.8 Private Kernel Module Functions (@private)
+### 3.9 Private Kernel Module Functions (@private)
 
 KernelScript supports private helper functions within kernel modules using the `@private` attribute. These functions execute in kernel space but are internal to the module - they cannot be called by eBPF programs and are not registered via BTF. They serve as utility functions for `@kfunc` implementations.
 
-#### 3.8.1 @private Declaration and Usage
+#### 3.9.1 @private Declaration and Usage
 
 Private functions are declared using the `@private` attribute and can only be called by other functions within the same kernel module:
 
@@ -1446,7 +1549,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 ```
 
-#### 3.8.2 Function Visibility and Call Hierarchy
+#### 3.9.2 Function Visibility and Call Hierarchy
 
 ```kernelscript
 // Example showing function call hierarchy
@@ -1486,7 +1589,7 @@ fn traffic_analyzer(ctx: *__sk_buff) -> int {
 }
 ```
 
-#### 3.8.3 @private vs @kfunc Comparison
+#### 3.9.3 @private vs @kfunc Comparison
 
 | Aspect | `@private` | `@kfunc` |
 |--------|-----------|----------|
@@ -1497,7 +1600,7 @@ fn traffic_analyzer(ctx: *__sk_buff) -> int {
 | **Use Case** | Internal implementation details | Public API functions |
 | **Performance** | Direct function call | BTF-mediated call |
 
-#### 3.8.4 Code Organization Benefits
+#### 3.9.4 Code Organization Benefits
 
 Using `@private` functions provides several architectural benefits:
 
@@ -1560,11 +1663,11 @@ fn optimized_packet_check(packet: *u8, len: u32) -> bool {
 }
 ```
 
-### 3.9 Struct_ops and Kernel Module Function Pointers
+### 3.10 Struct_ops and Kernel Module Function Pointers
 
 KernelScript supports eBPF struct_ops through clean impl block syntax that allows implementing kernel interfaces using eBPF programs.
 
-#### 3.9.1 eBPF Struct_ops with Impl Blocks
+#### 3.10.1 eBPF Struct_ops with Impl Blocks
 
 eBPF struct_ops allow implementing kernel interfaces using eBPF programs. KernelScript uses impl blocks for a clean, intuitive syntax:
 
@@ -1629,7 +1732,7 @@ impl my_bbr_congestion_control {
 register(my_bbr_congestion_control)
 ```
 
-#### 3.9.2 Simplified Struct_ops Example
+#### 3.10.2 Simplified Struct_ops Example
 
 ```kernelscript
 // Minimal struct_ops implementation
@@ -1669,7 +1772,7 @@ fn main() -> i32 {
 }
 ```
 
-#### 3.9.3 Registration Function
+#### 3.10.3 Registration Function
 
 The `register()` function is type-aware and generates the appropriate registration code:
 
@@ -4530,7 +4633,8 @@ kernelscript_file = { global_declaration }
 
 global_declaration = config_declaration | map_declaration | type_declaration | 
                     function_declaration | struct_declaration | impl_declaration |
-                    global_variable_declaration | bindings_declaration | import_declaration 
+                    global_variable_declaration | bindings_declaration | import_declaration |
+                    extern_declaration 
 
 (* Map declarations - global scope *)
 map_declaration = [ "pin" ] [ "@flags" "(" flag_expression ")" ] "var" identifier ":" map_type "<" key_type "," value_type ">" "(" map_config ")"
@@ -4717,9 +4821,15 @@ null_literal = "null"
 (* Import declarations - unified syntax for KernelScript and external languages *)
 import_declaration = "import" identifier "from" string_literal 
 
+(* External kernel function declarations - for importing existing kernel kfuncs *)
+extern_declaration = "extern" identifier "(" parameter_list ")" [ "->" type_annotation ]
+
 (* Examples:
    import utils from "./common/utils.ks"          // KernelScript import
    import ml_analysis from "./ml/threat.py"       // Python import (userspace only)
+   
+   extern bpf_ktime_get_ns() -> u64               // Import existing kernel kfunc
+   extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32  // Import with parameters
    
    Import behavior is determined by file extension:
    - .ks files: Import KernelScript symbols (functions, types, maps, configs)  

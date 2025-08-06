@@ -2896,6 +2896,15 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
     | ImportDecl _import_decl ->
         (* Import declarations are handled elsewhere - no processing needed here *)
         ()
+    | ExternKfuncDecl extern_decl ->
+        (* Add extern kfunc to function table *)
+        let param_types = List.map (fun (_, typ) -> resolve_user_type ctx typ) extern_decl.extern_params in
+        let return_type = match extern_decl.extern_return_type with
+          | Some t -> resolve_user_type ctx t
+          | None -> Void
+        in
+        Hashtbl.replace ctx.functions extern_decl.extern_name (param_types, return_type);
+        Hashtbl.replace ctx.function_scopes extern_decl.extern_name Kernel (* Extern kfuncs run in kernel space *);
   ) ast;
   
   (* Second pass: type check attributed functions and global functions with multi-program awareness *)

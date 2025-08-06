@@ -343,6 +343,14 @@ type import_declaration = {
   import_pos: position;
 }
 
+(** Extern kfunc declaration - for importing kernel functions *)
+type extern_kfunc_declaration = {
+  extern_name: string;
+  extern_params: (string * bpf_type) list;
+  extern_return_type: bpf_type option;
+  extern_pos: position;
+}
+
 (** Top-level declarations *)
 type declaration =
   | AttributedFunction of attributed_function
@@ -354,6 +362,7 @@ type declaration =
   | GlobalVarDecl of global_variable_declaration
   | ImplBlock of impl_block
   | ImportDecl of import_declaration
+  | ExternKfuncDecl of extern_kfunc_declaration
 
 (** Complete AST *)
 type ast = declaration list
@@ -438,6 +447,13 @@ let make_attributed_function attrs func pos = {
   attr_pos = pos;
   program_type = None;
   tail_call_dependencies = [];
+}
+
+let make_extern_kfunc_declaration name params return_type pos = {
+  extern_name = name;
+  extern_params = params;
+  extern_return_type = return_type;
+  extern_pos = pos;
 }
 
 let make_type_def def = def
@@ -879,6 +895,15 @@ let string_of_declaration = function
         import_decl.module_name 
         import_decl.source_path 
         source_type_str
+  | ExternKfuncDecl extern_decl ->
+      let params_str = String.concat ", " (List.map (fun (name, typ) ->
+        Printf.sprintf "%s: %s" name (string_of_bpf_type typ)
+      ) extern_decl.extern_params) in
+      let return_str = match extern_decl.extern_return_type with
+        | Some typ -> " -> " ^ string_of_bpf_type typ
+        | None -> ""
+      in
+      Printf.sprintf "extern %s(%s)%s;" extern_decl.extern_name params_str return_str
 
 let string_of_ast ast =
   String.concat "\n\n" (List.map string_of_declaration ast)

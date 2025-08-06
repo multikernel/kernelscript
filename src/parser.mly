@@ -39,7 +39,7 @@
 %token NULL NONE
 
 /* Keywords */
-%token FN PIN TYPE STRUCT ENUM IMPL
+%token FN EXTERN PIN TYPE STRUCT ENUM IMPL
 %token U8 U16 U32 U64 I8 I16 I32 I64 BOOL CHAR VOID STR
 %token IF ELSE FOR WHILE RETURN BREAK CONTINUE
 %token VAR CONST CONFIG LOCAL
@@ -97,6 +97,7 @@
 %type <Ast.map_flag> flag_item
 
 %type <Ast.function_def> function_declaration
+%type <Ast.extern_kfunc_declaration> extern_kfunc_declaration
 %type <Ast.return_type_spec option> function_return_type
 %type <(string * Ast.bpf_type) list> parameter_list
 %type <string * Ast.bpf_type> parameter
@@ -170,6 +171,7 @@ declaration:
   | config_declaration { ConfigDecl $1 }
   | attributed_function_declaration { AttributedFunction $1 }
   | function_declaration { GlobalFunction $1 }
+  | extern_kfunc_declaration { ExternKfuncDecl $1 }
   | map_declaration { MapDecl $1 }
   | struct_declaration { StructDecl $1 }
   | enum_declaration { TypeDef $1 }
@@ -210,6 +212,13 @@ attribute:
 function_declaration:
   | FN IDENTIFIER LPAREN parameter_list RPAREN function_return_type LBRACE statement_list RBRACE
     { make_function $2 $4 $6 $8 (make_pos ()) }
+
+/* Extern kfunc declaration: extern name(params) -> return_type; */
+extern_kfunc_declaration:
+  | EXTERN IDENTIFIER LPAREN parameter_list RPAREN ARROW bpf_type
+    { make_extern_kfunc_declaration $2 $4 (Some $7) (make_pos ()) }
+  | EXTERN IDENTIFIER LPAREN parameter_list RPAREN
+    { make_extern_kfunc_declaration $2 $4 None (make_pos ()) }
 
 function_return_type:
   | /* empty */ { None }
