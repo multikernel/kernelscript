@@ -49,7 +49,7 @@ val is_well_known_kernel_type : ?btf_path:string -> string -> bool
 val extract_struct_ops_definitions : string option -> string list -> string list
 
 (** Generate struct_ops template with BTF extraction *)
-val generate_struct_ops_template : string option -> string list -> string -> string
+val generate_struct_ops_template : ?include_kfuncs:string -> string option -> string list -> string -> string
 
 (** Generate KernelScript source code from template *)
-val generate_kernelscript_source : ?extra_param:string -> program_template -> string -> string 
+val generate_kernelscript_source : ?extra_param:string -> ?include_kfuncs:string -> program_template -> string -> string 

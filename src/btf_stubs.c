@@ -631,6 +631,64 @@ value btf_extract_kernel_struct_names_stub(value btf_handle) {
     CAMLreturn(result);
 }
 
+/* Extract kfuncs from BTF using DECL_TAG annotations */
+value btf_extract_kfuncs_stub(value btf_handle) {
+    CAMLparam1(btf_handle);
+    CAMLlocal3(result_list, current, tuple);
+    
+    struct btf *btf = btf_of_value(btf_handle);
+    if (!btf) {
+        CAMLreturn(Val_emptylist);
+    }
+    
+    result_list = Val_emptylist;
+    int nr_types = btf__type_cnt(btf);
+    
+    /* First pass: find all DECL_TAG types that reference "bpf_kfunc" */
+    for (int i = 1; i < nr_types; i++) {
+        const struct btf_type *t = btf__type_by_id(btf, i);
+        if (!t) continue;
+        
+        int kind = btf_kind(t);
+        
+        if (kind == BTF_KIND_DECL_TAG) {
+            const char *tag_name = btf__name_by_offset(btf, t->name_off);
+            if (tag_name && strcmp(tag_name, "bpf_kfunc") == 0) {
+                /* This is a bpf_kfunc tag, get the function it references */
+                int target_id = t->type;
+                const struct btf_type *target_func = btf__type_by_id(btf, target_id);
+                
+                if (target_func && btf_kind(target_func) == BTF_KIND_FUNC) {
+                    const char *func_name = btf__name_by_offset(btf, target_func->name_off);
+                    if (!func_name) continue;
+                    
+                    /* Get the function prototype */
+                    const struct btf_type *func_proto = btf__type_by_id(btf, target_func->type);
+                    if (func_proto && btf_kind(func_proto) == BTF_KIND_FUNC_PROTO) {
+                        /* Extract function signature */
+                        char *signature = format_function_prototype(btf, func_proto);
+                        
+                        /* Create tuple (function_name, signature) */
+                        tuple = caml_alloc_tuple(2);
+                        Store_field(tuple, 0, caml_copy_string(func_name));
+                        Store_field(tuple, 1, caml_copy_string(signature));
+                        
+                        /* Add to result list */
+                        current = caml_alloc(2, 0);
+                        Store_field(current, 0, tuple);
+                        Store_field(current, 1, result_list);
+                        result_list = current;
+                        
+                        free(signature);
+                    }
+                }
+            }
+        }
+    }
+    
+    CAMLreturn(result_list);
+}
+
 /* Free BTF handle */
 value btf_free_stub(value btf_handle) {
     CAMLparam1(btf_handle);

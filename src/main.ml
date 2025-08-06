@@ -21,7 +21,7 @@ open Printf
 
 (** Subcommand types *)
 type subcommand = 
-  | Init of { prog_type: string; project_name: string; btf_path: string option }
+  | Init of { prog_type: string; project_name: string; btf_path: string option; extract_kfuncs: bool }
   | Compile of { input_file: string; output_dir: string option; verbose: bool; generate_makefile: bool; btf_vmlinux_path: string option; test_mode: bool }
 
 (** Parse command line arguments *)
@@ -32,14 +32,15 @@ let rec parse_args () =
       printf "KernelScript Compiler\n";
       printf "Usage: %s <subcommand> [options]\n\n" (List.hd args);
       printf "Subcommands:\n";
-      printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>]\n";
+      printf "  init <prog_type_or_struct_ops> <project_name> [--btf-vmlinux-path <path>] [--kfuncs]\n";
       printf "    Initialize a new KernelScript project\n";
       printf "    prog_type: xdp | tc/direction | probe/target_function | tracepoint/category/event\n";
       printf "    Examples: tc/ingress, tc/egress, probe/sys_read, probe/vfs_write, probe/tcp_sendmsg\n";
       printf "    tracepoint: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
       printf "    struct_ops: tcp_congestion_ops\n";
       printf "    project_name: Name of the project directory to create\n";
-      printf "    --btf-vmlinux-path: Path to BTF vmlinux file (default: /sys/kernel/btf/vmlinux)\n\n";
+      printf "    --btf-vmlinux-path: Path to BTF vmlinux file (default: /sys/kernel/btf/vmlinux)\n";
+      printf "    --kfuncs: Extract available kfuncs from BTF and generate .kh header file\n\n";
       printf "  compile <input_file> [options]\n";
       printf "    Compile KernelScript source to C code\n";
       printf "    -o, --output <dir>            Specify output directory\n";
@@ -61,7 +62,7 @@ let rec parse_args () =
       exit 1
 
 and parse_init_args args =
-  let rec parse_aux prog_type_opt project_name_opt btf_path_opt = function
+  let rec parse_aux prog_type_opt project_name_opt btf_path_opt extract_kfuncs = function
     | [] ->
         (match (prog_type_opt, project_name_opt) with
          | (Some prog_type, Some project_name) ->
@@ -70,7 +71,7 @@ and parse_init_args args =
                | Some path -> Some path
                | None -> Some "/sys/kernel/btf/vmlinux"
              in
-             Init { prog_type; project_name; btf_path = final_btf_path }
+             Init { prog_type; project_name; btf_path = final_btf_path; extract_kfuncs }
          | (None, _) ->
              printf "Error: Missing program type for init command\n";
              exit 1
@@ -78,21 +79,23 @@ and parse_init_args args =
              printf "Error: Missing project name for init command\n";
              exit 1)
     | "--btf-vmlinux-path" :: path :: rest ->
-        parse_aux prog_type_opt project_name_opt (Some path) rest
+        parse_aux prog_type_opt project_name_opt (Some path) extract_kfuncs rest
+    | "--kfuncs" :: rest ->
+        parse_aux prog_type_opt project_name_opt btf_path_opt true rest
     | arg :: rest when not (String.starts_with ~prefix:"-" arg) ->
         (match (prog_type_opt, project_name_opt) with
-         | (None, None) -> parse_aux (Some arg) project_name_opt btf_path_opt rest
-         | (Some _, None) -> parse_aux prog_type_opt (Some arg) btf_path_opt rest
+         | (None, None) -> parse_aux (Some arg) project_name_opt btf_path_opt extract_kfuncs rest
+         | (Some _, None) -> parse_aux prog_type_opt (Some arg) btf_path_opt extract_kfuncs rest
          | (Some _, Some _) ->
              printf "Error: Too many arguments for init command\n";
              exit 1
          | (None, Some _) -> (* This shouldn't happen *) 
-             parse_aux (Some arg) project_name_opt btf_path_opt rest)
+             parse_aux (Some arg) project_name_opt btf_path_opt extract_kfuncs rest)
     | unknown :: _ ->
         printf "Error: Unknown option '%s' for init command\n" unknown;
         exit 1
   in
-  parse_aux None None None args
+  parse_aux None None None false args
 
 and parse_compile_args args =
   let rec parse_aux input_file_opt output_dir verbose generate_makefile btf_path test_mode = function
@@ -134,8 +137,52 @@ and parse_compile_args args =
   in
   parse_aux None None false true None false args
 
+(** Parse function signature and convert to extern declaration *)
+let generate_extern_declaration func_name signature =
+  (* Parse "fn(param1: type1, param2: type2, ...) -> return_type" format *)
+  try
+    if String.length signature < 3 || not (String.sub signature 0 3 = "fn(") then
+      sprintf "extern %s() -> i32" func_name (* fallback *)
+    else
+      let paren_start = 3 in
+      let paren_end = String.index signature ')' in
+      let params_str = String.sub signature paren_start (paren_end - paren_start) in
+      
+      (* Parse return type *)
+      let arrow_pos = try Some (String.index signature '>') with Not_found -> None in
+      let return_type = match arrow_pos with
+        | Some pos when pos > paren_end + 2 ->
+            String.trim (String.sub signature (pos + 1) (String.length signature - pos - 1))
+        | _ -> "i32"  (* Default return type *)
+      in
+      
+      sprintf "extern %s(%s) -> %s" func_name params_str return_type
+  with
+  | exn ->
+      printf "⚠️ Warning: Failed to parse function signature '%s': %s\n" signature (Printexc.to_string exn);
+      sprintf "extern %s() -> i32" func_name (* fallback *)
+
+(** Generate .kh file content from extracted kfuncs *)
+let generate_kh_file_content project_name kfuncs =
+  let header = sprintf {|//
+// Generated kfuncs header for %s
+// This file contains extern declarations for available kernel functions (kfuncs)
+// extracted from BTF information.
+// 
+// Usage: Include this file in your KernelScript source with:
+//   include "%s.kh"
+//
+
+|} project_name project_name in
+  
+  let extern_declarations = List.map (fun (func_name, signature) ->
+    sprintf "%s" (generate_extern_declaration func_name signature)
+  ) kfuncs in
+  
+  header ^ String.concat "\n" extern_declarations ^ "\n"
+
 (** Initialize a new KernelScript project *)
-let init_project prog_type_or_struct_ops project_name btf_path =
+let init_project prog_type_or_struct_ops project_name btf_path extract_kfuncs =
   printf "🚀 Initializing KernelScript project: %s\n" project_name;
   printf "📋 Type: %s\n" prog_type_or_struct_ops;
   
@@ -210,10 +257,11 @@ let init_project prog_type_or_struct_ops project_name btf_path =
       exit 1);
   
   (* Generate template based on type *)
+  let kh_filename = if extract_kfuncs then Some (project_name ^ ".kh") else None in
   let source_content = 
     if is_struct_ops then (
       printf "🔧 Extracting struct_ops definition for %s...\n" prog_type;
-      let content = Btf_parser.generate_struct_ops_template btf_path [prog_type] project_name in
+      let content = Btf_parser.generate_struct_ops_template ?include_kfuncs:kh_filename btf_path [prog_type] project_name in
       printf "✅ Generated struct_ops template\n";
       content
     ) else (
@@ -224,7 +272,7 @@ let init_project prog_type_or_struct_ops project_name btf_path =
                printf "🔧 Extracting types for %s program targeting %s...\n" prog_type func_name;
                let template = Btf_parser.get_kprobe_program_template func_name btf_path in
                printf "✅ Found %d type definitions\n" (List.length template.types);
-               Btf_parser.generate_kernelscript_source template project_name
+               Btf_parser.generate_kernelscript_source ?include_kfuncs:kh_filename template project_name
            | None -> failwith "probe requires target function")
       | "tracepoint" ->
           (match target_function with
@@ -232,7 +280,7 @@ let init_project prog_type_or_struct_ops project_name btf_path =
                printf "🔧 Extracting types for %s program targeting %s...\n" prog_type category_event;
                let template = Btf_parser.get_tracepoint_program_template category_event btf_path in
                printf "✅ Found %d type definitions\n" (List.length template.types);
-               Btf_parser.generate_kernelscript_source template project_name
+               Btf_parser.generate_kernelscript_source ?include_kfuncs:kh_filename template project_name
            | None -> failwith "tracepoint requires category/event")
       | "tc" ->
           (match target_function with
@@ -240,13 +288,13 @@ let init_project prog_type_or_struct_ops project_name btf_path =
                printf "🔧 Extracting types for %s program with %s direction...\n" prog_type direction;
                let template = Btf_parser.get_program_template prog_type btf_path in
                printf "✅ Found %d type definitions\n" (List.length template.types);
-               Btf_parser.generate_kernelscript_source ~extra_param:direction template project_name
+               Btf_parser.generate_kernelscript_source ~extra_param:direction ?include_kfuncs:kh_filename template project_name
            | None -> failwith "tc requires direction")
       | _ ->
           printf "🔧 Extracting types for %s program...\n" prog_type;
           let template = Btf_parser.get_program_template prog_type btf_path in
           printf "✅ Found %d type definitions\n" (List.length template.types);
-          Btf_parser.generate_kernelscript_source template project_name
+          Btf_parser.generate_kernelscript_source ?include_kfuncs:kh_filename template project_name
     ) in
   
   let source_filename = project_name ^ "/" ^ project_name ^ ".ks" in
@@ -348,10 +396,30 @@ cd %s && make run
   close_out oc;
   printf "✅ Generated README: %s\n" readme_filename;
   
+  (* Generate kfuncs header file if requested *)
+  if extract_kfuncs then (
+    printf "🔧 Extracting kfuncs from BTF...\n";
+    let kh_filename = project_name ^ "/" ^ project_name ^ ".kh" in
+    (match btf_path with
+     | Some path when Sys.file_exists path ->
+         let kfuncs = Btf_binary_parser.extract_kfuncs_from_btf path in
+         let kh_content = generate_kh_file_content project_name kfuncs in
+         let oc = open_out kh_filename in
+         output_string oc kh_content;
+         close_out oc;
+         printf "✅ Generated kfuncs header: %s (%d kfuncs)\n" kh_filename (List.length kfuncs)
+     | Some path ->
+         printf "❌ Warning: BTF file not found: %s - skipping kfuncs extraction\n" path
+     | None ->
+         printf "❌ Warning: No BTF path provided - skipping kfuncs extraction\n")
+  );
+  
   printf "\n🎉 Project '%s' initialized successfully!\n" project_name;
   printf "📁 Project structure:\n";
   printf "   %s/\n" project_name;
   printf "   ├── %s.ks      # KernelScript source\n" project_name;
+  (if extract_kfuncs then
+    printf "   ├── %s.kh      # Available kfuncs (extern declarations)\n" project_name);
   printf "   └── README.md      # Project documentation\n";
   printf "\n🚀 Next steps:\n";
   if is_struct_ops then (
@@ -1248,7 +1316,7 @@ help:
 (** Main entry point *)
 let () =
   match parse_args () with
-  | Init { prog_type; project_name; btf_path } ->
-      init_project prog_type project_name btf_path
+  | Init { prog_type; project_name; btf_path; extract_kfuncs } ->
+      init_project prog_type project_name btf_path extract_kfuncs
   | Compile { input_file; output_dir; verbose; generate_makefile; btf_vmlinux_path; test_mode } ->
       compile_source input_file output_dir verbose generate_makefile btf_vmlinux_path test_mode 

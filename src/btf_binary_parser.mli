@@ -39,4 +39,9 @@ val extract_kernel_function_signatures : string -> string list -> (string * stri
 (** Extract all kernel-defined struct names from BTF file.
     @param btf_path Path to the binary BTF file
     @return List of kernel struct names *)
-val extract_all_kernel_struct_names : string -> string list 
+val extract_all_kernel_struct_names : string -> string list
+
+(** Extract kfuncs from BTF file using DECL_TAG annotations.
+    @param btf_path Path to the binary BTF file
+    @return List of (function_name, signature) pairs for functions tagged with "bpf_kfunc" *)
+val extract_kfuncs_from_btf : string -> (string * string) list 

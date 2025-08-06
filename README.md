@@ -255,6 +255,9 @@ kernelscript init probe/sys_read my_tracer
 # Create project with custom BTF path
 kernelscript init --btf-vmlinux-path /custom/path/vmlinux xdp my_project
 
+# Create XDP project with kfuncs extracted
+kernelscript init --kfuncs xdp my_packet_filter
+
 # Create struct_ops project
 kernelscript init tcp_congestion_ops my_congestion_control
 ```

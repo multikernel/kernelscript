@@ -39,6 +39,7 @@ external btf_type_get_members : btf_handle -> int -> (string * int) array = "btf
 external btf_resolve_type : btf_handle -> int -> string = "btf_resolve_type_stub"
 external btf_extract_function_signatures : btf_handle -> string list -> (string * string) list = "btf_extract_function_signatures_stub"
 external btf_extract_kernel_struct_names : btf_handle -> string list = "btf_extract_kernel_struct_names_stub"
+external btf_extract_kfuncs : btf_handle -> (string * string) list = "btf_extract_kfuncs_stub"
 external btf_free : btf_handle -> unit = "btf_free_stub"
 
 (** Parse BTF file and extract requested types using libbpf *)
@@ -195,4 +196,30 @@ let extract_all_kernel_struct_names btf_path =
         btf_free btf_handle;
         struct_names
   with
-  | _ -> [] 
+  | _ -> []
+
+(** Extract kfuncs from BTF file using DECL_TAG annotations *)
+let extract_kfuncs_from_btf btf_path =
+  try
+    printf "Extracting kfuncs from BTF file: %s\n" btf_path;
+    
+    match btf_new_from_file btf_path with
+    | None -> (
+      printf "Error: Failed to open BTF file %s\n" btf_path;
+      []
+    )
+    | Some btf_handle -> (
+      let kfuncs = btf_extract_kfuncs btf_handle in
+      btf_free btf_handle;
+      
+      printf "Successfully extracted %d kfuncs\n" (List.length kfuncs);
+      List.iter (fun (name, sig_str) ->
+        printf "  Kfunc: %s -> %s\n" name sig_str
+      ) kfuncs;
+      
+      kfuncs
+    )
+  with
+  | exn ->
+      printf "Error extracting kfuncs from BTF file %s: %s\n" btf_path (Printexc.to_string exn);
+      [] 
