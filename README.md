@@ -17,14 +17,15 @@ KernelScript aims to become the programming language for Linux kernel customizat
 
 Writing eBPF programs today is challenging and error-prone:
 
-- **Raw C + libbpf**: Requires deep eBPF knowledge, verbose boilerplate, manual memory management, and complex build systems
-- **Kernel development complexity**: Understanding verifier constraints, BPF helper functions, and kernel APIs
+- **Raw C + libbpf**: Requires deep eBPF knowledge, extensive boilerplate code for multiple program types
+- **Kernel development complexity**: Understanding eBPF verifier constraints, BPF helper functions, and kernel context
+- **Kernel version compatibility**: Managing different kernel APIs, struct layouts, and available kfuncs across kernel versions
 - **Complex tail call management**: Manual program array setup, explicit `bpf_tail_call()` invocation, and error handling for failed tail calls
 - **Intricate dynptr APIs**: Manual management of `bpf_ringbuf_reserve_dynptr()`, `bpf_dynptr_data()`, `bpf_dynptr_write()`, and proper cleanup sequences
 - **Complex struct_ops implementation**: Manual function pointer setup, intricate BTF type registration, kernel interface compliance, and lifecycle management
 - **Complex kfunc implementation**: Manual kernel module creation, BTF symbol registration, export management, and module loading coordination
-- **Userspace coordination**: Manually writing loaders, map management, and program lifecycle code
-- **Multi-program systems**: No coordination between related eBPF programs sharing resources
+- **Userspace coordination**: Manually writing loaders, map management, and program lifecycle management of different kinds
+- **Multiple programming paradigms**: Developers must master userspace application development, eBPF kernel programming, and kernel module (kfunc) programming
 
 ### Why Not Existing Tools?
 
@@ -51,23 +52,40 @@ Writing eBPF programs today is challenging and error-prone:
 
 KernelScript addresses these problems through revolutionary language features:
 
-✅ **Single-file multi-target compilation** - Write userspace, eBPF, and kernel module code in one file. The compiler automatically targets each function correctly based on attributes (`@xdp`, `@helper`, regular functions)
+✅ **Single-file multi-target compilation** - Write userspace, eBPF, and kernel module code in one file. The compiler automatically targets each function correctly based on attributes (`@xdp`, `@helper`, `@kfunc`, and regular userspace functions)
 
 ✅ **Automatic tail call orchestration** - Simply write `return other_xdp_func(ctx)` and the compiler handles program arrays, `bpf_tail_call()` generation, and error handling automatically
 
-✅ **Transparent dynptr integration** - Use simple pointer operations (`event_log.reserve()`, `buffer[index]`) while the compiler automatically uses complex dynptr APIs (`bpf_ringbuf_reserve_dynptr`, `bpf_dynptr_write`) behind the scenes
+✅ **Transparent dynptr integration** - Use simple pointer operations (`ringbuffer.reserve()`, `some_map[key]`) while the compiler automatically uses complex dynptr APIs (`bpf_ringbuf_reserve_dynptr`, `bpf_dynptr_write`) behind the scenes
 
 ✅ **First-class program lifecycle safety** - Programs are typed values with compile-time guarantees that prevent calling `attach()` before `load()` succeeds
 
-✅ **Zero-boilerplate shared state** - Global maps and config blocks are automatically accessible across all programs without imports, exports, or coordination code
+✅ **Zero-boilerplate shared state** - Maps are automatically accessible across all programs as regular global variables in a programming language
 
-✅ **Custom kernel functions (@kfunc)** - Write full-privilege kernel functions that eBPF programs can call, automatically generating kernel modules and BTF registrations
+✅ **Builtin kfunc support** - Define full-privilege kernel functions that eBPF programs can call directly, automatically generating kernel modules and BTF registrations
 
 ✅ **Unified error handling** - C-style integer throw/catch works seamlessly in both eBPF and userspace contexts, unlike complex Result types
 
 ✅ **Verifier-optimized type system** - Fixed-size arrays (`u8[64]`), simple type aliases, and no complex generics that confuse the eBPF verifier
 
-✅ **Complete automated toolchain** - Generate ready-to-use projects with Makefiles, userspace loaders, and build systems from a single source file  
+✅ **Complete automated toolchain** - Generate ready-to-use projects with Makefiles, userspace loaders, kernel modules (if kfunc is defined) and build systems from a single source file  
+
+✅ **Automatic BTF extraction** - Seamlessly extract available kfuncs and kernel struct definitions from specified BTF files during project initialization
+
+
+### Why Choose KernelScript?
+
+| Feature | Raw C + libbpf | Rust eBPF | bpftrace | **KernelScript** |
+|---------|---------------|-----------|----------|------------------|
+| **Syntax** | Complex C | Complex Rust | Simple but limited | Clean & readable |
+| **Type Safety** | Manual | Yes | Limited | Yes |
+| **Multi-program** | Manual | Manual | No | Automatic |
+| **Build System** | Manual Makefiles | Cargo complexity | N/A | Generated |
+| **Userspace Code** | Manual | Manual | N/A | Generated |
+| **Learning Curve** | Steep | Steep | Easy but limited | Moderate |
+| **Program Types** | All | Most | Tracing only | All |
+
+KernelScript combines the power of low-level eBPF programming with the productivity of modern programming languages, making eBPF development accessible to a broader audience while maintaining the performance and flexibility that makes eBPF powerful.
 
 ## Language Overview
 
@@ -79,6 +97,8 @@ KernelScript supports all major eBPF program types with typed contexts:
 // XDP program for packet processing
 @xdp fn packet_filter(ctx: *xdp_md) -> xdp_action {
     var packet_size = ctx->data_end - ctx->data
+    var timestamp = get_current_timestamp()  // Call our custom kfunc
+    
     if (packet_size > 1500) {
         return XDP_DROP
     }
@@ -148,6 +168,13 @@ var recent_packets : lru_hash<IpAddress, PacketInfo>(1000)
 Clean function syntax with helper function support:
 
 ```kernelscript
+// Custom kernel function - runs in kernel space with full privileges
+@kfunc
+fn get_current_timestamp() -> u64 {
+    // Access kernel-only functionality using kernel APIs
+    return ktime_get_ns()  // Direct kernel API call
+}
+
 // Helper functions for eBPF programs
 @helper
 fn extract_src_ip(ctx: *xdp_md) -> IpAddress {
@@ -155,7 +182,7 @@ fn extract_src_ip(ctx: *xdp_md) -> IpAddress {
     return 0x7f000001  // 127.0.0.1
 }
 
-// Regular functions
+// Regular userspace functions
 fn update_stats(ip: IpAddress, size: PacketSize) {
     connection_count[ip] = connection_count[ip] + 1
 }
@@ -186,7 +213,7 @@ fn handle_action(action: FilterAction) -> xdp_action {
     }
 }
 
-// Truthy/falsy patterns for maps
+// Map lookup and update patterns
 fn lookup_or_create(ip: IpAddress) -> Counter {
     var count = connection_count[ip]
     if (count != none) {
@@ -200,7 +227,7 @@ fn lookup_or_create(ip: IpAddress) -> Counter {
 
 ### Multi-Program Coordination
 
-KernelScript can coordinate multiple eBPF programs:
+Cordination between multiple eBPF programs is just natural:
 
 ```kernelscript
 // Shared map between programs
@@ -376,20 +403,6 @@ The `examples/` directory contains comprehensive examples:
 - `functions.ks` - Function definitions and calls
 - `types_demo.ks` - Type system features
 - `error_handling_demo.ks` - Error handling patterns
-
-## Why Choose KernelScript?
-
-| Feature | Raw C + libbpf | Rust eBPF | bpftrace | **KernelScript** |
-|---------|---------------|-----------|----------|------------------|
-| **Syntax** | Complex C | Complex Rust | Simple but limited | Clean & readable |
-| **Type Safety** | Manual | Yes | Limited | Yes |
-| **Multi-program** | Manual | Manual | No | Automatic |
-| **Build System** | Manual Makefiles | Cargo complexity | N/A | Generated |
-| **Userspace Code** | Manual | Manual | N/A | Generated |
-| **Learning Curve** | Steep | Steep | Easy but limited | Moderate |
-| **Program Types** | All | Most | Tracing only | All |
-
-KernelScript combines the power of low-level eBPF programming with the productivity of modern programming languages, making eBPF development accessible to a broader audience while maintaining the performance and flexibility that makes eBPF powerful.
 
 ## License
 
