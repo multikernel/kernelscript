@@ -445,6 +445,7 @@ type function_usage = {
   mutable uses_attach: bool;
   mutable uses_detach: bool;
   mutable uses_map_operations: bool;
+  mutable uses_daemon: bool;
   mutable used_maps: string list;
   mutable used_dispatch_functions: int list;
 }
@@ -454,6 +455,7 @@ let create_function_usage () = {
   uses_attach = false;
   uses_detach = false;
   uses_map_operations = false;
+  uses_daemon = false;
   used_maps = [];
   used_dispatch_functions = [];
 }
@@ -725,6 +727,7 @@ let track_function_usage ctx instr =
             | "load" -> ctx.function_usage.uses_load <- true
             | "attach" -> ctx.function_usage.uses_attach <- true
             | "detach" -> ctx.function_usage.uses_detach <- true
+            | "daemon" -> ctx.function_usage.uses_daemon <- true
             | "dispatch" -> 
                 let num_buffers = List.length args in
                 if not (List.mem num_buffers ctx.function_usage.used_dispatch_functions) then
@@ -2915,6 +2918,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
       uses_attach = acc_usage.uses_attach || func_usage.uses_attach;
       uses_detach = acc_usage.uses_detach || func_usage.uses_detach;
       uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
+      uses_daemon = acc_usage.uses_daemon || func_usage.uses_daemon;
       used_maps = List.fold_left (fun acc map_name ->
         if List.mem map_name acc then acc else map_name :: acc
       ) acc_usage.used_maps func_usage.used_maps;
@@ -3537,12 +3541,56 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
     
     let bpf_obj_decl = "" in  (* Skeleton now handles the BPF object *)
     
-    let functions_list = List.filter (fun s -> s <> "") [attachment_storage; load_function; attach_function; detach_function] in
+    (* Generate daemon function if used *)
+    let daemon_function = if all_usage.uses_daemon then
+      sprintf {|void daemon_builtin(void) {
+    // Standard Unix daemon process
+    if (daemon(0, 0) != 0) {
+        perror("daemon");
+        exit(1);
+    }
+    
+    // Setup daemon infrastructure
+    signal(SIGTERM, handle_signal);
+    signal(SIGINT, handle_signal);
+    signal(SIGHUP, SIG_IGN);
+    
+    // Create PID file
+    FILE *pidfile = fopen("/var/run/%s.pid", "w");
+    if (pidfile) {
+        fprintf(pidfile, "%%d\n", getpid());
+        fclose(pidfile);
+    }
+    
+    // Daemon main loop - never returns
+    while (keep_running) {
+        sleep(1);
+    }
+    
+    // Cleanup and exit
+    unlink("/var/run/%s.pid");
+    exit(0);
+}|} base_name base_name
+    else "" in
+
+    let functions_list = List.filter (fun s -> s <> "") [attachment_storage; load_function; attach_function; detach_function; daemon_function] in
     if functions_list = [] && bpf_obj_decl = "" then ""
     else
       sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 
         bpf_obj_decl (String.concat "\n\n" functions_list) in
   
+  (* Generate daemon signal handling variables if used *)
+  let daemon_globals = if all_usage.uses_daemon then
+    sprintf {|
+// Daemon signal handling
+static volatile sig_atomic_t keep_running = 1;
+
+static void handle_signal(int sig) {
+    keep_running = 0;
+}
+|}
+  else "" in
+
   (* Generate struct_ops attach functions *)
   let struct_ops_attach_functions = generate_struct_ops_attach_functions ir_multi_prog in
 
@@ -3553,7 +3601,6 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
 %s
 
 %s
-
 %s
 
 %s
@@ -3565,17 +3612,19 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
 %s
 
 %s
-%s
 
 %s
 %s
 
 %s
+%s
+
+%s
 
 %s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
+|} includes string_typedefs type_alias_definitions string_helpers daemon_globals enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table ?btf_path (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =

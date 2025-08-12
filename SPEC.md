@@ -4188,6 +4188,21 @@ mod program {
     // - For Cgroup: target is cgroup path (e.g., "/sys/fs/cgroup/test"), flags are unused (0)
     pub fn attach(handle: ProgramHandle, target: string, flags: u32) -> u32
     
+    // Detach a loaded eBPF program from its current attachment
+    // - Automatically determines the correct detachment method based on program type
+    // - Safe to call multiple times on the same handle (no-op if already detached)
+    // - No return value (void) - logs errors to stderr if detachment fails
+    pub fn detach(handle: ProgramHandle) -> void
+    
+    // Convert the current userspace process into a daemon and run indefinitely
+    // - Daemonizes the process using standard Unix daemon() call
+    // - Sets up proper signal handling (SIGTERM, SIGINT for graceful shutdown)
+    // - Creates PID file for process management
+    // - This function NEVER returns - it runs an infinite loop
+    // - Only available in userspace context - compilation error if used in eBPF
+    // - Process exits gracefully on receiving termination signals
+    pub fn daemon() -> never
+    
     // Register struct_ops impl blocks
     pub fn register(ops) -> i32
 }
@@ -4645,6 +4660,38 @@ fn print_summary_stats() {
     print("Total read time: ", total_read_time)
     print("Total write time: ", total_write_time)
 }
+```
+
+### 14.4 Daemon Service Features
+
+The `daemon()` builtin provides several key features for long-running services:
+
+1. **Process Daemonization**: Automatically detaches from terminal and runs in background
+2. **Signal Handling**: Graceful shutdown on SIGTERM/SIGINT signals
+3. **Process Management**: Creates PID file for system service integration
+4. **Infinite Runtime**: Never returns - runs monitoring loop forever
+5. **Error Handling**: Proper cleanup on signals and exit conditions
+
+#### Usage with System Services
+
+```bash
+# Compile daemon service
+kernelscript compile network_monitor.ks
+
+# Run as system service (systemd example)
+# /etc/systemd/system/network-monitor.service:
+[Unit]
+Description=KernelScript Network Monitor
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/network_monitor
+PIDFile=/var/run/network_monitor.pid
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 ## 15. Complete Formal Grammar (EBNF)

@@ -46,7 +46,9 @@ fn main() -> i32 {
     // Show userspace functionality working
     detach(prog)
     print("Userspace example program detached")
-    
+
+    print("Now running as a daemon")
+    daemon() // Never returns
     return 0
 }
 

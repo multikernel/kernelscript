@@ -177,6 +177,17 @@ let builtin_functions = [
     kernel_impl = "";
     validate = Some validate_dispatch_function;
   };
+  {
+    name = "daemon";
+    param_types = []; (* No parameters - void function *)
+    return_type = Void; (* Never returns in practice, but type system needs Void *)
+    description = "Become a daemon process - detaches from terminal and runs forever (userspace only)";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "daemon_builtin"; (* Custom implementation in userspace *)
+    kernel_impl = ""; (* Not available in kernel context *)
+    validate = None;
+  };
 
 ]
 
