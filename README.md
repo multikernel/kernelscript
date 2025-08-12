@@ -263,6 +263,8 @@ fn main() -> i32 {
 
 📖 **For detailed language specification, syntax reference, and advanced features, please read [`SPEC.md`](SPEC.md).**
 
+🔧 **For complete builtin functions reference, see [`BUILTINS.md`](BUILTINS.md).**
+
 ## Command Line Usage
 
 ### Initialize a New Project
