@@ -61,6 +61,17 @@ let validate_dispatch_function arg_types _ast_context _pos =
     else
       (false, Some "dispatch() only accepts ring buffer arguments")
 
+(** Validation function for exec() - validates Python file suffix *)
+let validate_exec_function arg_types _ast_context _pos =
+  if List.length arg_types <> 1 then
+    (false, Some "exec() takes exactly one argument")
+  else
+    (* The argument should be a string type *)
+    let arg_type = List.hd arg_types in
+    match arg_type with
+    | Str _ -> (true, None) (* Actual file suffix validation happens during codegen *)
+    | _ -> (false, Some "exec() requires a string argument (Python file path)")
+
 (** Validation function for register() - only accepts impl block arguments *)
 let validate_register_function arg_types ast_context _pos =
   if List.length arg_types <> 1 then
@@ -187,6 +198,17 @@ let builtin_functions = [
     userspace_impl = "daemon_builtin"; (* Custom implementation in userspace *)
     kernel_impl = ""; (* Not available in kernel context *)
     validate = None;
+  };
+  {
+    name = "exec";
+    param_types = [Str 256]; (* Python script file path *)
+    return_type = Void; (* Never returns - replaces current process *)
+    description = "Replace current process with Python script, inheriting eBPF maps (userspace only)";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "exec_builtin"; (* Custom implementation in userspace *)
+    kernel_impl = ""; (* Not available in kernel context *)
+    validate = Some validate_exec_function;
   };
 
 ]

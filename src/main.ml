@@ -1016,7 +1016,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
   (* Phase 6: Advanced multi-target code generation *)
     current_phase := "Code Generation";
     Printf.printf "Phase 6: %s\n" !current_phase;
-    let _resource_plan = Multi_program_ir_optimizer.plan_system_resources ir_with_ring_buffer_analysis.programs multi_prog_analysis in
+    let _resource_plan = Multi_program_ir_optimizer.plan_system_resources ir_with_ring_buffer_analysis.programs ir_with_ring_buffer_analysis in
     let _optimization_strategies = Multi_program_ir_optimizer.generate_optimization_strategies multi_prog_analysis in
     
     (* Extract type aliases from original AST *)

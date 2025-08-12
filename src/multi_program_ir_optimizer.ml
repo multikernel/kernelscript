@@ -100,9 +100,9 @@ let validate_cross_program_constraints _programs multi_prog_analysis =
     Printf.printf "  ⚠️  Found %d constraint issues (see above)\n" !issues
 
 (** Resource planning for multi-program systems *)
-let plan_system_resources programs multi_prog_analysis =
+let plan_system_resources programs ir_multi_prog =
   let total_programs = List.length programs in
-  let total_maps = List.length multi_prog_analysis.global_maps in
+  let total_maps = List.length ir_multi_prog.Ir.global_maps in
   let estimated_instructions = total_programs * 1000 in
   let estimated_stack = total_programs * 512 in
   let estimated_memory = total_maps * 1024 * 1024 in
@@ -182,7 +182,7 @@ let generate_optimized_ir (annotated_ast: declaration list)
   
   (* Step 5: Resource planning *)
   Printf.printf "Step 5: Resource planning and validation...\n";
-  let resource_plan = plan_system_resources optimized_programs multi_prog_analysis in
+  let resource_plan = plan_system_resources optimized_programs baseline_ir in
   print_resource_plan resource_plan;
   
   Printf.printf "\n✅ Advanced Multi-Program IR Optimization completed successfully!\n\n";

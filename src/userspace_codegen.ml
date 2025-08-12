@@ -446,6 +446,7 @@ type function_usage = {
   mutable uses_detach: bool;
   mutable uses_map_operations: bool;
   mutable uses_daemon: bool;
+  mutable uses_exec: bool;
   mutable used_maps: string list;
   mutable used_dispatch_functions: int list;
 }
@@ -456,6 +457,7 @@ let create_function_usage () = {
   uses_detach = false;
   uses_map_operations = false;
   uses_daemon = false;
+  uses_exec = false;
   used_maps = [];
   used_dispatch_functions = [];
 }
@@ -728,6 +730,8 @@ let track_function_usage ctx instr =
             | "attach" -> ctx.function_usage.uses_attach <- true
             | "detach" -> ctx.function_usage.uses_detach <- true
             | "daemon" -> ctx.function_usage.uses_daemon <- true
+            | "exec" -> 
+                ctx.function_usage.uses_exec <- true
             | "dispatch" -> 
                 let num_buffers = List.length args in
                 if not (List.mem num_buffers ctx.function_usage.used_dispatch_functions) then
@@ -1940,6 +1944,18 @@ let rec generate_c_instruction_from_ir ctx instruction =
                  if not (List.mem 1 ctx.function_usage.used_dispatch_functions) then
                    ctx.function_usage.used_dispatch_functions <- 1 :: ctx.function_usage.used_dispatch_functions;
                  ("dispatch_ring_buffers", [])
+             | "exec" ->
+                 (* Special handling for exec: validate Python file and translate call *)
+                 (match c_args with
+                  | [file_arg] ->
+                      (* Extract filename for validation *)
+                      let file_str = if String.contains file_arg '"' then
+                        String.sub file_arg 1 (String.length file_arg - 2)
+                      else file_arg in
+                      if not (String.ends_with ~suffix:".py" file_str) then
+                        failwith (Printf.sprintf "exec() only supports Python files (.py), got: %s" file_str);
+                      (userspace_impl, c_args)
+                  | _ -> failwith "exec() expects exactly one argument")
              | _ -> (userspace_impl, c_args))
         | None ->
             (* Regular function call *)
@@ -2415,9 +2431,8 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
     let pinned_globals_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
     let has_pinned_globals = List.length pinned_globals_vars > 0 in
     
-    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations || has_pinned_globals) then
+    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations || func_usage.uses_exec || has_pinned_globals) then
       let all_setup_parts = List.filter (fun s -> s <> "") [
-        (if func_usage.uses_map_operations then "    // Map setup would go here if needed" else "");
         (if has_pinned_globals then
           let project_name = base_name in
           let pin_path = sprintf "/sys/fs/bpf/%s/globals/pinned_globals" project_name in
@@ -2443,7 +2458,8 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
         }
     }|} pin_path pin_path
                 else "");
-        (if all_setup_code <> "" then all_setup_code else "");
+        (* Include all_setup_code only once for maps, config, struct_ops, and ringbuf *)
+        (if func_usage.uses_map_operations || func_usage.uses_exec || List.length config_declarations > 0 then all_setup_code else "");
         ] in
       if all_setup_parts <> [] then "\n" ^ String.concat "\n" all_setup_parts else ""
     else "" in
@@ -2764,17 +2780,48 @@ int %s_get_next_key(%s *key, %s *next_key) {
   let ringbuf_handlers = generate_ringbuf_handlers_from_registry ir_multi_prog.ring_buffer_registry ~dispatch_used in
   String.concat "\n" (regular_map_ops @ [ringbuf_handlers])
 
-(** Generate map setup code - handle both regular and pinned maps *)
-let generate_map_setup_code maps =
+(** Generate unified map setup code - handle both regular and pinned maps *)
+let generate_unified_map_setup_code maps =
+  (* Remove duplicates first *)
+  let deduplicated_maps = List.fold_left (fun acc map ->
+    if List.exists (fun existing -> existing.map_name = map.map_name) acc
+    then acc
+    else map :: acc
+  ) [] maps |> List.rev in
+  
   List.map (fun map ->
-    match map.pin_path with
-    | Some pin_path ->
-        (* For pinned maps, try multiple approaches in order *)
-        Printf.sprintf "/* Load or create pinned %s map at %s */" map.map_name pin_path
-    | None ->
-        (* For non-pinned maps, just load from BPF object *)
-        Printf.sprintf "/* Load %s map from eBPF object */" map.map_name
-  ) maps |> String.concat "\n"
+    (* Always load from eBPF object first, then handle pinning if needed *)
+    let pin_logic = match map.pin_path with
+      | Some pin_path ->
+          Printf.sprintf {|
+        // Check if map is already pinned
+        int existing_fd = bpf_obj_get("%s");
+        if (existing_fd >= 0) {
+            %s_fd = existing_fd;
+        } else {
+            // Map not pinned yet, pin it now
+            if (bpf_map__pin(%s_map, "%s") < 0) {
+                fprintf(stderr, "Failed to pin %s map to %s\n");
+                return 1;
+            }
+            %s_fd = bpf_map__fd(%s_map);
+        }|} pin_path map.map_name map.map_name pin_path map.map_name pin_path map.map_name map.map_name
+      | None ->
+          Printf.sprintf {|
+        // Non-pinned map, just get file descriptor
+        %s_fd = bpf_map__fd(%s_map);|} map.map_name map.map_name
+    in
+    Printf.sprintf {|    // Load map %s from eBPF object
+    struct bpf_map *%s_map = bpf_object__find_map_by_name(obj->obj, "%s");
+    if (!%s_map) {
+        fprintf(stderr, "Failed to find %s map in eBPF object\n");
+        return 1;
+    }%s
+    if (%s_fd < 0) {
+        fprintf(stderr, "Failed to get fd for %s map\n");
+        return 1;
+    }|} map.map_name map.map_name map.map_name map.map_name map.map_name pin_logic map.map_name map.map_name
+  ) deduplicated_maps |> String.concat "\n"
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
 let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
@@ -2908,6 +2955,299 @@ let generate_load_function_with_tail_calls _base_name all_usage tail_call_analys
 }|} dep_loading_code
   else ""
 
+(** Generate Python wrapper for exec() builtin *)
+let generate_python_wrapper base_name global_maps ir_multi_prog =
+  let map_metadata = List.mapi (fun _index map ->
+    let key_type = c_type_from_ir_type map.map_key_type in
+    let value_type = c_type_from_ir_type map.map_value_type in
+    let map_type_str = match map.map_type with
+      | IRHash -> "hash"
+      | IRMapArray -> "array"
+      | IRLru_hash -> "lru_hash"
+      | IRPercpu_hash -> "percpu_hash"
+      | IRPercpu_array -> "percpu_array"
+    in
+    sprintf {|    '%s': {
+        'type': '%s',
+        'key_type': '%s',
+        'value_type': '%s',
+        'max_entries': %d
+    }|} map.map_name map_type_str key_type value_type map.max_entries
+  ) global_maps |> String.concat ",\n" in
+  
+  let struct_definitions = match ir_multi_prog.userspace_program with
+    | Some userspace_prog ->
+        List.map (fun ir_struct ->
+          let fields = List.map (fun (field_name, field_type) ->
+            let ctypes_type = match field_type with
+              | IRU8 -> "c_uint8"
+              | IRU16 -> "c_uint16" 
+              | IRU32 -> "c_uint32"
+              | IRU64 -> "c_uint64"
+              | IRI8 -> "c_int8"
+              | IRI16 -> "c_int16"
+              | IRI32 -> "c_int32"
+              | IRI64 -> "c_int64"
+              | IRBool -> "c_bool"
+              | IRChar -> "c_char"
+              | _ -> "c_void_p"
+            in
+            sprintf "        ('%s', %s)" field_name ctypes_type
+          ) ir_struct.struct_fields in
+          sprintf {|class %s(Structure):
+    _fields_ = [
+%s
+    ]|} ir_struct.struct_name (String.concat ",\n" fields)
+        ) userspace_prog.userspace_structs
+    | None -> [] in
+  
+  let map_exports = List.map (fun map ->
+    sprintf "%s = _maps.get('%s')" map.map_name map.map_name
+  ) global_maps |> String.concat "\n" in
+  
+  sprintf {|#!/usr/bin/env python3
+# %s.py - AUTO-GENERATED by KernelScript compiler
+# DO NOT EDIT - This file is regenerated on each compilation
+
+import os
+import json
+import mmap
+import struct
+import ctypes
+import ctypes.util
+from ctypes import Structure, c_uint8, c_uint16, c_uint32, c_uint64
+from ctypes import c_int8, c_int16, c_int32, c_int64, c_bool, c_char, c_void_p
+
+# ============================================================================
+# COMPILE-TIME GENERATED METADATA
+# ============================================================================
+
+MAP_METADATA = {
+%s
+}
+
+# ============================================================================
+# AUTO-GENERATED STRUCT DEFINITIONS
+# ============================================================================
+
+%s
+
+# ============================================================================
+# MAP ACCESSOR CLASSES
+# ============================================================================
+
+import os
+import ctypes
+import ctypes.util
+import struct as struct_module
+
+# Load libbpf for proper BPF operations
+def find_libbpf():
+    """Find libbpf library with fallback options"""
+    for lib_name in ['libbpf.so.1', 'libbpf.so.0', 'libbpf.so']:
+        try:
+            return ctypes.CDLL(lib_name)
+        except OSError:
+            continue
+    
+    # Try standard paths
+    for path in ['/usr/lib/x86_64-linux-gnu/libbpf.so.1',
+                 '/usr/lib64/libbpf.so.1',
+                 '/usr/local/lib/libbpf.so.1']:
+        try:
+            return ctypes.CDLL(path)
+        except OSError:
+            continue
+    
+    raise RuntimeError("libbpf not found. Please install libbpf-dev or libbpf-devel package")
+
+libbpf = find_libbpf()
+
+# Define libbpf function signatures
+libbpf.bpf_map_lookup_elem.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+libbpf.bpf_map_lookup_elem.restype = ctypes.c_int
+
+libbpf.bpf_map_update_elem.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64]
+libbpf.bpf_map_update_elem.restype = ctypes.c_int
+
+libbpf.bpf_map_delete_elem.argtypes = [ctypes.c_int, ctypes.c_void_p]
+libbpf.bpf_map_delete_elem.restype = ctypes.c_int
+
+# BPF update flags (standard definitions)
+BPF_ANY = 0
+BPF_NOEXIST = 1
+BPF_EXIST = 2
+
+def bpf_map_lookup_elem(map_fd, key_data, value_data):
+    """Real BPF map lookup using libbpf"""
+    # Prepare key and value storage
+    key = ctypes.c_uint32(key_data)
+    value = ctypes.c_uint64(0)
+    
+    # Use libbpf function
+    result = libbpf.bpf_map_lookup_elem(
+        map_fd,
+        ctypes.byref(key),
+        ctypes.byref(value)
+    )
+    
+    if result == 0:
+        return 0, value.value
+    else:
+        return result, 0
+
+def bpf_map_update_elem(map_fd, key_data, value_data, flags):
+    """Real BPF map update using libbpf"""
+    # Prepare key and value storage
+    key = ctypes.c_uint32(key_data)
+    value = ctypes.c_uint64(value_data)
+    
+    # Use libbpf function
+    result = libbpf.bpf_map_update_elem(
+        map_fd,
+        ctypes.byref(key),
+        ctypes.byref(value),
+        flags
+    )
+    return result
+
+def bpf_map_delete_elem(map_fd, key_data):
+    """Real BPF map delete using libbpf"""
+    # Prepare key storage
+    key = ctypes.c_uint32(key_data)
+    
+    # Use libbpf function
+    result = libbpf.bpf_map_delete_elem(
+        map_fd,
+        ctypes.byref(key)
+    )
+    return result
+
+class BPFMapError(Exception):
+    pass
+
+class ArrayMap:
+    def __init__(self, fd, max_entries):
+        self.fd = fd
+        self.max_entries = max_entries
+        
+    def __getitem__(self, key):
+        if key >= self.max_entries:
+            raise IndexError(f"Key {key} out of bounds for array size {self.max_entries}")
+        
+        # Use libbpf for BPF operations
+        result, value = bpf_map_lookup_elem(self.fd, key, 0)
+        if result != 0:
+            if result == -2:  # ENOENT - key not found
+                raise KeyError(f"Key {key} not found in map")
+            else:
+                raise BPFMapError(f"BPF lookup failed: error_code={result}")
+        
+        return value
+    
+    def __setitem__(self, key, value):
+        if key >= self.max_entries:
+            raise IndexError(f"Key {key} out of bounds for array size {self.max_entries}")
+        
+        # Use libbpf for BPF operations
+        result = bpf_map_update_elem(self.fd, key, value, BPF_ANY)
+        if result != 0:
+            raise BPFMapError(f"Failed to update map: error_code={result}")
+
+class HashMap:
+    def __init__(self, fd, max_entries):
+        self.fd = fd
+        self.max_entries = max_entries
+        
+    def __getitem__(self, key):
+        # Use libbpf for BPF operations
+        result, value = bpf_map_lookup_elem(self.fd, key, 0)
+        if result != 0:
+            if result == -2:  # ENOENT - key not found
+                raise KeyError(f"Key {key} not found in map")
+            else:
+                raise BPFMapError(f"BPF lookup failed: error_code={result}")
+        
+        return value
+    
+    def __setitem__(self, key, value):
+        # Use libbpf for BPF operations
+        result = bpf_map_update_elem(self.fd, key, value, BPF_ANY)
+        if result != 0:
+            raise BPFMapError(f"Failed to update map: error_code={result}")
+    
+    def __delitem__(self, key):
+        # Use libbpf for BPF operations
+        result = bpf_map_delete_elem(self.fd, key)
+        if result != 0:
+            raise BPFMapError(f"Failed to delete from map: error_code={result}")
+
+class LRUHashMap(HashMap):
+    pass
+
+class PerCpuHashMap(HashMap):
+    pass
+
+class PerCpuArrayMap(ArrayMap):
+    pass
+
+# ============================================================================
+# INITIALIZATION (runs when module is imported)
+# ============================================================================
+
+def _initialize_maps():
+    """Initialize map objects from inherited file descriptors"""
+    map_fds_json = os.environ.get('KERNELSCRIPT_MAP_FDS')
+    if not map_fds_json:
+        # Gracefully handle case where no maps are available
+        print("No KernelScript map file descriptors found - running with simulated data")
+        return {}
+    
+    try:
+        map_fds = json.loads(map_fds_json)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid map FDs JSON: {e}")
+    
+    maps = {}
+    for name, metadata in MAP_METADATA.items():
+        if name not in map_fds:
+            print(f"WARNING: Map '{name}' not found in FD mapping")
+            continue
+        
+        fd = map_fds[name]
+        print(f"Initializing {metadata['type']} map '{name}' with fd {fd}")
+        
+        try:
+            if metadata['type'] == 'array':
+                maps[name] = ArrayMap(fd, metadata['max_entries'])
+            elif metadata['type'] == 'hash':
+                maps[name] = HashMap(fd, metadata['max_entries'])
+            elif metadata['type'] == 'lru_hash':
+                maps[name] = LRUHashMap(fd, metadata['max_entries'])
+            elif metadata['type'] == 'percpu_hash':
+                maps[name] = PerCpuHashMap(fd, metadata['max_entries'])
+            elif metadata['type'] == 'percpu_array':
+                maps[name] = PerCpuArrayMap(fd, metadata['max_entries'])
+            else:
+                raise RuntimeError(f"Unknown map type: {metadata['type']}")
+        except Exception as e:
+            print(f"Failed to initialize real map '{name}': {e}")
+    
+    return maps
+
+# Initialize maps when module is imported
+_maps = _initialize_maps()
+
+
+%s
+
+# Clean up environment
+if 'KERNELSCRIPT_MAP_FDS' in os.environ:
+    del os.environ['KERNELSCRIPT_MAP_FDS']
+
+print(f"KernelScript Python wrapper initialized with {len(_maps)} maps")
+|} base_name map_metadata (String.concat "\n\n" struct_definitions) map_exports
+
 (** Generate complete userspace program from IR *)
 let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table ?btf_path (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
@@ -2919,6 +3259,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
       uses_detach = acc_usage.uses_detach || func_usage.uses_detach;
       uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
       uses_daemon = acc_usage.uses_daemon || func_usage.uses_daemon;
+      uses_exec = acc_usage.uses_exec || func_usage.uses_exec;
       used_maps = List.fold_left (fun acc map_name ->
         if List.mem map_name acc then acc else map_name :: acc
       ) acc_usage.used_maps func_usage.used_maps;
@@ -2933,8 +3274,19 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     List.mem map.map_name all_usage.used_maps
   ) global_maps in
 
+  (* For exec() builtin, include ALL global maps regardless of userspace usage 
+     since they need to be shared with the exec'd process *)
+  let maps_for_exec = if all_usage.uses_exec then
+    global_maps  (* All global maps (pinned and non-pinned) *)
+  else [] in
+
+  (* Include all exec maps in used_global_maps_with_exec when exec is used *)
+  let used_global_maps_with_exec = if all_usage.uses_exec then
+    maps_for_exec  (* Use all global maps directly for exec *)
+  else used_global_maps in
+
   let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach in
-  let base_includes = generate_headers_for_maps ~uses_bpf_functions global_maps in
+  let base_includes = generate_headers_for_maps ~uses_bpf_functions used_global_maps_with_exec in
   let additional_includes = {|#include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -3010,8 +3362,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   else "" in
   
   (* Generate setup code first for use in main function *)
-  let map_setup_code = if all_usage.uses_map_operations then
-    generate_map_setup_code used_global_maps
+  let map_setup_code = if all_usage.uses_map_operations || all_usage.uses_exec then
+    generate_unified_map_setup_code used_global_maps_with_exec
   else "" in
   
   (* Generate pinned globals support *)
@@ -3069,8 +3421,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   
 
   
-  let map_fd_declarations = if all_usage.uses_map_operations then
-    generate_map_fd_declarations used_global_maps
+  let map_fd_declarations = if all_usage.uses_map_operations || all_usage.uses_exec then
+    generate_map_fd_declarations used_global_maps_with_exec
   else "" in
   
   (* Generate config map file descriptors if there are config declarations *)
@@ -3088,7 +3440,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let dispatch_is_used = List.length all_usage.used_dispatch_functions > 0 in
   
   let map_operation_functions = if all_usage.uses_map_operations then
-    generate_map_operation_functions used_global_maps ir_multi_prog ~dispatch_used:dispatch_is_used
+    generate_map_operation_functions used_global_maps_with_exec ir_multi_prog ~dispatch_used:dispatch_is_used
   else "" in
   
   (* Generate ring buffer handlers separately if needed *)
@@ -3573,7 +3925,50 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
 }|} base_name base_name
     else "" in
 
-    let functions_list = List.filter (fun s -> s <> "") [attachment_storage; load_function; attach_function; detach_function; daemon_function] in
+    (* Generate exec function if used *)
+    let exec_function = if all_usage.uses_exec then
+      if maps_for_exec = [] then
+        (* No maps to pass - use empty JSON *)
+        sprintf {|void exec_builtin(const char* python_script) {
+    // No global maps to inherit - set empty JSON
+    setenv("KERNELSCRIPT_MAP_FDS", "{}", 1);
+    
+    // Execute Python - file descriptors automatically inherited!
+    char* args[] = {"python3", (char*)python_script, NULL};
+    execvp("python3", args);
+    perror("execvp failed");
+    exit(1);
+}|}
+      else
+        (* Generate JSON with map file descriptors *)
+        let map_fd_json_format = List.map (fun map ->
+          sprintf "\\\"%s\\\":%%d" map.map_name
+        ) maps_for_exec |> String.concat "," in
+        let map_fd_args = List.map (fun map ->
+          sprintf "%s_fd" map.map_name
+        ) maps_for_exec |> String.concat ", " in
+        sprintf {|void exec_builtin(const char* python_script) {
+    // Create JSON with map name -> fd mapping for global maps
+    char map_fds_json[1024];
+    snprintf(map_fds_json, sizeof(map_fds_json), "{%s}", %s);
+    setenv("KERNELSCRIPT_MAP_FDS", map_fds_json, 1);
+    
+    // Clear FD_CLOEXEC flags to ensure file descriptors survive exec()
+%s
+    
+    // Execute Python - file descriptors automatically inherited!
+    char* args[] = {"python3", (char*)python_script, NULL};
+    execvp("python3", args);
+    perror("execvp failed");
+    exit(1);
+}|} map_fd_json_format map_fd_args 
+        (List.map (fun map ->
+          sprintf "    fcntl(%s_fd, F_SETFD, fcntl(%s_fd, F_GETFD) & ~FD_CLOEXEC);" 
+            map.map_name map.map_name
+        ) maps_for_exec |> String.concat "\n")
+    else "" in
+
+    let functions_list = List.filter (fun s -> s <> "") [attachment_storage; load_function; attach_function; detach_function; daemon_function; exec_function] in
     if functions_list = [] && bpf_obj_decl = "" then ""
     else
       sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 
@@ -3651,7 +4046,28 @@ int main(void) {
   let oc = open_out filepath in
   output_string oc content;
   close_out oc;
-  printf "✅ Generated IR-based userspace program: %s\n" filepath
+  printf "✅ Generated IR-based userspace program: %s\n" filepath;
+  
+  (* Generate Python wrapper if exec() is used *)
+  (match ir_multi_prog.userspace_program with
+   | Some userspace_prog ->
+       let usage = List.fold_left (fun acc_usage func ->
+         let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
+         {acc_usage with uses_exec = acc_usage.uses_exec || func_usage.uses_exec}
+       ) (create_function_usage ()) userspace_prog.userspace_functions in
+       
+       if usage.uses_exec then (
+         (* For exec(), include ALL global maps, not just pinned ones *)
+         let exec_maps = ir_multi_prog.global_maps in
+         let python_wrapper_content = generate_python_wrapper base_name exec_maps ir_multi_prog in
+         let python_filename = sprintf "%s.py" base_name in
+         let python_filepath = Filename.concat output_dir python_filename in
+         let python_oc = open_out python_filepath in
+         output_string python_oc python_wrapper_content;
+         close_out python_oc;
+         printf "✅ Generated Python wrapper: %s\n" python_filepath
+       )
+   | None -> ())
 
 (** Compatibility functions for tests *)
 let generate_c_statement _stmt = "/* IR-based statement generation */"
@@ -3661,6 +4077,7 @@ let is_impl_block_variable ir_multi_prog var_name =
   List.exists (fun struct_ops_decl ->
     struct_ops_decl.ir_instance_name = var_name
   ) ir_multi_prog.struct_ops_instances
+
 
 
 

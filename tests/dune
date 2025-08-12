@@ -416,6 +416,11 @@
  (modules test_tc)
  (libraries kernelscript alcotest unix str))
 
+(executable
+ (name test_exec)
+ (modules test_exec)
+ (libraries kernelscript alcotest unix str))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -657,6 +662,10 @@
  (alias runtest_tc)
  (action (run ./test_tc.exe)))
 
+(rule
+ (alias runtest_exec)
+ (action (run ./test_exec.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -691,7 +700,8 @@
   test_string_codegen.exe
   test_string_struct_fixes.exe
   test_string_type.exe
-  test_string_literal_bugs.exe)
+  test_string_literal_bugs.exe
+  test_exec.exe)
  (action
   (progn
    (run ./test_userspace.exe)
@@ -704,7 +714,8 @@
    (run ./test_string_codegen.exe)
    (run ./test_string_struct_fixes.exe)
    (run ./test_string_type.exe)
-   (run ./test_string_literal_bugs.exe))))
+   (run ./test_string_literal_bugs.exe)
+   (run ./test_exec.exe))))
 
 (rule
  (alias core-tests)
@@ -862,7 +873,8 @@
   ./test_integer_literal_codegen.exe
   ./test_tracepoint.exe
   ./test_probe.exe
-  ./test_tc.exe)
+  ./test_tc.exe
+  ./test_exec.exe)
  (action
   (progn
    (run ./test_ast.exe)
@@ -882,4 +894,5 @@
    (run ./test_tracepoint.exe)
    (run ./test_probe.exe)
    (run ./test_tc.exe)
+   (run ./test_exec.exe)
    (run ./test_detach_api.exe)))) 
