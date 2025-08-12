@@ -2673,18 +2673,18 @@ static int %s_event_handler(void *ctx, void *data, size_t data_sz) {
   final_event_handlers ^ combined_rb_declaration
 
 (** Generate ring buffer setup code from centralized registry *)
-let generate_ringbuf_setup_code_from_registry (registry : Ir.ir_ring_buffer_registry) ~dispatch_used =
+let generate_ringbuf_setup_code_from_registry ?(obj_var="obj->obj") (registry : Ir.ir_ring_buffer_registry) ~dispatch_used =
   if List.length registry.ring_buffer_declarations = 0 then ""
   else
     let fd_setup_code = List.map (fun rb_decl ->
       let ringbuf_name = rb_decl.rb_name in
       sprintf {|    // Get ring buffer map FD for %s
-    int %s_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s");
+    int %s_map_fd = bpf_object__find_map_fd_by_name(%s, "%s");
     if (%s_map_fd < 0) {
         fprintf(stderr, "Failed to find %s ring buffer map\n");
         return 1;
     }|} 
-        ringbuf_name ringbuf_name ringbuf_name ringbuf_name ringbuf_name
+        ringbuf_name ringbuf_name obj_var ringbuf_name ringbuf_name ringbuf_name
     ) registry.ring_buffer_declarations in
     
     let combined_rb_setup = if List.length registry.ring_buffer_declarations > 0 && dispatch_used then
@@ -2781,7 +2781,7 @@ int %s_get_next_key(%s *key, %s *next_key) {
   String.concat "\n" (regular_map_ops @ [ringbuf_handlers])
 
 (** Generate unified map setup code - handle both regular and pinned maps *)
-let generate_unified_map_setup_code maps =
+let generate_unified_map_setup_code ?(obj_var="obj->obj") maps =
   (* Remove duplicates first *)
   let deduplicated_maps = List.fold_left (fun acc map ->
     if List.exists (fun existing -> existing.map_name = map.map_name) acc
@@ -2812,7 +2812,7 @@ let generate_unified_map_setup_code maps =
         %s_fd = bpf_map__fd(%s_map);|} map.map_name map.map_name
     in
     Printf.sprintf {|    // Load map %s from eBPF object
-    struct bpf_map *%s_map = bpf_object__find_map_by_name(obj->obj, "%s");
+    struct bpf_map *%s_map = bpf_object__find_map_by_name(%s, "%s");
     if (!%s_map) {
         fprintf(stderr, "Failed to find %s map in eBPF object\n");
         return 1;
@@ -2820,7 +2820,7 @@ let generate_unified_map_setup_code maps =
     if (%s_fd < 0) {
         fprintf(stderr, "Failed to get fd for %s map\n");
         return 1;
-    }|} map.map_name map.map_name map.map_name map.map_name map.map_name pin_logic map.map_name map.map_name
+    }|} map.map_name map.map_name obj_var map.map_name map.map_name map.map_name pin_logic map.map_name map.map_name
   ) deduplicated_maps |> String.concat "\n"
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
@@ -3372,19 +3372,22 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
     generate_pinned_globals_support project_name ir_multi_prog.global_variables in
   
   (* Generate config map setup code - load from eBPF object and initialize with defaults *)
-  let config_setup_code = if List.length config_declarations > 0 then
-    List.map (fun config_decl ->
-      let config_name = config_decl.Ast.config_name in
-      let load_code = sprintf {|    /* Load %s config map from eBPF object */
-    %s_config_map_fd = bpf_object__find_map_fd_by_name(obj->obj, "%s_config_map");
+  let generate_config_setup_code ?(obj_var="obj->obj") config_declarations =
+    if List.length config_declarations > 0 then
+      List.map (fun config_decl ->
+        let config_name = config_decl.Ast.config_name in
+        let load_code = sprintf {|    /* Load %s config map from eBPF object */
+    %s_config_map_fd = bpf_object__find_map_fd_by_name(%s, "%s_config_map");
     if (%s_config_map_fd < 0) {
         fprintf(stderr, "Failed to find %s config map in eBPF object\n");
         return -1;
-    }|} config_name config_name config_name config_name config_name in
-      let init_code = generate_config_initialization config_decl in
-      load_code ^ "\n" ^ init_code
-    ) config_declarations |> String.concat "\n"
-  else "" in
+    }|} config_name config_name obj_var config_name config_name config_name in
+        let init_code = generate_config_initialization config_decl in
+        load_code ^ "\n" ^ init_code
+      ) config_declarations |> String.concat "\n"
+    else "" in
+  
+  let config_setup_code = generate_config_setup_code config_declarations in
   
   (* Generate struct_ops registration code *)
   let struct_ops_registration_code = generate_struct_ops_registration_code ir_multi_prog in
@@ -3462,6 +3465,11 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   (* Generate automatic BPF object initialization when maps are used but load is not called *)
   let needs_auto_bpf_init = all_usage.uses_map_operations && not all_usage.uses_load in
   let auto_bpf_init_code = if needs_auto_bpf_init && all_setup_code <> "" then
+    let auto_map_setup_code = generate_unified_map_setup_code ~obj_var:"bpf_obj" used_global_maps_with_exec in
+    let auto_config_setup_code = generate_config_setup_code ~obj_var:"bpf_obj" config_declarations in
+    let auto_ringbuf_setup_code = generate_ringbuf_setup_code_from_registry ~obj_var:"bpf_obj" ir_multi_prog.ring_buffer_registry ~dispatch_used:(List.length all_usage.used_dispatch_functions > 0) in
+    let auto_setup_parts = [auto_map_setup_code; auto_config_setup_code; auto_ringbuf_setup_code] in
+    let auto_setup_code = String.concat "\n" (List.filter (fun s -> s <> "") auto_setup_parts) in
     sprintf {|
 /* Auto-generated BPF object initialization */
 static struct bpf_object *bpf_obj = NULL;
@@ -3489,7 +3497,7 @@ void cleanup_bpf_maps(void) {
         bpf_obj = NULL;
     }
 }
-|} base_name all_setup_code
+|} base_name auto_setup_code
   else "" in
   
   (* Only generate BPF helper functions when they're actually used *)
