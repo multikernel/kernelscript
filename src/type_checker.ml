@@ -19,6 +19,9 @@
 open Ast
 open Printf
 
+(** Expression context for void function validation *)
+type expr_context = Statement | Expression
+
 (** Type checking exceptions *)
 exception Type_error of string * position
 exception Unification_error of bpf_type * bpf_type * position
@@ -40,6 +43,7 @@ type context = {
   mutable current_function: string option;
   mutable current_program_type: program_type option;
   mutable multi_program_analysis: Multi_program_analyzer.multi_program_analysis option;
+  mutable expr_context: expr_context; (* Track whether we're in statement or expression context *)
   in_tail_call_context: bool; (* Flag to indicate we're processing a potential tail call *)
   in_match_return_context: bool; (* Flag to indicate we're inside a match expression in return position *)
   ast_context: Ast.declaration list; (* Store original AST for struct_ops attribute checking *)
@@ -184,6 +188,7 @@ let create_context symbol_table ast =
     current_function = None;
     current_program_type = None;
     multi_program_analysis = None;
+    expr_context = Expression; (* Default to expression context for safety *)
     in_tail_call_context = false;
     in_match_return_context = false;
     attributed_function_map = Hashtbl.create 16;
@@ -195,6 +200,20 @@ let loop_depth = ref 0
 
 (** Helper to create type error *)
 let type_error msg pos = raise (Type_error (msg, pos))
+
+(** Validate void function usage in expression context *)
+let validate_void_in_expression expr_type func_name context pos =
+  match expr_type, context with
+  | Void, Expression -> 
+      type_error ("Void function '" ^ func_name ^ "' cannot be used in an expression") pos
+  | _ -> ()
+
+(** Check if a type represents an enum (either Enum _ or built-in enum-like types) *)
+let is_enum_like_type = function
+  | Enum _ -> true
+  | Xdp_action -> true  (* Built-in enum-like type *)
+  (* Add other built-in enum-like types here as needed *)
+  | _ -> false
 
 (** Resolve user types to built-in types and type aliases *)
 let rec resolve_user_type ctx = function
@@ -325,14 +344,15 @@ let rec unify_types t1 t2 =
   | ProgramRef pt1, ProgramRef pt2 when pt1 = pt2 -> Some (ProgramRef pt1)
   
   (* Enum-integer compatibility: enums are represented as u32 *)
-  | Enum _, U32 | U32, Enum _ -> Some U32
+  | Enum _, (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) | (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64), Enum _ -> Some U32
   | Enum enum_name, Enum other_name when enum_name = other_name -> Some (Enum enum_name)
-  
-  (* Special built-in type compatibility for specific enums *)
-  | Enum "xdp_action", Xdp_action | Xdp_action, Enum "xdp_action" -> Some Xdp_action
   
 
   
+  (* All enum-like types (both Enum _ and built-in enum types) are compatible with integers *)
+  | t1, (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) when is_enum_like_type t1 -> Some t1
+  | (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64), t2 when is_enum_like_type t2 -> Some t2
+
   (* No unification possible *)
   | _ -> None
 
@@ -1237,14 +1257,20 @@ and type_check_expression ctx expr =
 
            (* Try builtin -> user function -> function pointer variable *)
            (match type_check_builtin_call ctx name typed_args arg_types expr.expr_pos with
-            | Some result -> result
+            | Some result -> 
+                validate_void_in_expression result.texpr_type name ctx.expr_context expr.expr_pos;
+                result
             | None ->
                 (match type_check_user_function_call ctx name typed_args arg_types expr.expr_pos with
-                 | Some result -> result
+                 | Some result -> 
+                     validate_void_in_expression result.texpr_type name ctx.expr_context expr.expr_pos;
+                     result
                  | None ->
                      (match type_check_function_pointer_variable ctx name typed_args arg_types expr.expr_pos with
-                      | Some result -> result
-                                            | None -> type_error ("Undefined function: " ^ name) expr.expr_pos)))
+                      | Some result -> 
+                          validate_void_in_expression result.texpr_type name ctx.expr_context expr.expr_pos;
+                          result
+                      | None -> type_error ("Undefined function: " ^ name) expr.expr_pos)))
                       
        | FieldAccess ({expr_desc = Identifier var_name; _}, method_name) 
          when Hashtbl.mem ctx.variables var_name ->
@@ -1522,7 +1548,10 @@ and type_check_expression ctx expr =
 and type_check_statement ctx stmt =
   match stmt.stmt_desc with
   | ExprStmt expr ->
+      let old_context = ctx.expr_context in
+      ctx.expr_context <- Statement; (* Allow void functions in statement context *)
       let typed_expr = type_check_expression ctx expr in
+      ctx.expr_context <- old_context; (* Restore previous context *)
       { tstmt_desc = TExprStmt typed_expr; tstmt_pos = stmt.stmt_pos }
   
     | Assignment (name, expr) ->
@@ -1965,6 +1994,32 @@ and type_check_statement ctx stmt =
                    None
              | None -> None)
       in
+      
+      (* Elegant return validation: check compatibility with current function *)
+      (match ctx.current_function with
+       | Some func_name ->
+           (try
+             let (_, return_type) = Hashtbl.find ctx.functions func_name in
+             let resolved_return_type = resolve_user_type ctx return_type in
+             (match typed_expr_opt, resolved_return_type with
+              | Some _, Void -> 
+                  type_error ("Void function '" ^ func_name ^ "' cannot return a value") stmt.stmt_pos
+              | None, t when t <> Void -> 
+                  type_error ("Non-void function '" ^ func_name ^ "' must return a value of type " ^ 
+                             string_of_bpf_type t) stmt.stmt_pos
+              | Some typed_expr, _ ->
+                  (* Check return type compatibility *)
+                  let resolved_expr_type = resolve_user_type ctx typed_expr.texpr_type in
+                  (match unify_types resolved_expr_type resolved_return_type with
+                   | Some _ -> () (* Types can be unified *)
+                   | None -> 
+                       type_error ("Function '" ^ func_name ^ "' expects return type " ^ 
+                                  string_of_bpf_type resolved_return_type ^ " but got " ^ 
+                                  string_of_bpf_type resolved_expr_type) stmt.stmt_pos)
+              | _ -> () (* Valid cases *))
+           with Not_found -> () (* Function not in context *))
+       | None -> () (* Not in function context *));
+      
       { tstmt_desc = TReturn typed_expr_opt; tstmt_pos = stmt.stmt_pos }
   
   | If (cond, then_stmts, else_opt) ->

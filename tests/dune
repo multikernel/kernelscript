@@ -421,6 +421,11 @@
  (modules test_exec)
  (libraries kernelscript alcotest unix str))
 
+(executable
+ (name test_void_functions)
+ (modules test_void_functions)
+ (libraries kernelscript alcotest str test_utils))
+
 ; Test rules for individual execution
 (rule
  (alias runtest_lexer)
@@ -666,6 +671,10 @@
  (alias runtest_exec)
  (action (run ./test_exec.exe)))
 
+(rule
+ (alias runtest_void_functions)
+ (action (run ./test_void_functions.exe)))
+
 ; Test aliases for organized execution
 (rule
  (alias map-tests)
@@ -767,7 +776,8 @@
   test_match.exe
   test_test_attribute.exe
   test_named_returns.exe
-  test_import_system.exe)
+  test_import_system.exe
+  test_void_functions.exe)
  (action
   (progn
    (run ./test_btf_binary_parser.exe)
@@ -817,7 +827,8 @@
    (run ./test_match.exe)
    (run ./test_test_attribute.exe)
    (run ./test_named_returns.exe)
-   (run ./test_import_system.exe))))
+   (run ./test_import_system.exe)
+   (run ./test_void_functions.exe))))
 
 (rule
  (alias ir-tests)
@@ -874,7 +885,8 @@
   ./test_tracepoint.exe
   ./test_probe.exe
   ./test_tc.exe
-  ./test_exec.exe)
+  ./test_exec.exe
+  ./test_void_functions.exe)
  (action
   (progn
    (run ./test_ast.exe)
@@ -895,4 +907,5 @@
    (run ./test_probe.exe)
    (run ./test_tc.exe)
    (run ./test_exec.exe)
+   (run ./test_void_functions.exe)
    (run ./test_detach_api.exe)))) 
