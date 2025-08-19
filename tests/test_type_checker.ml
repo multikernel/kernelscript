@@ -1070,6 +1070,8 @@ let test_xdp_signature_validation () =
 let test_kernel_function_calls_from_attributed () =
   (* Test the specific bug case: kernel function called from attributed function *)
   let program_text = {|
+type IpAddress = u32
+
 @helper
 fn get_src_ip(ctx: *xdp_md) -> IpAddress {
     return 0x08080808  // 8.8.8.8 as u32
@@ -1161,6 +1163,8 @@ fn main_kernel_function(ctx: *xdp_md) -> u32 {
 (** Test function call type resolution with user-defined types *)
 let test_function_call_user_type_resolution () =
   let program_text = {|
+type IpAddress = u32
+
 @helper
 fn extract_ip_from_context(ctx: *xdp_md) -> IpAddress {
     return 0x7f000001  // 127.0.0.1 as u32
