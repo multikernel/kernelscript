@@ -243,6 +243,12 @@ fn arbitrary_address() -> i32 {
 - **Intelligent Probe Selection**: Automatically chooses fprobe for function entrance (better performance) or kprobe for arbitrary addresses
 - **Type Safety**: Function entrance probes have correct types extracted from kernel BTF information
 
+**Return Type Constraint:**
+- **All probe functions must return `i32`** due to eBPF's `BPF_PROG()` macro constraint
+- The return value controls execution flow: `0` = continue normally, non-zero = may alter behavior
+- This applies regardless of the target kernel function's actual return type (which may be `void`, pointers, etc.)
+- BTF function signature extraction automatically converts all return types to `i32` for consistency
+
 #### 3.1.2 Traffic Control (TC) Programs with Direction Support
 
 TC programs must specify traffic direction for proper kernel attachment point selection.

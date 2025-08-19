@@ -5,18 +5,21 @@
 // We print the exit code parameter to see why processes are exiting.
 
 // Target kernel function signature:
-// do_exit(code: i64) -> void
+// do_exit(code: i64) -> void (in kernel)
 // 
 // The 'code' parameter contains the exit status/signal that caused
 // the process to exit. In the kernel, it's declared as 'long' (signed 64-bit).
+// 
+// Note: eBPF probe functions must return i32 due to BPF_PROG() constraint,
+// regardless of the target kernel function's return type.
 
 
 @probe("do_exit")
-fn do_exit(code: i64) -> void {
+fn do_exit(code: i64) -> i32 {
     // Print the exit code parameter
     // This will show us the exit status/signal for the exiting process
     print("Process exiting with code: %ld", code)
-    return 0
+    return 0  // Continue normal execution
 }
 
 fn main() -> i32 {

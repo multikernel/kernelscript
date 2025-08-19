@@ -172,11 +172,9 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
   | _ -> fail "Expected AttributedFunction"
 
 let test_probe_return_type_validation _ =
-  (* Test valid return types for kprobe *)
+  (* Test valid return types for kprobe - only i32 allowed due to BPF_PROG() constraint *)
   let test_cases = [
     ("i32", "fn handler() -> i32 { return 0 }");
-    ("void", "fn handler() -> void { }");
-    ("u32", "fn handler() -> u32 { return 0 }");
   ] in
   
   List.iter (fun (ret_type, func_def) ->
@@ -185,6 +183,25 @@ let test_probe_return_type_validation _ =
     let typed_ast = type_check_ast ast in
     check int (Printf.sprintf "Type checking should succeed for %s return type" ret_type) 1 (List.length typed_ast)
   ) test_cases
+
+let test_probe_invalid_return_types _ =
+  (* Test that void, u32, and other invalid return types are rejected for probe functions *)
+  let invalid_cases = [
+    ("void", "fn handler() -> void { }");
+    ("u32", "fn handler() -> u32 { return 0 }");
+    ("str", "fn handler() -> str(32) { return \"test\" }");
+    ("bool", "fn handler() -> bool { return true }");
+  ] in
+  
+  List.iter (fun (ret_type, func_def) ->
+    let source = "@probe(\"sys_read\")\n" ^ func_def in
+    try
+      let ast = parse_string source in
+      let _ = type_check_ast ast in
+      fail (Printf.sprintf "Should have rejected %s return type for probe function" ret_type)
+    with
+    | _ -> check bool (Printf.sprintf "Correctly rejected %s return type" ret_type) true true
+  ) invalid_cases
 
 let test_probe_too_many_parameters _ =
   (* Test rejection of functions with more than 6 parameters *)
@@ -579,6 +596,7 @@ let type_checking_tests = [
   "probe type checking", `Quick, test_probe_type_checking;
   "probe parameter validation", `Quick, test_probe_parameter_validation;
   "probe return type validation", `Quick, test_probe_return_type_validation;
+  "probe invalid return types", `Quick, test_probe_invalid_return_types;
   "probe too many parameters", `Quick, test_probe_too_many_parameters;
   "probe pt_regs rejection", `Quick, test_probe_pt_regs_rejection;
 ]

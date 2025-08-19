@@ -311,13 +311,24 @@ static char* resolve_type_to_string(struct btf *btf, int type_id) {
 }
 
 /* Helper function to format function prototype */
-static char* format_function_prototype(struct btf *btf, const struct btf_type *func_proto) {
+static char* format_function_prototype(struct btf *btf, const struct btf_type *func_proto, int force_i32_return) {
     char result[1024];
     int ret_type_id = func_proto->type;
     int param_count = btf_vlen(func_proto);
     
     /* Get return type */
-    char *ret_type = resolve_type_to_string(btf, ret_type_id);
+    char *original_ret_type = resolve_type_to_string(btf, ret_type_id);
+    
+    /* Use original return type unless forced to i32 for eBPF probe/kfunc functions */
+    const char *ret_type;
+    if (force_i32_return) {
+        /* eBPF probe/kfunc functions must return i32 due to BPF_PROG() constraint,
+         * regardless of the kernel function's actual return type */
+        ret_type = "i32";
+    } else {
+        /* Preserve original return type for struct_ops and other contexts */
+        ret_type = original_ret_type;
+    }
     
     /* Start building the function signature */
     snprintf(result, sizeof(result), "fn(");
@@ -353,7 +364,7 @@ static char* format_function_prototype(struct btf *btf, const struct btf_type *f
     snprintf(closing, sizeof(closing), ") -> %s", ret_type);
     strncat(result, closing, sizeof(result) - strlen(result) - 1);
     
-    free(ret_type);
+    free(original_ret_type);
     return strdup(result);
 }
 
@@ -384,7 +395,7 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             /* Check if this points to a function prototype */
             const struct btf_type *target = btf__type_by_id(btf, t->type);
             if (target && btf_kind(target) == BTF_KIND_FUNC_PROTO) {
-                char *func_sig = format_function_prototype(btf, target);
+                char *func_sig = format_function_prototype(btf, target, 0); /* Don't force i32 for general BTF resolution */
                 value result = caml_copy_string(func_sig);
                 free(func_sig);
                 CAMLreturn(result);
@@ -474,7 +485,7 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             CAMLreturn(caml_copy_string("fwd"));
         }
         case BTF_KIND_FUNC_PROTO: {
-            char *func_sig = format_function_prototype(btf, t);
+            char *func_sig = format_function_prototype(btf, t, 0); /* Don't force i32 for general BTF resolution */
             value result = caml_copy_string(func_sig);
             free(func_sig);
             CAMLreturn(result);
@@ -573,8 +584,8 @@ value btf_extract_function_signatures_stub(value btf_handle, value function_name
                 /* Get the function prototype */
                 const struct btf_type *func_proto = btf__type_by_id(btf, t->type);
                 if (func_proto && btf_kind(func_proto) == BTF_KIND_FUNC_PROTO) {
-                    /* Extract function signature */
-                    char *signature = format_function_prototype(btf, func_proto);
+                    /* Extract function signature - force i32 return for probe functions */
+                    char *signature = format_function_prototype(btf, func_proto, 1);
                     
                     /* Create tuple (function_name, signature) */
                     tuple = caml_alloc_tuple(2);
@@ -665,8 +676,7 @@ value btf_extract_kfuncs_stub(value btf_handle) {
                     /* Get the function prototype */
                     const struct btf_type *func_proto = btf__type_by_id(btf, target_func->type);
                     if (func_proto && btf_kind(func_proto) == BTF_KIND_FUNC_PROTO) {
-                        /* Extract function signature */
-                        char *signature = format_function_prototype(btf, func_proto);
+                        char *signature = format_function_prototype(btf, func_proto, 0);
                         
                         /* Create tuple (function_name, signature) */
                         tuple = caml_alloc_tuple(2);

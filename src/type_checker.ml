@@ -3054,16 +3054,14 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                  failwith (sprintf "Internal error: %s without target function should have been rejected earlier" probe_type_name)
              );
 
-             (* Allow both i32 (standard eBPF probe return) and void (matching kernel function signature) *)
+             (* Require i32 return type for eBPF probe functions - BPF_PROG() always returns int *)
              let valid_return_type = match resolved_return_type with
                | Some I32 -> true   (* Standard eBPF probe return type *)
-               | Some Void -> true  (* Allow void to match kernel function signatures *)
-               | Some U32 -> true   (* Allow u32 as alternative to i32 *)
                | _ -> false
              in
              
              if not valid_return_type then
-               type_error (sprintf "@%s attributed function must return i32, u32, or void" probe_type_name) attr_func.attr_pos
+               type_error (sprintf "@%s attributed function must return i32" probe_type_name) attr_func.attr_pos
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         
