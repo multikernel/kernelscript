@@ -732,7 +732,8 @@ let rec ast_type_to_ir_type = function
   | ProgramHandle -> IRI32 (* Program handles are represented as file descriptors (i32) in IR to support error codes *)
   | Ringbuf (value_type, size) -> IRRingbuf (ast_type_to_ir_type value_type, size) (* Ring buffer object *)
   | RingbufRef _ -> IRU32 (* Ring buffer references are represented as pointers/handles (u32) in IR *)
-  | NoneType -> IRU32 (* None type represented as u32 sentinel value in IR *)
+  | NoneType -> IRU32  (* None type represented as u32 sentinel value in IR *)
+  | Null -> IRPointer (IRU32, {min_size = Some 0; max_size = Some 0; alignment = 1; nullable = true})  (* Null is represented as a nullable pointer in IR *)
 
 (* Helper function that preserves type aliases when converting AST types to IR types *)
 let rec ast_type_to_ir_type_with_context symbol_table ast_type =

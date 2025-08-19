@@ -312,15 +312,17 @@ let rec unify_types t1 t2 =
        | Some unified -> Some (Array (unified, s1))
        | None -> None)
   
-  (* Pointer types - any pointer can be null *)
+  (* Null type unification - null can unify with any pointer or function type *)
+  | Null, Pointer t -> Some (Pointer t)  (* null unifies with any pointer *)
+  | Pointer t, Null -> Some (Pointer t)  (* any pointer unifies with null *)
+  | Null, Function (params, ret) -> Some (Function (params, ret))  (* null unifies with functions *)
+  | Function (params, ret), Null -> Some (Function (params, ret))  (* functions unify with null *)
+  
+  (* Pointer types *)
   | Pointer t1, Pointer t2 ->
       (match unify_types t1 t2 with
        | Some unified -> Some (Pointer unified)
        | None -> None)
-  
-  (* Special case: null pointer (Pointer U32) can unify with any function type *)
-  | Pointer U32, Function (params, ret) -> Some (Function (params, ret))
-  | Function (params, ret), Pointer U32 -> Some (Function (params, ret))
   
   (* Result types *)
   | Result (ok1, err1), Result (ok2, err2) ->
@@ -430,7 +432,7 @@ let type_check_literal lit pos =
         Str (max 1 len)  (* At least size 1 to handle empty strings *)
     | CharLit _ -> Char
     | BoolLit _ -> Bool
-    | NullLit -> Pointer U32  (* null literal as nullable pointer, can be unified with any pointer type *)
+    | NullLit -> Null  (* null literal - can unify with any pointer or function type *)
     | NoneLit -> NoneType  (* none literal represents missing/absent values *)
     | ArrayLit init_style ->
         (* Handle enhanced array literal type checking *)
@@ -1080,7 +1082,8 @@ and type_check_binary_op ctx left op right pos =
         (match resolved_left_type, resolved_right_type with
          | Str _, Str _ -> Bool  (* Allow string comparison regardless of size *)
          (* Null comparisons - any type can be compared with null *)
-         | _, Pointer _ | Pointer _, _ -> Bool
+         | Null, _ | _, Null -> Bool  (* Direct null comparisons *)
+         | _, Pointer _ | Pointer _, _ -> Bool  (* Pointer comparisons (legacy) *)
          (* None comparisons - allow with map access expressions or variables that could contain map results *)
          | NoneType, _ | _, NoneType -> 
              (* Check if at least one operand is a map access or could reasonably be a map result *)

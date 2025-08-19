@@ -90,6 +90,8 @@ and bpf_type =
   | Ringbuf of bpf_type * int (* value_type, size - ring buffer object *)
   (* None type - represents missing/absent values *)
   | NoneType
+  (* Null type - represents null pointers, compatible with any pointer type *)
+  | Null
 
 (** Map configuration *)
 type map_config = {
@@ -644,6 +646,7 @@ let rec string_of_bpf_type = function
   | RingbufRef value_type -> Printf.sprintf "ringbuf_ref<%s>" (string_of_bpf_type value_type)
   | Ringbuf (value_type, size) -> Printf.sprintf "ringbuf<%s>(%d)" (string_of_bpf_type value_type) size
   | NoneType -> "none"
+  | Null -> "null"
 
 let rec string_of_literal = function
   | IntLit (i, original_opt) -> 
