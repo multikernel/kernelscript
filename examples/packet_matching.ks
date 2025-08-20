@@ -252,31 +252,44 @@ fn packet_monitor(ctx: *xdp_md) -> xdp_action {
     var dst_ip = get_dst_ip(ctx)
     
     // Categorize and log based on protocol
-    var log_category = match (protocol) {
+    match (protocol) {
         TCP: {
             var tcp_port = get_tcp_dest_port(ctx)
-            return match (tcp_port) {
-                HTTP: "web_traffic",
-                HTTPS: "secure_web", 
-                SSH: "admin_access",
-                default: "tcp_other"
+            match (tcp_port) {
+                HTTP: {
+                    print("PKT: web_traffic %u->%u\n", src_ip, dst_ip)
+                },
+                HTTPS: {
+                    print("PKT: secure_web %u->%u\n", src_ip, dst_ip)
+                },
+                SSH: {
+                    print("PKT: admin_access %u->%u\n", src_ip, dst_ip)
+                },
+                default: {
+                    print("PKT: tcp_other %u->%u\n", src_ip, dst_ip)
+                }
             }
         },
         
         UDP: {
             var udp_port = get_udp_dest_port(ctx)
-            return match (udp_port) {
-                DNS: "dns_query",
-                default: "udp_other"
+            match (udp_port) {
+                DNS: {
+                    print("PKT: dns_query %u->%u\n", src_ip, dst_ip)
+                },
+                default: {
+                    print("PKT: udp_other %u->%u\n", src_ip, dst_ip)
+                }
             }
         },
         
-        ICMP: "icmp_traffic",
-        default: "unknown_protocol"
+        ICMP: {
+            print("PKT: icmp_traffic %u->%u\n", src_ip, dst_ip)
+        },
+        default: {
+            print("PKT: unknown_protocol %u->%u\n", src_ip, dst_ip)
+        }
     }
-    
-    // Log the packet with category
-    print("PKT: %s %u->%u\n", log_category, src_ip, dst_ip)
     
     return XDP_PASS
 }
@@ -284,14 +297,14 @@ fn packet_monitor(ctx: *xdp_md) -> xdp_action {
 // Quality of Service (QoS) packet marking
 // Demonstrates match for traffic prioritization
 @tc("ingress")
-fn qos_packet_marker(ctx: *__sk_buff) -> int {
+fn qos_packet_marker(ctx: *__sk_buff) -> i32 {
     var protocol = get_ip_protocol_tc(ctx)
     
     // Set QoS markings based on traffic type
     var qos_class = match (protocol) {
         TCP: {
             var tcp_port = get_tcp_dest_port_tc(ctx)
-            return match (tcp_port) {
+            match (tcp_port) {
                 SSH: "high_priority",      // Admin traffic
                 HTTPS: "medium_priority",  // Web traffic
                 HTTP: "medium_priority",   // Web traffic
@@ -301,7 +314,7 @@ fn qos_packet_marker(ctx: *__sk_buff) -> int {
         
         UDP: {
             var udp_port = get_udp_dest_port_tc(ctx)
-            return match (udp_port) {
+            match (udp_port) {
                 DNS: "high_priority",      // DNS is critical
                 default: "low_priority"
             }
