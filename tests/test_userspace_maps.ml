@@ -428,7 +428,7 @@ pin var shared_counter : hash<u32, u32>(1024)
   return XDP_PASS
 }
 
-@tc("ingress") fn packet_filter(ctx: *__sk_buff) -> int {
+@tc("ingress") fn packet_filter(ctx: *__sk_buff) -> i32 {
   shared_counter[2] = 200
   return 0 // TC_ACT_OK
 }

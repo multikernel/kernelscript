@@ -385,7 +385,7 @@ var xdp_stats : hash<u32, u64>(1024)
     ("tc", {|
 var tc_stats : hash<u32, u64>(1024)
 
-@tc("ingress") fn tc_test(ctx: *__sk_buff) -> int {
+@tc("ingress") fn tc_test(ctx: *__sk_buff) -> i32 {
   tc_stats[1] = tc_stats[2]
   return 0
 }

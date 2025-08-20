@@ -328,7 +328,7 @@ let test_multiple_programs_single_main () =
         return 2
     }
     
-    @tc("ingress") fn filter(ctx: *__sk_buff) -> int {
+    @tc("ingress") fn filter(ctx: *__sk_buff) -> i32 {
         return 0
     }
     

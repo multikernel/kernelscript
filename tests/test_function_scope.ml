@@ -419,7 +419,7 @@ fn safe_increment(index: u32) -> bool {
       return 0
     }
     
-    @tc("ingress") fn counter_tc(ctx: *__sk_buff) -> int {
+    @tc("ingress") fn counter_tc(ctx: *__sk_buff) -> i32 {
       var count = get_global_counter(0)
       safe_increment(1)
       return 0
@@ -495,7 +495,7 @@ fn shared_logging(message: u32) {
       return 0
     }
     
-    @tc("ingress") fn tc_filter(ctx: *__sk_buff) -> int {
+    @tc("ingress") fn tc_filter(ctx: *__sk_buff) -> i32 {
       if (shared_validation(256)) {
         shared_logging(2)
         return 0
@@ -627,7 +627,7 @@ let test_attributed_function_cross_call_restriction () =
       return 2
     }
     
-    @tc("ingress") fn main_filter(ctx: *__sk_buff) -> int {
+    @tc("ingress") fn main_filter(ctx: *__sk_buff) -> i32 {
       var result = helper_filter(ctx)  // This should fail
       return result
     }

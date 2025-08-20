@@ -69,7 +69,7 @@ fn monitor(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn analyzer(ctx: *__sk_buff) -> int {
+fn analyzer(ctx: *__sk_buff) -> i32 {
     update_counters(1)  // Same kernel-shared function
     return 0  // TC_ACT_OK
 }
@@ -256,7 +256,7 @@ TC programs must specify traffic direction for proper kernel attachment point se
 ```kernelscript
 // Ingress traffic control (packets entering the interface)
 @tc("ingress")
-fn ingress_filter(ctx: *__sk_buff) -> int {
+fn ingress_filter(ctx: *__sk_buff) -> i32 {
     var packet_size = ctx->len
     
     // Drop oversized packets at ingress
@@ -269,7 +269,7 @@ fn ingress_filter(ctx: *__sk_buff) -> int {
 
 // Egress traffic control (packets leaving the interface)  
 @tc("egress")
-fn egress_shaper(ctx: *__sk_buff) -> int {
+fn egress_shaper(ctx: *__sk_buff) -> i32 {
     var protocol = ctx->protocol
     
     // Shape traffic based on protocol at egress
@@ -798,7 +798,7 @@ fn packet_analyzer(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn flow_tracker(ctx: *__sk_buff) -> int {
+fn flow_tracker(ctx: *__sk_buff) -> i32 {
     // Track flow information using shared config
     if (monitoring.enable_stats && (ctx.hash() % monitoring.sample_rate == 0)) {
         // Sample this flow
@@ -867,7 +867,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn flow_monitor(ctx: *__sk_buff) -> int {
+fn flow_monitor(ctx: *__sk_buff) -> i32 {
     return 0  // TC_ACT_OK
 }
 
@@ -1021,7 +1021,7 @@ fn main(args: Args) -> i32 {
 fn ingress_monitor(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
 
 @tc("egress")
-fn egress_monitor(ctx: *__sk_buff) -> int { return 0 }  // TC_ACT_OK
+fn egress_monitor(ctx: *__sk_buff) -> i32 { return 0 }  // TC_ACT_OK
 
 // Struct_ops example using impl block approach
 struct tcp_congestion_ops {
@@ -1419,7 +1419,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn traffic_shaper(ctx: *__sk_buff) -> int {
+fn traffic_shaper(ctx: *__sk_buff) -> i32 {
     var packet = ctx.packet()
     
     // Reuse the same helpers
@@ -1475,7 +1475,7 @@ fn ddos_protection(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn connection_tracker(ctx: *__sk_buff) -> int {
+fn connection_tracker(ctx: *__sk_buff) -> i32 {
     var tcp_info = extract_tcp_info(ctx)  // Reuse same helper
     if (tcp_info != null) {
         track_connection(tcp_info.src_port, tcp_info.dst_port)
@@ -1609,7 +1609,7 @@ fn high_level_filter(packet: *u8, len: u32) -> i32 {
 
 // eBPF usage
 @tc("ingress")
-fn traffic_analyzer(ctx: *__sk_buff) -> int {
+fn traffic_analyzer(ctx: *__sk_buff) -> i32 {
     var packet = ctx.packet()
     
     // Can only call the public kfunc
@@ -2516,7 +2516,7 @@ fn ingress_monitor(ctx: *xdp_md) -> xdp_action {
 
 // Program 2: Automatically has access to the same global maps
 @tc("egress")
-fn egress_monitor(ctx: *__sk_buff) -> int {
+fn egress_monitor(ctx: *__sk_buff) -> i32 {
     var flow_key = extract_flow_key(ctx)?
     
     // Same global map, no import needed - compound assignments work everywhere
@@ -2976,7 +2976,7 @@ fn packet_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn flow_monitor(ctx: *__sk_buff) -> int {
+fn flow_monitor(ctx: *__sk_buff) -> i32 {
     // Can call the same kernel-shared functions
     if (!validate_packet(ctx.packet())) {
         return 2  // TC_ACT_SHOT
@@ -3081,7 +3081,7 @@ fn main_filter(ctx: *xdp_md) -> xdp_action {
 }
 
 @tc("ingress")
-fn ingress_handler(ctx: *__sk_buff) -> int {
+fn ingress_handler(ctx: *__sk_buff) -> i32 {
     return security_check(ctx)       // ✅ Same type (@tc), return position  
 }
 ```
@@ -3670,7 +3670,7 @@ program network_monitor : xdp {
 }
 
 program flow_analyzer : tc {
-    fn main(ctx: *__sk_buff) -> int {
+    fn main(ctx: *__sk_buff) -> i32 {
         return 0  // TC_ACT_OK
     }
 }

@@ -51,7 +51,7 @@ let test_different_program_types () =
   return 0
 }
 
-@tc("ingress") fn tc_filter(ctx: *__sk_buff) -> int {
+@tc("ingress") fn tc_filter(ctx: *__sk_buff) -> i32 {
   return 0
 }
 
@@ -204,7 +204,7 @@ let test_multiple_program_handles () =
   return 2
 }
 
-@tc("ingress") fn tc_shaper(ctx: *__sk_buff) -> int {
+@tc("ingress") fn tc_shaper(ctx: *__sk_buff) -> i32 {
   return 0
 }
 
