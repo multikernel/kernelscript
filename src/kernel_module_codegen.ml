@@ -192,7 +192,7 @@ let rec generate_statement_translation stmt =
 (** Generate expression translation *)
 and generate_expression_translation expr =
   match expr.expr_desc with
-  | Literal (IntLit (value, _)) -> string_of_int value
+  | Literal (IntLit (value, _)) -> Ast.IntegerValue.to_string value
   | Literal (StringLit str) -> sprintf "\"%s\"" str
   | Literal (BoolLit true) -> "true"
   | Literal (BoolLit false) -> "false"

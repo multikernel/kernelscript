@@ -69,7 +69,7 @@ let test_enum_constant_evaluation () =
     let xdp_pass_expr = make_test_expr (Kernelscript.Ast.Identifier "XDP_PASS") in
     
     match eval_expression eval_ctx xdp_pass_expr with
-    | EnumValue ("xdp_action", 2) -> 
+    | EnumValue ("xdp_action", 2L) -> 
         check bool "XDP_PASS correctly evaluated from symbol table" true true
     | _ -> 
         fail "XDP_PASS should evaluate to EnumValue(xdp_action, 2)"
@@ -98,7 +98,7 @@ let test_various_enum_constants () =
     (* Test XDP_DROP *)
     let xdp_drop_expr = make_test_expr (Kernelscript.Ast.Identifier "XDP_DROP") in
     (match eval_expression eval_ctx xdp_drop_expr with
-    | EnumValue ("xdp_action", 1) ->
+    | EnumValue ("xdp_action", 1L) ->
         check bool "XDP_DROP correctly evaluated" true true  
     | _ ->
         fail "XDP_DROP should evaluate to EnumValue(xdp_action, 1)");
@@ -106,7 +106,7 @@ let test_various_enum_constants () =
     (* Test TC enum constant *)
     let tc_ok_expr = make_test_expr (Kernelscript.Ast.Identifier "TC_ACT_OK") in
     (match eval_expression eval_ctx tc_ok_expr with
-    | EnumValue ("tc_action", 0) ->
+    | EnumValue ("tc_action", 0L) ->
         check bool "TC_ACT_OK correctly evaluated" true true  
     | _ ->
         fail "TC_ACT_OK should evaluate to EnumValue(tc_action, 0)")

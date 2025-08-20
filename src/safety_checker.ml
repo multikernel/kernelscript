@@ -154,8 +154,9 @@ let check_array_bounds expr =
              (* Use type annotations from the type-annotated AST *)
              (match arr_expr.expr_type with
               | Some (Ast.Array (_, size)) ->
-                  if idx >= size || idx < 0 then
-                    ArrayOutOfBounds (arr_name, idx, size) :: errors
+                  let idx_int64 = Ast.IntegerValue.to_int64 idx in
+                  if Int64.compare idx_int64 (Int64.of_int size) >= 0 || Int64.compare idx_int64 0L < 0 then
+                    ArrayOutOfBounds (arr_name, Int64.to_int idx_int64, size) :: errors
                   else
                     errors
               | Some (Ast.Map (_, _, _, _)) ->
@@ -163,8 +164,9 @@ let check_array_bounds expr =
                   errors
               | Some (Ast.Str size) ->
                   (* String character access - check bounds *)
-                  if idx >= size || idx < 0 then
-                    ArrayOutOfBounds (arr_name, idx, size) :: errors
+                  let idx_int64 = Ast.IntegerValue.to_int64 idx in
+                  if Int64.compare idx_int64 (Int64.of_int size) >= 0 || Int64.compare idx_int64 0L < 0 then
+                    ArrayOutOfBounds (arr_name, Int64.to_int idx_int64, size) :: errors
                   else
                     errors
               | Some _ ->
@@ -197,7 +199,7 @@ let check_array_bounds expr =
              check_expr idx_expr errors')
     | FieldAccess (ptr_expr, field) ->
         (match ptr_expr.expr_desc with
-         | Literal (IntLit (0, _)) ->
+         | Literal (IntLit (Ast.Signed64 0L, _)) ->
              (* Null pointer field access *)
              NullPointerDereference field :: errors
 
@@ -272,7 +274,7 @@ let check_pointer_safety expr =
     match e.expr_desc with
     | FieldAccess (ptr_expr, _field) ->
         (match ptr_expr.expr_desc with
-         | Literal (IntLit (0, _)) ->
+         | Literal (IntLit (Ast.Signed64 0L, _)) ->
              (* Direct null pointer dereference *)
              (valid_ptrs, ("null", "Null pointer dereference") :: invalid_ptrs)
          | Identifier ptr_name ->
@@ -292,13 +294,13 @@ let check_pointer_safety expr =
     | BinaryOp (left, op, right) ->
         (* Check for division by zero *)
         let invalid_ptrs' = match op, right.expr_desc with
-          | Div, Literal (IntLit (0, _)) -> ("division", "Division by zero") :: invalid_ptrs
-          | Mod, Literal (IntLit (0, _)) -> ("modulo", "Modulo by zero") :: invalid_ptrs
+          | Div, Literal (IntLit (Ast.Signed64 0L, _)) -> ("division", "Division by zero") :: invalid_ptrs
+          | Mod, Literal (IntLit (Ast.Signed64 0L, _)) -> ("modulo", "Modulo by zero") :: invalid_ptrs
           | _ -> invalid_ptrs
         in
         (* Check for integer overflow *)
         let invalid_ptrs'' = match op, left.expr_desc, right.expr_desc with
-          | Add, Literal (IntLit (a, _)), Literal (IntLit (b, _)) when a > 0 && b > 0 && a > max_int - b ->
+          | Add, Literal (IntLit (a, _)), Literal (IntLit (b, _)) when Ast.IntegerValue.compare_with_zero a > 0 && Ast.IntegerValue.compare_with_zero b > 0 && Int64.compare (Ast.IntegerValue.to_int64 a) (Int64.sub (Int64.of_int max_int) (Ast.IntegerValue.to_int64 b)) > 0 ->
               ("overflow", "Integer overflow in addition") :: invalid_ptrs'
           | _ -> invalid_ptrs'
         in

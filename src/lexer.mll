@@ -51,12 +51,14 @@
       if i >= String.length s then acc
       else
         match s.[i] with
-        | '0'..'9' as c -> aux (i+1) (acc * 16 + (Char.code c - Char.code '0'))
-        | 'a'..'f' as c -> aux (i+1) (acc * 16 + (Char.code c - Char.code 'a' + 10))
-        | 'A'..'F' as c -> aux (i+1) (acc * 16 + (Char.code c - Char.code 'A' + 10))
+        | '0'..'9' as c -> aux (i+1) (Int64.add (Int64.mul acc 16L) (Int64.of_int (Char.code c - Char.code '0')))
+        | 'a'..'f' as c -> aux (i+1) (Int64.add (Int64.mul acc 16L) (Int64.of_int (Char.code c - Char.code 'a' + 10)))
+        | 'A'..'F' as c -> aux (i+1) (Int64.add (Int64.mul acc 16L) (Int64.of_int (Char.code c - Char.code 'A' + 10)))
         | _ -> create_lexer_error ("Invalid hex literal: " ^ s)
     in
-    aux 0 0
+    let raw_val = aux 0 0L in
+    (* Hex literals are typically unsigned in C-like languages *)
+    if Int64.compare raw_val 0L < 0 then Ast.Unsigned64 raw_val else Ast.Signed64 raw_val
 
   let parse_binary_literal s =
     let s = String.sub s 2 (String.length s - 2) in (* Remove "0b" or "0B" *)
@@ -64,11 +66,13 @@
       if i >= String.length s then acc
       else
         match s.[i] with
-        | '0' -> aux (i+1) (acc * 2)
-        | '1' -> aux (i+1) (acc * 2 + 1)
+        | '0' -> aux (i+1) (Int64.mul acc 2L)
+        | '1' -> aux (i+1) (Int64.add (Int64.mul acc 2L) 1L)
         | _ -> create_lexer_error ("Invalid binary literal: " ^ s)
     in
-    aux 0 0
+    let raw_val = aux 0 0L in
+    (* Binary literals are typically unsigned in C-like languages *)
+    if Int64.compare raw_val 0L < 0 then Ast.Unsigned64 raw_val else Ast.Signed64 raw_val
 
   let lookup_keyword = function
     | "fn" -> FN
@@ -140,7 +144,13 @@ rule token = parse
   | "//" [^ '\r' '\n']* { token lexbuf }
   
   (* Literals *)
-  | decimal_literal as lit { INT (int_of_string lit, None) }
+  | decimal_literal as lit { 
+      try
+        let int_val = Ast.IntegerValue.of_string lit in
+        INT (int_val, None)
+      with Failure msg ->
+        create_lexer_error msg
+    }
   | hex_literal as lit { INT (parse_hex_literal lit, Some lit) }
   | binary_literal as lit { INT (parse_binary_literal lit, Some lit) }
   

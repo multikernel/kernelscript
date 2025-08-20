@@ -102,7 +102,7 @@ let detect_multiple_assignments (assignments: map_assignment list) : (string * i
   List.iter (fun assignment ->
     let key = Printf.sprintf "%s[%s]" assignment.map_name 
       (match assignment.key_expr.expr_desc with
-       | Literal (IntLit (i, _)) -> string_of_int i
+       | Literal (IntLit (i, _)) -> Ast.IntegerValue.to_string i
        | Identifier name -> name
        | _ -> "expr")
     in

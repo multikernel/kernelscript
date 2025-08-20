@@ -246,11 +246,11 @@ let analyze_access_pattern map_name expressions =
     (* Check if sequential *)
     let rec check_stride acc = function
       | x1 :: x2 :: rest -> 
-          let stride = x2 - x1 in
+          let stride = Int64.sub (Ast.IntegerValue.to_int64 x2) (Ast.IntegerValue.to_int64 x1) in
           if acc = None then check_stride (Some stride) (x2 :: rest)
           else if acc = Some stride then check_stride acc (x2 :: rest)
           else Random
-      | _ -> match acc with Some s -> Sequential s | None -> Random
+      | _ -> match acc with Some s -> Sequential (Int64.to_int s) | None -> Random
     in
     check_stride None seq_accesses
   else Random

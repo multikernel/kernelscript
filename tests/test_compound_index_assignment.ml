@@ -71,7 +71,7 @@ var test_map : hash<u32, u32>(1024)
     
     (* Check key expression *)
     (match key_expr.expr_desc with
-     | Literal (IntLit (123, _)) -> ()
+     | Literal (IntLit (Signed64 123L, _)) -> ()
      | _ -> failwith "Expected integer literal key");
     
     (* Check operator *)
@@ -79,7 +79,7 @@ var test_map : hash<u32, u32>(1024)
     
     (* Check value expression *)
     (match value_expr.expr_desc with
-     | Literal (IntLit (1, _)) -> ()
+     | Literal (IntLit (Signed64 1L, _)) -> ()
      | _ -> failwith "Expected integer literal value");
     
     print_endline "✓ Basic compound index assignment parsing test passed"

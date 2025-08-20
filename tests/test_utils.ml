@@ -31,11 +31,11 @@ let test_pos = make_position 1 1 "test.ks"
 module Xdp = struct
   (** XDP action enum values *)
   let action_constants = [
-    ("XDP_ABORTED", Some 0);
-    ("XDP_DROP", Some 1);
-    ("XDP_PASS", Some 2);
-    ("XDP_TX", Some 3);
-    ("XDP_REDIRECT", Some 4);
+    ("XDP_ABORTED", Some (Signed64 0L));
+    ("XDP_DROP", Some (Signed64 1L));
+    ("XDP_PASS", Some (Signed64 2L));
+    ("XDP_TX", Some (Signed64 3L));
+    ("XDP_REDIRECT", Some (Signed64 4L));
   ]
   
   (** XDP context struct fields *)
@@ -62,16 +62,16 @@ end
 module Tc = struct
   (** TC action constants as enum values *)
   let action_constants = [
-    ("TC_ACT_UNSPEC", Some (-1));
-    ("TC_ACT_OK", Some 0);
-    ("TC_ACT_RECLASSIFY", Some 1);
-    ("TC_ACT_SHOT", Some 2);
-    ("TC_ACT_PIPE", Some 3);
-    ("TC_ACT_STOLEN", Some 4);
-    ("TC_ACT_QUEUED", Some 5);
-    ("TC_ACT_REPEAT", Some 6);
-    ("TC_ACT_REDIRECT", Some 7);
-    ("TC_ACT_TRAP", Some 8);
+    ("TC_ACT_UNSPEC", Some (Signed64 (-1L)));
+    ("TC_ACT_OK", Some (Signed64 0L));
+    ("TC_ACT_RECLASSIFY", Some (Signed64 1L));
+    ("TC_ACT_SHOT", Some (Signed64 2L));
+    ("TC_ACT_PIPE", Some (Signed64 3L));
+    ("TC_ACT_STOLEN", Some (Signed64 4L));
+    ("TC_ACT_QUEUED", Some (Signed64 5L));
+    ("TC_ACT_REPEAT", Some (Signed64 6L));
+    ("TC_ACT_REDIRECT", Some (Signed64 7L));
+    ("TC_ACT_TRAP", Some (Signed64 8L));
   ]
   
   (** TC context struct fields for __sk_buff *)

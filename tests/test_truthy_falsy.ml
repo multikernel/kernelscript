@@ -54,8 +54,8 @@ let test_truthy_type_checking () =
   let ctx = create_context symbol_table [] in
   
   (* Test numbers *)
-  let zero_expr = make_expr (Literal (IntLit (0, None))) pos in
-  let nonzero_expr = make_expr (Literal (IntLit (42, None))) pos in
+  let zero_expr = make_expr (Literal (IntLit (Signed64 0L, None))) pos in
+  let nonzero_expr = make_expr (Literal (IntLit (Signed64 42L, None))) pos in
   
   (* Test strings *)
   let empty_string = make_expr (Literal (StringLit "")) pos in
@@ -137,8 +137,8 @@ let test_truthy_evaluation () =
   | _ -> check bool "Structs should fail in boolean context" false true);
   
   (* Test enum truthiness *)
-  check bool "Enum with 0 value is falsy" (is_truthy_value (EnumValue ("Color", 0))) false;
-  check bool "Enum with non-zero value is truthy" (is_truthy_value (EnumValue ("Color", 1))) true;
+  check bool "Enum with 0 value is falsy" (is_truthy_value (EnumValue ("Color", 0L))) false;
+  check bool "Enum with non-zero value is truthy" (is_truthy_value (EnumValue ("Color", 1L))) true;
   
   (* Test other types *)
   check bool "Map handle is truthy" (is_truthy_value (MapHandle "test_map")) true;
@@ -150,8 +150,8 @@ let test_if_statement_truthy () =
   let pos = make_test_pos () in
   
   (* Test with numeric condition *)
-  let zero_cond = make_expr (Literal (IntLit (0, None))) pos in
-  let nonzero_cond = make_expr (Literal (IntLit (42, None))) pos in
+  let zero_cond = make_expr (Literal (IntLit (Signed64 0L, None))) pos in
+  let nonzero_cond = make_expr (Literal (IntLit (Signed64 42L, None))) pos in
   let print_stmt = make_stmt (ExprStmt (make_expr (Literal (StringLit "executed")) pos)) pos in
   
   let if_zero = make_stmt (If (zero_cond, [print_stmt], None)) pos in
@@ -184,7 +184,7 @@ let test_while_loop_truthy () =
   
   (* Test with numeric condition *)
   let counter_expr = make_expr (Identifier "counter") pos in
-  let decrement_stmt = make_stmt (Assignment ("counter", make_expr (BinaryOp (counter_expr, Sub, make_expr (Literal (IntLit (1, None))) pos)) pos)) pos in
+  let decrement_stmt = make_stmt (Assignment ("counter", make_expr (BinaryOp (counter_expr, Sub, make_expr (Literal (IntLit (Signed64 1L, None))) pos)) pos)) pos in
   
   let while_loop = make_stmt (While (counter_expr, [decrement_stmt])) pos in
   
@@ -206,7 +206,7 @@ let test_map_lookup_truthy () =
   
   (* Create a simple map lookup example *)
   let map_expr = make_expr (Identifier "test_map") pos in
-  let key_expr = make_expr (Literal (IntLit (1, None))) pos in
+  let key_expr = make_expr (Literal (IntLit (Signed64 1L, None))) pos in
   let lookup_expr = make_expr (ArrayAccess (map_expr, key_expr)) pos in
   
   let print_stmt = make_stmt (ExprStmt (make_expr (Literal (StringLit "found")) pos)) pos in
@@ -266,7 +266,7 @@ let test_complex_boolean_expressions () =
   let ctx = create_context symbol_table [] in
   
   (* Test logical AND with truthy/falsy *)
-  let num_expr = make_expr (Literal (IntLit (42, None))) pos in
+  let num_expr = make_expr (Literal (IntLit (Signed64 42L, None))) pos in
   let str_expr = make_expr (Literal (StringLit "hello")) pos in
   let bool_expr = make_expr (Literal (BoolLit true)) pos in
   

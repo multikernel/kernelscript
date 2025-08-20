@@ -27,7 +27,7 @@ let dummy_loc = {
 }
 
 let make_int_lit value =   {
-  expr_desc = Literal (IntLit (value, None));
+  expr_desc = Literal (IntLit (Signed64 (Int64.of_int value), None));
   expr_type = Some U32;
   expr_pos = dummy_loc;
   type_checked = false;
@@ -65,7 +65,7 @@ let make_call name args = {
 let make_array elements = {
   expr_desc = Literal (ArrayLit (ExplicitArray (List.map (function
     | {expr_desc = Literal lit; _} -> lit
-    | _ -> IntLit (0, None) (* fallback *)
+    | _ -> IntLit (Signed64 0L, None) (* fallback *)
   ) elements)));
   expr_type = None;
   expr_pos = dummy_loc;

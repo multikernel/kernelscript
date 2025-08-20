@@ -431,7 +431,7 @@ let test_type_definition_handling () =
   add_type_def table struct_def dummy_pos;
   
   (* Add enum definition *)
-  let enum_def = EnumDef ("TestEnum", [("Value1", Some 0); ("Value2", Some 1)]) in
+  let enum_def = EnumDef ("TestEnum", [("Value1", Some (Signed64 0L)); ("Value2", Some (Signed64 1L))]) in
   add_type_def table enum_def dummy_pos;
   
   (* Test lookups *)
@@ -447,7 +447,7 @@ let test_type_definition_handling () =
   (match lookup_symbol table "TestEnum::Value1" with
    | Some { kind = EnumConstant (enum_name, Some value); _ } -> 
        check string "enum constant name" "TestEnum" enum_name;
-       check int "enum constant value" 0 value
+       check int "enum constant value" 0 (Int64.to_int (IntegerValue.to_int64 value))
    | _ -> fail "expected to find TestEnum::Value1")
 
 (** Test 7: Function parameter handling *)
@@ -605,7 +605,7 @@ let test_complex_integration () =
   let struct_def = StructDef ("PacketInfo", [("size", U32); ("protocol", U16)]) in
   add_type_def table struct_def dummy_pos;
   
-  let enum_def = EnumDef ("xdp_action", [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)]) in
+  let enum_def = EnumDef ("xdp_action", [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))]) in
   add_type_def table enum_def dummy_pos;
   
   (* Program scope *)

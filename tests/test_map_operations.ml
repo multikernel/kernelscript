@@ -439,7 +439,7 @@ let test_map_value_error_cases () =
 
 (** Test access pattern analysis *)
 let test_access_pattern_analysis () =
-  let key_expr = make_expr (Literal (IntLit (42, None))) pos in
+  let key_expr = make_expr (Literal (IntLit (Signed64 42L, None))) pos in
   
   (* Simplified pattern analysis *)
   check bool "access pattern analysis" true (match key_expr.expr_desc with Literal _ -> true | _ -> false)
@@ -462,9 +462,9 @@ let test_basic_map_operations () =
 (** Test map lookup operations *)
 let test_map_lookup_operations () =
   let test_keys = [
-    make_expr (Literal (IntLit (1, None))) pos;
-    make_expr (Literal (IntLit (42, None))) pos;
-    make_expr (Literal (IntLit (100, None))) pos;
+    make_expr (Literal (IntLit (Signed64 1L, None))) pos;
+    make_expr (Literal (IntLit (Signed64 42L, None))) pos;
+    make_expr (Literal (IntLit (Signed64 100L, None))) pos;
   ] in
   
   List.iteri (fun i _key_expr ->
@@ -475,9 +475,9 @@ let test_map_lookup_operations () =
 (** Test map update operations *)
 let test_map_update_operations () =
   let updates = [
-    (make_expr (Literal (IntLit (1, None))) pos, make_expr (Literal (IntLit (10, None))) pos);
-    (make_expr (Literal (IntLit (2, None))) pos, make_expr (Literal (IntLit (20, None))) pos);
-    (make_expr (Literal (IntLit (3, None))) pos, make_expr (Literal (IntLit (30, None))) pos);
+    (make_expr (Literal (IntLit (Signed64 1L, None))) pos, make_expr (Literal (IntLit (Signed64 10L, None))) pos);
+    (make_expr (Literal (IntLit (Signed64 2L, None))) pos, make_expr (Literal (IntLit (Signed64 20L, None))) pos);
+    (make_expr (Literal (IntLit (Signed64 3L, None))) pos, make_expr (Literal (IntLit (Signed64 30L, None))) pos);
   ] in
   
   List.iteri (fun i (_key_expr, _value_expr) ->
@@ -489,9 +489,9 @@ let test_map_update_operations () =
 (** Test map delete operations *)
 let test_map_delete_operations () =
   let delete_keys = [
-    make_expr (Literal (IntLit (5, None))) pos;
-    make_expr (Literal (IntLit (15, None))) pos;
-    make_expr (Literal (IntLit (25, None))) pos;
+    make_expr (Literal (IntLit (Signed64 5L, None))) pos;
+    make_expr (Literal (IntLit (Signed64 15L, None))) pos;
+    make_expr (Literal (IntLit (Signed64 25L, None))) pos;
   ] in
   
   List.iteri (fun _i _key_expr ->
@@ -501,8 +501,8 @@ let test_map_delete_operations () =
 
 (** Test complex map operations *)
 let test_complex_map_operations () =
-  let _key_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (10, None))) pos, Add, make_expr (Literal (IntLit (5, None))) pos)) pos in
-  let _value_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (20, None))) pos, Mul, make_expr (Literal (IntLit (2, None))) pos)) pos in
+  let _key_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 10L, None))) pos, Add, make_expr (Literal (IntLit (Signed64 5L, None))) pos)) pos in
+  let _value_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 20L, None))) pos, Mul, make_expr (Literal (IntLit (Signed64 2L, None))) pos)) pos in
   
   (* Simplified tests *)
   check bool "complex key pattern" true true;
@@ -549,7 +549,7 @@ let test_comprehensive_map_operation_analysis () =
 (** Test delete statement AST construction *)
 let test_delete_statement_ast () =
   let map_expr = make_expr (Identifier "test_map") pos in
-  let key_expr = make_expr (Literal (IntLit (42, None))) pos in
+  let key_expr = make_expr (Literal (IntLit (Signed64 42L, None))) pos in
   
   let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
@@ -581,10 +581,10 @@ let test_delete_statement_parsing () =
 (** Test delete statement with different key types *)
 let test_delete_with_different_key_types () =
   let test_cases = [
-    ("integer literal", make_expr (Literal (IntLit (123, None))) pos);
+    ("integer literal", make_expr (Literal (IntLit (Signed64 123L, None))) pos);
     ("string literal", make_expr (Literal (StringLit "test_key")) pos);
     ("variable", make_expr (Identifier "key_variable") pos);
-    ("binary expression", make_expr (BinaryOp (make_expr (Literal (IntLit (10, None))) pos, Add, make_expr (Literal (IntLit (5, None))) pos)) pos);
+    ("binary expression", make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 10L, None))) pos, Add, make_expr (Literal (IntLit (Signed64 5L, None))) pos)) pos);
   ] in
   
   let map_expr = make_expr (Identifier "test_map") pos in
@@ -642,14 +642,14 @@ let test_delete_statement_array_maps () =
 let test_delete_statement_codegen_validation () =
   (* Test that delete statements can be processed by the analysis system *)
   let map_expr = make_expr (Identifier "codegen_map") pos in
-  let key_expr = make_expr (Literal (IntLit (777, None))) pos in
+  let key_expr = make_expr (Literal (IntLit (Signed64 777L, None))) pos in
   let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
   (* Verify the statement has the expected structure for code generation *)
   let has_map_and_key = match delete_stmt.stmt_desc with
     | Delete (DeleteMapEntry (m_expr, k_expr)) ->
         (match m_expr.expr_desc, k_expr.expr_desc with
-         | Identifier "codegen_map", Literal (IntLit (777, None)) -> true
+         | Identifier "codegen_map", Literal (IntLit (Signed64 777L, None)) -> true
          | _ -> false)
     | _ -> false
   in
@@ -711,20 +711,20 @@ let test_delete_statement_complex_expressions () =
   check bool "delete with field access key" true (match delete_with_field.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false);
   
   (* Test delete with array access as key *)
-  let array_access_key = make_expr (ArrayAccess (make_expr (Identifier "keys") pos, make_expr (Literal (IntLit (0, None))) pos)) pos in
+  let array_access_key = make_expr (ArrayAccess (make_expr (Identifier "keys") pos, make_expr (Literal (IntLit (Signed64 0L, None))) pos)) pos in
   let delete_with_array = make_stmt (Delete (DeleteMapEntry (map_expr, array_access_key))) pos in
   check bool "delete with array access key" true (match delete_with_array.stmt_desc with Delete (DeleteMapEntry (_, _)) -> true | _ -> false)
 
 (** Test delete statement validation in different contexts *)
 let test_delete_statement_contexts () =
   let map_expr = make_expr (Identifier "context_map") pos in
-  let key_expr = make_expr (Literal (IntLit (999, None))) pos in
+  let key_expr = make_expr (Literal (IntLit (Signed64 999L, None))) pos in
   let delete_stmt = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) pos in
   
   (* Test that delete statements can be used in different control flow contexts *)
   let in_if_stmt = make_stmt (If (make_expr (Literal (BoolLit true)) pos, [delete_stmt], None)) pos in
   let in_while_stmt = make_stmt (While (make_expr (Literal (BoolLit false)) pos, [delete_stmt])) pos in
-  let in_for_stmt = make_stmt (For ("i", make_expr (Literal (IntLit (0, None))) pos, make_expr (Literal (IntLit (10, None))) pos, [delete_stmt])) pos in
+  let in_for_stmt = make_stmt (For ("i", make_expr (Literal (IntLit (Signed64 0L, None))) pos, make_expr (Literal (IntLit (Signed64 10L, None))) pos, [delete_stmt])) pos in
   
   (* Verify statements are constructed correctly *)
   check bool "delete in if statement" true (match in_if_stmt.stmt_desc with If (_, [{ stmt_desc = Delete (DeleteMapEntry (_, _)); _ }], None) -> true | _ -> false);

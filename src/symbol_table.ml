@@ -27,7 +27,7 @@ type symbol_kind =
   | TypeDef of type_def
   | GlobalMap of map_declaration
   | Parameter of bpf_type
-  | EnumConstant of string * int option  (* enum_name, value *)
+  | EnumConstant of string * Ast.integer_value option  (* enum_name, value *)
   | Config of config_declaration
   | ImportedModule of import_source_type * string  (* source_type, file_path *)
   | ImportedFunction of string * bpf_type list * bpf_type  (* module_name, param_types, return_type *)
@@ -233,13 +233,13 @@ let process_enum_values values =
     | (const_name, None) :: rest ->
         (* Auto-assign current value *)
         let processed_value = (const_name, Some current_value) in
-        process_values (processed_value :: acc) (current_value + 1) rest
+        process_values (processed_value :: acc) (Ast.Signed64 (Int64.add (Ast.IntegerValue.to_int64 current_value) 1L)) rest
     | (const_name, Some explicit_value) :: rest ->
         (* Use explicit value and update current value *)
         let processed_value = (const_name, Some explicit_value) in
-        process_values (processed_value :: acc) (explicit_value + 1) rest
+        process_values (processed_value :: acc) (Ast.Signed64 (Int64.add (Ast.IntegerValue.to_int64 explicit_value) 1L)) rest
   in
-  process_values [] 0 values
+  process_values [] (Ast.Signed64 0L) values
 
 (** Add type definition to symbol table *)
 let add_type_def table type_def pos =
@@ -679,7 +679,7 @@ and process_statement table stmt =
       (* We'll need to extract the literal value from expr for const declarations *)
       let const_value = match expr.expr_desc with
         | Literal lit -> lit
-        | _ -> IntLit (0, None) (* Default fallback *)
+        | _ -> IntLit (Ast.Signed64 0L, None) (* Default fallback *)
       in
       add_symbol table name (ConstVariable (var_type, const_value)) Private stmt.stmt_pos;
       process_expression table expr
@@ -989,7 +989,7 @@ let string_of_symbol_kind = function
   | GlobalMap _ -> "global_map"
   | Parameter t -> "param:" ^ string_of_bpf_type t
   | EnumConstant (enum_name, value) ->
-      "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> string_of_int v | None -> "auto")
+      "enum_const:" ^ enum_name ^ "=" ^ (match value with Some v -> Ast.IntegerValue.to_string v | None -> "auto")
   | Config config_decl -> "config:" ^ config_decl.config_name
   | ImportedModule (source_type, file_path) ->
       let source_str = match source_type with

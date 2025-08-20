@@ -53,7 +53,7 @@ let test_userspace_object_allocation () =
 (** Test that delete works with both map entries and pointers *)
 let test_delete_targets () =
   let map_expr = make_expr (Identifier "my_map") in
-  let key_expr = make_expr (Literal (IntLit (42, None))) in
+  let key_expr = make_expr (Literal (IntLit (Signed64 42L, None))) in
   let ptr_expr = make_expr (Identifier "ptr") in
   
   let map_delete = make_stmt (Delete (DeleteMapEntry (map_expr, key_expr))) in

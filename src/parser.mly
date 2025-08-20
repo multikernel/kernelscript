@@ -21,6 +21,16 @@
     let pos = Parsing.symbol_start_pos () in
     { line = pos.pos_lnum; column = pos.pos_cnum - pos.pos_bol; filename = pos.pos_fname }
   
+  (* Safe conversion from integer_value to int with overflow check *)
+  let integer_value_to_int_safe int_val =
+    let i64 = Ast.IntegerValue.to_int64 int_val in
+    if Int64.compare i64 (Int64.of_int max_int) > 0 then
+      failwith ("Integer literal too large: " ^ Ast.IntegerValue.to_string int_val)
+    else if Int64.compare i64 (Int64.of_int min_int) < 0 then
+      failwith ("Integer literal too small: " ^ Ast.IntegerValue.to_string int_val)
+    else
+      Int64.to_int i64
+  
   (* Elegant helper to convert identifier string to map_type *)
   let string_to_map_type = function
     | "hash" -> Hash
@@ -32,7 +42,7 @@
 %}
 
 /* Token declarations */
-%token <int * string option> INT
+%token <Ast.integer_value * string option> INT
 %token <string> STRING IDENTIFIER
 %token <char> CHAR_LIT
 %token <bool> BOOL_LIT
@@ -87,10 +97,10 @@
 %type <string * Ast.bpf_type> struct_field
 %type <Ast.type_def> enum_declaration
 %type <Ast.type_def> type_alias_declaration
-%type <(string * int option) list> enum_variants
-%type <(string * int option) list> enum_variant_list
-%type <string * int option> enum_variant
-%type <int> enum_value
+%type <(string * Ast.integer_value option) list> enum_variants
+%type <(string * Ast.integer_value option) list> enum_variant_list
+%type <string * Ast.integer_value option> enum_variant
+%type <Ast.integer_value> enum_value
 %type <Ast.map_type> map_type
 
 %type <Ast.map_flag list> flag_expression
@@ -253,7 +263,7 @@ bpf_type:
   | BOOL { Bool }
   | CHAR { Char }
   | VOID { Void }
-  | STR LPAREN INT RPAREN { Str (fst $3) }
+  | STR LPAREN INT RPAREN { Str (integer_value_to_int_safe (fst $3)) }
   | IDENTIFIER { UserType $1 }
   | array_type { $1 }
   | function_type { $1 }
@@ -264,17 +274,17 @@ bpf_type:
 
 /* Array types: type[size] */
 array_type:
-  | U8 LBRACKET INT RBRACKET { Array (U8, fst $3) }
-| U16 LBRACKET INT RBRACKET { Array (U16, fst $3) }
-| U32 LBRACKET INT RBRACKET { Array (U32, fst $3) }
-| U64 LBRACKET INT RBRACKET { Array (U64, fst $3) }
-| I8 LBRACKET INT RBRACKET { Array (I8, fst $3) }
-| I16 LBRACKET INT RBRACKET { Array (I16, fst $3) }
-| I32 LBRACKET INT RBRACKET { Array (I32, fst $3) }
-| I64 LBRACKET INT RBRACKET { Array (I64, fst $3) }
-| BOOL LBRACKET INT RBRACKET { Array (Bool, fst $3) }
-| CHAR LBRACKET INT RBRACKET { Array (Char, fst $3) }
-| IDENTIFIER LBRACKET INT RBRACKET { Array (UserType $1, fst $3) }
+  | U8 LBRACKET INT RBRACKET { Array (U8, integer_value_to_int_safe (fst $3)) }
+| U16 LBRACKET INT RBRACKET { Array (U16, integer_value_to_int_safe (fst $3)) }
+| U32 LBRACKET INT RBRACKET { Array (U32, integer_value_to_int_safe (fst $3)) }
+| U64 LBRACKET INT RBRACKET { Array (U64, integer_value_to_int_safe (fst $3)) }
+| I8 LBRACKET INT RBRACKET { Array (I8, integer_value_to_int_safe (fst $3)) }
+| I16 LBRACKET INT RBRACKET { Array (I16, integer_value_to_int_safe (fst $3)) }
+| I32 LBRACKET INT RBRACKET { Array (I32, integer_value_to_int_safe (fst $3)) }
+| I64 LBRACKET INT RBRACKET { Array (I64, integer_value_to_int_safe (fst $3)) }
+| BOOL LBRACKET INT RBRACKET { Array (Bool, integer_value_to_int_safe (fst $3)) }
+| CHAR LBRACKET INT RBRACKET { Array (Char, integer_value_to_int_safe (fst $3)) }
+| IDENTIFIER LBRACKET INT RBRACKET { Array (UserType $1, integer_value_to_int_safe (fst $3)) }
 
 /* Function types: fn(param: type, ...) -> return_type */
 function_type:
@@ -417,7 +427,7 @@ catch_clause:
 
 catch_pattern:
   | INT
-    { IntPattern (fst $1) }
+    { IntPattern (integer_value_to_int_safe (fst $1)) }
   | IDENTIFIER
     { if $1 = "_" then WildcardPattern else failwith ("Invalid catch pattern: " ^ $1) }
 
@@ -517,18 +527,18 @@ struct_literal_field:
 /* Map Declarations */
 map_declaration:
   | VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
-    { let config = make_map_config (fst $11) ~flags:[] () in
+    { let config = make_map_config (integer_value_to_int_safe (fst $11)) ~flags:[] () in
       make_map_declaration $2 $6 $8 $4 config true ~is_pinned:false (make_pos ()) }
   | PIN VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
-    { let config = make_map_config (fst $12) ~flags:[] () in
+    { let config = make_map_config (integer_value_to_int_safe (fst $12)) ~flags:[] () in
       make_map_declaration $3 $7 $9 $5 config true ~is_pinned:true (make_pos ()) }
   | AT IDENTIFIER LPAREN flag_expression RPAREN VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
     { if $2 <> "flags" then failwith ("Unknown map attribute: " ^ $2);
-      let config = make_map_config (fst $16) ~flags:$4 () in
+      let config = make_map_config (integer_value_to_int_safe (fst $16)) ~flags:$4 () in
       make_map_declaration $7 $11 $13 $9 config true ~is_pinned:false (make_pos ()) }
   | AT IDENTIFIER LPAREN flag_expression RPAREN PIN VAR IDENTIFIER COLON map_type LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN
     { if $2 <> "flags" then failwith ("Unknown map attribute: " ^ $2);
-      let config = make_map_config (fst $17) ~flags:$4 () in
+      let config = make_map_config (integer_value_to_int_safe (fst $17)) ~flags:$4 () in
       make_map_declaration $8 $12 $14 $10 config true ~is_pinned:true (make_pos ()) }
 
 map_type:
@@ -538,14 +548,14 @@ map_type:
 generic_type_with_size:
   | IDENTIFIER LT bpf_type COMMA bpf_type GT LPAREN INT RPAREN { 
         (* Map types with explicit size *)
-        Map ($3, $5, string_to_map_type $1, fst $8)
+        Map ($3, $5, string_to_map_type $1, integer_value_to_int_safe (fst $8))
     }
 
 /* Ring buffer types: ringbuf<Event_Type>(size) */
 ringbuf_type:
   | IDENTIFIER LT bpf_type GT LPAREN INT RPAREN {
       if $1 = "ringbuf" then
-        Ringbuf ($3, fst $6)
+        Ringbuf ($3, integer_value_to_int_safe (fst $6))
       else
         failwith ("Expected 'ringbuf', got: " ^ $1)
     }
@@ -566,7 +576,7 @@ flag_item:
     }
   | IDENTIFIER LPAREN INT RPAREN {
       match $1 with
-      | "numa_node" -> NumaNode (fst $3)
+      | "numa_node" -> NumaNode (integer_value_to_int_safe (fst $3))
       | unknown -> failwith ("Unknown parameterized map flag: " ^ unknown)
     }
 
@@ -606,7 +616,12 @@ enum_variant:
 /* Enum values can be positive or negative integers */
 enum_value:
   | INT { fst $1 }  /* Positive integer */
-  | MINUS INT { -(fst $2) }  /* Negative integer */
+  | MINUS INT { 
+      let int_val = fst $2 in
+      match int_val with
+      | Ast.Signed64 i -> Ast.Signed64 (Int64.neg i)
+      | Ast.Unsigned64 i -> Ast.Signed64 (Int64.neg i)  (* Convert unsigned to signed for negation *)
+    }  (* Negative integer *)
 
 /* Type alias declaration: type name = type */
 type_alias_declaration:

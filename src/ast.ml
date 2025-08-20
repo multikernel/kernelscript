@@ -55,14 +55,8 @@ type map_flag =
   | Wronly              (* BPF_F_WRONLY *)
   | Clone               (* BPF_F_CLONE *)
 
-(** Type definitions for structs, enums, and type aliases *)
-type type_def =
-  | StructDef of string * (string * bpf_type) list
-  | EnumDef of string * (string * int option) list
-  | TypeAlias of string * bpf_type
-
 (** BPF type system with extended type definitions *)
-and bpf_type =
+type bpf_type =
   (* Primitive types *)
   | U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64 | Bool | Char | Void
   | Str of int  (* Fixed-size string str<N> *)
@@ -113,9 +107,82 @@ type map_declaration = {
   map_pos: position;
 }
 
+(** Integer value with proper signed/unsigned distinction *)
+type integer_value = 
+  | Signed64 of Int64.t
+  | Unsigned64 of Int64.t  (* Stored in Int64.t but interpreted as unsigned *)
+
+(** Helper module for working with integer values elegantly *)
+module IntegerValue = struct
+  let of_string s = 
+    try
+      (* Try signed parsing first *)
+      Signed64 (Int64.of_string s)
+    with Failure _ ->
+      (* Handle unsigned 64-bit integers that exceed signed range *)
+      try
+        (* Parse as unsigned using custom logic for large values *)
+        let parse_uint64 str =
+          let len = String.length str in
+          let rec aux i acc =
+            if i >= len then acc
+            else
+              let digit = Char.code str.[i] - Char.code '0' in
+              if digit < 0 || digit > 9 then
+                failwith "Invalid digit"
+              else
+                let new_acc = Int64.add (Int64.mul acc 10L) (Int64.of_int digit) in
+                aux (i + 1) new_acc
+          in
+          aux 0 0L
+        in
+        let uint64_val = parse_uint64 s in
+        Unsigned64 uint64_val
+      with _ ->
+        failwith ("Invalid integer literal: " ^ s)
+  
+  let to_string = function
+    | Signed64 i -> Int64.to_string i
+    | Unsigned64 i -> 
+        (* Handle unsigned 64-bit values correctly *)
+        if Int64.compare i 0L >= 0 then
+          Int64.to_string i
+        else
+          (* For negative Int64.t values representing large unsigned numbers *)
+          (* Use Printf to format as unsigned *)
+          Printf.sprintf "%Lu" i
+  
+  let to_c_literal = function
+    | Signed64 i -> Int64.to_string i ^ "LL"
+    | Unsigned64 i -> 
+        (* Use unsigned formatting for C literals *)
+        if Int64.compare i 0L >= 0 then
+          Int64.to_string i ^ "ULL"
+        else
+          Printf.sprintf "%LuULL" i
+  
+  let is_negative = function
+    | Signed64 i -> Int64.compare i 0L < 0
+    | Unsigned64 _ -> false  (* Unsigned values are never conceptually negative *)
+  
+  let to_int64 = function
+    | Signed64 i -> i
+    | Unsigned64 i -> i
+  
+  let compare_with_zero = function
+    | Signed64 i -> Int64.compare i 0L
+    | Unsigned64 i -> if Int64.compare i 0L < 0 then 1 else Int64.compare i 0L (* Handle unsigned wrap-around *)
+end
+
+(** Type definitions for structs, enums, and type aliases *)
+type type_def =
+  | StructDef of string * (string * bpf_type) list
+  | EnumDef of string * (string * integer_value option) list
+  | TypeAlias of string * bpf_type
+
 (** Literal values *)
 type literal =
-  | IntLit of int * string option  (* value * original_representation *)
+  | IntLit of integer_value * string option  (* value * original_representation *)
   | StringLit of string 
   | CharLit of char 
   | BoolLit of bool
@@ -649,10 +716,10 @@ let rec string_of_bpf_type = function
   | Null -> "null"
 
 let rec string_of_literal = function
-  | IntLit (i, original_opt) -> 
+  | IntLit (int_val, original_opt) -> 
       (match original_opt with
        | Some orig -> orig  (* Use original format if available *)
-       | None -> string_of_int i)
+       | None -> IntegerValue.to_string int_val)
   | StringLit s -> Printf.sprintf "\"%s\"" s
   | CharLit c -> Printf.sprintf "'%c'" c
   | BoolLit b -> string_of_bool b
@@ -848,7 +915,7 @@ let string_of_declaration = function
               (String.concat ",\n  " (List.map (fun (name, opt) ->
                 match opt with
                 | None -> name
-                | Some v -> Printf.sprintf "%s = %d" name v) values))
+                | Some v -> Printf.sprintf "%s = %s" name (IntegerValue.to_string v)) values))
         | TypeAlias (name, typ) ->
             Printf.sprintf "type %s = %s;" name (string_of_bpf_type typ)
       in

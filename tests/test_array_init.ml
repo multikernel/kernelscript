@@ -28,7 +28,7 @@ let make_array_literal init_style = {
   map_scope = None;
 }
 
-let make_int_literal i = IntLit (i, None)
+let make_int_literal i = IntLit (Signed64 (Int64.of_int i), None)
 let make_bool_literal b = BoolLit b
 let make_char_literal c = CharLit c
 let make_string_literal s = StringLit s

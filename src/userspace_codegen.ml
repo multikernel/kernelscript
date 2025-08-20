@@ -1021,7 +1021,7 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
         match symbol.Symbol_table.kind with
         | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values)) ->
             let processed_values = List.map (fun (const_name, opt_value) ->
-              (const_name, Option.value ~default:0 opt_value)
+              (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
             ) enum_values in
             Hashtbl.replace enum_map enum_name processed_values
         | _ -> ()
@@ -1034,7 +1034,7 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
 let generate_enum_definition_userspace enum_name enum_values =
   let value_count = List.length enum_values in
   let enum_variants = List.mapi (fun i (const_name, value) ->
-    let line = sprintf "    %s = %d%s" const_name value (if i = value_count - 1 then "" else ",") in
+    let line = sprintf "    %s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
     line
   ) enum_values in
   sprintf "enum %s {\n%s\n};" enum_name (String.concat "\n" enum_variants)
@@ -1239,7 +1239,7 @@ let determine_global_var_section (global_var : ir_global_variable) =
   | None -> "bss"  (* Uninitialized variables go to .bss *)
   | Some init_val ->
       (match init_val.value_desc with
-         | IRLiteral (Ast.IntLit (0, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
+         | IRLiteral (Ast.IntLit (Ast.Signed64 0L, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
   | IRLiteral (Ast.BoolLit false) -> "bss"      (* False booleans go to .bss *)
   | IRLiteral (Ast.NullLit) -> "bss"            (* Null pointers go to .bss *)
   | IRLiteral (Ast.NoneLit) -> "bss"            (* None values go to .bss *)
@@ -1307,7 +1307,7 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
       (match original_opt with
        | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
        | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
-       | _ -> string_of_int i)
+       | _ -> Ast.IntegerValue.to_string i)
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (NullLit) -> "NULL"
@@ -1321,7 +1321,7 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
        | ZeroArray -> "{0}"  (* Empty array initialization *)
        | FillArray fill_lit ->
            let fill_str = match fill_lit with
-             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.IntLit (i, _) -> Ast.IntegerValue.to_string i
              | Ast.BoolLit b -> if b then "true" else "false"
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" s
@@ -1332,7 +1332,7 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
            sprintf "{%s}" fill_str
        | ExplicitArray elems ->
            let elem_strs = List.map (function
-             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.IntLit (i, _) -> Ast.IntegerValue.to_string i
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.BoolLit b -> if b then "true" else "false"
              | Ast.StringLit s -> sprintf "\"%s\"" s
@@ -2294,7 +2294,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
     let initialization = match field.Ast.field_default with
       | Some default_value -> 
           (match default_value with
-           | Ast.IntLit (i, _) -> sprintf "    init_config.%s = %d;" field.Ast.field_name i
+           | Ast.IntLit (i, _) -> sprintf "    init_config.%s = %s;" field.Ast.field_name (Ast.IntegerValue.to_string i)
            | Ast.BoolLit b -> sprintf "    init_config.%s = %s;" field.Ast.field_name (if b then "true" else "false")
            | Ast.ArrayLit init_style ->
                (* Handle enhanced array initialization *)
@@ -2302,7 +2302,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
                 | ZeroArray -> sprintf "    /* %s defaults to zero-initialized */" field.Ast.field_name
                 | FillArray fill_lit ->
                     let fill_value = match fill_lit with
-                      | Ast.IntLit (value, _) -> string_of_int value
+                      | Ast.IntLit (value, _) -> Ast.IntegerValue.to_string value
                       | Ast.BoolLit b -> if b then "1" else "0"
                       | _ -> "0"
                     in
@@ -2310,7 +2310,7 @@ let generate_config_initialization (config_decl : Ast.config_declaration) =
                 | ExplicitArray elements ->
                     let elements_str = List.mapi (fun i element ->
                       match element with
-                      | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %d;" field.Ast.field_name i value
+                      | Ast.IntLit (value, _) -> sprintf "    init_config.%s[%d] = %s;" field.Ast.field_name i (Ast.IntegerValue.to_string value)
                       | _ -> sprintf "    init_config.%s[%d] = 0;" field.Ast.field_name i (* fallback *)
                     ) elements in
                     String.concat "\n" elements_str)

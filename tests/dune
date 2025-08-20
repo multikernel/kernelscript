@@ -331,10 +331,10 @@
  (libraries kernelscript alcotest))
 
 (executable
- (public_name test_integer_literal_codegen)
- (name test_integer_literal_codegen)
- (libraries kernelscript alcotest str)
- (modules test_integer_literal_codegen))
+(public_name test_integer_literal)
+(name test_integer_literal)
+(libraries kernelscript alcotest str)
+(modules test_integer_literal))
 
 (executable
  (name test_string_literal_bugs)
@@ -624,8 +624,8 @@
  (action (run ./test_global_var.exe)))
 
 (rule
- (alias runtest_integer_literal_codegen)
- (action (run ./test_integer_literal_codegen.exe)))
+(alias runtest_integer_literal)
+(action (run ./test_integer_literal.exe)))
 
 (rule
  (alias runtest_tail_call)
@@ -843,17 +843,17 @@
    (run ./test_ir_function_system.exe))))
 
 (rule
- (alias codegen-tests)
- (deps test_ebpf_c_codegen.exe test_ebpf_string_generation.exe test_nested_if_codegen.exe test_integer_literal_codegen.exe test_context_field_types.exe test_global_var_ordering.exe test_bpf_loop_callbacks.exe)
- (action
-  (progn
-   (run ./test_ebpf_c_codegen.exe)
-   (run ./test_ebpf_string_generation.exe)
-   (run ./test_nested_if_codegen.exe)
-   (run ./test_integer_literal_codegen.exe)
-   (run ./test_context_field_types.exe)
-   (run ./test_global_var_ordering.exe)
-   (run ./test_bpf_loop_callbacks.exe))))
+(alias codegen-tests)
+(deps test_ebpf_c_codegen.exe test_ebpf_string_generation.exe test_nested_if_codegen.exe test_integer_literal.exe test_context_field_types.exe test_global_var_ordering.exe test_bpf_loop_callbacks.exe)
+(action
+ (progn
+  (run ./test_ebpf_c_codegen.exe)
+  (run ./test_ebpf_string_generation.exe)
+  (run ./test_nested_if_codegen.exe)
+  (run ./test_integer_literal.exe)
+  (run ./test_context_field_types.exe)
+  (run ./test_global_var_ordering.exe)
+  (run ./test_bpf_loop_callbacks.exe))))
 
 ; Top-level alias to run all tests
 (alias
@@ -881,7 +881,7 @@
   ./test_string_literal_bugs.exe
   ./test_nested_if_codegen.exe
   ./test_error_handling.exe
-  ./test_integer_literal_codegen.exe
+  ./test_integer_literal.exe
   ./test_tracepoint.exe
   ./test_probe.exe
   ./test_tc.exe
@@ -902,7 +902,7 @@
    (run ./test_string_literal_bugs.exe)
    (run ./test_nested_if_codegen.exe)
    (run ./test_error_handling.exe)
-   (run ./test_integer_literal_codegen.exe)
+   (run ./test_integer_literal.exe)
    (run ./test_tracepoint.exe)
    (run ./test_probe.exe)
    (run ./test_tc.exe)

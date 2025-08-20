@@ -59,7 +59,7 @@ let create_test_main test_function_names filename =
   ) test_function_names in
   
   let return_expr = { 
-    expr_desc = Literal (IntLit (0, None)); 
+    expr_desc = Literal (IntLit (Ast.Signed64 0L, None)); 
     expr_pos = dummy_pos; 
     expr_type = None; 
     type_checked = false; 
@@ -134,7 +134,7 @@ let rec generate_expression_to_c expr =
   match expr.expr_desc with
   | Literal literal ->
       (match literal with
-       | IntLit (value, _) -> sprintf "%d" value
+       | IntLit (value, _) -> sprintf "%s" (Ast.IntegerValue.to_string value)
        | StringLit s -> sprintf "\"%s\"" s
        | BoolLit true -> "true"
        | BoolLit false -> "false"

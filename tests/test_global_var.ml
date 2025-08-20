@@ -201,7 +201,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     
     (* Test global_int *)
     (match lookup_symbol symbol_table "global_int" with
-     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (42, None)); _}); scope = []; _} ->
+     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (Signed64 42L, None)); _}); scope = []; _} ->
          check bool "global_int correctly stored" true true
      | Some {kind = GlobalVariable _; _} ->
          fail "global_int has wrong type or value"
@@ -215,7 +215,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     
     (* Test inferred_var *)
     (match lookup_symbol symbol_table "inferred_var" with
-     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (100, None)); _}); scope = []; _} ->
+     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (Signed64 100L, None)); _}); scope = []; _} ->
          check bool "inferred_var correctly stored" true true
      | _ -> fail "inferred_var not found or incorrect")
   with

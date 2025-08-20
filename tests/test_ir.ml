@@ -65,7 +65,7 @@ let make_test_global_map_2 () =
 
 let make_test_main_function () =
   let return_stmt = make_stmt 
-    (Return (Some (make_expr (Literal (IntLit (0, None))) (make_test_position ())))) 
+    (Return (Some (make_expr (Literal (IntLit (Signed64 0L, None))) (make_test_position ())))) 
     (make_test_position ()) in
   make_function 
     "test_xdp" 
@@ -119,7 +119,7 @@ let test_map_operation_lowering () =
   let map_access = make_expr 
     (ArrayAccess (
       make_expr (Identifier "global_map_2") (make_test_position ()),
-      make_expr (Literal (IntLit (0, None))) (make_test_position ())
+      make_expr (Literal (IntLit (Signed64 0L, None))) (make_test_position ())
     )) 
     (make_test_position ()) in
   let map_access = { map_access with expr_type = Some U32 } in
@@ -154,7 +154,7 @@ let test_map_operation_lowering () =
 let test_bounds_check_insertion () =
   let array_decl = make_expr (Identifier "arr") (make_test_position ()) in
   let array_decl = { array_decl with expr_type = Some (Array (U32, 10)) } in
-  let index_expr = make_expr (Literal (IntLit (5, None))) (make_test_position ()) in
+  let index_expr = make_expr (Literal (IntLit (Signed64 5L, None))) (make_test_position ()) in
   let array_access = make_expr 
     (ArrayAccess (array_decl, index_expr)) 
     (make_test_position ()) in
@@ -174,7 +174,7 @@ let test_bounds_check_insertion () =
 
 let test_stack_usage_tracking () =
   let buffer_decl = make_stmt 
-    (Declaration ("buffer", Some (Array (U8, 100)), Some (make_expr (Literal (IntLit (0, None))) (make_test_position ())))) 
+    (Declaration ("buffer", Some (Array (U8, 100)), Some (make_expr (Literal (IntLit (Signed64 0L, None))) (make_test_position ())))) 
     (make_test_position ()) in
   
   let test_func = make_function 

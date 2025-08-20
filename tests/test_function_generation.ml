@@ -88,7 +88,7 @@ let test_program_function_calls _ =
     expr_desc = BinaryOp (
       { expr_desc = Identifier "value"; expr_pos = test_pos; expr_type = Some U32 },
       Mul,
-      { expr_desc = Literal (IntLit (2, None)); expr_pos = test_pos; expr_type = Some U32 }
+      { expr_desc = Literal (IntLit (Signed64 2L, None)); expr_pos = test_pos; expr_type = Some U32 }
     );
     expr_pos = test_pos;
     expr_type = Some U32;
@@ -107,7 +107,7 @@ let test_program_function_calls _ =
   let main_params = [("ctx", xdp_md)] in
   let helper_call = {
     expr_desc = FunctionCall ("helper", [
-      { expr_desc = Literal (IntLit (10, None)); expr_pos = test_pos; expr_type = Some U32 }
+      { expr_desc = Literal (IntLit (Signed64 10L, None)); expr_pos = test_pos; expr_type = Some U32 }
     ]);
     expr_pos = test_pos;
     expr_type = Some U32;

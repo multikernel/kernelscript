@@ -205,9 +205,9 @@ module AssignmentOptimization = struct
         | IRMapStore (map_val, _key_val, _value_val, _) ->
                          let assignment = Map_assignment.{
                map_name = (match map_val.value_desc with IRMapRef name -> name | _ -> "unknown");
-               key_expr = { Ast.expr_desc = Ast.Literal (IntLit (0, None)); expr_type = None; expr_pos = instr.instr_pos; 
+               key_expr = { Ast.expr_desc = Ast.Literal (IntLit (Ast.Signed64 0L, None)); expr_type = None; expr_pos = instr.instr_pos; 
                             type_checked = false; program_context = None; map_scope = None }; (* Simplified for IR analysis *)
-                               value_expr = { Ast.expr_desc = Ast.Literal (IntLit (0, None)); expr_type = None; expr_pos = instr.instr_pos; 
+                               value_expr = { Ast.expr_desc = Ast.Literal (IntLit (Ast.Signed64 0L, None)); expr_type = None; expr_pos = instr.instr_pos; 
                                type_checked = false; program_context = None; map_scope = None }; (* Simplified for IR analysis *)
                assignment_type = DirectAssignment;
                assignment_pos = instr.instr_pos;

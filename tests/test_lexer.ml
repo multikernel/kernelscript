@@ -21,7 +21,7 @@ let token_testable = testable (fun fmt -> function
   | Parser.FN -> Format.fprintf fmt "FN"
   | Parser.PIN -> Format.fprintf fmt "PIN"
   | Parser.AT -> Format.fprintf fmt "AT"
-  | Parser.INT (i, _) -> Format.fprintf fmt "INT(%d)" i
+  | Parser.INT (i, _) -> Format.fprintf fmt "INT(%s)" (Kernelscript.Ast.IntegerValue.to_string i)
   | Parser.STRING s -> Format.fprintf fmt "STRING(%s)" s
   | Parser.BOOL_LIT b -> Format.fprintf fmt "BOOL_LIT(%b)" b
   | Parser.CHAR_LIT c -> Format.fprintf fmt "CHAR_LIT(%c)" c
@@ -80,15 +80,15 @@ let test_keywords () =
 
 let test_literals () =
   let tokens = Lexer.tokenize_string "42 \"hello\" true" in
-  check (list token_testable) "literals" [Parser.INT (42, None); Parser.STRING "hello"; Parser.BOOL_LIT true] tokens
+  check (list token_testable) "literals" [Parser.INT (Signed64 42L, None); Parser.STRING "hello"; Parser.BOOL_LIT true] tokens
 
 let test_hex_literals () =
   let tokens = Lexer.tokenize_string "0xFF" in
-  check (list token_testable) "hex literals" [Parser.INT (255, Some "0xFF")] tokens
+  check (list token_testable) "hex literals" [Parser.INT (Signed64 255L, Some "0xFF")] tokens
 
 let test_binary_literals () =
   let tokens = Lexer.tokenize_string "0b1010" in
-  check (list token_testable) "binary literals" [Parser.INT (10, Some "0b1010")] tokens
+  check (list token_testable) "binary literals" [Parser.INT (Signed64 10L, Some "0b1010")] tokens
 
 let test_string_literals () =
   let tokens = Lexer.tokenize_string "\"hello world\"" in
@@ -153,7 +153,7 @@ let test_complex_attributed_function () =
     Parser.AT; Parser.IDENTIFIER "xdp"; Parser.FN; Parser.IDENTIFIER "packet_filter"; 
     Parser.LPAREN; Parser.IDENTIFIER "ctx"; Parser.COLON; Parser.MULTIPLY; Parser.IDENTIFIER "xdp_md"; Parser.RPAREN;
     Parser.ARROW; Parser.IDENTIFIER "xdp_action"; Parser.LBRACE;
-    Parser.VAR; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (42, None);
+    Parser.VAR; Parser.IDENTIFIER "x"; Parser.ASSIGN; Parser.INT (Signed64 42L, None);
     Parser.RETURN; Parser.IDENTIFIER "x";
     Parser.RBRACE
   ] in
@@ -162,7 +162,7 @@ let test_complex_attributed_function () =
 let test_mixed_literals () =
   let tokens = Lexer.tokenize_string "0xFF 255 0b11111111 true false \"test\" 'c'" in
   check (list token_testable) "mixed literals" [
-    Parser.INT (255, Some "0xFF"); Parser.INT (255, None); Parser.INT (255, Some "0b11111111"); 
+    Parser.INT (Signed64 255L, Some "0xFF"); Parser.INT (Signed64 255L, None); Parser.INT (Signed64 255L, Some "0b11111111"); 
     Parser.BOOL_LIT true; Parser.BOOL_LIT false; Parser.STRING "test"; Parser.CHAR_LIT 'c'
   ] tokens
 

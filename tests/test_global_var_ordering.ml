@@ -23,12 +23,12 @@ let test_global_var_ordering () =
   
   (* Create global variables directly *)
   let global_var1 = make_ir_global_variable "test_counter" IRU32 
-    (Some (make_ir_value (IRLiteral (IntLit (0, None))) IRU32 test_pos)) test_pos () in
+    (Some (make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos)) test_pos () in
   let global_var2 = make_ir_global_variable "local_secret" IRU64 
-    (Some (make_ir_value (IRLiteral (IntLit (0xdeadbeef, None))) IRU64 test_pos)) test_pos ~is_local:true () in
+    (Some (make_ir_value (IRLiteral (IntLit (Signed64 0xdeadbeefL, None))) IRU64 test_pos)) test_pos ~is_local:true () in
   
   (* Create a simple XDP function that uses these global variables *)
-  let return_instr = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos))) test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos))) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test_func" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   

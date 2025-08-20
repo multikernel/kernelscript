@@ -460,7 +460,7 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
       in
       emit_instruction ctx instr;
       (* Return success value *)
-      make_ir_value (IRLiteral (IntLit (0, None))) IRU32 pos
+      make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 pos
   | "delete" ->
       let instr = make_ir_instruction
         (IRMapDelete (map_val, key_val))
@@ -468,7 +468,7 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
         pos
       in
       emit_instruction ctx instr;
-      make_ir_value (IRLiteral (IntLit (0, None))) IRU32 pos
+      make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 pos
 
   | _ -> failwith ("Unknown map operation: " ^ operation)
 
@@ -675,7 +675,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            else if Hashtbl.mem ctx.maps obj_name then
              (* Handle map operations *)
              let key_val = if List.length arg_vals > 0 then List.hd arg_vals 
-                          else make_ir_value (IRLiteral (IntLit (0, None))) IRU32 expr.expr_pos in
+                          else make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos in
              let value_val_opt = if List.length arg_vals > 1 then Some (List.nth arg_vals 1) else None in
              expand_map_operation ctx obj_name method_name key_val value_val_opt expr.expr_pos
            else if Hashtbl.mem ctx.variables obj_name then
@@ -1006,7 +1006,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                    (* Process block statements - they will be executed conditionally *)
                    List.iter (lower_statement ctx) stmts;
                    (* If no explicit assignment to result, use default value *)
-                   let default_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 arm.arm_pos in
+                   let default_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 arm.arm_pos in
                    let assign_instr = make_ir_instruction (IRAssign (result_val, make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos in
                    emit_instruction ctx assign_instr);
               
@@ -1038,7 +1038,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
             | ConstantPattern lit -> 
                 let lit_val = lower_literal lit arm.arm_pos in
                 IRConstantPattern lit_val
-            | IdentifierPattern _ -> IRConstantPattern (make_ir_value (IRLiteral (IntLit (0, None))) IRU32 arm.arm_pos)
+            | IdentifierPattern _ -> IRConstantPattern (make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 arm.arm_pos)
             | DefaultPattern -> IRDefaultPattern
           in
           let ir_value = match arm.arm_body with
@@ -1807,8 +1807,8 @@ and lower_statement ctx stmt =
         let check_for_break_continue stmts =
           List.fold_left (fun acc stmt ->
             match stmt.Ast.stmt_desc with
-            | Ast.Break -> Some (make_ir_value (IRLiteral (IntLit (1, None))) IRU32 stmt.stmt_pos)
-            | Ast.Continue -> Some (make_ir_value (IRLiteral (IntLit (0, None))) IRU32 stmt.stmt_pos)
+            | Ast.Break -> Some (make_ir_value (IRLiteral (IntLit (Ast.Signed64 1L, None))) IRU32 stmt.stmt_pos)
+            | Ast.Continue -> Some (make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 stmt.stmt_pos)
             | _ -> acc
           ) None stmts
         in
@@ -1993,7 +1993,7 @@ and lower_statement ctx stmt =
            (match loop_analysis.bound_info with
             | Loop_analysis.Bounded (start_int, end_int) ->
                 for i = start_int to end_int - 1 do
-                  let iter_val = make_ir_value (IRLiteral (IntLit (i, None))) IRU32 stmt.stmt_pos in
+                  let iter_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 (Int64.of_int i), None))) IRU32 stmt.stmt_pos in
                   let assign_iter = make_ir_instruction (IRAssign (counter_val, make_ir_expr (IRValue iter_val) IRU32 stmt.stmt_pos)) stmt.stmt_pos in
                   emit_instruction ctx assign_iter;
                   List.iter (lower_statement ctx) body_stmts;
@@ -2070,7 +2070,7 @@ and lower_statement ctx stmt =
            List.iter (lower_statement ctx) body_stmts;
            
            (* Increment counter *)
-           let one_val = make_ir_value (IRLiteral (IntLit (1, None))) IRU32 stmt.stmt_pos in
+           let one_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 1L, None))) IRU32 stmt.stmt_pos in
            let inc_expr = make_ir_expr (IRBinOp (counter_val, IRAdd, one_val)) IRU32 stmt.stmt_pos in
            let inc_instr = make_ir_instruction (IRAssign (counter_val, inc_expr)) stmt.stmt_pos in
            emit_instruction ctx inc_instr;
@@ -2121,8 +2121,8 @@ and lower_statement ctx stmt =
       let body_instructions = List.rev body_ctx.current_block in
       
       (* Mark as iterator bpf_loop *)
-      let start_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 stmt.stmt_pos in
-      let end_val = make_ir_value (IRLiteral (IntLit (100, None))) IRU32 stmt.stmt_pos in (* Placeholder *)
+      let start_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 stmt.stmt_pos in
+      let end_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 100L, None))) IRU32 stmt.stmt_pos in (* Placeholder *)
       let bpf_iter_instr = make_ir_instruction 
         (IRBpfLoop (start_val, end_val, index_val, loop_ctx_val, body_instructions))
         stmt.stmt_pos in
@@ -2188,7 +2188,7 @@ and lower_statement ctx stmt =
             (string_of_position stmt.stmt_pos))
         else (
           (* We're in userspace - config field assignment is allowed *)
-          let key_val = make_ir_value (IRLiteral (IntLit (0, None))) (IRU32) stmt.stmt_pos in
+          let key_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) (IRU32) stmt.stmt_pos in
           let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
           let value_val = lower_expression ctx value_expr in
           let instr = make_ir_instruction 
@@ -2277,7 +2277,7 @@ and lower_statement ctx stmt =
       (* For now, assume it's an integer literal - in a full implementation, 
          we'd need to evaluate the expression at compile time *)
       let error_code = match expr.expr_desc with
-        | Ast.Literal (Ast.IntLit (code, _)) -> Ir.IntErrorCode code
+        | Ast.Literal (Ast.IntLit (code, _)) -> Ir.IntErrorCode (Int64.to_int (Ast.IntegerValue.to_int64 code))
         | Ast.Identifier _ -> 
             (* For identifiers (like enum values), we'd need to resolve them *)
             (* For now, use a default error code *)
@@ -2506,12 +2506,12 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
          | Literal lit -> Some (make_ir_value (IRLiteral lit) ir_type global_var_decl.global_var_pos)
          | UnaryOp (Neg, {expr_desc = Literal (IntLit (n, orig)); _}) ->
              (* Handle negative integer literals by creating a negated literal *)
-             Some (make_ir_value (IRLiteral (IntLit (-n, orig))) ir_type global_var_decl.global_var_pos)
+             Some (make_ir_value (IRLiteral (IntLit (Ast.Signed64 (Int64.neg (Ast.IntegerValue.to_int64 n)), orig))) ir_type global_var_decl.global_var_pos)
          | _ -> 
              (* For more complex expressions, we need to evaluate them at compile time *)
              (* For now, default to zero/null initialization *)
              (match ir_type with
-              | IRU32 | IRI32 -> Some (make_ir_value (IRLiteral (IntLit (0, None))) ir_type global_var_decl.global_var_pos)
+              | IRU32 | IRI32 -> Some (make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) ir_type global_var_decl.global_var_pos)
               | IRBool -> Some (make_ir_value (IRLiteral (BoolLit false)) ir_type global_var_decl.global_var_pos)
               | IRStr _ -> Some (make_ir_value (IRLiteral (StringLit "")) ir_type global_var_decl.global_var_pos)
               | _ -> None))
@@ -3099,7 +3099,7 @@ let lower_multi_program ast symbol_table source_name =
       match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
       | Literal key_lit, Literal value_lit ->
           let key_str = match key_lit with
-            | IntLit (i, _) -> string_of_int i
+            | IntLit (i, _) -> Ast.IntegerValue.to_string i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
@@ -3109,7 +3109,7 @@ let lower_multi_program ast symbol_table source_name =
                 (match init_style with
                  | ZeroArray -> "[]"
                  | FillArray lit -> "[" ^ (match lit with
-                     | IntLit (i, _) -> string_of_int i
+                     | IntLit (i, _) -> Ast.IntegerValue.to_string i
                      | StringLit s -> "\"" ^ s ^ "\""
                      | CharLit c -> "'" ^ String.make 1 c ^ "'"
                      | BoolLit b -> string_of_bool b
@@ -3118,7 +3118,7 @@ let lower_multi_program ast symbol_table source_name =
                      | ArrayLit _ -> "[]") ^ "]"
                  | ExplicitArray literals ->
                      "[" ^ (String.concat ", " (List.map (function
-                       | IntLit (i, _) -> string_of_int i
+                       | IntLit (i, _) -> Ast.IntegerValue.to_string i
                        | StringLit s -> "\"" ^ s ^ "\""
                        | CharLit c -> "'" ^ String.make 1 c ^ "'"
                        | BoolLit b -> string_of_bool b
@@ -3128,7 +3128,7 @@ let lower_multi_program ast symbol_table source_name =
                      ) literals)) ^ "]")
           in
           let value_str = match value_lit with
-            | IntLit (i, _) -> string_of_int i
+            | IntLit (i, _) -> Ast.IntegerValue.to_string i
             | StringLit s -> "\"" ^ s ^ "\""
             | CharLit c -> "'" ^ String.make 1 c ^ "'"
             | BoolLit b -> string_of_bool b
@@ -3247,7 +3247,7 @@ let lower_multi_program ast symbol_table source_name =
                 | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) field_expr.expr_pos
                 | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) field_expr.expr_pos
                 | Ast.IntLit (value, _) -> 
-                    let ir_type = if value < 0 then IRI32 else IRU32 in
+                    let ir_type = if Ast.IntegerValue.compare_with_zero value < 0 then IRI32 else IRU32 in
                     make_ir_value (IRLiteral (IntLit (value, None))) ir_type field_expr.expr_pos
                 | Ast.BoolLit b -> make_ir_value (IRLiteral (BoolLit b)) IRBool field_expr.expr_pos
                 | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar field_expr.expr_pos

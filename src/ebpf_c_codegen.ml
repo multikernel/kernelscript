@@ -654,7 +654,7 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
         match symbol.Symbol_table.kind with
         | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values)) ->
             let processed_values = List.map (fun (const_name, opt_value) ->
-              (const_name, Option.value ~default:0 opt_value)
+              (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
             ) enum_values in
             Hashtbl.replace enum_map enum_name processed_values
         | _ -> ()
@@ -669,7 +669,7 @@ let generate_enum_definition ctx enum_name enum_values =
   increase_indent ctx;
   let value_count = List.length enum_values in
   List.iteri (fun i (const_name, value) ->
-    let line = sprintf "%s = %d%s" const_name value (if i = value_count - 1 then "" else ",") in
+    let line = sprintf "%s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
     emit_line ctx line
   ) enum_values;
   decrease_indent ctx;
@@ -1491,7 +1491,7 @@ let generate_global_variables ctx global_variables =
                  (match original_opt with
                   | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
                   | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
-                  | _ -> string_of_int i)
+                  | _ -> Ast.IntegerValue.to_string i)
              | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
              | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" s
              | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
@@ -1565,7 +1565,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
       (match original_opt with
        | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
        | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
-       | _ -> string_of_int i)
+       | _ -> Ast.IntegerValue.to_string i)
   | IRLiteral (BoolLit b) -> if b then "1" else "0"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (NullLit) -> "NULL"
@@ -1593,7 +1593,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
        | ZeroArray -> "{0}"  (* Empty array initialization *)
        | FillArray fill_lit ->
            let fill_str = match fill_lit with
-             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.IntLit (i, _) -> Ast.IntegerValue.to_string i
              | Ast.BoolLit b -> if b then "1" else "0"
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" s
@@ -1605,7 +1605,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
        | ExplicitArray elements ->
            let element_strings = List.map (fun elem ->
              match elem with
-             | Ast.IntLit (i, _) -> string_of_int i
+             | Ast.IntLit (i, _) -> Ast.IntegerValue.to_string i
              | Ast.BoolLit b -> if b then "1" else "0"
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" s
@@ -2305,7 +2305,7 @@ let generate_ringbuf_operation ctx ringbuf_val op =
 (** Helper function to convert AST expressions to C code for bpf_loop callbacks *)
 let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
   match expr.Ast.expr_desc with
-  | Ast.Literal (Ast.IntLit (i, _)) -> string_of_int i
+  | Ast.Literal (Ast.IntLit (i, _)) -> Ast.IntegerValue.to_string i
   | Ast.Literal (Ast.BoolLit b) -> if b then "true" else "false"
   | Ast.Identifier name when name = "i" -> counter_var (* Map loop variable to counter *)
   | Ast.Identifier name -> name
@@ -2880,13 +2880,13 @@ let rec generate_c_instruction ctx ir_instr =
           let ret_str = match ret_val.value_desc with
             (* Use context-specific action constant mapping *)
             | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction Xdp_actionType ->
-                (match Kernelscript_context.Context_codegen.map_context_action_constant "xdp" i with
+                (match Kernelscript_context.Context_codegen.map_context_action_constant "xdp" (Int64.to_int (Ast.IntegerValue.to_int64 i)) with
                  | Some action -> action
-                 | None -> string_of_int i)
+                 | None -> Ast.IntegerValue.to_string i)
             | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction TcActionType ->
-                (match Kernelscript_context.Context_codegen.map_context_action_constant "tc" i with
+                (match Kernelscript_context.Context_codegen.map_context_action_constant "tc" (Int64.to_int (Ast.IntegerValue.to_int64 i)) with
                  | Some action -> action
-                 | None -> string_of_int i)
+                 | None -> Ast.IntegerValue.to_string i)
             | IRMapAccess (_, _, _) ->
                 (* For map access in return position, auto-dereference to return the value *)
                 generate_c_value ~auto_deref_map_access:true ctx ret_val

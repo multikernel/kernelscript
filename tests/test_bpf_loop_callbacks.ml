@@ -153,7 +153,7 @@ let test_callback_signature_consistency () =
   
   (* Create a simple callback function *)
   let callback_name = "loop_callback" in
-  let return_instr = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (0, None))) IRU32 test_pos))) test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos))) test_pos in
   let callback_block = make_ir_basic_block "entry" [return_instr] 0 in
   let callback_func = make_ir_function callback_name [("index", IRU32); ("data", IRPointer (IRU8, make_bounds_info ()))] (Some IRU32) [callback_block] test_pos in
   

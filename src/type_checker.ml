@@ -399,7 +399,7 @@ let can_assign to_type from_type =
 (** Helper function to get the type of a literal *)
 let get_literal_type lit =
   match lit with
-  | IntLit (value, _) -> if value < 0 then I32 else U32
+  | IntLit (value, _) -> if Ast.IntegerValue.compare_with_zero value < 0 then I32 else U32
   | StringLit s -> Str (max 1 (String.length s))
   | CharLit _ -> Char
   | BoolLit _ -> Bool
@@ -421,7 +421,7 @@ let type_check_literal lit pos =
   let typ = match lit with
     | IntLit (value, _) -> 
         (* Choose appropriate integer type based on the value *)
-        if value < 0 then I32  (* Signed integers for negative values *)
+        if Ast.IntegerValue.compare_with_zero value < 0 then I32  (* Signed integers for negative values *)
         else U32  (* Unsigned integers for positive values *)
     | StringLit s -> 
         (* String literals are polymorphic - they can unify with any string type *)
@@ -477,7 +477,7 @@ let type_check_literal lit pos =
 let type_of_literal lit =
   match lit with
   | IntLit (value, _) -> 
-      if value < 0 then I32 else U32
+      if Ast.IntegerValue.compare_with_zero value < 0 then I32 else U32
   | StringLit s -> 
       let len = String.length s in
       Str (max 1 len)
@@ -1866,9 +1866,9 @@ and type_check_statement ctx stmt =
       let const_value = match typed_expr.texpr_desc with
         | TLiteral lit -> lit
         | TUnaryOp (Neg, {texpr_desc = TLiteral (IntLit (n, Some sign)); _}) -> 
-            IntLit (-n, Some sign)  (* Negated signed integer literal *)
+            IntLit (Ast.Signed64 (Int64.neg (Ast.IntegerValue.to_int64 n)), Some sign)  (* Negated signed integer literal *)
         | TUnaryOp (Neg, {texpr_desc = TLiteral (IntLit (n, None)); _}) -> 
-            IntLit (-n, None)  (* Negated integer literal *)
+            IntLit (Ast.Signed64 (Int64.neg (Ast.IntegerValue.to_int64 n)), None)  (* Negated integer literal *)
         | _ -> type_error ("Const variable must be initialized with a literal value") stmt.stmt_pos
       in
       

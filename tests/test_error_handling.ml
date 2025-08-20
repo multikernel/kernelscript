@@ -92,7 +92,7 @@ let test_throw_parsing () =
          | Throw expr ->
              (match expr.expr_desc with
               | Literal (IntLit (code, _)) ->
-                  check int "throw code" 123 code
+                  check int "throw code" 123 (Int64.to_int (IntegerValue.to_int64 code))
               | _ -> fail "Expected integer literal in throw")
          | _ -> fail "Expected Throw statement")
     | _ -> fail "Expected attributed function declaration"

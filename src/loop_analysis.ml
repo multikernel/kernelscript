@@ -29,7 +29,7 @@ type loop_analysis = {
 }
 
 (** Constant environment for tracking variable assignments *)
-type const_env = (string * int) list
+type const_env = (string * Ast.integer_value) list
 
 (** Check if an expression is a compile-time constant given a constant environment *)
 let rec is_compile_time_constant_with_env const_env expr =
@@ -60,16 +60,16 @@ let rec evaluate_constant_expr_with_env const_env expr =
              evaluate_constant_expr_with_env const_env right with
        | Some l, Some r ->
            (match op with
-            | Add -> Some (l + r)
-            | Sub -> Some (l - r) 
-            | Mul -> Some (l * r)
-            | Div when r <> 0 -> Some (l / r)
-            | Mod when r <> 0 -> Some (l mod r)
+            | Add -> Some (Ast.Signed64 (Int64.add (Ast.IntegerValue.to_int64 l) (Ast.IntegerValue.to_int64 r)))
+            | Sub -> Some (Ast.Signed64 (Int64.sub (Ast.IntegerValue.to_int64 l) (Ast.IntegerValue.to_int64 r)))
+            | Mul -> Some (Ast.Signed64 (Int64.mul (Ast.IntegerValue.to_int64 l) (Ast.IntegerValue.to_int64 r)))
+            | Div when Ast.IntegerValue.compare_with_zero r <> 0 -> Some (Ast.Signed64 (Int64.div (Ast.IntegerValue.to_int64 l) (Ast.IntegerValue.to_int64 r)))
+            | Mod when Ast.IntegerValue.compare_with_zero r <> 0 -> Some (Ast.Signed64 (Int64.rem (Ast.IntegerValue.to_int64 l) (Ast.IntegerValue.to_int64 r)))
             | _ -> None)
        | _ -> None)
   | UnaryOp (Neg, expr) ->
       (match evaluate_constant_expr_with_env const_env expr with
-       | Some i -> Some (-i)
+       | Some i -> Some (Ast.Signed64 (Int64.neg (Ast.IntegerValue.to_int64 i)))
        | None -> None)
   | _ -> None
 
@@ -109,10 +109,10 @@ let analyze_for_loop_with_context const_env start_expr end_expr =
     match evaluate_constant_expr_with_env const_env start_expr, 
           evaluate_constant_expr_with_env const_env end_expr with
     | Some start_val, Some end_val ->
-        let iterations = max 0 (end_val - start_val) in
+        let iterations = Int64.to_int (Int64.max 0L (Int64.sub (Ast.IntegerValue.to_int64 end_val) (Ast.IntegerValue.to_int64 start_val))) in
         {
           is_bounded = true;
-          bound_info = Bounded (start_val, end_val);
+          bound_info = Bounded (Int64.to_int (Ast.IntegerValue.to_int64 start_val), Int64.to_int (Ast.IntegerValue.to_int64 end_val));
           estimated_iterations = Some iterations;
         }
     | _ ->

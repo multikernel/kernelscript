@@ -450,7 +450,7 @@ let kernelscript_type_to_c_type = function
 (** Convert KernelScript expression to C *)
 let kernelscript_expr_to_c expr =
   match expr.Ast.expr_desc with
-  | Ast.Literal (Ast.IntLit (value, _)) -> string_of_int value
+  | Ast.Literal (Ast.IntLit (value, _)) -> Ast.IntegerValue.to_string value
   | Ast.Literal (Ast.BoolLit true) -> "true"
   | Ast.Literal (Ast.BoolLit false) -> "false"
   | Ast.Literal (Ast.StringLit str) -> sprintf "\"%s\"" str
@@ -836,7 +836,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       | "enum" ->
           let enum_values = match btf_type.members with
             | Some members -> 
-                List.map (fun (const_name, const_value) -> (const_name, Some (int_of_string const_value))) members
+                List.map (fun (const_name, const_value) -> (const_name, Some (Ast.Signed64 (Int64.of_string const_value)))) members
             | None -> []
           in
           Ast.TypeDef (Ast.EnumDef (btf_type.Btf_parser.name, enum_values))

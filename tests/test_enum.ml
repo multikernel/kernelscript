@@ -29,12 +29,13 @@ let test_enum_auto_assignment () =
       | [] -> List.rev acc
       | (const_name, None) :: rest ->
           (* Auto-assign current value *)
-          let processed_value = (const_name, Some current_value) in
+          let processed_value = (const_name, Some (Signed64 (Int64.of_int current_value))) in
           process_values (processed_value :: acc) (current_value + 1) rest
       | (const_name, Some explicit_value) :: rest ->
           (* Use explicit value and update current value *)
           let processed_value = (const_name, Some explicit_value) in
-          process_values (processed_value :: acc) (explicit_value + 1) rest
+          let explicit_int = Int64.to_int (IntegerValue.to_int64 explicit_value) in
+          process_values (processed_value :: acc) (explicit_int + 1) rest
     in
     process_values [] 0 values
   in
@@ -43,26 +44,26 @@ let test_enum_auto_assignment () =
   let values1 = [("TCP", None); ("UDP", None); ("ICMP", None)] in
   let result1 = process_enum_values values1 in
   let expected1 = [("TCP", Some 0); ("UDP", Some 1); ("ICMP", Some 2)] in
-  check (list (pair string (option int))) "auto assignment" expected1 result1;
+  check (list (pair string (option int))) "auto assignment" expected1 (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) result1);
   
   (* Test case 2: Mixed explicit and auto values *)
-  let values2 = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", None); ("UNKNOWN", None)] in
+  let values2 = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", None); ("UNKNOWN", None)] in
   let result2 = process_enum_values values2 in
   let expected2 = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 18); ("UNKNOWN", Some 19)] in
-  check (list (pair string (option int))) "mixed assignment" expected2 result2;
+  check (list (pair string (option int))) "mixed assignment" expected2 (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) result2);
   
   (* Test case 3: Auto values with explicit override *)
-  let values3 = [("FIRST", None); ("SECOND", Some 10); ("THIRD", None)] in
+  let values3 = [("FIRST", None); ("SECOND", Some (Signed64 10L)); ("THIRD", None)] in
   let result3 = process_enum_values values3 in
   let expected3 = [("FIRST", Some 0); ("SECOND", Some 10); ("THIRD", Some 11)] in
-  check (list (pair string (option int))) "auto with override" expected3 result3
+  check (list (pair string (option int))) "auto with override" expected3 (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) result3)
 
 (** Test enum parsing and symbol table integration *)
 let test_enum_symbol_table () =
   let symbol_table = create_symbol_table () in
   
   (* Create enum definition *)
-  let enum_values = [("XDP_ABORTED", Some 0); ("XDP_DROP", Some 1); ("XDP_PASS", Some 2)] in
+  let enum_values = [("XDP_ABORTED", Some (Signed64 0L)); ("XDP_DROP", Some (Signed64 1L)); ("XDP_PASS", Some (Signed64 2L))] in
   let enum_def = EnumDef ("xdp_action", enum_values) in
   
   (* Add to symbol table *)
@@ -95,7 +96,7 @@ let test_enum_type_checking () =
   let empty_symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   
   (* Add enum type to context *)
-  let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in
+  let enum_values = [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("xdp_action", enum_values) in
   let enum_type = Enum "xdp_action" in
   let ctx = create_context empty_symbol_table [] in  (* Provide empty AST for tests *)
@@ -126,7 +127,7 @@ let test_enum_constants () =
   let symbol_table = create_symbol_table () in
   
   (* Add enum with constants *)
-  let enum_values = [("PROTOCOL_TCP", Some 6); ("PROTOCOL_UDP", Some 17); ("PROTOCOL_ICMP", Some 1)] in
+  let enum_values = [("PROTOCOL_TCP", Some (Signed64 6L)); ("PROTOCOL_UDP", Some (Signed64 17L)); ("PROTOCOL_ICMP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("Protocol", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
@@ -139,7 +140,7 @@ let test_enum_constants () =
       (match symbol.kind with
        | EnumConstant (enum_name, Some value) ->
            check string "constant enum name" "Protocol" enum_name;
-           check int "TCP value" 6 value
+           check int "TCP value" 6 (Int64.to_int (IntegerValue.to_int64 value))
        | _ -> check bool "wrong constant kind" false true)
   | None -> check bool "TCP constant not found" false true);
   
@@ -182,7 +183,7 @@ let test_enum_expressions () =
   let symbol_table = create_symbol_table () in
   
   (* Add enum *)
-  let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in
+  let enum_values = [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("xdp_action", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
@@ -194,7 +195,7 @@ let test_enum_expressions () =
   | Some s ->
       (match s.kind with
        | EnumConstant (_, Some value) ->
-           check int "enum constant value" 2 value
+           check int "enum constant value" 2 (Int64.to_int (IntegerValue.to_int64 value))
        | _ -> check bool "wrong symbol type" false true)
   | None -> check bool "enum constant not found" false true
 
@@ -209,7 +210,7 @@ let test_enum_edge_cases () =
   check bool "empty enum registered" true (empty_symbol <> None);
   
   (* Test enum with duplicate names (should be handled by symbol table) *)
-  let duplicate_values = [("SAME", Some 1); ("SAME", Some 2)] in
+  let duplicate_values = [("SAME", Some (Signed64 1L)); ("SAME", Some (Signed64 2L))] in
   let duplicate_enum = EnumDef ("Duplicate", duplicate_values) in
   
   (* This should either succeed (last wins) or fail gracefully *)
@@ -226,21 +227,22 @@ let test_enum_edge_cases () =
 (** Test enum with large values *)
 let test_enum_large_values () =
   let large_values = [
-    ("SMALL", Some 0);
-    ("MEDIUM", Some 1000);
-    ("LARGE", Some 65535);
-    ("VERY_LARGE", Some 4294967295) (* Max u32 *)
+    ("SMALL", None);
+    ("MEDIUM", Some (Signed64 1000L));
+    ("LARGE", Some (Signed64 65535L));
+    ("VERY_LARGE", Some (Signed64 4294967295L)) (* Max u32 *)
   ] in
   
   let process_enum_values values =
     let rec process_values acc current_value = function
       | [] -> List.rev acc
       | (const_name, None) :: rest ->
-          let processed_value = (const_name, Some current_value) in
+          let processed_value = (const_name, Some (Signed64 (Int64.of_int current_value))) in
           process_values (processed_value :: acc) (current_value + 1) rest
       | (const_name, Some explicit_value) :: rest ->
           let processed_value = (const_name, Some explicit_value) in
-          process_values (processed_value :: acc) (explicit_value + 1) rest
+          let explicit_int = Int64.to_int (IntegerValue.to_int64 explicit_value) in
+          process_values (processed_value :: acc) (explicit_int + 1) rest
     in
     process_values [] 0 values
   in
@@ -253,7 +255,7 @@ let test_enum_large_values () =
     ("VERY_LARGE", Some 4294967295)
   ] in
   
-  check (list (pair string (option int))) "large values handled" expected result
+  check (list (pair string (option int))) "large values handled" expected (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) result)
 
 (** Test enum constant preservation in IR generation *)
 let test_enum_ir_preservation () =
@@ -262,7 +264,7 @@ let test_enum_ir_preservation () =
   
   (* Create a symbol table with enum constants *)
   let symbol_table = create_symbol_table () in
-  let enum_values = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 1)] in
+  let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("IpProtocol", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
@@ -278,7 +280,7 @@ let test_enum_ir_preservation () =
    | IREnumConstant (enum_name, constant_name, numeric_value) ->
        check string "IR enum name" "IpProtocol" enum_name;
        check string "IR constant name" "TCP" constant_name;
-       check int "IR constant value" 6 numeric_value
+       check int "IR constant value" 6 (Int64.to_int (IntegerValue.to_int64 numeric_value))
    | IRLiteral _ -> check bool "should not be IRLiteral" false true
    | _ -> check bool "wrong IR value type" false true)
 
@@ -288,7 +290,7 @@ let test_enum_c_code_preservation () =
   let open Kernelscript.Ir in
   
   (* Create IREnumConstant value *)
-  let enum_constant = make_ir_value (IREnumConstant ("IpProtocol", "TCP", 6)) IRU32 dummy_pos in
+  let enum_constant = make_ir_value (IREnumConstant ("IpProtocol", "TCP", Signed64 6L)) IRU32 dummy_pos in
   
   (* Create a simple eBPF context *)
   let ctx = create_c_context () in
@@ -306,7 +308,7 @@ let test_enum_c_code_preservation () =
 let test_enum_definition_inclusion () =
   (* Create a symbol table with enum definition *)
   let symbol_table = create_symbol_table () in
-  let enum_values = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 1)] in
+  let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("IpProtocol", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
@@ -320,7 +322,7 @@ let test_enum_definition_inclusion () =
        (match symbol.kind with
         | EnumConstant (enum_name, Some value) ->
             check string "enum name" "IpProtocol" enum_name;
-            check int "TCP value" 6 value
+            check int "TCP value" 6 (Int64.to_int (IntegerValue.to_int64 value))
         | _ -> check bool "wrong symbol kind" false true)
    | None -> check bool "TCP symbol not found" false true)
 
@@ -328,7 +330,7 @@ let test_enum_definition_inclusion () =
 let test_match_enum_constants () =
   (* Create symbol table with enum *)
   let symbol_table = create_symbol_table () in
-  let enum_values = [("TCP", Some 6); ("UDP", Some 17); ("ICMP", Some 1)] in
+  let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("IpProtocol", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
@@ -343,7 +345,7 @@ let test_match_enum_constants () =
         | EnumConstant (enum_name, Some value) ->
             check string "match enum name" "IpProtocol" enum_name;
             check string "match constant name" "TCP" "TCP";
-            check int "match constant value" 6 value
+            check int "match constant value" 6 (Int64.to_int (IntegerValue.to_int64 value))
         | _ -> check bool "wrong symbol kind for match" false true)
    | None -> check bool "TCP symbol not found for match" false true)
 
@@ -354,7 +356,7 @@ let test_enum_not_numeric_literals () =
   
   (* Create symbol table with enum *)
   let symbol_table = create_symbol_table () in
-  let enum_values = [("TCP", Some 6); ("UDP", Some 17)] in
+  let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L))] in
   let enum_def = EnumDef ("IpProtocol", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
@@ -378,12 +380,12 @@ let test_enum_preservation_pipeline () =
   
   (* Create symbol table with enum *)
   let symbol_table = create_symbol_table () in
-  let enum_values = [("XDP_PASS", Some 2); ("XDP_DROP", Some 1)] in
+  let enum_values = [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))] in
   let enum_def = EnumDef ("XdpAction", enum_values) in
   add_type_def symbol_table enum_def dummy_pos;
   
   (* Create IR with enum constant *)
-  let enum_constant = make_ir_value (IREnumConstant ("XdpAction", "XDP_PASS", 2)) IRU32 dummy_pos in
+  let enum_constant = make_ir_value (IREnumConstant ("XdpAction", "XDP_PASS", Signed64 2L)) IRU32 dummy_pos in
   
   (* Create context for C generation *)
   let ctx = create_c_context () in
@@ -405,7 +407,7 @@ let test_userspace_enum_preservation () =
   let open Kernelscript.Ir in
   
   (* Create IREnumConstant value *)
-  let enum_constant = make_ir_value (IREnumConstant ("Protocol", "HTTP", 80)) IRU32 dummy_pos in
+  let enum_constant = make_ir_value (IREnumConstant ("Protocol", "HTTP", Signed64 80L)) IRU32 dummy_pos in
   
   (* Create a simple userspace context *)
   let ctx = create_userspace_context () in
@@ -442,7 +444,7 @@ enum test_enum {
     ("POSITIVE", Some 1);
     ("LARGE_NEGATIVE", Some (-999))
   ] in
-  check (list (pair string (option int))) "enum variants" expected enum_def
+  check (list (pair string (option int))) "enum variants" expected (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) enum_def)
 
 let test_mixed_positive_negative_enum () =
   let source = {|
@@ -472,7 +474,7 @@ enum mixed_values {
     ("AUTO_ASSIGNED", None);  (* Auto-assigned value *)
     ("POSITIVE_AFTER", Some 200)
   ] in
-  check (list (pair string (option int))) "mixed enum variants" expected enum_def
+  check (list (pair string (option int))) "mixed enum variants" expected (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) enum_def)
 
 let test_tc_action_enum () =
   let source = {|
@@ -510,7 +512,7 @@ enum tc_action {
     ("TC_ACT_REDIRECT", Some 7);
     ("TC_ACT_TRAP", Some 8)
   ] in
-  check (list (pair string (option int))) "tc_action variants" expected enum_def
+  check (list (pair string (option int))) "tc_action variants" expected (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) enum_def)
 
 let test_edge_case_negative_values () =
   let source = {|
@@ -538,7 +540,7 @@ enum edge_cases {
     ("POSITIVE_ONE", Some 1);
     ("VERY_POSITIVE", Some 2147483647)
   ] in
-  check (list (pair string (option int))) "edge case variants" expected enum_def
+  check (list (pair string (option int))) "edge case variants" expected (List.map (fun (name, opt) -> (name, Option.map (fun v -> Int64.to_int (IntegerValue.to_int64 v)) opt)) enum_def)
 
 (** Test enum as array index *)
 let test_enum_array_index () =

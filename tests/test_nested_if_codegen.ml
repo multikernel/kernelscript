@@ -37,7 +37,7 @@ let test_irif_structured_generation () =
   
   (* Create nested IRIf instructions manually *)
   let inner_cond = make_ir_value (IRLiteral (BoolLit false)) IRBool test_pos in
-  let inner_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos))) test_pos in
+  let inner_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos))) test_pos in
   let inner_if = make_ir_instruction (IRIf (inner_cond, [inner_return], None)) test_pos in
   
   let outer_cond = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
@@ -106,7 +106,7 @@ let test_deep_nesting () =
   
   (* Create 3-level nested IRIf instructions *)
   let deepest_cond = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
-  let deepest_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (123, None))) IRU32 test_pos))) test_pos in
+  let deepest_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 123L, None))) IRU32 test_pos))) test_pos in
   let deepest_if = make_ir_instruction (IRIf (deepest_cond, [deepest_return], None)) test_pos in
   
   let middle_cond = make_ir_value (IRLiteral (BoolLit false)) IRBool test_pos in
@@ -130,11 +130,11 @@ let test_if_else () =
   
   (* Create if-else with nested if in else branch *)
   let else_cond = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
-  let else_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (456, None))) IRU32 test_pos))) test_pos in
+  let else_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 456L, None))) IRU32 test_pos))) test_pos in
   let else_inner_if = make_ir_instruction (IRIf (else_cond, [else_return], None)) test_pos in
   
   let main_cond = make_ir_value (IRLiteral (BoolLit false)) IRBool test_pos in
-  let then_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (789, None))) IRU32 test_pos))) test_pos in
+  let then_return = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 789L, None))) IRU32 test_pos))) test_pos in
   let main_if = make_ir_instruction (IRIf (main_cond, [then_return], Some [else_inner_if])) test_pos in
   
   (* Generate C code *)

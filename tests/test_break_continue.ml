@@ -221,8 +221,8 @@ let test_break_continue_unbound_variable_naming () =
   let temp_val = make_ir_value (IRRegister temp_reg) IRU32 test_pos in
   
   (* Create a modulo operation and comparison (similar to the original failing case) *)
-  let two_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
-  let zero_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 test_pos in
+  let two_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
+  let zero_val = make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos in
   
   (* Create IR instructions that would be in a bpf_loop callback *)
   let mod_expr = make_ir_expr (IRBinOp (counter_val, IRMod, two_val)) IRU32 test_pos in
@@ -232,8 +232,8 @@ let test_break_continue_unbound_variable_naming () =
   let eq_assign = make_ir_instruction (IRAssign (condition_val, eq_expr)) test_pos in
   
   (* Create the bpf_loop instruction with these body instructions *)
-  let start_val = make_ir_value (IRLiteral (IntLit (0, None))) IRU32 test_pos in
-  let end_val = make_ir_value (IRLiteral (IntLit (1000, None))) IRU32 test_pos in
+  let start_val = make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos in
+  let end_val = make_ir_value (IRLiteral (IntLit (Signed64 1000L, None))) IRU32 test_pos in
   let ctx_val = make_ir_value (IRRegister 10) (IRPointer (IRU8, make_bounds_info ())) test_pos in
   let body_instructions = [mod_assign; eq_assign] in
   

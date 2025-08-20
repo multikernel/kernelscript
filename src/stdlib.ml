@@ -255,8 +255,8 @@ let builtin_types = [
   
   (* Kernel allocation flags enum *)
   TypeDef (EnumDef ("gfp_flag", [
-    ("GFP_KERNEL", Some 0x0001);
-    ("GFP_ATOMIC", Some 0x0002);
+    ("GFP_KERNEL", Some (Ast.Signed64 0x0001L));
+    ("GFP_ATOMIC", Some (Ast.Signed64 0x0002L));
   ]));
 ]
 

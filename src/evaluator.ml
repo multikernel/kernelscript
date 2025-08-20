@@ -32,7 +32,7 @@ type runtime_value =
   | ArrayValue of runtime_value array
   | PointerValue of int  (* Address representation *)
   | StructValue of (string * runtime_value) list
-  | EnumValue of string * int
+  | EnumValue of string * Int64.t
   | MapHandle of string  (* Map identifier *)
   | ContextValue of string * (string * runtime_value) list
   | NullValue  (* Simple null value representation *)
@@ -318,7 +318,7 @@ let rec string_of_runtime_value = function
   | StructValue fields ->
       "{" ^ String.concat "; " (List.map (fun (name, value) ->
         name ^ " = " ^ string_of_runtime_value value) fields) ^ "}"
-  | EnumValue (name, value) -> Printf.sprintf "%s(%d)" name value
+  | EnumValue (name, value) -> Printf.sprintf "%s(%Ld)" name value
   | MapHandle name -> Printf.sprintf "map<%s>" name
   | ContextValue (ctx_type, fields) ->
       Printf.sprintf "%s_context{%s}" ctx_type
@@ -330,7 +330,7 @@ let rec string_of_runtime_value = function
 
 (** Convert literal to runtime value *)
 let runtime_value_of_literal = function
-  | IntLit (i, _) -> IntValue i
+  | IntLit (i, _) -> IntValue (Int64.to_int (Ast.IntegerValue.to_int64 i))
   | StringLit s -> StringValue s
   | CharLit c -> CharValue c
   | BoolLit b -> BoolValue b
@@ -354,7 +354,7 @@ let is_truthy_value rv =
   | StringValue s -> String.length s > 0          (* empty string is falsy, non-empty is truthy *)
   | CharValue c -> c <> '\000'                    (* null character is falsy, others truthy *)
   | PointerValue addr -> addr <> 0                (* null pointer is falsy, non-null is truthy *)
-  | EnumValue (_, value) -> value <> 0            (* enum based on numeric value *)
+  | EnumValue (_, value) -> Int64.compare value 0L <> 0            (* enum based on numeric value *)
   | MapHandle _ -> true                           (* maps are always truthy *)
   | ContextValue (_, _) -> true                   (* context values are always truthy *)
   | NullValue -> false                            (* null is always falsy *)
@@ -643,7 +643,7 @@ and eval_expression ctx expr =
            (* Look up enum constants from loaded builtin AST files *)
            (match Symbol_table.lookup_symbol symbol_table name with
             | Some { kind = Symbol_table.EnumConstant (enum_name, Some value); _ } ->
-                EnumValue (enum_name, value)
+                EnumValue (enum_name, Ast.IntegerValue.to_int64 value)
             | _ ->
                 (* Not an enum constant, try variables *)
                 (try
@@ -731,8 +731,8 @@ and eval_expression ctx expr =
                        (match Symbol_table.lookup_symbol symbol_table name with
                         | Some { kind = Symbol_table.EnumConstant (_, Some value); _ } ->
                             (match matched_value with
-                             | EnumValue (_, matched_val) -> matched_val = value
-                             | IntValue matched_val -> matched_val = value
+                             | EnumValue (_, matched_val) -> matched_val = Ast.IntegerValue.to_int64 value
+                             | IntValue matched_val -> Int64.of_int matched_val = Ast.IntegerValue.to_int64 value
                              | _ -> false)
                         | _ -> false)
                    | None -> false)

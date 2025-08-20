@@ -135,7 +135,7 @@ and ir_type =
   | IRPointer of ir_type * bounds_info
   | IRArray of ir_type * int * bounds_info
   | IRStruct of string * (string * ir_type) list
-  | IREnum of string * (string * int) list
+  | IREnum of string * (string * Ast.integer_value) list
   | IRResult of ir_type * ir_type
   | IRContext of context_type
   | IRAction of action_type
@@ -224,7 +224,7 @@ and ir_value_desc =
   | IRRegister of int
   | IRContextField of context_type * string
   | IRMapRef of string
-  | IREnumConstant of string * string * int  (* enum_name, constant_name, value *)
+  | IREnumConstant of string * string * Ast.integer_value  (* enum_name, constant_name, value *)
   | IRFunctionRef of string  (* Function reference by name *)
   | IRMapAccess of string * ir_value * (ir_value_desc * ir_type)  (* map_name, key, (underlying_value_desc, underlying_type) *)
 
@@ -753,7 +753,7 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
                   IRStruct (name, ir_fields)
               | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
-                    (enum_name, Option.value ~default:0 opt_value)
+                    (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
                   ) values in
                   IREnum (name, ir_values)
               | _ -> ast_type_to_ir_type ast_type)
@@ -776,7 +776,7 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
                   IRStruct (name, ir_fields)
               | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
-                    (enum_name, Option.value ~default:0 opt_value)
+                    (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
                   ) values in
                   IREnum (name, ir_values)
               | _ -> ast_type_to_ir_type ast_type)
@@ -798,7 +798,7 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
              (match symbol.kind with
               | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
-                    (enum_name, Option.value ~default:0 opt_value)
+                    (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
                   ) values in
                   IREnum (name, ir_values)
               | _ -> ast_type_to_ir_type ast_type)

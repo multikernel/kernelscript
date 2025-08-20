@@ -62,7 +62,7 @@ let test_c_value_generation () =
   let ctx = create_c_context () in
   
   (* Test literals *)
-  let int_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
+  let int_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
   check string "integer literal" "42" (generate_c_value ctx int_val);
   
   let bool_val = make_ir_value (IRLiteral (BoolLit true)) IRBool test_pos in
@@ -76,8 +76,8 @@ let test_c_expression_generation () =
   let ctx = create_c_context () in
   
   (* Test binary operation: 10 + 20 *)
-  let left_val = make_ir_value (IRLiteral (IntLit (10, None))) IRU32 test_pos in
-  let right_val = make_ir_value (IRLiteral (IntLit (20, None))) IRU32 test_pos in
+  let left_val = make_ir_value (IRLiteral (IntLit (Signed64 10L, None))) IRU32 test_pos in
+  let right_val = make_ir_value (IRLiteral (IntLit (Signed64 20L, None))) IRU32 test_pos in
   let add_expr = make_ir_expr (IRBinOp (left_val, IRAdd, right_val)) IRU32 test_pos in
   
   let result = generate_c_expression ctx add_expr in
@@ -98,7 +98,7 @@ let test_context_access () =
 let test_bounds_checking () =
   let ctx = create_c_context () in
   
-  let index_val = make_ir_value (IRLiteral (IntLit (5, None))) IRU32 test_pos in
+  let index_val = make_ir_value (IRLiteral (IntLit (Signed64 5L, None))) IRU32 test_pos in
   generate_bounds_check ctx index_val 0 9;
   
   let output = String.concat "\n" ctx.output_lines in
@@ -111,7 +111,7 @@ let test_map_operations () =
   
   (* Test map lookup *)
   let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
-  let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
+  let key_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
   let dest_val = make_ir_value (IRVariable "result") (IRPointer (IRU64, make_bounds_info ())) test_pos in
   
   generate_map_load ctx map_val key_val dest_val MapLookup;
@@ -126,8 +126,8 @@ let test_literal_map_operations () =
   
   (* Test map store with literal key and value *)
   let map_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
-  let literal_key = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
-  let literal_value = make_ir_value (IRLiteral (IntLit (100, None))) IRU64 test_pos in
+  let literal_key = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
+  let literal_value = make_ir_value (IRLiteral (IntLit (Signed64 100L, None))) IRU64 test_pos in
   
   generate_map_store ctx map_val literal_key literal_value MapUpdate;
   
@@ -195,7 +195,7 @@ let test_function_generation () =
   let ctx = create_c_context () in
   
   (* Create a simple function: return 42 *)
-  let return_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
@@ -214,7 +214,7 @@ let test_complete_program () =
   Kernelscript_context.Xdp_codegen.register ();
   
   (* Create a simple XDP program *)
-  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in (* XDP_PASS *)
+  let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test_xdp" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
@@ -256,7 +256,7 @@ let test_control_flow () =
   let ctx = create_c_context () in
   
   (* Test conditional jump *)
-  let cond_val = make_ir_value (IRLiteral (IntLit (1, None))) IRBool test_pos in
+  let cond_val = make_ir_value (IRLiteral (IntLit (Signed64 1L, None))) IRBool test_pos in
   let cond_jump = make_ir_instruction (IRCondJump (cond_val, "true_branch", "false_branch")) test_pos in
   
   generate_c_instruction ctx cond_jump;
@@ -268,7 +268,7 @@ let test_control_flow () =
 
 (** Test file writing functionality *)
 let test_file_writing () =
-  let return_val = make_ir_value (IRLiteral (IntLit (2, None))) IRU32 test_pos in
+  let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
   let main_func = make_ir_function "test" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
@@ -383,7 +383,7 @@ let test_string_literal_multi_arg_calls () =
   
   (* Create string literal and other arguments *)
   let string_val = make_ir_value (IRLiteral (StringLit "Test: %d")) (IRStr 8) test_pos in
-  let int_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos in
+  let int_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
   
   (* Test print function call with multiple arguments *)
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [string_val; int_val], None)) test_pos in
@@ -671,8 +671,8 @@ let test_hex_literal_addressing_fix () =
   let map_val = make_ir_value (IRMapRef "packet_counts") (IRPointer (IRStruct ("map", []), make_bounds_info ())) test_pos in
   
   (* Create hex literal like the one in rate_limiter.ks that caused the bug *)
-  let hex_key = make_ir_value (IRLiteral (IntLit (2130706433, Some "0x7F000001"))) IRU32 test_pos in
-  let hex_value = make_ir_value (IRLiteral (IntLit (255, Some "0xFF"))) IRU64 test_pos in
+  let hex_key = make_ir_value (IRLiteral (IntLit (Signed64 2130706433L, Some "0x7F000001"))) IRU32 test_pos in
+  let hex_value = make_ir_value (IRLiteral (IntLit (Signed64 255L, Some "0xFF"))) IRU64 test_pos in
   
   (* Test map store with hex literals *)
   generate_map_store ctx map_val hex_key hex_value MapUpdate;
@@ -858,7 +858,7 @@ let test_declaration_ordering_fix () =
     ~ast_key_type:U32 ~ast_value_type:U64 ~ast_map_type:Hash dummy_pos in
   
   let map_lookup_val = make_ir_value (IRMapRef "test_map") (IRPointer (IRStruct ("map", []), make_bounds_info ())) dummy_pos in
-  let key_val = make_ir_value (IRLiteral (IntLit (42, None))) IRU32 dummy_pos in
+  let key_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 dummy_pos in
   let dest_val = make_ir_value (IRVariable "result") IRU64 dummy_pos in
   
   (* Create instruction that uses the map *)
@@ -961,7 +961,7 @@ let test_map_field_access_pointer_fix () =
   let ctx = create_c_context () in
   
   (* Create a value that represents a map access result *)
-  let key_val = make_ir_value (IRLiteral (IntLit (1, None))) IRU32 dummy_pos in
+  let key_val = make_ir_value (IRLiteral (IntLit (Signed64 1L, None))) IRU32 dummy_pos in
   let map_access_val = make_ir_value 
     (IRMapAccess ("buffer_map", key_val, (IRRegister 5, IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))))
     (IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))
@@ -996,7 +996,7 @@ let test_variable_function_call_declaration () =
   (* Create a function call that returns to a register *)
   let result_reg = 0 in
   let result_val = make_ir_value (IRRegister result_reg) IRU32 test_pos in
-  let call_instr = make_ir_instruction (IRCall (DirectCall "helper_function", [make_ir_value (IRLiteral (IntLit (5, None))) IRU32 test_pos], Some result_val)) test_pos in
+  let call_instr = make_ir_instruction (IRCall (DirectCall "helper_function", [make_ir_value (IRLiteral (IntLit (Signed64 5L, None))) IRU32 test_pos], Some result_val)) test_pos in
   
   (* Create a variable declaration for the same register with no initialization *)
   let decl_instr = make_ir_instruction (IRDeclareVariable (result_val, IRU32, None)) test_pos in

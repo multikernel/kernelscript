@@ -45,7 +45,7 @@ let test_skeleton_header_inclusion () =
 let test_skeleton_header_inclusion_attach () =
   (* Test that skeleton header is included when attach() is used *)
   let test_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" } in
-  let attach_call = make_ir_instruction (IRCall (DirectCall "attach", [make_ir_value (IRLiteral (IntLit (1, None))) IRI32 test_pos; make_ir_value (IRLiteral (StringLit "lo")) (IRStr 10) test_pos; make_ir_value (IRLiteral (IntLit (0, None))) IRI32 test_pos], None)) test_pos in
+  let attach_call = make_ir_instruction (IRCall (DirectCall "attach", [make_ir_value (IRLiteral (IntLit (Signed64 1L, None))) IRI32 test_pos; make_ir_value (IRLiteral (StringLit "lo")) (IRStr 10) test_pos; make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRI32 test_pos], None)) test_pos in
   let entry_block = make_ir_basic_block "entry" [attach_call] 0 in
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
@@ -82,7 +82,7 @@ let test_skeleton_header_included_with_global_variables () =
   let global_var = {
     global_var_name = "test_var";
     global_var_type = IRU32;
-    global_var_init = Some (make_ir_value (IRLiteral (IntLit (42, None))) IRU32 test_pos);
+    global_var_init = Some (make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos);
     global_var_pos = test_pos;
     is_local = false;
     is_pinned = false;

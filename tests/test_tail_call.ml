@@ -43,7 +43,7 @@ let test_tail_call_detection _ =
   ] in
   
   let xdp_func2 = make_test_func "log_request" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 2L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] xdp_func1 in
@@ -69,7 +69,7 @@ let test_program_type_compatibility _ =
   ] in
   
   let tc_func = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some (make_unnamed_return I32)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 0L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] xdp_func in
@@ -89,7 +89,7 @@ let test_signature_compatibility _ =
   
   (* Different signature - incompatible *)
   let func2 = make_test_func "handler2" [("ctx", Xdp_md); ("data", U32)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 2L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] func1 in
@@ -112,7 +112,7 @@ let test_prog_array_mapping _ =
   ] in
   
   let func3 = make_test_func "log_tcp" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 2L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] func1 in
@@ -140,7 +140,7 @@ let test_dependency_chains _ =
   ] in
   
   let func3 = make_test_func "stage2" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 2L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] func1 in
@@ -160,7 +160,7 @@ let test_dependency_chains _ =
 (** Test no tail calls *)
 let test_no_tail_calls _ =
   let func1 = make_test_func "simple_handler" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (2, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 2L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] func1 in
@@ -178,7 +178,7 @@ let test_validation_errors _ =
   ] in
   
   let func2 = make_test_func "tc_handler" [("ctx", Pointer (Struct "__sk_buff"))] (Some (make_unnamed_return I32)) [
-    make_stmt (Return (Some (make_expr (Literal (IntLit (0, None))) make_test_position))) make_test_position
+    make_stmt (Return (Some (make_expr (Literal (IntLit (Signed64 0L, None))) make_test_position))) make_test_position
   ] in
   
   let attr_func1 = make_test_attr_func [SimpleAttribute "xdp"] func1 in
@@ -215,7 +215,7 @@ let test_tail_call_match_expressions _ =
   ] in
   
   let packet_processor = make_test_func "packet_processor" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (6, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (Signed64 6L, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some match_expr)) make_test_position
   ] in
   
@@ -253,15 +253,15 @@ let test_nested_match_tail_calls _ =
   
   (* Inner match expression *)
   let inner_match_arms = [
-            { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr handler_a_call; arm_pos = make_test_position };
+            { arm_pattern = ConstantPattern (IntLit (Signed64 1L, None)); arm_body = SingleExpr handler_a_call; arm_pos = make_test_position };
         { arm_pattern = DefaultPattern; arm_body = SingleExpr handler_b_call; arm_pos = make_test_position };
   ] in
   let inner_match = make_expr (Match (value_var, inner_match_arms)) make_test_position in
   
   (* Outer match expression *)
   let outer_match_arms = [
-            { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr inner_match; arm_pos = make_test_position };
-        { arm_pattern = ConstantPattern (IntLit (2, None)); arm_body = SingleExpr handler_c_call; arm_pos = make_test_position };
+            { arm_pattern = ConstantPattern (IntLit (Signed64 1L, None)); arm_body = SingleExpr inner_match; arm_pos = make_test_position };
+        { arm_pattern = ConstantPattern (IntLit (Signed64 2L, None)); arm_body = SingleExpr handler_c_call; arm_pos = make_test_position };
         { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_tx_const; arm_pos = make_test_position };
   ] in
   let outer_match = make_expr (Match (value_var, outer_match_arms)) make_test_position in
@@ -279,7 +279,7 @@ let test_nested_match_tail_calls _ =
   ] in
   
   let dispatcher = make_test_func "dispatcher" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Declaration ("value", Some U32, Some (make_expr (Literal (IntLit (1, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("value", Some U32, Some (make_expr (Literal (IntLit (Signed64 1L, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some outer_match)) make_test_position
   ] in
   
@@ -306,9 +306,9 @@ let test_match_with_mixed_tail_calls _ =
   let xdp_aborted_const = make_expr (Identifier "XDP_ABORTED") make_test_position in
   
   let match_arms = [
-            { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr tail_target_call1; arm_pos = make_test_position };
-        { arm_pattern = ConstantPattern (IntLit (2, None)); arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
-        { arm_pattern = ConstantPattern (IntLit (3, None)); arm_body = SingleExpr tail_target_call2; arm_pos = make_test_position };
+            { arm_pattern = ConstantPattern (IntLit (Signed64 1L, None)); arm_body = SingleExpr tail_target_call1; arm_pos = make_test_position };
+        { arm_pattern = ConstantPattern (IntLit (Signed64 2L, None)); arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
+        { arm_pattern = ConstantPattern (IntLit (Signed64 3L, None)); arm_body = SingleExpr tail_target_call2; arm_pos = make_test_position };
         { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_aborted_const; arm_pos = make_test_position };
   ] in
   
@@ -319,7 +319,7 @@ let test_match_with_mixed_tail_calls _ =
   ] in
   
   let mixed_dispatcher = make_test_func "mixed_dispatcher" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Declaration ("value", Some U32, Some (make_expr (Literal (IntLit (1, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("value", Some U32, Some (make_expr (Literal (IntLit (Signed64 1L, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some match_expr)) make_test_position
   ] in
   
@@ -351,7 +351,7 @@ let test_tail_calls_in_if_statements _ =
   let final_return = make_stmt (Return (Some (make_expr (Identifier "XDP_PASS") make_test_position))) make_test_position in
   
   let packet_filter = make_test_func "packet_filter" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Declaration ("size", Some U32, Some (make_expr (Literal (IntLit (128, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("size", Some U32, Some (make_expr (Literal (IntLit (Signed64 128L, None))) make_test_position))) make_test_position;
     if_stmt;
     final_return
   ] in
@@ -401,16 +401,16 @@ let test_helper_functions_not_tail_called _ =
   let xdp_drop_const = make_expr (Identifier "XDP_DROP") make_test_position in
   
   let match_arms = [
-    { arm_pattern = ConstantPattern (IntLit (6, None)); arm_body = SingleExpr syn_helper_call; arm_pos = make_test_position }; (* TCP *)
-    { arm_pattern = ConstantPattern (IntLit (17, None)); arm_body = SingleExpr dns_helper_call; arm_pos = make_test_position }; (* UDP *)
+    { arm_pattern = ConstantPattern (IntLit (Signed64 6L, None)); arm_body = SingleExpr syn_helper_call; arm_pos = make_test_position }; (* TCP *)
+    { arm_pattern = ConstantPattern (IntLit (Signed64 17L, None)); arm_body = SingleExpr dns_helper_call; arm_pos = make_test_position }; (* UDP *)
     { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
   ] in
   
   let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
   
   let ddos_protection = make_test_func "ddos_protection" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (6, None))) make_test_position))) make_test_position;
-    make_stmt (Declaration ("src_ip", Some U32, Some (make_expr (Literal (IntLit (0xc0a80101, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (Signed64 6L, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("src_ip", Some U32, Some (make_expr (Literal (IntLit (Signed64 0xc0a80101L, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some match_expr)) make_test_position
   ] in
   
@@ -454,15 +454,15 @@ let test_mixed_helpers_and_tail_calls _ =
   let xdp_drop_const = make_expr (Identifier "XDP_DROP") make_test_position in
   
   let match_arms = [
-    { arm_pattern = ConstantPattern (IntLit (1, None)); arm_body = SingleExpr helper_call; arm_pos = make_test_position }; (* Call helper *)
-    { arm_pattern = ConstantPattern (IntLit (6, None)); arm_body = SingleExpr program_call; arm_pos = make_test_position }; (* Call eBPF program *)
+    { arm_pattern = ConstantPattern (IntLit (Signed64 1L, None)); arm_body = SingleExpr helper_call; arm_pos = make_test_position }; (* Call helper *)
+    { arm_pattern = ConstantPattern (IntLit (Signed64 6L, None)); arm_body = SingleExpr program_call; arm_pos = make_test_position }; (* Call eBPF program *)
     { arm_pattern = DefaultPattern; arm_body = SingleExpr xdp_drop_const; arm_pos = make_test_position };
   ] in
   
   let match_expr = make_expr (Match (protocol_var, match_arms)) make_test_position in
   
   let packet_classifier = make_test_func "packet_classifier" [("ctx", Xdp_md)] (Some (make_unnamed_return Xdp_action)) [
-    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (6, None))) make_test_position))) make_test_position;
+    make_stmt (Declaration ("protocol", Some U32, Some (make_expr (Literal (IntLit (Signed64 6L, None))) make_test_position))) make_test_position;
     make_stmt (Return (Some match_expr)) make_test_position
   ] in
   
