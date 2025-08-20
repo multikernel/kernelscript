@@ -3147,9 +3147,21 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
         (attr_acc, typed_func :: userspace_acc)
     | ImplBlock impl_block ->
         (* Type check impl block functions - treat them as eBPF functions with struct_ops attributes *)
+        (* Check if this is a struct_ops impl block *)
+        let is_struct_ops = List.exists (function
+          | AttributeWithArg ("struct_ops", _) -> true
+          | _ -> false
+        ) impl_block.impl_attributes in
+
         let typed_impl_functions = List.filter_map (function
           | ImplFunction func ->
-              let typed_func = type_check_function ctx func in
+              (* Set function scope to Kernel for struct_ops implementations *)
+              let func_to_check = if is_struct_ops then
+                { func with func_scope = Ast.Kernel }
+              else
+                func
+              in
+              let typed_func = type_check_function ctx func_to_check in
               Some (impl_block.impl_attributes, typed_func)
           | ImplStaticField (_, _) -> None  (* Static fields don't need type checking as functions *)
         ) impl_block.impl_items in

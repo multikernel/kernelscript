@@ -1209,10 +1209,73 @@ let test_sched_ext_ops_btf_definition () =
        check bool "Generated definition contains flags" true (contains_substr definition "flags")
    | None -> fail "Should generate definition for valid BTF type")
 
+(** Test that struct_ops functions can call kernel functions (kfuncs) - regression test for type checker bug *)
+let test_struct_ops_can_call_kernel_functions () =
+  let program = {|
+    // Declare external kernel functions (kfuncs)
+    extern scx_bpf_select_cpu_dfl(p: *u8, prev_cpu: i32, wake_flags: u64, direct: *bool) -> i32
+    extern scx_bpf_dsq_insert(p: *u8, dsq_id: u64, slice: u64, enq_flags: u64) -> void
+    extern scx_bpf_consume(dsq_id: u64, cpu: i32, flags: u64) -> i32
+    
+    // Kernel enum constants
+    enum scx_dsq_id_flags {
+        SCX_DSQ_GLOBAL = 9223372036854775809,
+        SCX_DSQ_LOCAL = 9223372036854775810,
+        SCX_SLICE_DFL = 20000000,
+    }
+    
+    @struct_ops("sched_ext_ops")
+    impl simple_scheduler {
+        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+            var direct: bool = false
+            // This should be allowed - struct_ops functions run in kernel context
+            var cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &direct)
+            
+            if (direct == true) {
+                scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0)
+            }
+            
+            return cpu
+        }
+        
+        fn dispatch(cpu: i32, prev: *u8) -> void {
+            // This should also be allowed - calling kernel function from struct_ops
+            if (scx_bpf_consume(SCX_DSQ_GLOBAL, cpu, 0) == 0) {
+                // No tasks available
+            }
+        }
+        
+        name: "simple_sched",
+        timeout_ms: 0,
+        flags: 0,
+    }
+    
+    fn main() -> i32 {
+        var result = register(simple_scheduler)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  
+  (* This should succeed - struct_ops functions should be able to call kernel functions *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast in
+    check bool "struct_ops functions should be able to call kernel functions" true true
+  with
+  | Type_checker.Type_error (msg, _) ->
+      (* If we get the old error message, the bug is still present *)
+      if String.contains msg 'u' && String.contains msg 's' && String.contains msg 'e' && String.contains msg 'r' then
+        fail ("struct_ops functions should be able to call kernel functions, but got error: " ^ msg)
+      else
+        fail ("Unexpected type error: " ^ msg)
+  | _ -> fail "Unexpected error during type checking"
+
 let tests = [
   "struct_ops parsing", `Quick, test_struct_ops_parsing;
   "regular struct parsing", `Quick, test_regular_struct_parsing;
   "register() with struct_ops", `Quick, test_register_with_struct_ops;
+  "struct_ops can call kernel functions", `Quick, test_struct_ops_can_call_kernel_functions;
   "register() rejects regular struct", `Quick, test_register_rejects_regular_struct;
   "multiple struct_ops", `Quick, test_multiple_struct_ops;
   "struct_ops IR generation", `Quick, test_struct_ops_ir_generation;
