@@ -3246,7 +3246,12 @@ let lower_multi_program ast symbol_table source_name =
                 (match literal with
                 | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) field_expr.expr_pos
                 | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) field_expr.expr_pos
-                | _ -> failwith "Unsupported literal type in static field")
+                | Ast.IntLit (value, _) -> 
+                    let ir_type = if value < 0 then IRI32 else IRU32 in
+                    make_ir_value (IRLiteral (IntLit (value, None))) ir_type field_expr.expr_pos
+                | Ast.BoolLit b -> make_ir_value (IRLiteral (BoolLit b)) IRBool field_expr.expr_pos
+                | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar field_expr.expr_pos
+                | _ -> failwith ("Unsupported literal type in static field: " ^ (Ast.string_of_literal literal)))
             | _ -> failwith "Static fields must be literals"
           in
           Some (field_name, field_val)

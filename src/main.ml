@@ -37,7 +37,7 @@ let rec parse_args () =
       printf "    prog_type: xdp | tc/direction | probe/target_function | tracepoint/category/event\n";
       printf "    Examples: tc/ingress, tc/egress, probe/sys_read, probe/vfs_write, probe/tcp_sendmsg\n";
       printf "    tracepoint: tracepoint/syscalls/sys_enter_read, tracepoint/sched/sched_switch\n";
-      printf "    struct_ops: tcp_congestion_ops\n";
+      printf "    struct_ops: tcp_congestion_ops, sched_ext_ops\n";
       printf "    project_name: Name of the project directory to create\n";
       printf "    --btf-vmlinux-path: Path to BTF vmlinux file (default: /sys/kernel/btf/vmlinux)\n";
       printf "    --kfuncs: Extract available kfuncs from BTF and generate .kh header file\n\n";

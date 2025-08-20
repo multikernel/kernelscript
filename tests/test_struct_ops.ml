@@ -989,6 +989,226 @@ let test_mixed_struct_types_inclusion () =
   check bool "No string types should be generated (literals are embedded)" false
     (contains_substr c_code "str_256_t")
 
+(** Test sched_ext_ops parsing and type checking *)
+let test_sched_ext_ops_parsing () =
+  let program = {|
+    @struct_ops("sched_ext_ops")
+    impl simple_scheduler {
+        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+            return prev_cpu
+        }
+        
+        fn enqueue(p: *u8, enq_flags: u64) -> void {
+            // Simple enqueue implementation
+        }
+        
+        fn dispatch(cpu: i32, prev: *u8) -> void {
+            // Simple dispatch implementation
+        }
+        
+        name: "simple_sched",
+        timeout_ms: 0,
+        flags: 0,
+    }
+    
+    fn main() -> i32 {
+        var result = register(simple_scheduler)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  
+  (* Type checking should succeed *)
+  try
+    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
+    check bool "sched_ext_ops type checking should succeed" true true
+  with
+  | Type_checker.Type_error _ -> fail "Type checking should succeed for sched_ext_ops"
+  | _ -> fail "Unexpected error during type checking"
+
+(** Test sched_ext_ops IR generation *)
+let test_sched_ext_ops_ir_generation () =
+  let program = {|
+    @struct_ops("sched_ext_ops")
+    impl fifo_scheduler {
+        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+            return prev_cpu
+        }
+        
+        fn enqueue(p: *u8, enq_flags: u64) -> void {
+            // FIFO enqueue
+        }
+        
+        name: "fifo_sched",
+        timeout_ms: 1000,
+        flags: 0,
+    }
+    
+    fn main() -> i32 {
+        var result = register(fifo_scheduler)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  
+  (* Check that struct_ops are collected in IR *)
+  check bool "IR contains sched_ext_ops declarations" true (List.length ir.struct_ops_declarations > 0);
+  
+  (* Check the struct_ops declaration details - find our sched_ext_ops declaration *)
+  let sched_ext_declarations = List.filter (fun decl -> 
+    decl.Ir.ir_struct_ops_name = "fifo_scheduler" && decl.Ir.ir_kernel_struct_name = "sched_ext_ops"
+  ) ir.struct_ops_declarations in
+  (match sched_ext_declarations with
+   | [declaration] ->
+       check string "Struct ops name" "fifo_scheduler" declaration.Ir.ir_struct_ops_name;
+       check string "Kernel struct name" "sched_ext_ops" declaration.Ir.ir_kernel_struct_name
+   | [] -> fail "Expected to find sched_ext_ops declaration in IR"
+   | _ -> fail "Expected exactly one sched_ext_ops declaration in IR")
+
+(** Test sched_ext_ops eBPF code generation *)
+let test_sched_ext_ops_ebpf_codegen () =
+  let program = {|
+    @struct_ops("sched_ext_ops")
+    impl priority_scheduler {
+        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+            return prev_cpu
+        }
+        
+        fn enqueue(p: *u8, enq_flags: u64) -> void {
+            // Priority-based enqueue
+        }
+        
+        fn dispatch(cpu: i32, prev: *u8) -> void {
+            // Priority-based dispatch
+        }
+        
+        name: "priority_sched",
+        timeout_ms: 5000,
+        flags: 1,
+    }
+    
+    fn main() -> i32 {
+        var result = register(priority_scheduler)
+        return result
+    }
+  |} in
+  
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  
+  (* Generate eBPF C code *)
+  let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+  
+  (* Basic generation checks *)
+  check bool "eBPF code generation completed" true (String.length c_code > 0);
+  
+  (* Check for struct_ops section annotations *)
+  check bool "Contains struct_ops sections" true
+    (try ignore (Str.search_forward (Str.regexp "SEC(\"struct_ops") c_code 0); true with Not_found -> false);
+  
+  (* Check that sched_ext_ops struct definition is included *)
+  check bool "Contains sched_ext_ops struct definition" true
+    (try ignore (Str.search_forward (Str.regexp "struct sched_ext_ops") c_code 0); true with Not_found -> false);
+  
+  (* Check that the struct has expected fields/methods *)
+  check bool "sched_ext_ops contains select_cpu field" true
+    (contains_substr c_code "select_cpu");
+  check bool "sched_ext_ops contains enqueue field" true
+    (contains_substr c_code "enqueue");
+  check bool "sched_ext_ops contains dispatch field" true
+    (contains_substr c_code "dispatch");
+  
+  (* Check that struct_ops instance is properly generated *)
+  check bool "Contains struct_ops instance definition" true
+    (try ignore (Str.search_forward (Str.regexp "SEC(\"\\.struct_ops\")") c_code 0); true with Not_found -> false);
+  check bool "Instance has correct struct type" true
+    (try ignore (Str.search_forward (Str.regexp "struct sched_ext_ops.*priority_scheduler") c_code 0); true with Not_found -> false)
+
+(** Test sched_ext_ops registry functionality *)
+let test_sched_ext_ops_registry () =
+  (* Test that sched_ext_ops is known *)
+  check bool "sched_ext_ops is known" true (Struct_ops_registry.is_known_struct_ops "sched_ext_ops");
+  
+  (* Test sched_ext_ops info retrieval *)
+  (match Struct_ops_registry.get_struct_ops_info "sched_ext_ops" with
+   | Some info ->
+       check string "sched_ext_ops description" "Extensible scheduler operations" info.description;
+       check (option string) "sched_ext_ops version" (Some "6.12+") info.kernel_version;
+       check bool "sched_ext_ops usage contains scheduler" true 
+         (List.exists (fun usage -> String.contains usage 's' && String.contains usage 'c' && String.contains usage 'h') info.common_usage)
+   | None -> fail "Expected to find sched_ext_ops info");
+  
+  (* Test getting all known struct_ops includes sched_ext_ops *)
+  let all_known = Struct_ops_registry.get_all_known_struct_ops () in
+  check bool "Contains sched_ext_ops" true (List.mem "sched_ext_ops" all_known)
+
+(** Test sched_ext_ops BTF extraction **)
+let test_sched_ext_ops_btf_extraction () =
+  (* Test BTF template generation - should fail gracefully with non-existent BTF *)
+  (try
+    let _ = Btf_parser.generate_struct_ops_template (Some "/nonexistent/btf") ["sched_ext_ops"] "test_project" in
+    fail "Should have failed with non-existent BTF file"
+  with
+  | Failure msg -> check bool "BTF error contains expected message" true (String.length msg > 0)
+  | _ -> fail "Expected Failure exception");
+  
+  (* Test BTF verification - should fail gracefully *)
+  (match Struct_ops_registry.verify_struct_ops_against_btf "/non/existent/btf" "sched_ext_ops" [("select_cpu", "u32")] with
+   | Ok () -> fail "Should have failed with non-existent BTF"
+   | Error _ -> check bool "BTF verification fails gracefully" true true);
+  
+  (* Test struct_ops extraction from BTF - should return empty list for non-existent file *)
+  let definitions = Struct_ops_registry.extract_struct_ops_from_btf "/non/existent/btf" ["sched_ext_ops"] in
+  check int "No definitions from non-existent BTF" 0 (List.length definitions)
+
+(** Test sched_ext_ops BTF definition generation **)
+let test_sched_ext_ops_btf_definition () =
+  (* Create a mock BTF type for sched_ext_ops *)
+  let mock_btf_type = {
+    Btf_binary_parser.name = "sched_ext_ops";
+    kind = "struct";
+    size = Some 256;
+    members = Some [
+      ("select_cpu", "int (*)(struct task_struct *, int, u64)");
+      ("enqueue", "void (*)(struct task_struct *, u64)");
+      ("dispatch", "void (*)(s32, struct task_struct *)");
+      ("runnable", "void (*)(struct task_struct *, u64)");
+      ("running", "void (*)(struct task_struct *)");
+      ("stopping", "void (*)(struct task_struct *, bool)");
+      ("quiescent", "void (*)(struct task_struct *, u64)");
+      ("init_task", "s32 (*)(struct task_struct *, struct scx_init_task_args *)");
+      ("exit_task", "void (*)(struct task_struct *, struct scx_exit_task_args *)");
+      ("enable", "void (*)(struct task_struct *)");
+      ("cancel", "bool (*)(struct task_struct *, struct scx_cancel_task_args *)");
+      ("init", "s32 (*)()");
+      ("exit", "void (*)(struct scx_exit_info *)");
+      ("name", "char *");
+      ("timeout_ms", "u64");
+      ("flags", "u64");
+    ];
+    kernel_defined = true;
+  } in
+  
+  (* Test definition generation *)
+  (match Struct_ops_registry.generate_struct_ops_definition mock_btf_type with
+   | Some definition ->
+       check bool "Generated definition contains struct name" true (contains_substr definition "sched_ext_ops");
+       check bool "Generated definition contains select_cpu" true (contains_substr definition "select_cpu");
+       check bool "Generated definition contains struct_ops attribute" true (contains_substr definition "@struct_ops");
+       check bool "Generated definition contains timeout_ms" true (contains_substr definition "timeout_ms");
+       check bool "Generated definition contains flags" true (contains_substr definition "flags")
+   | None -> fail "Should generate definition for valid BTF type")
+
 let tests = [
   "struct_ops parsing", `Quick, test_struct_ops_parsing;
   "regular struct parsing", `Quick, test_regular_struct_parsing;
@@ -1021,6 +1241,13 @@ let tests = [
   "init command struct_ops detection", `Quick, test_init_command_struct_ops_detection;
   "BTF error handling", `Quick, test_btf_error_handling;
   "struct_ops code generation", `Quick, test_struct_ops_code_generation;
+  (* sched_ext_ops tests *)
+  "sched_ext_ops parsing", `Quick, test_sched_ext_ops_parsing;
+  "sched_ext_ops IR generation", `Quick, test_sched_ext_ops_ir_generation;
+  "sched_ext_ops eBPF codegen", `Quick, test_sched_ext_ops_ebpf_codegen;
+  "sched_ext_ops registry", `Quick, test_sched_ext_ops_registry;
+  "sched_ext_ops BTF extraction", `Quick, test_sched_ext_ops_btf_extraction;
+  "sched_ext_ops BTF definition", `Quick, test_sched_ext_ops_btf_definition;
 ]
 
 let () = Alcotest.run "KernelScript struct_ops and BTF integration tests" [

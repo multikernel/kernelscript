@@ -131,6 +131,26 @@ module StructOps = struct
     ("test_2", Function ([I32; I32], I32));
   ]
   
+  (** Sched-ext operations struct fields *)
+  let sched_ext_ops_fields = [
+    ("select_cpu", Function ([Pointer U8; I32; U64], I32));
+    ("enqueue", Function ([Pointer U8; U64], Void));
+    ("dispatch", Function ([I32; Pointer U8], Void));
+    ("runnable", Function ([Pointer U8; U64], Void));
+    ("running", Function ([Pointer U8], Void));
+    ("stopping", Function ([Pointer U8; Bool], Void));
+    ("quiescent", Function ([Pointer U8; U64], Void));
+    ("init_task", Function ([Pointer U8; Pointer U8], I32));
+    ("exit_task", Function ([Pointer U8; Pointer U8], Void));
+    ("enable", Function ([Pointer U8], Void));
+    ("cancel", Function ([Pointer U8; Pointer U8], Bool));
+    ("init", Function ([], I32));
+    ("exit", Function ([Pointer U8], Void));
+    ("name", Pointer U8);
+    ("timeout_ms", U64);
+    ("flags", U64);
+  ]
+  
   (** Create TCP congestion ops struct AST *)
   let tcp_congestion_ops_struct = 
     StructDecl {
@@ -158,11 +178,21 @@ module StructOps = struct
       struct_attributes = [AttributeWithArg ("struct_ops", "bpf_struct_ops_test")];
     }
   
+  (** Create sched-ext ops struct AST *)
+  let sched_ext_ops_struct = 
+    StructDecl {
+      struct_name = "sched_ext_ops";
+      struct_fields = sched_ext_ops_fields;
+      struct_pos = test_pos;
+      struct_attributes = [AttributeWithArg ("struct_ops", "sched_ext_ops")];
+    }
+  
   (** All struct_ops builtin AST declarations *)
   let builtin_ast = [
     tcp_congestion_ops_struct;
     bpf_iter_ops_struct;
     bpf_struct_ops_test_struct;
+    sched_ext_ops_struct;
   ]
 end
 

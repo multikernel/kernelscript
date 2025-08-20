@@ -1802,7 +1802,62 @@ fn main() -> i32 {
 }
 ```
 
-#### 3.10.3 Registration Function
+#### 3.10.3 Sched-ext Scheduler Implementation
+
+KernelScript supports sched-ext (extensible scheduler) through the `sched_ext_ops` struct_ops:
+
+```kernelscript
+// Simple FIFO scheduler using sched-ext
+@struct_ops("sched_ext_ops")
+impl simple_fifo_scheduler {
+    
+    // Select CPU for a waking task
+    fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+        // Use default CPU selection with direct dispatch if idle core found
+        var direct: bool = false
+        var cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &direct)
+        
+        if (direct) {
+            // Insert directly into local DSQ, skipping enqueue
+            scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0)
+        }
+        
+        return cpu
+    }
+    
+    // Enqueue task into global FIFO queue
+    fn enqueue(p: *u8, enq_flags: u64) -> void {
+        // Simple FIFO: insert all tasks into global DSQ
+        scx_bpf_dsq_insert(p, SCX_DSQ_GLOBAL, SCX_SLICE_DFL, enq_flags)
+    }
+    
+    // Dispatch tasks from global queue to local CPU
+    fn dispatch(cpu: i32, prev: *u8) -> void {
+        // Try to consume a task from the global DSQ
+        if (!scx_bpf_consume(SCX_DSQ_GLOBAL)) {
+            // No tasks available, CPU will go idle
+        }
+    }
+    
+    // Initialize scheduler
+    fn init() -> i32 {
+        return 0  // Success
+    }
+    
+    // Scheduler configuration
+    name: "simple_fifo",
+    timeout_ms: 0,  // No timeout
+    flags: 0,       // Default flags
+}
+
+// Register the scheduler
+fn main() -> i32 {
+    var result = register(simple_fifo_scheduler)
+    return result
+}
+```
+
+#### 3.10.4 Registration Function
 
 The `register()` function is type-aware and generates the appropriate registration code:
 

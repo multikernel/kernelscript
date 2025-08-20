@@ -46,6 +46,12 @@ let known_struct_ops = [
     kernel_version = Some "5.6+";
     common_usage = ["Testing and development"];
   };
+  {
+    name = "sched_ext_ops";
+    description = "Extensible scheduler operations";
+    kernel_version = Some "6.12+";
+    common_usage = ["Custom scheduling policies"; "BPF-based schedulers"; "Scheduler experimentation"];
+  };
 ]
 
 (** Check if a struct_ops type is known *)
