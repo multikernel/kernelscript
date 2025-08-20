@@ -454,7 +454,7 @@ let test_symbol_table_struct_ops () =
   (match Symbol_table.lookup_symbol symbol_table "IterOps" with
    | Some symbol ->
        (match symbol.kind with
-        | TypeDef (StructDef (name, _)) -> check string "Struct name in symbol table" "IterOps" name
+        | TypeDef (StructDef (name, _, _)) -> check string "Struct name in symbol table" "IterOps" name
         | _ -> fail "Expected StructDef in symbol table")  
    | None -> fail "struct_ops should be in symbol table")
 

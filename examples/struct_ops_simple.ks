@@ -1,22 +1,7 @@
 // Test file with impl block struct_ops declarations using the new syntax
 // This demonstrates the clean, intuitive impl block approach (Option 1)
 
-// Extracted from BTF
-struct tcp_congestion_ops {
-    ssthresh: fn(arg: *u8) -> u32,
-    cong_avoid: fn(arg: *u8, arg: u32, arg: u32) -> void,
-    set_state: fn(arg: *u8, arg: u8) -> void,
-    cwnd_event: fn(arg: *u8, arg: u32) -> void,
-    in_ack_event: fn(arg: *u8, arg: u32) -> void,
-    pkts_acked: fn(arg: *u8, arg: *u8) -> void,
-    min_tso_segs: fn(arg: *u8) -> u32,
-    cong_control: fn(arg: *u8, arg: u32, arg: u32, arg: *u8) -> void,
-    undo_cwnd: fn(arg: *u8) -> u32,
-    sndbuf_expand: fn(arg: *u8) -> u32,
-    get_info: fn(arg: *u8, arg: u32, arg: *u8, arg: *u8) -> u64,
-    name: u8[16],
-    owner: *u8,
-}
+include "tcp_congestion_ops.kh"
 
 @struct_ops("tcp_congestion_ops")
 impl minimal_congestion_control {

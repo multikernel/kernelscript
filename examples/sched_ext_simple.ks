@@ -1,6 +1,8 @@
 // Simple sched-ext scheduler implementation
 // This demonstrates a basic FIFO scheduler using sched_ext_ops
 
+include "sched_ext_ops.kh"
+
 // kfuncs declarations (extracted from BTF)
 extern scx_bpf_select_cpu_dfl(p: *u8, prev_cpu: i32, wake_flags: u64, direct: *bool) -> i32
 extern scx_bpf_dsq_insert(p: *u8, dsq_id: u64, slice: u64, enq_flags: u64) -> void
@@ -21,25 +23,6 @@ enum scx_dsq_id_flags {
         SCX_DSQ_LOCAL = 9223372036854775810,
         SCX_DSQ_LOCAL_ON = 13835058055282163712,
         SCX_DSQ_LOCAL_CPU_MASK = 4294967295,
-}
-
-// Define the sched_ext_ops structure (extracted from BTF)
-struct sched_ext_ops {
-    select_cpu: fn(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32,
-    enqueue: fn(p: *u8, enq_flags: u64) -> void,
-    dispatch: fn(cpu: i32, prev: *u8) -> void,
-    runnable: fn(p: *u8, enq_flags: u64) -> void,
-    running: fn(p: *u8) -> void,
-    stopping: fn(p: *u8, runnable: bool) -> void,
-    quiescent: fn(p: *u8, deq_flags: u64) -> void,
-    init_task: fn(p: *u8, args: *u8) -> i32,
-    exit_task: fn(p: *u8, args: *u8) -> void,
-    enable: fn(p: *u8) -> void,
-    init: fn() -> i32,
-    exit: fn(info: *u8) -> void,
-    name: *u8,
-    timeout_ms: u64,
-    flags: u64,
 }
 
 // Simple FIFO scheduler implementation

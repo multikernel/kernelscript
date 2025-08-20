@@ -6,6 +6,8 @@ import utils from "./import/simple_utils.ks"
 // Import Python module (uses Python bridge)
 import network_utils from "./import/network_utils.py"
 
+include "xdp.kh"
+
 config network {
     enable_filtering: bool = false,
     status_code: u32 = 0,

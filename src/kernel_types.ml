@@ -55,7 +55,7 @@ let get_kernel_types_from_btf btf_path =
   | None ->
       let kernel_types = 
         try
-          Btf_binary_parser.extract_all_kernel_struct_names btf_path
+          Btf_binary_parser.extract_all_kernel_struct_and_enum_names btf_path
         with
         | _ -> 
             printf "Warning: Failed to extract kernel types from BTF, using fallback list\n";

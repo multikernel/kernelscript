@@ -37,12 +37,12 @@ let test_type_alias_parsing () =
   
   (* Check first type alias *)
   (match List.nth ast 0 with
-   | TypeDef (TypeAlias ("IpAddress", U32)) -> ()
+   | TypeDef (TypeAlias ("IpAddress", U32, _)) -> ()
    | _ -> fail "Expected IpAddress type alias");
   
   (* Check second type alias *)
   (match List.nth ast 1 with
-   | TypeDef (TypeAlias ("Port", U16)) -> ()
+   | TypeDef (TypeAlias ("Port", U16, _)) -> ()
    | _ -> fail "Expected Port type alias")
 
 let test_type_alias_resolution () =
@@ -80,7 +80,7 @@ type EthBuffer = u8[14]
   
   (* Verify parsing *)
   (match List.nth ast 0 with
-   | TypeDef (TypeAlias ("EthBuffer", Array (U8, 14))) -> ()
+   | TypeDef (TypeAlias ("EthBuffer", Array (U8, 14), _)) -> ()
    | _ -> fail "Expected EthBuffer array type alias");
   
   (* Type check the AST using modern API *)
@@ -185,7 +185,7 @@ fn main() -> i32 {
   (* Extract type aliases from AST for code generation *)
   let type_aliases = List.fold_left (fun acc decl ->
     match decl with
-    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ)) -> (name, typ) :: acc
+    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> (name, typ) :: acc
     | _ -> acc
   ) [] ast in
   
@@ -335,7 +335,7 @@ fn main() -> i32 {
   (* Extract type aliases from AST *)
   let type_aliases = List.fold_left (fun acc decl ->
     match decl with
-    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ)) -> (name, typ) :: acc
+    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> (name, typ) :: acc
     | _ -> acc
   ) [] ast in
 

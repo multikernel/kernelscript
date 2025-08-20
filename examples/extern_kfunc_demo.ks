@@ -1,3 +1,5 @@
+include "xdp.kh"
+
 // External kfunc declarations - these would typically be imported from kernel BTF
 extern bpf_ktime_get_ns() -> u64
 extern bpf_trace_printk(fmt: *u8, fmt_size: u32) -> i32

@@ -624,8 +624,8 @@ value btf_extract_function_signatures_stub(value btf_handle, value function_name
     CAMLreturn(result_list);
 }
 
-/* Extract all kernel-defined struct names from BTF */
-value btf_extract_kernel_struct_names_stub(value btf_handle) {
+/* Extract all kernel-defined struct and enum names from BTF */
+value btf_extract_kernel_struct_and_enum_names_stub(value btf_handle) {
     CAMLparam1(btf_handle);
     CAMLlocal2(result, cons);
     
@@ -642,8 +642,8 @@ value btf_extract_kernel_struct_names_stub(value btf_handle) {
         const struct btf_type *type = btf__type_by_id(btf, i);
         if (!type) continue;
         
-        /* Check if it's a struct type */
-        if (btf_kind(type) == BTF_KIND_STRUCT) {
+        /* Check if it's a struct or enum type */
+        if (btf_kind(type) == BTF_KIND_STRUCT || btf_kind(type) == BTF_KIND_ENUM) {
             const char *type_name = btf__name_by_offset(btf, type->name_off);
             if (type_name && strlen(type_name) > 0) {
                 /* Create a new cons cell */

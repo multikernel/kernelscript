@@ -13,28 +13,7 @@
 // - The process being switched in (next_*)
 // - Process priorities, PIDs, and scheduling states
 
-// @kernel_only - This struct is only for eBPF compilation, not userspace
-struct trace_entry {
-    type: u16,
-    flags: u8,
-    preempt_count: u8,
-    pid: u32,
-}
-
-// @kernel_only - This struct is only for eBPF compilation, not userspace
-struct trace_event_raw_sched_switch {
-    ent: trace_entry,
-    prev_comm: u8[16],
-    prev_pid: u32,
-    prev_prio: u32,
-    prev_state: u64,
-    next_comm: u8[16],
-    next_pid: u32,
-    next_prio: u32,
-    __data: u8[0],
-}
-
-// unknown btf_trace_sched_switch (placeholder)
+include "tracepoint.kh"
 
 @tracepoint("sched/sched_switch")
 fn sched_sched_switch_handler(ctx: *trace_event_raw_sched_switch) -> i32 {

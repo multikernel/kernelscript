@@ -261,11 +261,8 @@ let generate_test_program ast _program_name =
     | _ -> None
   ) ast in
   
-  (* Filter out kernel-defined structs that are provided by kernel headers *)
-  let struct_defs = List.filter (fun struct_def ->
-    not (Kernel_types.is_well_known_ebpf_type struct_def.struct_name) &&
-    not (Struct_ops_registry.is_known_struct_ops struct_def.struct_name)
-  ) all_struct_defs in
+  (* Kernel structs never appear in test AST when using includes *)
+  let struct_defs = all_struct_defs in
   
   (* Extract test functions *)
   let test_functions = List.filter_map (function

@@ -1,23 +1,6 @@
-// XDP context struct (from BTF)
-struct xdp_md {
-  data: u64,
-  data_end: u64,
-  data_meta: u64,
-  ingress_ifindex: u32,
-  rx_queue_index: u32,
-  egress_ifindex: u32,
-}
-
-// XDP action enum (from BTF)
-enum xdp_action {
-  XDP_ABORTED = 0,
-  XDP_DROP = 1,
-  XDP_PASS = 2,
-  XDP_REDIRECT = 3,
-  XDP_TX = 4,
-}
-
 // Pattern Test Example - tests struct initialization (IRStructLiteral pattern)
+
+include "xdp.kh"
 
 struct PacketInfo {
     size: u64,

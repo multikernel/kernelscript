@@ -38,7 +38,7 @@ external btf_type_by_id : btf_handle -> int -> (int * string * int * int * int) 
 external btf_type_get_members : btf_handle -> int -> (string * int) array = "btf_type_get_members_stub"
 external btf_resolve_type : btf_handle -> int -> string = "btf_resolve_type_stub"
 external btf_extract_function_signatures : btf_handle -> string list -> (string * string) list = "btf_extract_function_signatures_stub"
-external btf_extract_kernel_struct_names : btf_handle -> string list = "btf_extract_kernel_struct_names_stub"
+external btf_extract_kernel_struct_and_enum_names : btf_handle -> string list = "btf_extract_kernel_struct_and_enum_names_stub"
 external btf_extract_kfuncs : btf_handle -> (string * string) list = "btf_extract_kfuncs_stub"
 external btf_free : btf_handle -> unit = "btf_free_stub"
 
@@ -184,15 +184,15 @@ let extract_kernel_function_signatures btf_path function_names =
       printf "Error extracting function signatures from BTF file %s: %s\n" btf_path (Printexc.to_string exn);
       []
 
-(** Extract all kernel-defined struct names from BTF file.
+(** Extract all kernel-defined struct and enum names from BTF file.
     @param btf_path Path to the binary BTF file
-    @return List of kernel struct names *)
-let extract_all_kernel_struct_names btf_path =
+    @return List of kernel struct and enum names *)
+let extract_all_kernel_struct_and_enum_names btf_path =
   try
     match btf_new_from_file btf_path with
     | None -> []
     | Some btf_handle ->
-        let struct_names = btf_extract_kernel_struct_names btf_handle in
+        let struct_names = btf_extract_kernel_struct_and_enum_names btf_handle in
         btf_free btf_handle;
         struct_names
   with

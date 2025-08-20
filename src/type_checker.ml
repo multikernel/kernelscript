@@ -157,11 +157,11 @@ let create_context symbol_table ast =
     | Symbol_table.TypeDef type_def ->
         (* Add type definition to types hashtable *)
         (match type_def with
-         | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+         | StructDef (name, _, _) | EnumDef (name, _, _) | TypeAlias (name, _, _) ->
              Hashtbl.replace types name type_def);
         (* Check if this is an impl block by looking in the AST context *)
         (match type_def with
-         | StructDef (name, _) ->
+         | StructDef (name, _, _) ->
              let is_impl_block = List.exists (function
                | ImplBlock impl_block when impl_block.impl_name = name -> true
                | _ -> false
@@ -225,11 +225,11 @@ let rec resolve_user_type ctx = function
       (try
          let type_def = Hashtbl.find ctx.types name in
          match type_def with
-         | TypeAlias (_, underlying_type) -> 
+         | TypeAlias (_, underlying_type, _) -> 
              (* Recursively resolve the underlying type in case it's also an alias *)
              resolve_user_type ctx underlying_type
-         | StructDef (_, _) -> Struct name
-         | EnumDef (_, _) -> Enum name
+         | StructDef (_, _, _) -> Struct name
+         | EnumDef (_, _, _) -> Enum name
        with Not_found -> UserType name)
   | Pointer inner_type -> Pointer (resolve_user_type ctx inner_type)
   | Function (param_types, return_type) -> 
@@ -903,7 +903,7 @@ and type_check_field_access ctx obj field pos =
                  (try
                     let type_def = Hashtbl.find ctx.types struct_name in
                     match type_def with
-                    | StructDef (_, fields) ->
+                    | StructDef (_, fields, _) ->
                         (try
                            let field_type = List.assoc field fields in
                            { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
@@ -944,7 +944,7 @@ and type_check_field_access ctx obj field pos =
       (try
                  let type_def = Hashtbl.find ctx.types struct_name in
         match type_def with
-        | StructDef (_, fields) ->
+        | StructDef (_, fields, _) ->
              (try
                 let field_type = List.assoc field fields in
                 { texpr_desc = TFieldAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
@@ -1006,7 +1006,7 @@ and type_check_arrow_access ctx obj field pos =
     (try
              let type_def = Hashtbl.find ctx.types struct_name in
       match type_def with
-      | StructDef (_, fields) ->
+      | StructDef (_, fields, _) ->
            (try
               let field_type = List.assoc field fields in
               { texpr_desc = TArrowAccess (typed_obj, field); texpr_type = field_type; texpr_pos = pos }
@@ -1176,7 +1176,7 @@ and type_check_struct_literal ctx struct_name field_assignments pos =
   try
     let type_def = Hashtbl.find ctx.types struct_name in
     match type_def with
-    | StructDef (_, struct_fields) ->
+    | StructDef (_, struct_fields, _) ->
         (* Type check each field assignment *)
         let typed_field_assignments = List.map (fun (field_name, field_expr) ->
           let typed_field_expr = type_check_expression ctx field_expr in
@@ -1647,7 +1647,7 @@ and type_check_statement ctx stmt =
                 (try
                                      let type_def = Hashtbl.find ctx.types struct_name in
                   match type_def with
-                  | StructDef (_, fields) ->
+                  | StructDef (_, fields, _) ->
                        (try
                           let field_type = List.assoc field fields in
                           let resolved_field_type = resolve_user_type ctx field_type in
@@ -1680,7 +1680,7 @@ and type_check_statement ctx stmt =
            (try
               let type_def = Hashtbl.find ctx.types struct_name in
               match type_def with
-              | StructDef (_, fields) ->
+              | StructDef (_, fields, _) ->
                   (try
                      let field_type = List.assoc field fields in
                      let resolved_field_type = resolve_user_type ctx field_type in
@@ -2297,7 +2297,7 @@ let type_check_program ctx prog =
   
   (* Add program-scoped structs to context *)
   List.iter (fun struct_def ->
-    let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields) in
+    let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.struct_pos) in
     Hashtbl.replace ctx.types struct_def.struct_name type_def
   ) prog.prog_structs;
   
@@ -2353,7 +2353,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
     match type_def with
-    | EnumDef (enum_name, enum_values) ->
+    | EnumDef (enum_name, enum_values, _) ->
         let enum_type = match enum_name with
           | "xdp_action" -> Xdp_action
           | _ -> UserType enum_name
@@ -2368,7 +2368,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
   List.iter (function
     | TypeDef type_def ->
         (match type_def with
-         | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+         | StructDef (name, _, _) | EnumDef (name, _, _) | TypeAlias (name, _, _) ->
              Hashtbl.replace ctx.types name type_def)
     | MapDecl map_decl ->
         (* Convert AST map to IR map for type checking context *)
@@ -2700,7 +2700,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
   (* Add enum constants as variables for all loaded enums *)
   Hashtbl.iter (fun _name type_def ->
     match type_def with
-    | EnumDef (enum_name, enum_values) ->
+    | EnumDef (enum_name, enum_values, _) ->
         let enum_type = match enum_name with
           | "xdp_action" -> Xdp_action
           | _ -> Enum enum_name
@@ -2716,10 +2716,10 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
   List.iter (function
     | TypeDef type_def ->
         (match type_def with
-         | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+         | StructDef (name, _, _) | EnumDef (name, _, _) | TypeAlias (name, _, _) ->
              Hashtbl.replace ctx.types name type_def)
     | StructDecl struct_def ->
-        let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields) in
+        let type_def = StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.struct_pos) in
         Hashtbl.replace ctx.types struct_def.struct_name type_def
     | MapDecl map_decl ->
         (* Convert AST map to IR map for type checking context *)

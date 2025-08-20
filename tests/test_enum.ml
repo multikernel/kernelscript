@@ -64,10 +64,10 @@ let test_enum_symbol_table () =
   
   (* Create enum definition *)
   let enum_values = [("XDP_ABORTED", Some (Signed64 0L)); ("XDP_DROP", Some (Signed64 1L)); ("XDP_PASS", Some (Signed64 2L))] in
-  let enum_def = EnumDef ("xdp_action", enum_values) in
+  let enum_def = EnumDef ("xdp_action", enum_values, { line = 1; column = 1; filename = "test" }) in
   
   (* Add to symbol table *)
-  add_type_def symbol_table enum_def dummy_pos;
+  add_type_def symbol_table enum_def;
   
   (* Verify enum type is registered *)
   let enum_symbol = lookup_symbol symbol_table "xdp_action" in
@@ -76,7 +76,7 @@ let test_enum_symbol_table () =
   (match enum_symbol with
   | Some symbol ->
       (match symbol.kind with
-       | TypeDef (EnumDef (name, values)) ->
+       | TypeDef (EnumDef (name, values, _)) ->
            check string "enum name" "xdp_action" name;
            check int "enum value count" 3 (List.length values)
        | _ -> check bool "wrong symbol kind" false true)
@@ -97,7 +97,7 @@ let test_enum_type_checking () =
   
   (* Add enum type to context *)
   let enum_values = [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("xdp_action", enum_values) in
+  let enum_def = EnumDef ("xdp_action", enum_values, { line = 1; column = 1; filename = "test" }) in
   let enum_type = Enum "xdp_action" in
   let ctx = create_context empty_symbol_table [] in  (* Provide empty AST for tests *)
   Hashtbl.replace ctx.types "xdp_action" enum_def;
@@ -128,8 +128,8 @@ let test_enum_constants () =
   
   (* Add enum with constants *)
   let enum_values = [("PROTOCOL_TCP", Some (Signed64 6L)); ("PROTOCOL_UDP", Some (Signed64 17L)); ("PROTOCOL_ICMP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("Protocol", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("Protocol", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Test constant lookup *)
   let tcp_const = lookup_symbol symbol_table "PROTOCOL_TCP" in
@@ -184,8 +184,8 @@ let test_enum_expressions () =
   
   (* Add enum *)
   let enum_values = [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("xdp_action", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("xdp_action", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Verify the constant can be looked up *)
   let symbol = lookup_symbol symbol_table "XDP_PASS" in
@@ -202,20 +202,20 @@ let test_enum_expressions () =
 (** Test enum edge cases *)
 let test_enum_edge_cases () =
   (* Test empty enum *)
-  let empty_enum = EnumDef ("Empty", []) in
+  let empty_enum = EnumDef ("Empty", [], { line = 1; column = 1; filename = "test" }) in
   let symbol_table = create_symbol_table () in
-  add_type_def symbol_table empty_enum dummy_pos;
+  add_type_def symbol_table empty_enum;
   
   let empty_symbol = lookup_symbol symbol_table "Empty" in
   check bool "empty enum registered" true (empty_symbol <> None);
   
   (* Test enum with duplicate names (should be handled by symbol table) *)
   let duplicate_values = [("SAME", Some (Signed64 1L)); ("SAME", Some (Signed64 2L))] in
-  let duplicate_enum = EnumDef ("Duplicate", duplicate_values) in
+  let duplicate_enum = EnumDef ("Duplicate", duplicate_values, { line = 1; column = 1; filename = "test" }) in
   
   (* This should either succeed (last wins) or fail gracefully *)
   try
-    add_type_def symbol_table duplicate_enum dummy_pos;
+    add_type_def symbol_table duplicate_enum;
     (* If it succeeds, verify the behavior *)
     let dup_symbol = lookup_symbol symbol_table "SAME" in
     check bool "duplicate handled" true (dup_symbol <> None)
@@ -265,8 +265,8 @@ let test_enum_ir_preservation () =
   (* Create a symbol table with enum constants *)
   let symbol_table = create_symbol_table () in
   let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("IpProtocol", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("IpProtocol", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Create AST identifier expression for enum constant *)
   let tcp_identifier = make_expr (Identifier "TCP") dummy_pos in
@@ -309,8 +309,8 @@ let test_enum_definition_inclusion () =
   (* Create a symbol table with enum definition *)
   let symbol_table = create_symbol_table () in
   let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("IpProtocol", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("IpProtocol", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Test that the enum can be looked up from symbol table *)
   let tcp_symbol = lookup_symbol symbol_table "TCP" in
@@ -331,8 +331,8 @@ let test_match_enum_constants () =
   (* Create symbol table with enum *)
   let symbol_table = create_symbol_table () in
   let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L)); ("ICMP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("IpProtocol", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("IpProtocol", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Test that enum constants can be looked up *)
   let tcp_symbol = lookup_symbol symbol_table "TCP" in
@@ -357,8 +357,8 @@ let test_enum_not_numeric_literals () =
   (* Create symbol table with enum *)
   let symbol_table = create_symbol_table () in
   let enum_values = [("TCP", Some (Signed64 6L)); ("UDP", Some (Signed64 17L))] in
-  let enum_def = EnumDef ("IpProtocol", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("IpProtocol", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Create AST identifier for enum constant *)
   let tcp_expr = make_expr (Identifier "TCP") dummy_pos in
@@ -381,8 +381,8 @@ let test_enum_preservation_pipeline () =
   (* Create symbol table with enum *)
   let symbol_table = create_symbol_table () in
   let enum_values = [("XDP_PASS", Some (Signed64 2L)); ("XDP_DROP", Some (Signed64 1L))] in
-  let enum_def = EnumDef ("XdpAction", enum_values) in
-  add_type_def symbol_table enum_def dummy_pos;
+  let enum_def = EnumDef ("XdpAction", enum_values, { line = 1; column = 1; filename = "test" }) in
+  add_type_def symbol_table enum_def;
   
   (* Create IR with enum constant *)
   let enum_constant = make_ir_value (IREnumConstant ("XdpAction", "XDP_PASS", Signed64 2L)) IRU32 dummy_pos in
@@ -431,7 +431,7 @@ enum test_enum {
 |} in
   let ast = parse_string source in
   let enum_def = match ast with
-    | [TypeDef (EnumDef (name, variants))] ->
+    | [TypeDef (EnumDef (name, variants, _))] ->
         check string "enum name" "test_enum" name;
         variants
     | _ -> failwith "Expected single enum declaration"
@@ -459,7 +459,7 @@ enum mixed_values {
 |} in
   let ast = parse_string source in
   let enum_def = match ast with
-    | [TypeDef (EnumDef (name, variants))] ->
+    | [TypeDef (EnumDef (name, variants, _))] ->
         check string "enum name" "mixed_values" name;
         variants
     | _ -> failwith "Expected single enum declaration"
@@ -493,7 +493,7 @@ enum tc_action {
 |} in
   let ast = parse_string source in
   let enum_def = match ast with
-    | [TypeDef (EnumDef (name, variants))] ->
+    | [TypeDef (EnumDef (name, variants, _))] ->
         check string "enum name" "tc_action" name;
         variants
     | _ -> failwith "Expected single enum declaration"
@@ -526,7 +526,7 @@ enum edge_cases {
 |} in
   let ast = parse_string source in
   let enum_def = match ast with
-    | [TypeDef (EnumDef (name, variants))] ->
+    | [TypeDef (EnumDef (name, variants, _))] ->
         check string "enum name" "edge_cases" name;
         variants
     | _ -> failwith "Expected single enum declaration"

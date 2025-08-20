@@ -49,10 +49,11 @@ module Xdp = struct
   ]
   
   (** Create XDP action enum AST *)
-  let action_enum = TypeDef (EnumDef ("xdp_action", action_constants))
+  let dummy_pos = { line = 1; column = 1; filename = "test" }
+  let action_enum = TypeDef (EnumDef ("xdp_action", action_constants, dummy_pos))
   
   (** Create XDP context struct AST *)
-  let context_struct = TypeDef (StructDef ("xdp_md", context_fields))
+  let context_struct = TypeDef (StructDef ("xdp_md", context_fields, dummy_pos))
   
   (** All XDP builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]
@@ -96,10 +97,11 @@ module Tc = struct
   ]
   
   (** Create TC action enum AST *)
-  let action_enum = TypeDef (EnumDef ("tc_action", action_constants))
+  let dummy_pos = { line = 1; column = 1; filename = "test" }
+  let action_enum = TypeDef (EnumDef ("tc_action", action_constants, dummy_pos))
   
   (** Create TC context struct AST for __sk_buff *)
-  let context_struct = TypeDef (StructDef ("__sk_buff", context_fields))
+  let context_struct = TypeDef (StructDef ("__sk_buff", context_fields, dummy_pos))
   
   (** All TC builtin AST declarations *)
   let builtin_ast = [action_enum; context_struct]

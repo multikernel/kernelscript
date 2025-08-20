@@ -106,13 +106,28 @@ let resolve_include include_decl base_path =
     close_in ic;
     
     let lexbuf = Lexing.from_string content in
+    Lexing.set_filename lexbuf file_path;
     let ast = Parser.program Lexer.token lexbuf in
     
     (* Validate that it's a proper header file *)
     validate_header_file file_path ast;
     
-    (* Return the parsed declarations *)
-    ast
+    (* Update position information in all declarations to include the correct filename *)
+    let update_position_in_declaration decl =
+      match decl with
+      | Ast.TypeDef (Ast.EnumDef (name, values, pos)) ->
+          Ast.TypeDef (Ast.EnumDef (name, values, { pos with filename = file_path }))
+      | Ast.TypeDef (Ast.StructDef (name, fields, pos)) ->
+          Ast.TypeDef (Ast.StructDef (name, fields, { pos with filename = file_path }))
+      | Ast.TypeDef (Ast.TypeAlias (name, typ, pos)) ->
+          Ast.TypeDef (Ast.TypeAlias (name, typ, { pos with filename = file_path }))
+      | Ast.StructDecl struct_def ->
+          Ast.StructDecl { struct_def with struct_pos = { struct_def.struct_pos with filename = file_path } }
+      | other -> other  (* Other declaration types don't need position updates for our filtering *)
+    in
+    
+    (* Return the parsed declarations with updated positions *)
+    List.map update_position_in_declaration ast
   with
   | Include_validation_error (err, file_path, pos) ->
       let error_msg = match err with

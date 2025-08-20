@@ -242,14 +242,14 @@ let process_enum_values values =
   process_values [] (Ast.Signed64 0L) values
 
 (** Add type definition to symbol table *)
-let add_type_def table type_def pos =
+let add_type_def table type_def =
   match type_def with
-  | StructDef (name, _) | EnumDef (name, _) | TypeAlias (name, _) ->
+  | StructDef (name, _, pos) | EnumDef (name, _, pos) | TypeAlias (name, _, pos) ->
       add_symbol table name (TypeDef type_def) Public pos;
       
       (* For enums, also add enum constants with auto-value assignment *)
       (match type_def with
-       | EnumDef (enum_name, values) ->
+       | EnumDef (enum_name, values, pos) ->
            let processed_values = process_enum_values values in
            List.iter (fun (const_name, value) ->
              (* Add both namespaced and direct constant names *)
@@ -402,8 +402,7 @@ let rec build_symbol_table ?(project_name = "kernelscript") ?builtin_asts ast =
 and process_declaration_accumulate table declaration =
   match declaration with
   | Ast.TypeDef type_def ->
-      let pos = { line = 1; column = 1; filename = "" } in  (* TODO: get actual position *)
-      add_type_def table type_def pos;
+      add_type_def table type_def;
       table
       
   | Ast.MapDecl map_decl ->
@@ -469,9 +468,8 @@ and process_declaration_accumulate table declaration =
       table
       
   | Ast.StructDecl struct_def ->
-      let pos = { line = 1; column = 1; filename = "" } in
-      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
-      add_type_def table type_def pos;
+      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.struct_pos) in
+      add_type_def table type_def;
       table
       
   | Ast.GlobalVarDecl global_var_decl ->
@@ -480,7 +478,7 @@ and process_declaration_accumulate table declaration =
       
   | Ast.ImplBlock impl_block ->
       (* Add the impl block itself as a struct_ops symbol *)
-      add_symbol table impl_block.impl_name (TypeDef (StructDef (impl_block.impl_name, []))) Public impl_block.impl_pos;
+      add_symbol table impl_block.impl_name (TypeDef (StructDef (impl_block.impl_name, [], impl_block.impl_pos))) Public impl_block.impl_pos;
       
       (* Process impl block functions and add them to symbol table *)
       List.iter (fun item ->
@@ -536,8 +534,7 @@ and process_declaration_accumulate table declaration =
 
 and process_declaration table = function
   | Ast.TypeDef type_def ->
-      let pos = { line = 1; column = 1; filename = "" } in  (* TODO: get actual position *)
-      add_type_def table type_def pos
+      add_type_def table type_def
       
   | Ast.MapDecl map_decl ->
       add_map_decl table map_decl
@@ -597,9 +594,8 @@ and process_declaration table = function
       add_config_decl table config_decl
       
   | Ast.StructDecl struct_def ->
-      let pos = { line = 1; column = 1; filename = "" } in
-      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields) in
-      add_type_def table type_def pos
+      let type_def = Ast.StructDef (struct_def.struct_name, struct_def.struct_fields, struct_def.struct_pos) in
+      add_type_def table type_def
       
   | Ast.GlobalVarDecl global_var_decl ->
       add_global_var_decl table global_var_decl
@@ -630,7 +626,7 @@ and process_declaration table = function
       
   | Ast.ImplBlock impl_block ->
       (* Add the impl block itself as a struct_ops symbol *)
-      add_symbol table impl_block.impl_name (TypeDef (StructDef (impl_block.impl_name, []))) Public impl_block.impl_pos;
+      add_symbol table impl_block.impl_name (TypeDef (StructDef (impl_block.impl_name, [], impl_block.impl_pos))) Public impl_block.impl_pos;
       
       (* Process impl block functions and add them to symbol table *)
       List.iter (fun item ->
@@ -887,7 +883,7 @@ and process_expression table expr =
   | StructLiteral (struct_name, field_assignments) ->
       (* Validate that struct exists *)
       (match lookup_symbol table struct_name with
-       | Some { kind = TypeDef (StructDef (_, _)); _ } ->
+       | Some { kind = TypeDef (StructDef (_, _, _)); _ } ->
            (* Process field assignment expressions *)
            List.iter (fun (_, field_expr) -> process_expression table field_expr) field_assignments
        | Some _ -> 
@@ -983,9 +979,9 @@ let string_of_symbol_kind = function
   | GlobalVariable (t, _) -> "global_variable:" ^ string_of_bpf_type t
   | Function (params, ret) ->
       "function:(" ^ String.concat "," (List.map string_of_bpf_type params) ^ ")->" ^ string_of_bpf_type ret
-  | TypeDef (StructDef (name, _)) -> "struct:" ^ name
-  | TypeDef (EnumDef (name, _)) -> "enum:" ^ name
-  | TypeDef (TypeAlias (name, t)) -> "alias:" ^ name ^ "=" ^ string_of_bpf_type t
+  | TypeDef (StructDef (name, _, _)) -> "struct:" ^ name
+  | TypeDef (EnumDef (name, _, _)) -> "enum:" ^ name
+  | TypeDef (TypeAlias (name, t, _)) -> "alias:" ^ name ^ "=" ^ string_of_bpf_type t
   | GlobalMap _ -> "global_map"
   | Parameter t -> "param:" ^ string_of_bpf_type t
   | EnumConstant (enum_name, value) ->

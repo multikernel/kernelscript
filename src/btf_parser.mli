@@ -51,5 +51,14 @@ val extract_struct_ops_definitions : string option -> string list -> string list
 (** Generate struct_ops template with BTF extraction *)
 val generate_struct_ops_template : ?include_kfuncs:string -> string option -> string list -> string -> string
 
+(** Generate program-type specific header content using BTF *)
+val generate_program_header : extract_kfuncs:bool -> string -> string -> string
+
+(** Generate struct_ops-specific header content using BTF *)
+val generate_struct_ops_header : string -> string -> string
+
+(** Generate tracepoint-specific header content using BTF *)
+val generate_tracepoint_header : string -> string -> string
+
 (** Generate KernelScript source code from template *)
 val generate_kernelscript_source : ?extra_param:string -> ?include_kfuncs:string -> program_template -> string -> string 

@@ -1134,7 +1134,7 @@ and resolve_type_alias ctx reg ast_type =
       (match Symbol_table.lookup_symbol ctx.symbol_table alias_name with
        | Some symbol ->
            (match symbol.kind with
-            | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
+            | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type, _)) -> 
                 let underlying_ir_type = ast_type_to_ir_type underlying_type in
                 (* Store the alias information for this register *)
                 Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
@@ -3042,15 +3042,15 @@ let lower_multi_program ast symbol_table source_name =
         failwith "Only one main() function is allowed";
       
       (* Extract struct definitions from AST (single source of truth) *)
-      (* Filter out kernel-only structs that should not be in userspace code *)
+      (* Filter out kernel structs from .kh header files *)
       let struct_definitions = List.filter_map (function
         | Ast.StructDecl struct_def -> 
-            (* Check if the struct has @kernel_only marker in comments/attributes *)
-            let is_kernel_only = List.exists (function
-              | Ast.SimpleAttribute "kernel_only" -> true
-              | _ -> false
-            ) struct_def.struct_attributes in
-            if is_kernel_only then None else Some struct_def
+            (* Filter out structs from .kh header files - they should not appear in userspace code *)
+            let is_header_struct = Filename.check_suffix struct_def.Ast.struct_pos.filename ".kh" in
+            if is_header_struct then
+              None
+            else
+              Some struct_def
         | _ -> None
       ) ast in
       

@@ -162,7 +162,7 @@ fn main() -> i32 {
     
     (* Check that type alias is present *)
     let has_type = List.exists (function
-      | Ast.TypeDef (Ast.TypeAlias (name, _)) -> name = "TestType"
+      | Ast.TypeDef (Ast.TypeAlias (name, _, _)) -> name = "TestType"
       | _ -> false
     ) expanded_ast in
     check bool "Type alias included" true has_type;

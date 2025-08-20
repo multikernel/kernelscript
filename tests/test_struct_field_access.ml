@@ -581,7 +581,7 @@ struct PacketStats {
     (* Test C code generation to ensure struct Counter doesn't appear *)
     let type_aliases = List.fold_left (fun acc decl ->
       match decl with
-      | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ)) -> (name, typ) :: acc
+      | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> (name, typ) :: acc
       | _ -> acc
     ) [] ast in
     

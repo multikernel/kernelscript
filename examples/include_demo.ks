@@ -4,6 +4,8 @@
 // Include declarations from header files
 include "common_kfuncs.kh"
 include "xdp_kfuncs.kh"
+include "xdp.kh"
+
 
 // XDP program that uses included kfunc declarations
 @xdp

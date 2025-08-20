@@ -100,7 +100,7 @@ fn test_function() -> i32 {
   
   (* Check that type aliases are parsed correctly *)
   let type_aliases = List.filter_map (function
-    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ)) -> Some (name, typ)
+    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> Some (name, typ)
     | _ -> None
   ) ast in
   

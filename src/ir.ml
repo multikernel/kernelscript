@@ -742,16 +742,16 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
       (match Symbol_table.lookup_symbol symbol_table name with
          | Some symbol ->
              (match symbol.kind with
-              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
+              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type, _)) -> 
                   (* Create IRTypeAlias to preserve the alias name *)
                   IRTypeAlias (name, ast_type_to_ir_type underlying_type)
-              | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
+              | Symbol_table.TypeDef (Ast.StructDef (_, fields, _)) ->
                   (* Resolve struct fields properly with type aliases preserved *)
                   let ir_fields = List.map (fun (field_name, field_type) ->
                     (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                   ) fields in
                   IRStruct (name, ir_fields)
-              | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
+              | Symbol_table.TypeDef (Ast.EnumDef (_, values, _)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
                     (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
                   ) values in
@@ -765,16 +765,16 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
       (match Symbol_table.lookup_symbol symbol_table name with
          | Some symbol ->
              (match symbol.kind with
-              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type)) -> 
+              | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type, _)) -> 
                   (* Create IRTypeAlias to preserve the alias name *)
                   IRTypeAlias (name, ast_type_to_ir_type underlying_type)
-              | Symbol_table.TypeDef (Ast.StructDef (_, fields)) ->
+              | Symbol_table.TypeDef (Ast.StructDef (_, fields, _)) ->
                   (* Resolve struct fields properly with type aliases preserved *)
                   let ir_fields = List.map (fun (field_name, field_type) ->
                     (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                   ) fields in
                   IRStruct (name, ir_fields)
-              | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
+              | Symbol_table.TypeDef (Ast.EnumDef (_, values, _)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
                     (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
                   ) values in
@@ -796,7 +796,7 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
       (match Symbol_table.lookup_symbol symbol_table name with
          | Some symbol ->
              (match symbol.kind with
-              | Symbol_table.TypeDef (Ast.EnumDef (_, values)) -> 
+              | Symbol_table.TypeDef (Ast.EnumDef (_, values, _)) -> 
                   let ir_values = List.map (fun (enum_name, opt_value) ->
                     (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
                   ) values in

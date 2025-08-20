@@ -249,15 +249,31 @@ let get_kernel_implementation name =
   | None -> None
 
 (** Builtin type definitions *)
+let builtin_pos = { line = 0; column = 0; filename = "<builtin>" }
+
 let builtin_types = [
   (* Standard C types as type aliases *)
-  TypeDef (TypeAlias ("size_t", U64));  (* size_t maps to 64-bit unsigned integer *)
+  TypeDef (TypeAlias ("size_t", U64, builtin_pos));  (* size_t maps to 64-bit unsigned integer *)
   
   (* Kernel allocation flags enum *)
   TypeDef (EnumDef ("gfp_flag", [
     ("GFP_KERNEL", Some (Ast.Signed64 0x0001L));
     ("GFP_ATOMIC", Some (Ast.Signed64 0x0002L));
-  ]));
+  ], builtin_pos));
+  
+  (* TC action constants enum - kernel provides these as #define macros *)
+  TypeDef (EnumDef ("tc_action", [
+    ("TC_ACT_UNSPEC", Some (Ast.Signed64 (-1L)));
+    ("TC_ACT_OK", Some (Ast.Signed64 0L));
+    ("TC_ACT_RECLASSIFY", Some (Ast.Signed64 1L));
+    ("TC_ACT_SHOT", Some (Ast.Signed64 2L));
+    ("TC_ACT_PIPE", Some (Ast.Signed64 3L));
+    ("TC_ACT_STOLEN", Some (Ast.Signed64 4L));
+    ("TC_ACT_QUEUED", Some (Ast.Signed64 5L));
+    ("TC_ACT_REPEAT", Some (Ast.Signed64 6L));
+    ("TC_ACT_REDIRECT", Some (Ast.Signed64 7L));
+    ("TC_ACT_TRAP", Some (Ast.Signed64 8L));
+  ], builtin_pos));
 ]
 
 (** Get all builtin type definitions *)

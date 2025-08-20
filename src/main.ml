@@ -256,45 +256,32 @@ let init_project prog_type_or_struct_ops project_name btf_path extract_kfuncs =
       printf "❌ Error creating directory: %s\n" (Printexc.to_string exn);
       exit 1);
   
-  (* Generate template based on type *)
-  let kh_filename = if extract_kfuncs then Some (project_name ^ ".kh") else None in
+  (* Generate program-type specific header and clean main file *)
   let source_content = 
     if is_struct_ops then (
       printf "🔧 Extracting struct_ops definition for %s...\n" prog_type;
+      let kh_filename = Some (prog_type ^ ".kh") in
       let content = Btf_parser.generate_struct_ops_template ?include_kfuncs:kh_filename btf_path [prog_type] project_name in
       printf "✅ Generated struct_ops template\n";
       content
     ) else (
-      match prog_type with
-      | "probe" ->
-          (match target_function with
-           | Some func_name ->
-               printf "🔧 Extracting types for %s program targeting %s...\n" prog_type func_name;
-               let template = Btf_parser.get_kprobe_program_template func_name btf_path in
-               printf "✅ Found %d type definitions\n" (List.length template.types);
-               Btf_parser.generate_kernelscript_source ?include_kfuncs:kh_filename template project_name
-           | None -> failwith "probe requires target function")
-      | "tracepoint" ->
-          (match target_function with
-           | Some category_event ->
-               printf "🔧 Extracting types for %s program targeting %s...\n" prog_type category_event;
-               let template = Btf_parser.get_tracepoint_program_template category_event btf_path in
-               printf "✅ Found %d type definitions\n" (List.length template.types);
-               Btf_parser.generate_kernelscript_source ?include_kfuncs:kh_filename template project_name
-           | None -> failwith "tracepoint requires category/event")
-      | "tc" ->
-          (match target_function with
-           | Some direction ->
-               printf "🔧 Extracting types for %s program with %s direction...\n" prog_type direction;
-               let template = Btf_parser.get_program_template prog_type btf_path in
-               printf "✅ Found %d type definitions\n" (List.length template.types);
-               Btf_parser.generate_kernelscript_source ~extra_param:direction ?include_kfuncs:kh_filename template project_name
-           | None -> failwith "tc requires direction")
-      | _ ->
-          printf "🔧 Extracting types for %s program...\n" prog_type;
-          let template = Btf_parser.get_program_template prog_type btf_path in
-          printf "✅ Found %d type definitions\n" (List.length template.types);
-          Btf_parser.generate_kernelscript_source ?include_kfuncs:kh_filename template project_name
+      (* Generate template using appropriate BTF parser function based on program type *)
+      printf "🔧 Generating %s program template...\n" prog_type;
+      let kh_filename = Some (prog_type ^ ".kh") in
+      let template = match prog_type with
+        | "probe" -> 
+            (match target_function with
+             | Some func -> Btf_parser.get_kprobe_program_template func btf_path
+             | None -> failwith "Probe programs require a target function")
+        | "tracepoint" ->
+            (match target_function with
+             | Some event -> Btf_parser.get_tracepoint_program_template event btf_path
+             | None -> failwith "Tracepoint programs require a target event")
+        | _ -> Btf_parser.get_program_template prog_type btf_path
+      in
+      let content = Btf_parser.generate_kernelscript_source ?extra_param:target_function ?include_kfuncs:kh_filename template project_name in
+      printf "✅ Generated program template\n";
+      content
     ) in
   
   let source_filename = project_name ^ "/" ^ project_name ^ ".ks" in
@@ -396,30 +383,63 @@ cd %s && make run
   close_out oc;
   printf "✅ Generated README: %s\n" readme_filename;
   
-  (* Generate kfuncs header file if requested *)
-  if extract_kfuncs then (
-    printf "🔧 Extracting kfuncs from BTF...\n";
-    let kh_filename = project_name ^ "/" ^ project_name ^ ".kh" in
+  (* Always generate program-type specific header file *)
+  if is_struct_ops then (
+    printf "🔧 Generating %s-specific header...\n" prog_type;
+    let kh_filename = project_name ^ "/" ^ prog_type ^ ".kh" in
     (match btf_path with
-     | Some path when Sys.file_exists path ->
-         let kfuncs = Btf_binary_parser.extract_kfuncs_from_btf path in
-         let kh_content = generate_kh_file_content project_name kfuncs in
+     | Some path ->
+         let kh_content = Btf_parser.generate_struct_ops_header prog_type path in
          let oc = open_out kh_filename in
          output_string oc kh_content;
          close_out oc;
-         printf "✅ Generated kfuncs header: %s (%d kfuncs)\n" kh_filename (List.length kfuncs)
-     | Some path ->
-         printf "❌ Warning: BTF file not found: %s - skipping kfuncs extraction\n" path
+         printf "✅ Generated struct_ops header: %s\n" kh_filename
      | None ->
-         printf "❌ Warning: No BTF path provided - skipping kfuncs extraction\n")
+         printf "❌ Warning: No BTF path provided - using fallback definitions\n";
+         let kh_content = Btf_parser.generate_struct_ops_header prog_type "/sys/kernel/btf/vmlinux" in
+         let oc = open_out kh_filename in
+         output_string oc kh_content;
+         close_out oc;
+         printf "✅ Generated struct_ops header with fallbacks: %s\n" kh_filename)
+  ) else (
+    printf "🔧 Generating %s-specific header...\n" prog_type;
+    let kh_filename = project_name ^ "/" ^ prog_type ^ ".kh" in
+    (match btf_path with
+     | Some path ->
+         let kh_content = match prog_type with
+           | "tracepoint" ->
+               (match target_function with
+                | Some event -> Btf_parser.generate_tracepoint_header event path
+                | None -> failwith "Tracepoint header generation requires target event")
+           | _ -> Btf_parser.generate_program_header ~extract_kfuncs prog_type path
+         in
+         let oc = open_out kh_filename in
+         output_string oc kh_content;
+         close_out oc;
+         printf "✅ Generated program header: %s\n" kh_filename
+     | None ->
+         printf "❌ Warning: No BTF path provided - using fallback definitions\n";
+         let kh_content = match prog_type with
+           | "tracepoint" ->
+               (match target_function with
+                | Some event -> Btf_parser.generate_tracepoint_header event "/sys/kernel/btf/vmlinux"
+                | None -> failwith "Tracepoint header generation requires target event")
+           | _ -> Btf_parser.generate_program_header ~extract_kfuncs prog_type "/sys/kernel/btf/vmlinux"
+         in
+         let oc = open_out kh_filename in
+         output_string oc kh_content;
+         close_out oc;
+         printf "✅ Generated program header with fallbacks: %s\n" kh_filename)
   );
   
   printf "\n🎉 Project '%s' initialized successfully!\n" project_name;
   printf "📁 Project structure:\n";
   printf "   %s/\n" project_name;
   printf "   ├── %s.ks      # KernelScript source\n" project_name;
-  (if extract_kfuncs then
-    printf "   ├── %s.kh      # Available kfuncs (extern declarations)\n" project_name);
+  (if is_struct_ops then
+    printf "   ├── %s.kh      # %s kernel struct definition\n" prog_type (String.uppercase_ascii prog_type)
+  else
+    printf "   ├── %s.kh      # %s-specific kernel definitions\n" prog_type (String.uppercase_ascii prog_type));
   printf "   └── README.md      # Project documentation\n";
   printf "\n🚀 Next steps:\n";
   if is_struct_ops then (
@@ -731,164 +751,12 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
          Printf.printf "⚠️ struct_ops found but no BTF path provided - skipping verification\n"
      | _ -> ());
     
-    (* Load BTF types for eBPF context types and action constants *)
-    let btf_types = try
-      let program_types = Multi_program_analyzer.get_program_types_from_ast compilation_ast in
-      List.fold_left (fun acc prog_type ->
-        let prog_type_str = match prog_type with
-          | Ast.Xdp -> "xdp"
-          | Ast.Tc -> "tc"
-          | Ast.Probe Ast.Kprobe -> "kprobe"
-          | Ast.Probe Ast.Fprobe -> "fprobe"
-          | Ast.Tracepoint -> "tracepoint"
-          | _ -> ""
-        in
-        if prog_type_str <> "" then
-          let template = Btf_parser.get_program_template prog_type_str btf_vmlinux_path in
-          
-          (* Extract context structures and integrate them with context codegen *)
-          List.iter (fun btf_type ->
-            (* Convert Btf_parser.btf_type_info to Context_codegen.btf_type_info *)
-            let context_btf_type = {
-              Kernelscript_context.Context_codegen.name = btf_type.Btf_parser.name;
-              kind = btf_type.Btf_parser.kind;
-              size = btf_type.Btf_parser.size;
-              members = btf_type.Btf_parser.members;
-              kernel_defined = btf_type.Btf_parser.kernel_defined;
-            } in
-            
-            match btf_type.Btf_parser.name with
-            | "xdp_md" -> 
-                Printf.printf "🔧 Integrating BTF xdp_md structure with context codegen\n";
-                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "xdp" context_btf_type
-            | "__sk_buff" ->
-                Printf.printf "🔧 Integrating BTF __sk_buff structure with context codegen\n";
-                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "tc" context_btf_type
-            | "pt_regs" ->
-                Printf.printf "🔧 Integrating BTF pt_regs structure with context codegen\n";
-                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "kprobe" context_btf_type
-            | name when String.starts_with name ~prefix:"trace_event_raw_" ->
-                Printf.printf "🔧 Integrating BTF %s structure with context codegen\n" name;
-                Kernelscript_context.Context_codegen.update_context_codegen_with_btf "tracepoint" context_btf_type
-            | _ -> ()
-          ) template.types;
-          
-          template.types @ acc
-        else
-          acc
-      ) [] program_types
-    with
-    | _ -> 
-        Printf.printf "⚠️ Warning: Could not load BTF types, using context defaults\n";
-        (* Context codegens already initialized at the start - don't register again *)
-        
-        (* Get context types from AST *)
-        let program_types = Multi_program_analyzer.get_program_types_from_ast compilation_ast in
-        List.fold_left (fun acc prog_type ->
-          match prog_type with
-          | Ast.Xdp -> 
-              (* Get XDP action constants from context system *)
-              let xdp_constants = Kernelscript_context.Context_codegen.get_context_action_constants "xdp" in
-              let xdp_action_type = {
-                Btf_parser.name = "xdp_action";
-                kind = "enum";
-                size = Some 4;
-                members = Some (List.map (fun (name, value) -> 
-                  (name, string_of_int value)) xdp_constants);
-                kernel_defined = true;
-              } in
-              let xdp_md_type = {
-                Btf_parser.name = "xdp_md";
-                kind = "struct";
-                size = Some 32;
-                members = Some (Kernelscript_context.Context_codegen.get_context_struct_fields "xdp");
-                kernel_defined = true;
-              } in
-              xdp_action_type :: xdp_md_type :: acc
-          | Ast.Tc ->
-              (* For TC programs, we only need __sk_buff struct - no action enum since return type is int *)
-              let sk_buff_type = {
-                Btf_parser.name = "__sk_buff";
-                kind = "struct";
-                size = Some 256;
-                members = Some (Kernelscript_context.Context_codegen.get_context_struct_fields "tc");
-                kernel_defined = true;
-              } in
-              sk_buff_type :: acc
-          | _ -> acc
-        ) [] program_types
-    in
-    
-    (* Convert BTF types to AST declarations *)
-    let btf_declarations = List.map (fun btf_type ->
-      match btf_type.Btf_parser.kind with
-      | "struct" -> 
-          let fields = match btf_type.members with
-            | Some members -> List.map (fun (field_name, _field_type) -> (field_name, Ast.U32)) members
-            | None -> []
-          in
-          Ast.StructDecl { 
-            struct_name = btf_type.Btf_parser.name; 
-            struct_fields = fields; 
-            struct_attributes = if btf_type.Btf_parser.kernel_defined then [Ast.SimpleAttribute "kernel_only"] else []; 
-            struct_pos = { filename = "btf"; line = 1; column = 1 }
-          }
-      | "enum" ->
-          let enum_values = match btf_type.members with
-            | Some members -> 
-                List.map (fun (const_name, const_value) -> (const_name, Some (Ast.Signed64 (Int64.of_string const_value)))) members
-            | None -> []
-          in
-          Ast.TypeDef (Ast.EnumDef (btf_type.Btf_parser.name, enum_values))
-      | _ -> 
-          Ast.TypeDef (Ast.TypeAlias (btf_type.Btf_parser.name, Ast.U32))
-    ) btf_types in
-    
-          Printf.printf "🔧 Loaded %d BTF type definitions\n" (List.length btf_declarations);
-      
-      (* Filter out BTF types that are already defined by the user *)
-      let user_defined_types = List.fold_left (fun acc decl ->
-        match decl with
-        | Ast.StructDecl struct_def -> struct_def.struct_name :: acc
-        | Ast.TypeDef (Ast.EnumDef (enum_name, _)) -> enum_name :: acc
-        | Ast.TypeDef (Ast.StructDef (struct_name, _)) -> struct_name :: acc
-        | Ast.TypeDef (Ast.TypeAlias (alias_name, _)) -> alias_name :: acc
-        | _ -> acc
-      ) [] compilation_ast in
-      
-      let filtered_btf_declarations = List.filter (fun btf_decl ->
-        match btf_decl with
-        | Ast.StructDecl struct_def -> 
-            if List.mem struct_def.struct_name user_defined_types then (
-              Printf.printf "🔧 Skipping BTF type '%s' - already defined by user\n" struct_def.struct_name;
-              false
-            ) else true
-        | Ast.TypeDef (Ast.EnumDef (enum_name, _)) -> 
-            if List.mem enum_name user_defined_types then (
-              Printf.printf "🔧 Skipping BTF enum '%s' - already defined by user\n" enum_name;
-              false
-            ) else true
-        | Ast.TypeDef (Ast.StructDef (struct_name, _)) -> 
-            if List.mem struct_name user_defined_types then (
-              Printf.printf "🔧 Skipping BTF struct '%s' - already defined by user\n" struct_name;
-              false
-            ) else true
-        | Ast.TypeDef (Ast.TypeAlias (alias_name, _)) -> 
-            if List.mem alias_name user_defined_types then (
-              Printf.printf "🔧 Skipping BTF alias '%s' - already defined by user\n" alias_name;
-              false
-            ) else true
-        | _ -> true
-      ) btf_declarations in
-      
-      Printf.printf "🔧 Using %d BTF types after filtering (skipped %d user-defined)\n" 
-        (List.length filtered_btf_declarations) 
-        (List.length btf_declarations - List.length filtered_btf_declarations);
+    (* No more BTF injection - kernel types come from include files *)
+    Printf.printf "🔧 Kernel types handled by include system - no BTF injection needed\n";
 
     (* Add stdlib builtin types to the symbol table *)
     let stdlib_builtin_declarations = Stdlib.get_builtin_types () in
-    let all_builtin_declarations = stdlib_builtin_declarations @ filtered_btf_declarations in
-    let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[all_builtin_declarations] compilation_ast in
+    let symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[stdlib_builtin_declarations] compilation_ast in
       
     Printf.printf "✅ Symbol table created successfully with BTF types\n\n";
     
@@ -994,7 +862,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       
       (try Unix.mkdir test_output_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
       
-      let filtered_symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[filtered_btf_declarations] filtered_ast in
+      let filtered_symbol_table = Symbol_table.build_symbol_table ~project_name:base_name ~builtin_asts:[stdlib_builtin_declarations] filtered_ast in
       let (filtered_annotated_ast, _) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some filtered_symbol_table) filtered_ast in
       let test_c_code = Test_codegen.generate_test_program filtered_annotated_ast base_name in
       
@@ -1021,7 +889,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Extract type aliases from original AST *)
     let type_aliases = List.filter_map (function
-      | Ast.TypeDef (Ast.TypeAlias (name, underlying_type)) -> Some (name, underlying_type)
+      | Ast.TypeDef (Ast.TypeAlias (name, underlying_type, _)) -> Some (name, underlying_type)
       | _ -> None
     ) ast in
     
@@ -1093,7 +961,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ~symbol_table ?btf_path:btf_vmlinux_path updated_optimized_ir ~output_dir:actual_output_dir input_file;
+      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ~symbol_table updated_optimized_ir ~output_dir:actual_output_dir input_file;
     
     (* Output directory already created earlier *)
     

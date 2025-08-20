@@ -1,5 +1,7 @@
 // Simple test to verify GFP flag validation 
 
+include "xdp.kh"
+
 struct TestData {
     value: u64,
 }

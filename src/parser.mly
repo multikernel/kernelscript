@@ -598,7 +598,7 @@ struct_field:
 /* Enum declaration: enum name { variants } - Fixed to eliminate unused production */
 enum_declaration:
   | ENUM IDENTIFIER LBRACE enum_variants RBRACE
-    { make_enum_def $2 $4 }
+    { make_enum_def $2 $4 (make_pos ()) }
 
 enum_variants:
   | /* empty */ { [] }
@@ -626,7 +626,7 @@ enum_value:
 /* Type alias declaration: type name = type */
 type_alias_declaration:
   | TYPE IDENTIFIER ASSIGN bpf_type
-    { make_type_alias $2 $4 }
+    { make_type_alias $2 $4 (make_pos ()) }
 
 /* Global variable declaration: [pin] [local] var name: type = value */
 global_variable_declaration:

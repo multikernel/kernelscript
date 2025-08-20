@@ -583,9 +583,25 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
     (* Also collect from enum constants *)
     (match ir_val.value_desc with
      | IREnumConstant (enum_name, constant_name, value) ->
-         let current_values = try Hashtbl.find enum_map enum_name with Not_found -> [] in
-         let updated_values = (constant_name, value) :: (List.filter (fun (name, _) -> name <> constant_name) current_values) in
-         Hashtbl.replace enum_map enum_name updated_values
+         (* Filter out both builtin and BTF-extracted enums *)
+         let should_include_enum = match symbol_table with
+           | Some st ->
+               (match Symbol_table.lookup_symbol st enum_name with
+                | Some symbol ->
+                    (match symbol.Symbol_table.kind with
+                     | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
+                         let is_builtin = enum_pos.filename = "<builtin>" in
+                         let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
+                         not is_builtin && not is_btf_enum
+                     | _ -> true)  (* Not an enum, include it *)
+                | None -> true)  (* Not found in symbol table, include it *)
+           | None -> true  (* No symbol table, include it *)
+         in
+         if should_include_enum then (
+           let current_values = try Hashtbl.find enum_map enum_name with Not_found -> [] in
+           let updated_values = (constant_name, value) :: (List.filter (fun (name, _) -> name <> constant_name) current_values) in
+           Hashtbl.replace enum_map enum_name updated_values
+         )
      | _ -> ())
   in
   
@@ -652,11 +668,16 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
       let global_symbols = Symbol_table.get_global_symbols st in
       List.iter (fun symbol ->
         match symbol.Symbol_table.kind with
-        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values)) ->
-            let processed_values = List.map (fun (const_name, opt_value) ->
-              (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
-            ) enum_values in
-            Hashtbl.replace enum_map enum_name processed_values
+        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, enum_pos)) ->
+            (* Only include user-defined enums - filter out both builtins and BTF-extracted enums *)
+            let is_builtin_enum = enum_pos.filename = "<builtin>" in
+            let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
+            if not is_builtin_enum && not is_btf_enum then (
+              let processed_values = List.map (fun (const_name, opt_value) ->
+                (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
+              ) enum_values in
+              Hashtbl.replace enum_map enum_name processed_values
+            )
         | _ -> ()
       ) global_symbols
   | None -> ()); (* No symbol table provided *)
@@ -679,27 +700,23 @@ let generate_enum_definition ctx enum_name enum_values =
 (** Generate enum definitions *)
 let generate_enum_definitions ?symbol_table ctx ir_multi_prog =
   let enum_map = collect_enum_definitions ?symbol_table ir_multi_prog in
+  
   if Hashtbl.length enum_map > 0 then (
-    (* Filter out kernel-defined enums that are provided by kernel headers *)
-    let user_defined_enums = Hashtbl.fold (fun enum_name enum_values acc ->
-      if not (Kernel_types.is_well_known_ebpf_type enum_name) then
+    let all_enums = Hashtbl.fold (fun enum_name enum_values acc ->
+      (* Only include enums that have values *)
+      if enum_values <> [] then
         (enum_name, enum_values) :: acc
       else
         acc
     ) enum_map [] in
     
-    if user_defined_enums <> [] then (
-      emit_line ctx "/* User-defined enum definitions */";
+    if all_enums <> [] then (
+      emit_line ctx "/* Enum definitions */";
       List.iter (fun (enum_name, enum_values) ->
         generate_enum_definition ctx enum_name enum_values
-      ) user_defined_enums;
+      ) all_enums;
       emit_blank_line ctx
-    );
-    
-    (* Log filtered types for debugging *)
-    let filtered_count = (Hashtbl.length enum_map) - (List.length user_defined_enums) in
-    if filtered_count > 0 then
-      printf "Filtered out %d kernel-defined enum types from C generation\n" filtered_count
+    )
   )
 
 (** Generate string type definitions *)
@@ -716,7 +733,7 @@ let generate_string_typedefs ctx ir_multi_prog =
   )
 
 (** Collect struct definitions from IR multi-program *)
-let collect_struct_definitions_from_multi_program ir_multi_prog =
+let collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog =
   let struct_defs = ref [] in
   
   (* No more hardcoded cheating - structs should have their fields properly resolved in IR *)
@@ -725,10 +742,26 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
     match ir_type with
           | IRStruct (name, struct_fields) ->
         if not (List.mem_assoc name !struct_defs) then (
-          (* Only collect structs that actually have fields - ignore empty structs that are likely type aliases *)
-          if struct_fields <> [] then
-            struct_defs := (name, struct_fields) :: !struct_defs
-          (* Remove warning - empty structs are expected for type aliases *)
+          (* Filter out kernel-defined structs that would conflict with vmlinux.h *)
+          let should_include_struct = 
+            (* Check if this struct comes from a .kh file via symbol table *)
+            match symbol_table with
+            | Some st ->
+                (match Symbol_table.lookup_symbol st name with
+                 | Some symbol ->
+                     (match symbol.Symbol_table.kind with
+                      | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
+                          not (Filename.check_suffix struct_pos.filename ".kh")
+                      | _ -> true)  (* Not a struct type definition, include it *)
+                 | None -> true)  (* Not found in symbol table, include it *)
+            | None -> true  (* No symbol table provided, include all structs *)
+          in
+          if should_include_struct then (
+            (* Only collect structs that actually have fields - ignore empty structs that are likely type aliases *)
+            if struct_fields <> [] then
+              struct_defs := (name, struct_fields) :: !struct_defs
+            (* Remove warning - empty structs are expected for type aliases *)
+          )
         )
     | IRPointer (inner_type, _) -> 
         (* Recursively collect from the pointed-to type *)
@@ -849,25 +882,11 @@ let collect_struct_definitions_from_multi_program ir_multi_prog =
 
 (** Generate struct definitions *)
 let generate_struct_definitions ?(btf_path=None) ctx struct_defs =
-  (* Filter out kernel-defined structs using centralized kernel type knowledge *)
-  let user_defined_structs = List.filter (fun (struct_name, fields) ->
-    (* Check if this struct name is a well-known kernel type *)
-    let is_kernel_type = Kernel_types.is_well_known_ebpf_type ?btf_path struct_name in
-    
-    (* Check if this struct has kernel-defined field types *)
-    let has_kernel_field = List.exists (fun (_field_name, field_type) ->
-      match field_type with
-      | IRStruct (name, _) -> Kernel_types.is_well_known_ebpf_type ?btf_path name
-      | IREnum (name, _) -> Kernel_types.is_well_known_ebpf_type ?btf_path name
-      | _ -> false
-    ) fields in
-    
-    (* Filter out kernel types and structs with kernel-defined fields *)
-    not is_kernel_type && not has_kernel_field
-  ) struct_defs in
+  (* No more filtering - all structs come from user code or includes *)
+  let _ = btf_path in  (* Suppress unused parameter warning *)
   
-  if user_defined_structs <> [] then (
-    emit_line ctx "/* User-defined struct definitions */";
+  if struct_defs <> [] then (
+    emit_line ctx "/* Struct definitions */";
     List.iter (fun (struct_name, fields) ->
       emit_line ctx (sprintf "struct %s {" struct_name);
       increase_indent ctx;
@@ -894,14 +913,9 @@ let generate_struct_definitions ?(btf_path=None) ctx struct_defs =
       ) fields;
       decrease_indent ctx;
       emit_line ctx "};"
-    ) user_defined_structs;
+    ) struct_defs;
     emit_blank_line ctx
-  );
-  
-  (* Log filtered types for debugging *)
-  let filtered_count = (List.length struct_defs) - (List.length user_defined_structs) in
-  if filtered_count > 0 then
-    printf "Filtered out %d kernel-defined struct types from C generation\n" filtered_count
+  )
 
 (** Collect type aliases from IR multi-program *)
 let collect_type_aliases_from_multi_program ir_multi_prog =
@@ -3756,7 +3770,7 @@ let generate_c_program ?_config_declarations ir_prog =
 
 (** Generate complete C program from multiple IR programs *)
 
-let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(btf_path=None) ir_multi_prog =
+let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ?symbol_table ?(btf_path=None) ir_multi_prog =
   let ctx = create_c_context () in
   
   (* Initialize modular context code generators *)
@@ -3783,7 +3797,7 @@ let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable
       generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
   
   (* Generate struct definitions *)
-      let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
+      let struct_defs = collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog in
   generate_struct_definitions ~btf_path ctx struct_defs;
   
   (* Generate config maps from IR multi-program *)
@@ -3934,7 +3948,7 @@ let compile_multi_to_c_with_tail_calls
   generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
   
   (* Generate struct definitions *)
-  let struct_defs = collect_struct_definitions_from_multi_program ir_multi_prog in
+  let struct_defs = collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog in
   generate_struct_definitions ~btf_path ctx struct_defs;
   
   (* Generate global map definitions BEFORE functions that use them *)

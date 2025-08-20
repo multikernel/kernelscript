@@ -208,12 +208,42 @@ let extract_struct_ops_definitions btf_path struct_ops_names =
 
 (** Generate struct_ops template with BTF extraction *)
 let generate_struct_ops_template ?include_kfuncs btf_path struct_ops_names project_name =
-  let struct_ops_definitions = extract_struct_ops_definitions btf_path struct_ops_names in
-  let struct_ops_code = String.concat "\n\n" struct_ops_definitions in
+  (* Only include struct definitions in main file if no header include *)
+  let struct_ops_code = match include_kfuncs with
+    | Some _ -> 
+        (* With include: struct definitions are in header, main file only has usage examples *)
+        ""
+    | None ->
+        (* Without include: struct definitions go in main file *)
+        let struct_ops_definitions = extract_struct_ops_definitions btf_path struct_ops_names in
+        String.concat "\n\n" struct_ops_definitions
+  in
   
-  let example_usage = List.map (fun name ->
-    Struct_ops_registry.generate_struct_ops_usage_example name
-  ) struct_ops_names |> String.concat "\n\n" in
+  (* Generate impl block or usage examples based on include *)
+  let example_usage = match include_kfuncs with
+    | Some _ ->
+        (* With include: generate impl block with unique name *)
+        List.map (fun name ->
+          sprintf {|// Implementation for %s (struct definition in header)
+@struct_ops("%s")
+impl my_%s {
+    // TODO: Implement the required function pointers
+    // Example function implementations:
+    // fn my_select_cpu(task: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+    //     // Your CPU selection logic here
+    //     return prev_cpu
+    // }
+    
+    // Static field assignments:
+    // name: "my_%s",
+}|} name name name name
+        ) struct_ops_names |> String.concat "\n\n"
+    | None ->
+        (* Without include: generate usage examples *)
+        List.map (fun name ->
+          Struct_ops_registry.generate_struct_ops_usage_example name
+        ) struct_ops_names |> String.concat "\n\n"
+  in
   
   let include_line = match include_kfuncs with
     | Some kh_filename -> sprintf "\ninclude \"%s\"\n" kh_filename
@@ -308,7 +338,8 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
     | _ -> ["0"; "-1"]
   in
   
-  let type_definitions = String.concat "\n\n" (List.map (fun type_info ->
+  (* Helper function to generate type definition string *)
+  let generate_type_definition ?(kernel_marker=false) type_info =
     match type_info.kind with
     | "struct" ->
         (match type_info.members with
@@ -316,11 +347,10 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
              let member_strings = List.map (fun (name, typ) ->
                sprintf "    %s: %s," name typ
              ) members in
-             (* Mark kernel-defined structs for eBPF-only usage *)
-             let kernel_marker = if type_info.kernel_defined then
+             let marker = if kernel_marker && type_info.kernel_defined then
                "// @kernel_only - This struct is only for eBPF compilation, not userspace\n"
              else "" in
-             sprintf "%sstruct %s {\n%s\n}" kernel_marker type_info.name (String.concat "\n" member_strings)
+             sprintf "%sstruct %s {\n%s\n}" marker type_info.name (String.concat "\n" member_strings)
          | None ->
              sprintf "// %s type (placeholder)" type_info.name)
     | "enum" ->
@@ -334,7 +364,18 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
              sprintf "// %s enum (placeholder)" type_info.name)
     | _ ->
         sprintf "// %s %s (placeholder)" type_info.kind type_info.name
-  ) template.types) in
+  in
+
+  (* Separate kernel types from user types *)
+  let type_definitions = match include_kfuncs with
+    | Some _ -> 
+        (* With include: Only user-defined types in main file *)
+        let user_types = List.filter (fun type_info -> not type_info.kernel_defined) template.types in
+        String.concat "\n\n" (List.map (generate_type_definition ~kernel_marker:false) user_types)
+    | None ->
+        (* Standalone: All types in main file, with kernel markers *)
+        String.concat "\n\n" (List.map (generate_type_definition ~kernel_marker:true) template.types)
+  in
   
   let sample_return = match return_values with
     | first :: _ -> first
@@ -449,3 +490,265 @@ fn main() -> i32 {
     return 0
 }
 |} context_comment include_line function_signatures_comment type_definitions attribute_line function_definition template.program_type sample_return function_name attach_comment attach_target program_description program_description
+
+(* Program-type specific kernel type names to extract from BTF *)
+let get_program_btf_types prog_type =
+  match prog_type with
+  | "xdp" -> [
+      ("xdp_md", "struct");
+      ("xdp_action", "enum");
+    ]
+  | "tc" -> [
+      ("__sk_buff", "struct");
+      ("bpf_flow_keys", "struct");
+      ("bpf_sock", "struct");
+    ]
+  | "probe" -> [
+      ("pt_regs", "struct");
+    ]
+  | "tracepoint" -> [
+      ("trace_entry", "struct");
+    ]
+  | _ -> []
+
+(* Program-type specific kfunc names to extract from BTF *)
+let get_program_kfunc_names prog_type =
+  let common_kfuncs = [
+    "bpf_ktime_get_ns";
+    "bpf_trace_printk"; 
+    "bpf_get_current_pid_tgid";
+    "bpf_get_current_comm";
+  ] in
+  let specific_kfuncs = match prog_type with
+    | "xdp" -> [
+        "bpf_xdp_adjust_head";
+        "bpf_xdp_adjust_tail";
+        "bpf_redirect";
+        "bpf_xdp_adjust_meta";
+        "bpf_fib_lookup";
+      ]
+    | "tc" -> [
+        "bpf_skb_change_head";
+        "bpf_skb_change_tail";
+        "bpf_clone_redirect";
+        "bpf_skb_store_bytes";
+        "bpf_skb_load_bytes";
+      ]
+    | "probe" -> [
+        "bpf_probe_read";
+        "bpf_probe_read_kernel";
+        "bpf_probe_read_user";
+        "bpf_probe_read_str";
+      ]
+    | "tracepoint" -> [
+        "bpf_get_stackid";
+        "bpf_perf_event_output";
+        "bpf_get_stack";
+      ]
+    | _ -> []
+  in
+  common_kfuncs @ specific_kfuncs
+
+(* Convert BTF kfunc signature to extern declaration *)
+let convert_kfunc_signature_to_extern name signature =
+  try
+    if String.length signature < 3 || not (String.sub signature 0 3 = "fn(") then
+      sprintf "extern %s() -> i32" name
+    else
+      let paren_start = 3 in
+      let paren_end = String.index signature ')' in
+      let params_str = String.sub signature paren_start (paren_end - paren_start) in
+      
+      let arrow_pos = try Some (String.index signature '>') with Not_found -> None in
+      let return_type = match arrow_pos with
+        | Some pos when pos > paren_end + 2 ->
+            String.trim (String.sub signature (pos + 1) (String.length signature - pos - 1))
+        | _ -> "i32"
+      in
+      
+      sprintf "extern %s(%s) -> %s" name params_str return_type
+  with
+  | exn ->
+      printf "Warning: Failed to parse kfunc signature '%s': %s\n" signature (Printexc.to_string exn);
+      sprintf "extern %s() -> i32" name
+
+(* Convert BTF type to KernelScript type definition *)
+let convert_btf_type_to_ks_definition btf_type =
+  match btf_type.Btf_binary_parser.kind with
+  | "struct" ->
+      let fields = match btf_type.Btf_binary_parser.members with
+        | Some members -> 
+            List.map (fun (name, typ) -> 
+              let ks_type = match typ with
+                | "unsigned int" | "__u32" | "u32" -> "u32"
+                | "unsigned short" | "__u16" | "u16" -> "u16"
+                | "unsigned char" | "__u8" | "u8" -> "u8"
+                | "unsigned long long" | "__u64" | "u64" -> "u64"
+                | "int" | "__s32" | "s32" -> "i32"
+                | "short" | "__s16" | "s16" -> "i16"
+                | "char" | "__s8" | "s8" -> "i8"
+                | "long long" | "__s64" | "s64" -> "i64"
+                | _ when String.contains typ '*' -> "*u8"
+                | _ -> "u32"
+              in
+              sprintf "    %s: %s," name ks_type
+            ) members
+            |> String.concat "\n"
+        | None -> ""
+      in
+      sprintf "struct %s {\n%s\n}" btf_type.Btf_binary_parser.name fields
+  | "enum" ->
+      let values = match btf_type.Btf_binary_parser.members with
+        | Some members ->
+            List.map (fun (name, value) -> 
+              sprintf "    %s = %s," name value
+            ) members
+            |> String.concat "\n"
+        | None -> ""
+      in
+      sprintf "enum %s {\n%s\n}" btf_type.Btf_binary_parser.name values
+  | _ -> sprintf "// %s (unsupported type)" btf_type.Btf_binary_parser.name
+
+(* Generate hardcoded enum definitions that can't be extracted from BTF *)
+let generate_hardcoded_enums prog_type =
+  match prog_type with
+  | "tc" -> 
+      sprintf {|enum tc_action {
+    TC_ACT_UNSPEC = -1,
+    TC_ACT_OK = 0,
+    TC_ACT_RECLASSIFY = 1,
+    TC_ACT_SHOT = 2,
+    TC_ACT_PIPE = 3,
+    TC_ACT_STOLEN = 4,
+    TC_ACT_QUEUED = 5,
+    TC_ACT_REPEAT = 6,
+    TC_ACT_REDIRECT = 7,
+    TC_ACT_TRAP = 8,
+}|}
+  | _ -> ""
+
+(* Generate program-type specific header content using BTF *)
+let generate_program_header ~extract_kfuncs prog_type btf_path =
+  let type_specs = get_program_btf_types prog_type in
+  let kfunc_names = if extract_kfuncs then get_program_kfunc_names prog_type else [] in
+  
+  let header = sprintf {|// AUTO-GENERATED %s DEFINITIONS - DO NOT EDIT
+// Contains all kernel types and functions needed for %s programs
+// Generated by KernelScript compiler from BTF
+
+|} (String.uppercase_ascii prog_type) prog_type in
+  
+  let type_definitions = 
+    try
+      let type_name_list = List.map (fun (name, _kind) -> name) type_specs in
+      let btf_types = Btf_binary_parser.parse_btf_file btf_path type_name_list in
+      let filtered_types = List.filter (fun btf_type ->
+        List.exists (fun (name, _kind) -> name = btf_type.Btf_binary_parser.name) type_specs
+      ) btf_types in
+      if filtered_types <> [] then
+        List.map convert_btf_type_to_ks_definition filtered_types |> String.concat "\n\n"
+      else
+        sprintf "// Warning: No BTF types found for %s" prog_type
+    with
+    | exn ->
+        printf "Warning: Failed to extract BTF types: %s\n" (Printexc.to_string exn);
+        sprintf "// Warning: BTF extraction failed for %s" prog_type
+  in
+  
+  let kfunc_declarations = 
+    try
+      let btf_kfuncs = Btf_binary_parser.extract_kfuncs_from_btf btf_path in
+      let filtered_kfuncs = List.filter (fun (name, _) ->
+        List.mem name kfunc_names
+      ) btf_kfuncs in
+      if filtered_kfuncs <> [] then
+        List.map (fun (name, signature) -> convert_kfunc_signature_to_extern name signature) filtered_kfuncs
+        |> String.concat "\n"
+      else
+        sprintf "// No BTF kfuncs found for %s" prog_type
+    with
+    | exn ->
+        printf "Warning: Failed to extract BTF kfuncs: %s\n" (Printexc.to_string exn);
+        sprintf "// Warning: BTF kfunc extraction failed for %s" prog_type
+  in
+  
+  let hardcoded_enums = generate_hardcoded_enums prog_type in
+  let enum_section = if hardcoded_enums <> "" then hardcoded_enums ^ "\n\n" else "" in
+  sprintf "%s%s\n\n%s%s\n" header type_definitions enum_section kfunc_declarations
+
+(* Generate struct_ops-specific header content using BTF *)
+let generate_struct_ops_header struct_ops_name btf_path =
+  let header = sprintf {|// AUTO-GENERATED %s DEFINITIONS - DO NOT EDIT
+// Contains kernel struct definition for %s
+// Generated by KernelScript compiler from BTF
+
+|} (String.uppercase_ascii struct_ops_name) struct_ops_name in
+  
+  let struct_definitions = 
+    try
+      let btf_types = Btf_binary_parser.parse_btf_file btf_path [struct_ops_name] in
+      let filtered_types = List.filter (fun btf_type ->
+        btf_type.Btf_binary_parser.name = struct_ops_name && btf_type.Btf_binary_parser.kind = "struct"
+      ) btf_types in
+      if filtered_types <> [] then
+        List.map convert_btf_type_to_ks_definition filtered_types |> String.concat "\n\n"
+      else
+        sprintf "// Warning: No BTF struct found for %s" struct_ops_name
+    with
+    | exn ->
+        printf "Warning: Failed to extract BTF struct for %s: %s\n" struct_ops_name (Printexc.to_string exn);
+        sprintf "// Warning: BTF extraction failed for %s" struct_ops_name
+  in
+  
+  sprintf "%s%s\n" header struct_definitions
+
+(* Generate tracepoint-specific header content using BTF *)
+let generate_tracepoint_header category_event btf_path =
+  (* Parse category and event from the category_event string *)
+  let (category, event) = 
+    if String.contains category_event '/' then
+      let parts = String.split_on_char '/' category_event in
+      match parts with
+      | [cat; evt] -> (cat, evt)
+      | _ -> failwith (sprintf "Invalid tracepoint format '%s'. Use 'category/event'" category_event)
+    else
+      failwith (sprintf "Invalid tracepoint format '%s'. Use 'category/event'" category_event)
+  in
+  
+  let header = sprintf {|// AUTO-GENERATED %s TRACEPOINT DEFINITIONS - DO NOT EDIT
+// Contains kernel types needed for %s/%s tracepoint programs
+// Generated by KernelScript compiler from BTF
+
+|} (String.uppercase_ascii event) category event in
+  
+  (* Determine typedef_name and raw_name based on the user's logic *)
+  let (typedef_name, raw_name) = 
+    if category = "syscalls" && String.starts_with event ~prefix:"sys_enter_" then
+      ("btf_trace_sys_enter", "trace_event_raw_sys_enter")
+    else if category = "syscalls" && String.starts_with event ~prefix:"sys_exit_" then
+      ("btf_trace_sys_exit", "trace_event_raw_sys_exit")
+    else
+      (sprintf "btf_trace_%s" event, sprintf "trace_event_raw_%s" event)
+  in
+  
+  (* Extract the tracepoint structures from BTF *)
+  let common_types = [raw_name; typedef_name; "trace_entry"] in
+  let struct_definitions = 
+    try
+      let btf_types = Btf_binary_parser.parse_btf_file btf_path common_types in
+      let filtered_types = List.filter (fun btf_type ->
+        btf_type.Btf_binary_parser.kind = "struct" && 
+        (btf_type.Btf_binary_parser.name = raw_name || 
+         btf_type.Btf_binary_parser.name = "trace_entry")
+      ) btf_types in
+      if filtered_types <> [] then
+        List.map convert_btf_type_to_ks_definition filtered_types |> String.concat "\n\n"
+      else
+        sprintf "// Warning: No BTF structs found for %s/%s" category event
+    with
+    | exn ->
+        printf "Warning: Failed to extract BTF structs for %s/%s: %s\n" category event (Printexc.to_string exn);
+        sprintf "// Warning: BTF extraction failed for %s/%s" category event
+  in
+  
+  sprintf "%s%s\n" header struct_definitions

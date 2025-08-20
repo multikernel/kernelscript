@@ -919,7 +919,9 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
   let enum_map = Hashtbl.create 16 in
   
   let rec collect_from_type = function
-    | IREnum (name, values) -> Hashtbl.replace enum_map name values
+    | IREnum (name, values) -> 
+        (* Note: Enum filtering is now handled at the IR level based on source file *)
+        Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
   
@@ -933,6 +935,7 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
     (* Also collect from enum constants *)
     (match ir_val.value_desc with
      | IREnumConstant (enum_name, constant_name, value) ->
+         (* Note: Enum constant filtering is now handled at the IR level based on source file *)
          let current_values = try Hashtbl.find enum_map enum_name with Not_found -> [] in
          let updated_values = (constant_name, value) :: (List.filter (fun (name, _) -> name <> constant_name) current_values) in
          Hashtbl.replace enum_map enum_name updated_values
@@ -1013,17 +1016,22 @@ let collect_enum_definitions_from_userspace ?symbol_table userspace_prog =
   (* Collect from all userspace functions *)
   List.iter collect_from_function userspace_prog.userspace_functions;
   
-  (* Also collect enum definitions from symbol table *)
+  (* Also collect enum definitions from symbol table, but filter out kernel-defined enums *)
   (match symbol_table with
   | Some st ->
       let global_symbols = Symbol_table.get_global_symbols st in
       List.iter (fun symbol ->
         match symbol.Symbol_table.kind with
-        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values)) ->
-            let processed_values = List.map (fun (const_name, opt_value) ->
-              (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
-            ) enum_values in
-            Hashtbl.replace enum_map enum_name processed_values
+        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, enum_pos)) ->
+            (* Filter out both builtin and BTF-extracted enums - they should not appear in userspace code *)
+            let is_builtin_enum = enum_pos.filename = "<builtin>" in
+            let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
+            if not is_builtin_enum && not is_btf_enum then (
+              let processed_values = List.map (fun (const_name, opt_value) ->
+                (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
+              ) enum_values in
+              Hashtbl.replace enum_map enum_name processed_values
+            )
         | _ -> ()
       ) global_symbols
   | None -> ()); (* No symbol table provided *)
@@ -1043,12 +1051,9 @@ let generate_enum_definition_userspace enum_name enum_values =
 let generate_enum_definitions_userspace ?symbol_table userspace_prog =
   let enum_map = collect_enum_definitions_from_userspace ?symbol_table userspace_prog in
   if Hashtbl.length enum_map > 0 then (
-    (* Filter out kernel-defined enums that are provided by kernel headers *)
+    (* Kernel enums never appear in userspace when using includes *)
     let user_defined_enums = Hashtbl.fold (fun enum_name enum_values acc ->
-      if not (Kernel_types.is_well_known_ebpf_type enum_name) then
-        (enum_name, enum_values) :: acc
-      else
-        acc
+      (enum_name, enum_values) :: acc
     ) enum_map [] in
     
     if List.length user_defined_enums > 0 then (
@@ -2977,6 +2982,10 @@ let generate_python_wrapper base_name global_maps ir_multi_prog =
   
   let struct_definitions = match ir_multi_prog.userspace_program with
     | Some userspace_prog ->
+        (* Filter out structs from .kh header files from Python userspace code *)
+        let user_defined_structs = List.filter (fun ir_struct ->
+          not (Filename.check_suffix ir_struct.struct_pos.filename ".kh")
+        ) userspace_prog.userspace_structs in
         List.map (fun ir_struct ->
           let fields = List.map (fun (field_name, field_type) ->
             let ctypes_type = match field_type with
@@ -2998,7 +3007,7 @@ let generate_python_wrapper base_name global_maps ir_multi_prog =
     _fields_ = [
 %s
     ]|} ir_struct.struct_name (String.concat ",\n" fields)
-        ) userspace_prog.userspace_structs
+        ) user_defined_structs
     | None -> [] in
   
   let map_exports = List.map (fun map ->
@@ -3249,7 +3258,7 @@ print(f"KernelScript Python wrapper initialized with {len(_maps)} maps")
 |} base_name map_metadata (String.concat "\n\n" struct_definitions) map_exports
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table ?btf_path (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
@@ -3413,10 +3422,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
          String.ends_with ~suffix:"_config" ir_struct.struct_name)
   ) userspace_prog.userspace_structs in
   
-  (* Filter out kernel-defined structs that are provided by kernel headers *)
+  (* Filter out structs from .kh header files - they should not appear in userspace code *)
   let user_defined_ir_structs = List.filter (fun ir_struct ->
-    not (Kernel_types.is_well_known_ebpf_type ?btf_path ir_struct.struct_name) &&
-    not (Struct_ops_registry.is_known_struct_ops ir_struct.struct_name)
+    not (Filename.check_suffix ir_struct.struct_pos.filename ".kh")
   ) non_config_ir_structs in
   
   let structs = String.concat "\n\n" 
@@ -4030,10 +4038,10 @@ static void handle_signal(int sig) {
 |} includes string_typedefs type_alias_definitions string_helpers daemon_globals enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table ?btf_path (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ?symbol_table ?btf_path userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ?symbol_table userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 

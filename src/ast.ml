@@ -176,9 +176,9 @@ end
 
 (** Type definitions for structs, enums, and type aliases *)
 type type_def =
-  | StructDef of string * (string * bpf_type) list
-  | EnumDef of string * (string * integer_value option) list
-  | TypeAlias of string * bpf_type
+  | StructDef of string * (string * bpf_type) list * position
+  | EnumDef of string * (string * integer_value option) list * position
+  | TypeAlias of string * bpf_type * position
 
 (** Literal values *)
 type literal =
@@ -539,13 +539,13 @@ let make_include_declaration path pos = {
 
 let make_type_def def = def
 
-let make_enum_def name values = EnumDef (name, values)
+let make_enum_def name values pos = EnumDef (name, values, pos)
 
-let make_kernel_enum_def name values = EnumDef (name, values)
+let make_kernel_enum_def name values pos = EnumDef (name, values, pos)
 
-let make_kernel_struct_def name fields = StructDef (name, fields)
+let make_kernel_struct_def name fields pos = StructDef (name, fields, pos)
 
-let make_type_alias name bpf_type = TypeAlias (name, bpf_type)
+let make_type_alias name bpf_type pos = TypeAlias (name, bpf_type, pos)
 
 let make_map_config max_entries ?key_size ?value_size ?(flags=[]) () = 
   {
@@ -906,17 +906,17 @@ let string_of_declaration = function
   | GlobalFunction func -> string_of_function func
   | TypeDef td ->
       let type_str = match td with
-        | StructDef (name, fields) ->
+        | StructDef (name, fields, _) ->
             Printf.sprintf "struct %s {\n  %s\n}" name
               (String.concat "\n  " (List.map (fun (name, typ) ->
                 Printf.sprintf "%s: %s;" name (string_of_bpf_type typ)) fields))
-        | EnumDef (name, values) ->
+        | EnumDef (name, values, _) ->
             Printf.sprintf "enum %s {\n  %s\n}" name
               (String.concat ",\n  " (List.map (fun (name, opt) ->
                 match opt with
                 | None -> name
                 | Some v -> Printf.sprintf "%s = %s" name (IntegerValue.to_string v)) values))
-        | TypeAlias (name, typ) ->
+        | TypeAlias (name, typ, _) ->
             Printf.sprintf "type %s = %s;" name (string_of_bpf_type typ)
       in
       type_str

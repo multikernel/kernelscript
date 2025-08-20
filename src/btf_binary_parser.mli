@@ -36,10 +36,10 @@ val parse_btf_file : string -> string list -> btf_type_info list
     @return List of (function_name, signature) pairs *)
 val extract_kernel_function_signatures : string -> string list -> (string * string) list
 
-(** Extract all kernel-defined struct names from BTF file.
+(** Extract all kernel-defined struct and enum names from BTF file.
     @param btf_path Path to the binary BTF file
-    @return List of kernel struct names *)
-val extract_all_kernel_struct_names : string -> string list
+    @return List of kernel struct and enum names *)
+val extract_all_kernel_struct_and_enum_names : string -> string list
 
 (** Extract kfuncs from BTF file using DECL_TAG annotations.
     @param btf_path Path to the binary BTF file

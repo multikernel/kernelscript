@@ -141,7 +141,7 @@ let extract_exportable_symbols ast =
     
     | TypeDef type_def ->
         (match type_def with
-         | StructDef (name, _fields) ->
+         | StructDef (name, _fields, _pos) ->
              let struct_type = Struct name in
              symbols := {
                symbol_name = name;
@@ -149,7 +149,7 @@ let extract_exportable_symbols ast =
                symbol_kind = `Type;
                is_public = true;
              } :: !symbols
-         | EnumDef (name, _) ->
+         | EnumDef (name, _, _pos) ->
              let enum_type = Enum name in
              symbols := {
                symbol_name = name;
@@ -157,7 +157,7 @@ let extract_exportable_symbols ast =
                symbol_kind = `Type;
                is_public = true;
              } :: !symbols
-         | TypeAlias (name, underlying_type) ->
+         | TypeAlias (name, underlying_type, _pos) ->
              symbols := {
                symbol_name = name;
                symbol_type = underlying_type;

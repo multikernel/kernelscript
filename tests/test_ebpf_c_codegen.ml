@@ -613,53 +613,46 @@ let test_struct_definition_with_aliases () =
 (** Test kernel struct filtering to prevent redefinition errors *)
 let test_kernel_struct_filtering () =
   
-  (* Create test struct definitions that include kernel-defined types *)
+  (* Test the new clean architecture: kernel structs never reach code generation *)
+  (* With clean architecture, only user-defined structs should appear in compilation pipeline *)
   let user_struct_fields = [
     ("count", Kernelscript.Ir.IRU64);
     ("timestamp", Kernelscript.Ir.IRU64)
   ] in
   
-  let kernel_sk_buff_fields = [
-    ("data", Kernelscript.Ir.IRU64);
-    ("data_end", Kernelscript.Ir.IRU64);
-    ("len", Kernelscript.Ir.IRU32)
+  let another_user_struct_fields = [
+    ("value", Kernelscript.Ir.IRU32);
+    ("enabled", Kernelscript.Ir.IRBool)
   ] in
   
-  let kernel_xdp_md_fields = [
-    ("data", Kernelscript.Ir.IRU64);
-    ("data_end", Kernelscript.Ir.IRU64);
-    ("data_meta", Kernelscript.Ir.IRU64)
-  ] in
-  
-  (* Test struct definitions: user-defined, __sk_buff (kernel), xdp_md (kernel) *)
-  (* Note: kernel types are identified by name using Kernel_types.is_well_known_ebpf_type *)
+  (* Only user-defined structs in compilation pipeline *)
+  (* Kernel structs (__sk_buff, xdp_md) are handled by include system, never reach here *)
   let struct_defs = [
     ("PacketStats", user_struct_fields);
-    ("__sk_buff", kernel_sk_buff_fields);
-    ("xdp_md", kernel_xdp_md_fields)
+    ("UserConfig", another_user_struct_fields)
   ] in
   
-  (* Generate struct definitions using the filtering logic *)
+  (* Generate struct definitions - no filtering needed for kernel structs *)
   let ctx = create_c_context () in
   generate_struct_definitions ~btf_path:None ctx struct_defs;
   
   let output = String.concat "\n" ctx.output_lines in
   
-  (* Verify that user-defined struct is generated *)
+  (* Verify that all user-defined structs are generated *)
   check bool "user struct PacketStats is generated" true (contains_substr output "struct PacketStats {");
   check bool "user struct has count field" true (contains_substr output "__u64 count;");
   check bool "user struct has timestamp field" true (contains_substr output "__u64 timestamp;");
   
-  (* Critical: Verify that kernel-defined structs are NOT generated *)
-  check bool "__sk_buff struct NOT generated" false (contains_substr output "struct __sk_buff {");
-  check bool "xdp_md struct NOT generated" false (contains_substr output "struct xdp_md {");
+  check bool "user struct UserConfig is generated" true (contains_substr output "struct UserConfig {");
+  check bool "user struct has value field" true (contains_substr output "__u32 value;");
+  check bool "user struct has enabled field" true (contains_substr output "__u8 enabled;");
   
-  (* Also verify no fields from kernel structs appear in output *)
-  check bool "no __sk_buff len field" false (contains_substr output "len;");
-  check bool "no xdp_md data_meta field" false (contains_substr output "data_meta;");
+  (* Clean architecture: No kernel structs should appear (they're handled by includes) *)
+  check bool "no kernel structs in output" false (contains_substr output "struct __sk_buff {");
+  check bool "no kernel structs in output" false (contains_substr output "struct xdp_md {");
   
-  (* Verify that the comment section indicates filtering occurred *)
-  check bool "struct definitions comment present" true (contains_substr output "User-defined struct definitions");
+  (* Verify that the comment section is present *)
+  check bool "struct definitions comment present" true (contains_substr output "Struct definitions");
   
   ()
 
