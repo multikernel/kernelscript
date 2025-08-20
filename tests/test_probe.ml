@@ -54,17 +54,17 @@ module MockProbeBTF = struct
   let mock_kernel_functions = [
     {
       name = "sys_read";
-      parameters = [("fd", "u32"); ("buf", "*u8"); ("count", "usize")];
+      parameters = [("fd", "u32"); ("buf", "*u8"); ("count", "size_t")];
       return_type = "isize";
     };
     {
       name = "vfs_write";
-      parameters = [("file", "*file"); ("buf", "*u8"); ("count", "usize"); ("pos", "*i64")];
+      parameters = [("file", "*file"); ("buf", "*u8"); ("count", "size_t"); ("pos", "*i64")];
       return_type = "isize";
     };
     {
       name = "tcp_sendmsg";
-      parameters = [("sk", "*sock"); ("msg", "*msghdr"); ("size", "usize")];
+      parameters = [("sk", "*sock"); ("msg", "*msghdr"); ("size", "size_t")];
       return_type = "i32";
     };
   ]
@@ -75,7 +75,7 @@ end
 (* 1. Parser Tests *)
 let test_probe_attribute_parsing _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -92,7 +92,7 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
 
 let test_probe_multiple_parameters _ =
   let source = "@probe(\"vfs_write\")
-fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
+fn vfs_write_handler(file: *file, buf: *u8, count: size_t, pos: *i64) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -138,7 +138,7 @@ fn empty_target_handler(fd: u32) -> i32 {
 (* 2. Type Checking Tests *)
 let test_probe_type_checking _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -147,7 +147,7 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
 
 let test_probe_parameter_validation _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -166,8 +166,8 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
              (match fd_type with U32 -> true | _ -> false);
            check bool "Second parameter type should be Pointer" true
              (match buf_type with Pointer _ -> true | _ -> false);
-           check bool "Third parameter type should be UserType usize" true
-             (match count_type with UserType "usize" -> true | _ -> false)
+           check bool "Third parameter type should be UserType size_t" true
+             (match count_type with UserType "size_t" -> true | _ -> false)
        | _ -> fail "Expected exactly three parameters")
   | _ -> fail "Expected AttributedFunction"
 
@@ -232,7 +232,7 @@ fn invalid_handler(ctx: *pt_regs) -> i32 {
 (* 3. IR Generation Tests *)
 let test_probe_ir_generation _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -247,7 +247,7 @@ fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
 
 let test_probe_complex_parameters _ =
   let source = "@probe(\"tcp_sendmsg\")
-fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
+fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -262,7 +262,7 @@ fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
 
 let test_probe_function_signature_validation _ =
   let source = "@probe(\"vfs_write\")
-fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
+fn vfs_write_handler(file: *file, buf: *u8, count: size_t, pos: *i64) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -279,7 +279,7 @@ fn vfs_write_handler(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
 (* 4. Code Generation Tests *)
 let test_fprobe_section_name_generation _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -315,7 +315,7 @@ fn vfs_read_handler(ctx: *pt_regs) -> i32 {
 
 let test_fprobe_complex_section_generation _ =
   let source = "@probe(\"tcp_sendmsg\")
-fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
+fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -338,7 +338,7 @@ fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
 
 let test_fprobe_ebpf_codegen _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -379,7 +379,7 @@ fn vfs_read_handler(ctx: *pt_regs) -> i32 {
 
 let test_fprobe_includes_generation _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -541,7 +541,7 @@ fn sys_open_handler(ctx: *pt_regs) -> i32 {
 
 let test_fprobe_network_function _ =
   let source = "@probe(\"tcp_sendmsg\")
-fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
+fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: size_t) -> i32 {
     return 0
 }" in
   let ast = parse_string source in
@@ -559,7 +559,7 @@ fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: usize) -> i32 {
 
 let test_probe_multiple_functions _ =
   let source = "@probe(\"sys_read\")
-fn sys_read_handler(fd: u32, buf: *u8, count: usize) -> i32 {
+fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
     return 0
 }
 

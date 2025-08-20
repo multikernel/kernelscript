@@ -217,7 +217,7 @@ KernelScript automatically extracts kernel function signatures from BTF (BPF Typ
 ```kernelscript
 // Function entrance probe (uses fprobe)
 @probe("sys_read")
-fn function_entrance(fd: u32, buf: *u8, count: usize) -> i32 {
+fn function_entrance(fd: u32, buf: *u8, count: size_t) -> i32 {
     // Direct access to function parameters with correct types
     // Compiler automatically extracts signature from BTF:
     // long sys_read(unsigned int fd, char __user *buf, size_t count)
@@ -2575,7 +2575,7 @@ pin var global_counters : array<u32, GlobalCounter>(256)
 pin var event_stream : hash<u32, Event>(1024)
 
 @probe("sys_read")
-fn producer(fd: u32, buf: *u8, count: usize) -> i32 {
+fn producer(fd: u32, buf: *u8, count: size_t) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
     // Update global counter (accessible by other programs)
@@ -2595,7 +2595,7 @@ fn producer(fd: u32, buf: *u8, count: usize) -> i32 {
 }
 
 @probe("sys_write")
-fn consumer(fd: u32, buf: *u8, count: usize) -> i32 {
+fn consumer(fd: u32, buf: *u8, count: size_t) -> i32 {
     var pid = bpf_get_current_pid_tgid() as u32
     
     // Access global counter (same map as producer program)

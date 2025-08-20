@@ -207,7 +207,7 @@ fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
 
 // Program 4: Sequential access pattern demonstration
 @probe("vfs_read")
-fn data_processor(file: *file, buf: *u8, count: usize, pos: *i64) -> i32 {
+fn data_processor(file: *file, buf: *u8, count: size_t, pos: *i64) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
         var element = sequential_data[i]

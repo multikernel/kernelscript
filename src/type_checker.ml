@@ -220,8 +220,6 @@ let rec resolve_user_type ctx = function
   | UserType "xdp_md" -> Xdp_md
   | UserType "xdp_action" -> Xdp_action
   | UserType "__sk_buff" -> Struct "__sk_buff"
-
-  | UserType "usize" -> U64  (* usize maps to 64-bit unsigned integer *)
   | UserType name ->
       (* Look up type alias in the context *)
       (try

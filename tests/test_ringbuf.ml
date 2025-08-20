@@ -502,7 +502,7 @@ var security_events : ringbuf<SecurityEvent>(8192)
   return XDP_PASS
 }
 
-@probe("sys_read") fn security_prog(fd: u32, buf: *u8, count: usize) -> i32 {
+@probe("sys_read") fn security_prog(fd: u32, buf: *u8, count: size_t) -> i32 {
   var sec_event = security_events.reserve()
   if (sec_event != null) {
     security_events.submit(sec_event)

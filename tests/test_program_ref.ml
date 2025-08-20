@@ -47,7 +47,7 @@ fn main() -> i32 {
 (** Test program reference with different program types *)
 let test_different_program_types () =
   let program_text = {|
-@probe("sys_read") fn kprobe_tracer(fd: u32, buf: *u8, count: usize) -> i32 {
+@probe("sys_read") fn kprobe_tracer(fd: u32, buf: *u8, count: size_t) -> i32 {
   return 0
 }
 

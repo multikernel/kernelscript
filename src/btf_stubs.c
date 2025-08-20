@@ -272,6 +272,14 @@ static char* resolve_type_to_string(struct btf *btf, int type_id) {
             return strdup("*u8");
         }
         
+        if (kind == BTF_KIND_TYPEDEF) {
+            /* Check for special typedef names like size_t */
+            const char *typedef_name = btf__name_by_offset(btf, t->name_off);
+            if (typedef_name && strcmp(typedef_name, "size_t") == 0) {
+                return strdup("size_t");  /* Map size_t to KernelScript size_t type alias */
+            }
+        }
+        
         t = btf__type_by_id(btf, t->type);
         if (!t) break;
         kind = btf_kind(t);
@@ -406,6 +414,14 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
             }
             /* Other pointer types */
             CAMLreturn(caml_copy_string("*u8"));
+        }
+        
+        if (kind == BTF_KIND_TYPEDEF) {
+            /* Check for special typedef names like size_t */
+            const char *typedef_name = btf__name_by_offset(btf, t->name_off);
+            if (typedef_name && strcmp(typedef_name, "size_t") == 0) {
+                CAMLreturn(caml_copy_string("size_t"));  /* Map size_t to KernelScript size_t type alias */
+            }
         }
         
         /* Follow the type chain */

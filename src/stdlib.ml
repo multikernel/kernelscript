@@ -250,6 +250,9 @@ let get_kernel_implementation name =
 
 (** Builtin type definitions *)
 let builtin_types = [
+  (* Standard C types as type aliases *)
+  TypeDef (TypeAlias ("size_t", U64));  (* size_t maps to 64-bit unsigned integer *)
+  
   (* Kernel allocation flags enum *)
   TypeDef (EnumDef ("gfp_flag", [
     ("GFP_KERNEL", Some 0x0001);
