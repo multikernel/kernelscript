@@ -42,6 +42,12 @@ external btf_extract_kernel_struct_and_enum_names : btf_handle -> string list = 
 external btf_extract_kfuncs : btf_handle -> (string * string) list = "btf_extract_kfuncs_stub"
 external btf_free : btf_handle -> unit = "btf_free_stub"
 
+(** BTF kind constants from C headers *)
+external btf_kind_struct : unit -> int = "btf_kind_struct_stub"
+external btf_kind_union : unit -> int = "btf_kind_union_stub"
+external btf_kind_enum : unit -> int = "btf_kind_enum_stub"
+external btf_kind_enum64 : unit -> int = "btf_kind_enum64_stub"
+
 (** Parse BTF file and extract requested types using libbpf *)
 let parse_btf_file btf_path target_types =
   try
@@ -82,17 +88,17 @@ let parse_btf_file btf_path target_types =
           
           (* Check if this is a target type *)
           if List.mem name target_types then (
-            let kind_str = match kind_int with
-              | 4 -> "struct"
-              | 5 -> "union"
-              | 6 -> "enum"
-              | 19 -> "enum64"
-              | _ -> "unknown"
+            let kind_str = 
+              if kind_int = btf_kind_struct () then "struct"
+              else if kind_int = btf_kind_union () then "union"
+              else if kind_int = btf_kind_enum () then "enum"
+              else if kind_int = btf_kind_enum64 () then "enum64"
+              else "unknown"
             in
             
             (* Get members for struct/union/enum types *)
             let members = 
-              if kind_int = 4 || kind_int = 5 then (
+              if kind_int = btf_kind_struct () || kind_int = btf_kind_union () then (
                 (* Struct/Union: resolve member types *)
                 try
                   let member_array = btf_type_get_members btf_handle i in
@@ -123,8 +129,7 @@ let parse_btf_file btf_path target_types =
                   Some (List.rev resolved_members)
                 with
                 | _ -> None
-              ) else if kind_int = 6 || kind_int = 19 then (
-                (* Enum (kind 6) or Enum64 (kind 19): extract enum values *)
+              ) else if kind_int = btf_kind_enum () || kind_int = btf_kind_enum64 () then (
                 try
                   let member_array = btf_type_get_members btf_handle i in
                   let member_list = Array.to_list member_array in

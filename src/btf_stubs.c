@@ -26,6 +26,27 @@
 #include <caml/fail.h>
 #include <caml/custom.h>
 
+/* BTF kind constants - expose to OCaml */
+value btf_kind_struct_stub(value unit) {
+    CAMLparam1(unit);
+    CAMLreturn(Val_int(BTF_KIND_STRUCT));
+}
+
+value btf_kind_union_stub(value unit) {
+    CAMLparam1(unit);
+    CAMLreturn(Val_int(BTF_KIND_UNION));
+}
+
+value btf_kind_enum_stub(value unit) {
+    CAMLparam1(unit);
+    CAMLreturn(Val_int(BTF_KIND_ENUM));
+}
+
+value btf_kind_enum64_stub(value unit) {
+    CAMLparam1(unit);
+    CAMLreturn(Val_int(BTF_KIND_ENUM64));
+}
+
 /* Debug macro */
 /* #define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__) */
 #define DEBUG_PRINT(...)
