@@ -37,8 +37,45 @@ type program_template = {
 
 
 
-(** Check if a type name is a well-known kernel type *)
-let is_well_known_kernel_type ?btf_path = Kernel_types.is_well_known_ebpf_type ?btf_path
+(** Cache for BTF-extracted kernel types to avoid re-parsing *)
+let kernel_types_cache : (string, string list) Hashtbl.t = Hashtbl.create 16
+
+(** Extract kernel types from BTF file with caching *)
+let get_kernel_types_from_btf btf_path =
+  match Hashtbl.find_opt kernel_types_cache btf_path with
+  | Some cached_types -> cached_types
+  | None ->
+      let kernel_types = Btf_binary_parser.extract_all_kernel_struct_and_enum_names btf_path in
+      Hashtbl.add kernel_types_cache btf_path kernel_types;
+      kernel_types
+
+(** Check if a type name is a well-known eBPF kernel type using BTF. *)
+let is_well_known_ebpf_type ?btf_path type_name =
+  match btf_path with
+  | Some path when Sys.file_exists path ->
+      let kernel_types = get_kernel_types_from_btf path in
+      List.mem type_name kernel_types
+  | Some path ->
+      failwith (sprintf "BTF file not found: %s" path)
+  | None ->
+      failwith "BTF file path is required for kernel type detection. Use --btf-vmlinux-path option."
+
+(** Clear the kernel types cache (useful for testing or when BTF file changes) *)
+let clear_kernel_types_cache () =
+  Hashtbl.clear kernel_types_cache
+
+(** Get all known kernel types for the given BTF file (for debugging/inspection) *)
+let get_all_kernel_types ?btf_path () =
+  match btf_path with
+  | Some path when Sys.file_exists path ->
+      get_kernel_types_from_btf path
+  | Some path ->
+      failwith (sprintf "BTF file not found: %s" path)
+  | None ->
+      failwith "BTF file path is required for kernel type inspection. Use --btf-vmlinux-path option."
+
+(** Check if a type name is a well-known kernel type (alias for compatibility) *)
+let is_well_known_kernel_type ?btf_path = is_well_known_ebpf_type ?btf_path
 
 (** Create hardcoded enum definitions for constants that can't be extracted from BTF *)
 let create_hardcoded_tc_action_enum () = {
@@ -82,7 +119,7 @@ let get_program_template prog_type btf_path =
           kind = bt.Btf_binary_parser.kind;
           size = bt.Btf_binary_parser.size;
           members = bt.Btf_binary_parser.members;
-          kernel_defined = is_well_known_kernel_type ?btf_path bt.Btf_binary_parser.name;
+          kernel_defined = is_well_known_ebpf_type ?btf_path bt.Btf_binary_parser.name;
         }) binary_types
     | Some path -> failwith (sprintf "BTF file not found: %s" path)
     | None -> failwith "BTF file path is required. Use --btf-vmlinux-path option."
@@ -147,7 +184,7 @@ let get_tracepoint_program_template category_event btf_path =
           kind = bt.Btf_binary_parser.kind;
           size = bt.Btf_binary_parser.size;
           members = bt.Btf_binary_parser.members;
-          kernel_defined = is_well_known_kernel_type ?btf_path bt.Btf_binary_parser.name;
+          kernel_defined = is_well_known_ebpf_type ?btf_path bt.Btf_binary_parser.name;
         }) binary_types
     | Some path -> failwith (sprintf "BTF file not found: %s" path)
     | None -> failwith "BTF file path is required for tracepoint extraction. Use --btf-vmlinux-path option."

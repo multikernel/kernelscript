@@ -42,8 +42,17 @@ val get_kprobe_program_template : string -> string option -> program_template
 (** Get tracepoint program template for a specific target function *)
 val get_tracepoint_program_template : string -> string option -> program_template
 
-(** Check if a type name is a well-known eBPF kernel type *)
+(** Check if a type name is a well-known eBPF kernel type using BTF *)
 val is_well_known_kernel_type : ?btf_path:string -> string -> bool
+
+(** Check if a type name is a well-known eBPF kernel type using BTF (main function) *)
+val is_well_known_ebpf_type : ?btf_path:string -> string -> bool
+
+(** Clear the kernel types cache (useful for testing or when BTF file changes) *)
+val clear_kernel_types_cache : unit -> unit
+
+(** Get all known kernel types for the given BTF file (for debugging/inspection) *)
+val get_all_kernel_types : ?btf_path:string -> unit -> string list
 
 (** Extract struct_ops definitions from BTF and generate KernelScript code *)
 val extract_struct_ops_definitions : string option -> string list -> string list
