@@ -59,6 +59,9 @@ val generate_context_field_access : string -> string -> string -> string
 (** Get context-specific includes *)
 val get_context_includes : string -> string list
 
+(** Get program description for a context type *)
+val get_context_program_description : string -> string
+
 (** Map action constant for a context type *)
 val map_context_action_constant : string -> int -> string option
 

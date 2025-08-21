@@ -224,7 +224,7 @@ let get_kprobe_program_template target_function btf_path =
   in
   
   {
-    program_type = "kprobe";
+    program_type = "probe";
     context_type = context_type;
     return_type = return_type;
     includes = ["linux/bpf.h"; "linux/pkt_cls.h"; "linux/if_ether.h"; "linux/ip.h"; "linux/tcp.h"; "linux/udp.h"];
@@ -358,21 +358,24 @@ let generate_kprobe_function_from_signature func_name signature =
 
 (** Generate KernelScript source code from template *)
 let generate_kernelscript_source ?extra_param ?include_kfuncs template project_name =
-  let context_comment = match template.program_type with
-    | "xdp" -> "// XDP (eXpress Data Path) program for high-performance packet processing"
-    | "tc" -> "// TC (Traffic Control) program for network traffic shaping and filtering"
-    | "kprobe" -> "// Kprobe program for dynamic kernel tracing"
-    | "uprobe" -> "// Uprobe program for userspace function tracing"
-    | "tracepoint" -> "// Tracepoint program for static kernel tracing"
-    | "lsm" -> "// LSM (Linux Security Module) program for security enforcement"
-    | "cgroup_skb" -> "// Cgroup SKB program for cgroup-based packet filtering"
-    | _ -> "// eBPF program"
-  in
+  (* Initialize context code generators to ensure they're available *)
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  Kernelscript_context.Kprobe_codegen.register ();
+  Kernelscript_context.Tracepoint_codegen.register ();
+  Kernelscript_context.Fprobe_codegen.register ();
   
-  let return_values = match template.program_type with
-    | "xdp" -> ["XDP_ABORTED"; "XDP_DROP"; "XDP_PASS"; "XDP_TX"; "XDP_REDIRECT"]
-    | "tc" -> ["TC_ACT_OK"; "TC_ACT_SHOT"; "TC_ACT_STOLEN"; "TC_ACT_PIPE"; "TC_ACT_REDIRECT"]
-    | _ -> ["0"; "-1"]
+  (* Get program description from context codegen system *)
+  let context_comment = "// " ^ (Kernelscript_context.Context_codegen.get_context_program_description template.program_type) in
+  
+  (* Get return values from context codegen system if available *)
+  let return_values = 
+    let action_constants = Kernelscript_context.Context_codegen.get_context_action_constants template.program_type in
+    if action_constants <> [] then
+      List.map fst action_constants  (* Extract constant names *)
+    else
+      (* Fallback for program types without action constants *)
+      ["0"; "-1"]
   in
   
   (* Helper function to generate type definition string *)
@@ -421,7 +424,7 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
   
   (* Generate function signature comments and actual function definition for specific program types *)
   let (function_signatures_comment, target_function_name, function_definition, custom_attribute) = 
-    if template.program_type = "kprobe" && template.function_signatures <> [] then
+    if template.program_type = "probe" && template.function_signatures <> [] then
       let signature_lines = List.map (fun (func_name, signature) ->
         sprintf "// Target function: %s -> %s" func_name signature
       ) template.function_signatures in
@@ -462,15 +465,15 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
     | None -> "@" ^ template.program_type
   in
   
-  (* Customize attach call for kprobe/tracepoint *)
+  (* Customize attach call for probe/tracepoint *)
   let attach_target = 
-    if template.program_type = "kprobe" then target_function_name 
+    if template.program_type = "probe" then target_function_name 
     else if template.program_type = "tracepoint" then target_function_name
     else "eth0" 
   in
   let attach_comment = 
-    if template.program_type = "kprobe" then 
-      "    // Attach kprobe to target kernel function"
+    if template.program_type = "probe" then 
+      "    // Attach probe to target kernel function"
     else if template.program_type = "tracepoint" then
       "    // Attach tracepoint to target kernel event"
     else 
@@ -478,7 +481,7 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
   in
   
   let function_name = 
-    if template.program_type = "kprobe" then target_function_name 
+    if template.program_type = "probe" then target_function_name 
     else if template.program_type = "tracepoint" then 
       String.map (function '/' -> '_' | c -> c) target_function_name ^ "_handler"
     else if template.program_type = "tc" && extra_param <> None then

@@ -18,6 +18,8 @@
     This module defines the interface for context-specific code generators
 *)
 
+open Printf
+
 type context_field_access = {
   field_name: string;
   c_expression: string -> string; (* ctx_var -> C expression *)
@@ -114,6 +116,17 @@ let get_context_struct_fields ctx_type =
         (field_name, field_access.field_type)
       ) codegen.field_mappings
   | None -> [] 
+
+(** Get program description for a context type *)
+let get_context_program_description ctx_type =
+  match ctx_type with
+  | "xdp" -> "XDP (eXpress Data Path) program for high-performance packet processing"
+  | "tc" -> "TC (Traffic Control) program for network traffic shaping and filtering"
+  | "probe" -> "Probe program for dynamic kernel tracing (fprobe/kprobe)"
+  | "kprobe" -> "Kprobe program for dynamic kernel tracing with offset support"
+  | "tracepoint" -> "Tracepoint program for static kernel tracing"
+  | "fprobe" -> "Fprobe program for function entry/exit tracing"
+  | _ -> sprintf "eBPF %s program" ctx_type
 
 (** Get the C type string for a context field *)
 let get_context_field_c_type ctx_type field_name =
