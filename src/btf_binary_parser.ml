@@ -35,7 +35,7 @@ external btf_new_from_file : string -> btf_handle option = "btf_new_from_file_st
 external btf_get_nr_types : btf_handle -> int = "btf_get_nr_types_stub"
 external btf_type_by_id : btf_handle -> int -> (int * string * int * int * int) = "btf_type_by_id_stub"
 
-external btf_type_get_members : btf_handle -> int -> (string * int) array = "btf_type_get_members_stub"
+external btf_type_get_members : btf_handle -> int -> (string * string) array = "btf_type_get_members_stub"
 external btf_resolve_type : btf_handle -> int -> string = "btf_resolve_type_stub"
 external btf_extract_function_signatures : btf_handle -> string list -> (string * string) list = "btf_extract_function_signatures_stub"
 external btf_extract_kernel_struct_and_enum_names : btf_handle -> string list = "btf_extract_kernel_struct_and_enum_names_stub"
@@ -59,12 +59,13 @@ let parse_btf_file btf_path target_types =
         try
           let member_array = btf_type_get_members btf_handle union_type_id in
           let member_list = Array.to_list member_array in
-          List.fold_left (fun acc (field_name, field_type_id) ->
+          List.fold_left (fun acc (field_name, field_type_id_str) ->
             if field_name = "" then
               (* Skip anonymous members within the union to avoid infinite recursion *)
               acc
             else
               try
+                let field_type_id = int_of_string field_type_id_str in
                 let field_type = btf_resolve_type btf_handle field_type_id in
                 (field_name, field_type) :: acc
               with
@@ -85,6 +86,7 @@ let parse_btf_file btf_path target_types =
               | 4 -> "struct"
               | 5 -> "union"
               | 6 -> "enum"
+              | 19 -> "enum64"
               | _ -> "unknown"
             in
             
@@ -96,8 +98,9 @@ let parse_btf_file btf_path target_types =
                   let member_array = btf_type_get_members btf_handle i in
                   let member_list = Array.to_list member_array in
                   (* Resolve each member's type and handle anonymous unions *)
-                  let resolved_members = List.fold_left (fun acc (field_name, field_type_id) ->
+                  let resolved_members = List.fold_left (fun acc (field_name, field_type_id_str) ->
                     try
+                      let field_type_id = int_of_string field_type_id_str in
                       let field_type = btf_resolve_type btf_handle field_type_id in
                       if field_name = "" && field_type = "union" then
                         (* Anonymous union: extract its members and flatten them *)
@@ -120,14 +123,14 @@ let parse_btf_file btf_path target_types =
                   Some (List.rev resolved_members)
                 with
                 | _ -> None
-              ) else if kind_int = 6 then (
-                (* Enum: extract enum values *)
+              ) else if kind_int = 6 || kind_int = 19 then (
+                (* Enum (kind 6) or Enum64 (kind 19): extract enum values *)
                 try
                   let member_array = btf_type_get_members btf_handle i in
                   let member_list = Array.to_list member_array in
-                  (* For enums, second element is the value, not type_id *)
+                  (* For enums, second element is the value (now as string) *)
                   let enum_values = List.map (fun (enum_name, enum_value) ->
-                    (enum_name, string_of_int enum_value)
+                    (enum_name, enum_value)
                   ) member_list in
                   Some enum_values
                 with

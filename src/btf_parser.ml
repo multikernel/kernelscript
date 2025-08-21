@@ -597,7 +597,7 @@ let convert_btf_type_to_ks_definition btf_type =
         | None -> ""
       in
       sprintf "struct %s {\n%s\n}" btf_type.Btf_binary_parser.name fields
-  | "enum" ->
+  | "enum" | "enum64" ->
       let values = match btf_type.Btf_binary_parser.members with
         | Some members ->
             List.map (fun (name, value) -> 
@@ -676,6 +676,15 @@ let generate_program_header ~extract_kfuncs prog_type btf_path =
   let enum_section = if hardcoded_enums <> "" then hardcoded_enums ^ "\n\n" else "" in
   sprintf "%s%s\n\n%s%s\n" header type_definitions enum_section kfunc_declarations
 
+(* Get struct_ops-specific enum names to extract from BTF *)
+let get_struct_ops_enum_names struct_ops_name =
+  match struct_ops_name with
+  | "sched_ext_ops" -> [
+      "scx_public_consts";
+      "scx_dsq_id_flags";
+    ]
+  | _ -> []
+
 (* Generate struct_ops-specific header content using BTF *)
 let generate_struct_ops_header struct_ops_name btf_path =
   let header = sprintf {|// AUTO-GENERATED %s DEFINITIONS - DO NOT EDIT
@@ -700,7 +709,30 @@ let generate_struct_ops_header struct_ops_name btf_path =
         sprintf "// Warning: BTF extraction failed for %s" struct_ops_name
   in
   
-  sprintf "%s%s\n" header struct_definitions
+  (* Extract related enums for specific struct_ops types *)
+  let enum_definitions = 
+    let enum_names = get_struct_ops_enum_names struct_ops_name in
+    if enum_names <> [] then
+      try
+        let btf_enums = Btf_binary_parser.parse_btf_file btf_path enum_names in
+        let filtered_enums = List.filter (fun btf_type ->
+          (btf_type.Btf_binary_parser.kind = "enum" || btf_type.Btf_binary_parser.kind = "enum64") && 
+          List.mem btf_type.Btf_binary_parser.name enum_names
+        ) btf_enums in
+        if filtered_enums <> [] then
+          "\n// Related kernel enums\n" ^ 
+          (List.map convert_btf_type_to_ks_definition filtered_enums |> String.concat "\n\n")
+        else
+          sprintf "\n// Warning: No BTF enums found for %s" struct_ops_name
+      with
+      | exn ->
+          printf "Warning: Failed to extract BTF enums for %s: %s\n" struct_ops_name (Printexc.to_string exn);
+          sprintf "\n// Warning: BTF enum extraction failed for %s" struct_ops_name
+    else
+      ""
+  in
+  
+  sprintf "%s%s%s\n" header struct_definitions enum_definitions
 
 (* Generate tracepoint-specific header content using BTF *)
 let generate_tracepoint_header category_event btf_path =

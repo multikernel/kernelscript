@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <bpf/libbpf.h>
 #include <bpf/btf.h>
 #include <caml/mlvalues.h>
@@ -149,6 +150,7 @@ value btf_type_by_id_stub(value btf_handle, value type_id) {
         case BTF_KIND_STRUCT:
         case BTF_KIND_UNION:
         case BTF_KIND_ENUM:
+        case BTF_KIND_ENUM64:
             size = t->size;
             break;
         case BTF_KIND_PTR:
@@ -206,8 +208,8 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
     }
     
     int kind = btf_kind(t);
-    if (kind != BTF_KIND_STRUCT && kind != BTF_KIND_UNION && kind != BTF_KIND_ENUM) {
-        /* Return empty array for non-struct/union/enum types */
+    if (kind != BTF_KIND_STRUCT && kind != BTF_KIND_UNION && kind != BTF_KIND_ENUM && kind != BTF_KIND_ENUM64) {
+        /* Return empty array for non-struct/union/enum/enum64 types */
         CAMLreturn(caml_alloc_tuple(0));
     }
     
@@ -227,8 +229,30 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
             
             member_tuple = caml_alloc_tuple(2);
             Store_field(member_tuple, 0, caml_copy_string(enum_name));
-            /* For enums, store the value instead of type_id */
-            Store_field(member_tuple, 1, Val_int(enums[i].val));
+            /* For enums, convert value to string for consistency with enum64 */
+            char value_str[16];
+            snprintf(value_str, sizeof(value_str), "%d", enums[i].val);
+            Store_field(member_tuple, 1, caml_copy_string(value_str));
+            
+            Store_field(result, i, member_tuple);
+        }
+    } else if (kind == BTF_KIND_ENUM64) {
+        /* Handle enum64 types - extract enum values */
+        const struct btf_enum64 *enums = btf_enum64(t);
+        for (int i = 0; i < vlen; i++) {
+            const char *enum_name = btf__name_by_offset(btf, enums[i].name_off);
+            if (!enum_name) enum_name = "";
+            
+            member_tuple = caml_alloc_tuple(2);
+            Store_field(member_tuple, 0, caml_copy_string(enum_name));
+            
+            /* For enum64, combine hi32 and lo32 to get the full 64-bit value */
+            uint64_t full_value = ((uint64_t)enums[i].val_hi32 << 32) | enums[i].val_lo32;
+            
+            /* Convert to string to preserve full precision */
+            char value_str[32];
+            snprintf(value_str, sizeof(value_str), "%" PRIu64, full_value);
+            Store_field(member_tuple, 1, caml_copy_string(value_str));
             
             Store_field(result, i, member_tuple);
         }
@@ -241,7 +265,10 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
             
             member_tuple = caml_alloc_tuple(2);
             Store_field(member_tuple, 0, caml_copy_string(member_name));
-            Store_field(member_tuple, 1, Val_int(members[i].type));
+            /* For struct/union, convert type_id to string for consistency */
+            char type_id_str[16];
+            snprintf(type_id_str, sizeof(type_id_str), "%u", members[i].type);
+            Store_field(member_tuple, 1, caml_copy_string(type_id_str));
             
             Store_field(result, i, member_tuple);
         }
@@ -305,13 +332,15 @@ static char* resolve_type_to_string(struct btf *btf, int type_id) {
         }
         case BTF_KIND_STRUCT:
         case BTF_KIND_UNION:
-        case BTF_KIND_ENUM: {
+        case BTF_KIND_ENUM:
+        case BTF_KIND_ENUM64: {
             const char *name = btf__name_by_offset(btf, t->name_off);
             if (name && strlen(name) > 0) {
                 return strdup(name);
             }
             return strdup(kind == BTF_KIND_STRUCT ? "struct" : 
-                         kind == BTF_KIND_UNION ? "union" : "enum");
+                         kind == BTF_KIND_UNION ? "union" : 
+                         kind == BTF_KIND_ENUM ? "enum" : "enum64");
         }
         default:
             return strdup("unknown");
@@ -477,22 +506,18 @@ value btf_resolve_type_stub(value btf_handle, value type_id) {
         }
         case BTF_KIND_STRUCT:
         case BTF_KIND_UNION:
-        case BTF_KIND_ENUM: {
-            const char *name = btf__name_by_offset(btf, t->name_off);
-            if (name && strlen(name) > 0) {
-                CAMLreturn(caml_copy_string(name));
-            }
-            /* For anonymous structs/unions */
-            CAMLreturn(caml_copy_string(kind == BTF_KIND_STRUCT ? "struct" : 
-                                      kind == BTF_KIND_UNION ? "union" : "enum"));
-        }
+        case BTF_KIND_ENUM:
         case BTF_KIND_ENUM64: {
             const char *name = btf__name_by_offset(btf, t->name_off);
             if (name && strlen(name) > 0) {
                 CAMLreturn(caml_copy_string(name));
             }
-            CAMLreturn(caml_copy_string("enum64"));
+            /* For anonymous structs/unions/enums */
+            CAMLreturn(caml_copy_string(kind == BTF_KIND_STRUCT ? "struct" : 
+                                      kind == BTF_KIND_UNION ? "union" : 
+                                      kind == BTF_KIND_ENUM ? "enum" : "enum64"));
         }
+
         case BTF_KIND_FWD: {
             const char *name = btf__name_by_offset(btf, t->name_off);
             if (name && strlen(name) > 0) {

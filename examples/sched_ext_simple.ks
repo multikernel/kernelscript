@@ -8,23 +8,6 @@ extern scx_bpf_select_cpu_dfl(p: *u8, prev_cpu: i32, wake_flags: u64, direct: *b
 extern scx_bpf_dsq_insert(p: *u8, dsq_id: u64, slice: u64, enq_flags: u64) -> void
 extern scx_bpf_consume(dsq_id: u64, cpu: i32, flags: u64) -> i32
 
-// Kernel enums (extracted from BTF)
-enum scx_public_consts {
-        SCX_OPS_NAME_LEN = 128,
-        SCX_SLICE_DFL = 20000000,
-        SCX_SLICE_INF = 18446744073709551615,
-}
-
-enum scx_dsq_id_flags {
-        SCX_DSQ_FLAG_BUILTIN = 9223372036854775808,
-        SCX_DSQ_FLAG_LOCAL_ON = 4611686018427387904,
-        SCX_DSQ_INVALID = 9223372036854775808,
-        SCX_DSQ_GLOBAL = 9223372036854775809,
-        SCX_DSQ_LOCAL = 9223372036854775810,
-        SCX_DSQ_LOCAL_ON = 13835058055282163712,
-        SCX_DSQ_LOCAL_CPU_MASK = 4294967295,
-}
-
 // Simple FIFO scheduler implementation
 @struct_ops("sched_ext_ops")
 impl simple_fifo_scheduler {
