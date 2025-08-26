@@ -22,6 +22,12 @@ open Kernelscript.Type_checker
 open Kernelscript.Ir_generator
 open Kernelscript.Ebpf_c_codegen
 
+(** Helper to check if string contains substring *)
+let contains_substr str substr =
+  try 
+    let _ = Str.search_forward (Str.regexp_string substr) str 0 in 
+    true
+  with Not_found -> false
 
 (** Test that void functions with naked return statements are accepted *)
 let test_void_function_naked_return () =
@@ -346,6 +352,48 @@ fn main() -> i32 {
   with
   | exn -> fail ("Void function with complex control flow should be accepted, but got: " ^ Printexc.to_string exn)
 
+(** Test void function call C code generation - regression test for void function call fix *)
+let test_void_function_call_c_generation () =
+  let program_text = {|
+    @helper fn set_qos_mark(ctx: *__sk_buff, class: str(16)) -> void { }
+    
+    @tc("ingress") fn qos_marker(ctx: *__sk_buff) -> i32 {
+      set_qos_mark(ctx, "high_priority")
+      return 0
+    }
+  |} in
+  
+  let ast = parse_string program_text in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let (typed_ast, _) = type_check_and_annotate_ast ast in
+  let ir = generate_ir typed_ast symbol_table "test_void" in
+  
+  (* Generate eBPF C code *)
+  let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+  
+  (* Check that void function is declared correctly *)
+  check bool "void function declaration" true 
+    (contains_substr c_code "void set_qos_mark(struct __sk_buff* ctx, str_16_t class)");
+  
+  (* Check that void function call does NOT generate temporary variable assignment *)
+  check bool "no temporary variable for void call" false 
+    (contains_substr c_code "void var_");
+  
+  (* Check that void function call is generated correctly without assignment *)
+  check bool "correct void function call" true 
+    (contains_substr c_code "set_qos_mark(ctx, ");
+  
+  (* Ensure the call is a standalone statement, not an assignment *)
+  check bool "void call as statement" true 
+    (contains_substr c_code "set_qos_mark(ctx, str_lit_1);");
+  
+  (* Ensure no invalid C syntax like "void var_X = function_call()" *)
+  let lines = String.split_on_char '\n' c_code in
+  let has_invalid_void_assignment = List.exists (fun line ->
+    contains_substr line "void " && contains_substr line " = " && contains_substr line "set_qos_mark"
+  ) lines in
+  check bool "no invalid void assignment" false has_invalid_void_assignment
+
 let void_function_tests = [
   ("void_function_naked_return", `Quick, test_void_function_naked_return);
   ("void_function_with_return_value", `Quick, test_void_function_with_return_value);
@@ -357,6 +405,7 @@ let void_function_tests = [
   ("void_function_in_expression", `Quick, test_void_function_in_expression);
   ("extern_void_kfunc", `Quick, test_extern_void_kfunc);
   ("void_function_complex_control_flow", `Quick, test_void_function_complex_control_flow);
+  ("void_function_call_c_generation", `Quick, test_void_function_call_c_generation);
 ]
 
 let () =

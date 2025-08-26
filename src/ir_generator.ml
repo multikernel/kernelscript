@@ -632,6 +632,12 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.Call (callee_expr, args) ->
       let arg_vals = List.map (lower_expression ctx) args in
       
+      (* Check if this is a void function call *)
+      let is_void_call = match expr.expr_type with
+        | Some Ast.Void -> true
+        | _ -> false
+      in
+      
       (* Determine call type based on callee expression *)
       (match callee_expr.expr_desc with
        | Ast.Identifier name ->
@@ -642,32 +648,54 @@ let rec lower_expression ctx (expr : Ast.expr) =
            else if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
              (* This is a variable holding a function pointer - use FunctionPointerCall *)
              let callee_val = lower_expression ctx callee_expr in
-             let result_reg = allocate_register ctx in
-             let result_type = match expr.expr_type with
-               | Some ast_type -> ast_type_to_ir_type ast_type
-               | None -> IRU32
-             in
-             let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
-             let instr = make_ir_instruction
-               (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
-               expr.expr_pos
-             in
-             emit_instruction ctx instr;
-             result_val
+             if is_void_call then
+               (* Void function pointer call - no return value *)
+               let instr = make_ir_instruction
+                 (IRCall (FunctionPointerCall callee_val, arg_vals, None))
+                 expr.expr_pos
+               in
+               emit_instruction ctx instr;
+               (* Return a dummy value for void calls - this should not be used *)
+               make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos
+             else
+               (* Non-void function pointer call *)
+               let result_reg = allocate_register ctx in
+               let result_type = match expr.expr_type with
+                 | Some ast_type -> ast_type_to_ir_type ast_type
+                 | None -> IRU32
+               in
+               let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+               let instr = make_ir_instruction
+                 (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
+                 expr.expr_pos
+               in
+               emit_instruction ctx instr;
+               result_val
            else
              (* This is a direct function call *)
-             let result_reg = allocate_register ctx in
-             let result_type = match expr.expr_type with
-               | Some ast_type -> ast_type_to_ir_type ast_type
-               | None -> IRU32
-             in
-             let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
-             let instr = make_ir_instruction
-               (IRCall (DirectCall name, arg_vals, Some result_val))
-               expr.expr_pos
-             in
-             emit_instruction ctx instr;
-             result_val
+             if is_void_call then
+               (* Void function call - no return value *)
+               let instr = make_ir_instruction
+                 (IRCall (DirectCall name, arg_vals, None))
+                 expr.expr_pos
+               in
+               emit_instruction ctx instr;
+               (* Return a dummy value for void calls - this should not be used *)
+               make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos
+             else
+               (* Non-void function call *)
+               let result_reg = allocate_register ctx in
+               let result_type = match expr.expr_type with
+                 | Some ast_type -> ast_type_to_ir_type ast_type
+                 | None -> IRU32
+               in
+               let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+               let instr = make_ir_instruction
+                 (IRCall (DirectCall name, arg_vals, Some result_val))
+                 expr.expr_pos
+               in
+               emit_instruction ctx instr;
+               result_val
        | Ast.FieldAccess ({expr_desc = Ast.Identifier obj_name; _}, method_name) ->
            (* Method call (e.g., ctx.method() or ringbuf.operation()) *)
            if obj_name = "ctx" then
@@ -713,18 +741,29 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (* Function pointer call - use FunctionPointerCall target *)
            let callee_val = lower_expression ctx callee_expr in
            (* Use the arg_vals that were already calculated at the beginning of the Call case *)
-           let result_reg = allocate_register ctx in
-           let result_type = match expr.expr_type with
-             | Some ast_type -> ast_type_to_ir_type ast_type
-             | None -> IRU32
-           in
-           let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
-           let instr = make_ir_instruction
-             (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
-             expr.expr_pos
-           in
-           emit_instruction ctx instr;
-           result_val)
+           if is_void_call then
+             (* Void function pointer call - no return value *)
+             let instr = make_ir_instruction
+               (IRCall (FunctionPointerCall callee_val, arg_vals, None))
+               expr.expr_pos
+             in
+             emit_instruction ctx instr;
+             (* Return a dummy value for void calls - this should not be used *)
+             make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos
+           else
+             (* Non-void function pointer call *)
+             let result_reg = allocate_register ctx in
+             let result_type = match expr.expr_type with
+               | Some ast_type -> ast_type_to_ir_type ast_type
+               | None -> IRU32
+             in
+             let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+             let instr = make_ir_instruction
+               (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
+               expr.expr_pos
+             in
+             emit_instruction ctx instr;
+             result_val)
         
   | Ast.ArrayAccess (array_expr, index_expr) ->
       (* Check if this is map access first, before calling lower_expression on array *)
@@ -1310,21 +1349,21 @@ and lower_statement ctx stmt =
       (* Handle expression statements elegantly - check for void-returning function calls *)
       (match expr.expr_desc with
        | Ast.Call (callee_expr, args) ->
-           (* Check if this is a direct call to a void-returning builtin function *)
-           (match callee_expr.expr_desc with
-            | Ast.Identifier name ->
-                (match Stdlib.get_builtin_function_signature name with
-                 | Some (_, Ast.Void) ->
-                     (* Void-returning builtin - generate call without result assignment *)
+           (* Check if this is a void-returning function call *)
+           (match expr.expr_type with
+            | Some Ast.Void ->
+                (* Void-returning function - generate call without result assignment *)
+                (match callee_expr.expr_desc with
+                 | Ast.Identifier name ->
                      let arg_vals = List.map (lower_expression ctx) args in
                      let instr = make_ir_instruction (IRCall (DirectCall name, arg_vals, None)) expr.expr_pos in
                      emit_instruction ctx instr
                  | _ ->
-                     (* Non-void or non-builtin - use normal expression handling *)
+                     (* Complex callee (function pointer) - use normal expression handling *)
                      let _ = lower_expression ctx expr in
                      ())
             | _ ->
-                (* Complex callee - use normal expression handling *)
+                (* Non-void function - use normal expression handling *)
                 let _ = lower_expression ctx expr in
                 ())
        | _ ->
