@@ -250,6 +250,10 @@ let fresh_label ctx prefix =
   ctx.label_counter <- ctx.label_counter + 1;
   sprintf "%s_%d" prefix ctx.label_counter
 
+(** Escape string for C string literal *)
+let escape_c_string s =
+  String.escaped s
+
 (** Optimization: Check if a register can be inlined *)
 let can_inline_register ctx reg =
   ctx.enable_temp_var_optimization && Hashtbl.mem ctx.inlinable_registers reg
@@ -1507,7 +1511,7 @@ let generate_global_variables ctx global_variables =
                   | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
                   | _ -> Ast.IntegerValue.to_string i)
              | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
-             | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" s
+             | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" (escape_c_string s)
              | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
              | IRLiteral (Ast.NullLit) -> "NULL"
              | _ -> "0" (* fallback *)
@@ -1553,7 +1557,7 @@ let generate_struct_ops ctx ir_multi_program =
           emit_line ctx (sprintf ".%s = (void *)%s," field_name func_name)
       | IRLiteral (StringLit s) ->
           (* String literal - use direct assignment *)
-          emit_line ctx (sprintf ".%s = \"%s\"," field_name s)
+          emit_line ctx (sprintf ".%s = \"%s\"," field_name (escape_c_string s))
       | IRLiteral (NullLit) ->
           (* Null literal *)
           emit_line ctx (sprintf ".%s = NULL," field_name)
@@ -1600,7 +1604,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
            emit_line ctx (sprintf "    .len = %d" actual_len);
            emit_line ctx "};";
            temp_var
-       | _ -> sprintf "\"%s\"" s) (* Fallback for non-string types *)
+       | _ -> sprintf "\"%s\"" (escape_c_string s)) (* Fallback for non-string types *)
   | IRLiteral (ArrayLit init_style) ->
       (* Generate C array initialization syntax *)
       (match init_style with
@@ -1610,7 +1614,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
              | Ast.IntLit (i, _) -> Ast.IntegerValue.to_string i
              | Ast.BoolLit b -> if b then "1" else "0"
              | Ast.CharLit c -> sprintf "'%c'" c
-             | Ast.StringLit s -> sprintf "\"%s\"" s
+             | Ast.StringLit s -> sprintf "\"%s\"" (escape_c_string s)
              | Ast.NullLit -> "NULL"
              | Ast.NoneLit -> "0"
              | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
@@ -1622,7 +1626,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
              | Ast.IntLit (i, _) -> Ast.IntegerValue.to_string i
              | Ast.BoolLit b -> if b then "1" else "0"
              | Ast.CharLit c -> sprintf "'%c'" c
-             | Ast.StringLit s -> sprintf "\"%s\"" s
+             | Ast.StringLit s -> sprintf "\"%s\"" (escape_c_string s)
              | Ast.NullLit -> "NULL"
              | Ast.NoneLit -> "0"
              | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
@@ -2595,7 +2599,7 @@ let rec generate_c_instruction ctx ir_instr =
                       (match first_ir.value_desc with
                        | IRLiteral (StringLit s) -> 
                            (* String literal - use directly for bpf_printk *)
-                           (ebpf_impl, [sprintf "\"%s\"" s])
+                           (ebpf_impl, [sprintf "\"%s\"" (escape_c_string s)])
                        | _ ->
                            (* Other types - auto-dereference map access values *)
                            let first_arg = (match first_ir.value_desc with
@@ -2621,7 +2625,7 @@ let rec generate_c_instruction ctx ir_instr =
                      let format_arg = match first_ir.value_desc with
                        | IRLiteral (StringLit s) -> 
                            (* String literal - use directly for bpf_printk *)
-                           sprintf "\"%s\"" s
+                           sprintf "\"%s\"" (escape_c_string s)
                        | _ ->
                            (* Other types - generate as usual *)
                            let format_str = generate_c_value ctx first_ir in

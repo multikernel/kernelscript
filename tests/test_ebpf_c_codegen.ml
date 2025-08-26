@@ -947,6 +947,63 @@ let test_bpf_printk_string_literal_fix () =
   check bool "bpf_printk does not use struct field" false (contains_substr c_code ".data)");
   ()
 
+(** Test string escaping in bpf_printk calls (bug fix regression test) *)
+let test_string_escaping_in_bpf_printk () =
+  (* Test that special characters in string literals are properly escaped *)
+  let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  
+  (* Test strings with various special characters that need escaping *)
+  let test_cases = [
+    ("newline", "hello\\nworld", "hello\nworld");
+    ("tab", "hello\\tworld", "hello\tworld");
+    ("quote", "hello\\\"world", "hello\"world");
+    ("backslash", "hello\\\\world", "hello\\world");
+  ] in
+  
+  List.iter (fun (name, expected_escaped, original_string) ->
+    (* Create a print call with a string literal containing special characters *)
+    let str_literal = make_ir_value (IRLiteral (StringLit original_string)) (IRStr (String.length original_string + 1)) dummy_pos in
+    let result_var = make_ir_value (IRVariable "result") IRU32 dummy_pos in
+    let print_instr = make_ir_instruction (IRCall (DirectCall "print", [str_literal], Some result_var)) dummy_pos in
+    
+    let main_block = make_ir_basic_block "entry" [print_instr] 0 in
+    let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+    
+    let ir_program = {
+      Kernelscript.Ir.name = "test_program";
+      program_type = Kernelscript.Ast.Xdp;
+      entry_function = main_func;
+      ir_pos = dummy_pos;
+    } in
+    
+    let multi_ir = {
+      Kernelscript.Ir.source_name = "test";
+      programs = [ir_program];
+      kernel_functions = [];
+      global_maps = [];
+      global_variables = [];
+      global_configs = [];
+      struct_ops_declarations = [];
+      struct_ops_instances = [];
+      userspace_program = None;
+      userspace_bindings = [];
+      ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+      multi_pos = dummy_pos;
+    } in
+    
+    (* Generate C code *)
+    let c_code = generate_c_multi_program multi_ir in
+    
+    (* Verify that the string is properly escaped in the generated bpf_printk call *)
+    let expected_call = Printf.sprintf "bpf_printk(\"%s\")" expected_escaped in
+    check bool (Printf.sprintf "string %s properly escaped" name) true (contains_substr c_code expected_call);
+    
+    (* Verify that the original unescaped string does NOT appear (which would be malformed) *)
+    let malformed_call = Printf.sprintf "bpf_printk(\"%s\")" original_string in
+    check bool (Printf.sprintf "string %s not malformed" name) false (contains_substr c_code malformed_call);
+  ) test_cases;
+  ()
+
 (** Test map field access pointer fix (bug fix regression test) *)
 let test_map_field_access_pointer_fix () =
   (* Test that field access on map lookup results uses arrow notation via SAFE_PTR_ACCESS *)
@@ -1044,6 +1101,7 @@ let suite =
     ("String size collection from userspace structs", `Quick, test_string_size_collection_from_userspace_structs);
     ("Declaration ordering fix", `Quick, test_declaration_ordering_fix);
     ("BPF printk string literal fix", `Quick, test_bpf_printk_string_literal_fix);
+    ("String escaping in bpf_printk", `Quick, test_string_escaping_in_bpf_printk);
     ("Variable function call declaration", `Quick, test_variable_function_call_declaration);
   ]
 
