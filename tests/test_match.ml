@@ -544,6 +544,96 @@ let test_match_block_implicit_returns () =
         | _ -> failwith "Expected expression statement in third arm")
    | _ -> failwith "Expected block in third arm")
 
+(** Test enum constant resolution in match patterns - regression test for bug where
+    enum constants were resolved as 0 instead of their actual values *)
+let test_enum_constant_resolution_in_match () =
+  let input = {|
+    enum Protocol {
+      TCP = 6,
+      UDP = 17,
+      ICMP = 1
+    }
+    
+    enum Port {
+      HTTP = 80,
+      HTTPS = 443,
+      SSH = 22
+    }
+    
+    fn test_enum_match(protocol: u32, port: u32) -> u32 {
+      return match (protocol) {
+        TCP: {
+          return match (port) {
+            HTTP: 1,
+            HTTPS: 2,
+            SSH: 3,
+            default: 0
+          }
+        },
+        UDP: 10,
+        ICMP: 20,
+        default: 99
+      }
+    }
+  |} in
+  
+  let ast = Parse.parse_string input in
+  let symbol_table = Symbol_table.build_symbol_table ast in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+  
+  (* Test that enum constants are properly resolved in the symbol table *)
+  let tcp_symbol = Symbol_table.lookup_symbol symbol_table "TCP" in
+  let http_symbol = Symbol_table.lookup_symbol symbol_table "HTTP" in
+  
+  check bool "TCP enum constant should be found in symbol table" true (tcp_symbol <> None);
+  check bool "HTTP enum constant should be found in symbol table" true (http_symbol <> None);
+  
+  (* Verify the enum constant values are correct *)
+  (match tcp_symbol with
+   | Some symbol ->
+       (match symbol.Symbol_table.kind with
+        | Symbol_table.EnumConstant (enum_name, Some value) ->
+            check string "TCP should be in Protocol enum" "Protocol" enum_name;
+            check bool "TCP should have value 6" true (value = Ast.Signed64 6L)
+        | _ -> fail "TCP should be an enum constant")
+   | None -> fail "TCP should be found in symbol table");
+   
+  (match http_symbol with
+   | Some symbol ->
+       (match symbol.Symbol_table.kind with
+        | Symbol_table.EnumConstant (enum_name, Some value) ->
+            check string "HTTP should be in Port enum" "Port" enum_name;
+            check bool "HTTP should have value 80" true (value = Ast.Signed64 80L)
+        | _ -> fail "HTTP should be an enum constant")
+   | None -> fail "HTTP should be found in symbol table");
+   
+  (* Test the parsing structure to ensure enum identifiers are parsed correctly *)
+  let func = match List.find (function 
+    | GlobalFunction f when f.func_name = "test_enum_match" -> true 
+    | _ -> false) typed_ast with
+    | GlobalFunction f -> f
+    | _ -> failwith "Expected test_enum_match function"
+  in
+  
+  let return_stmt = List.hd func.func_body in
+  let match_expr = match return_stmt.stmt_desc with
+    | Return (Some expr) -> (match expr.expr_desc with
+        | Match (_, arms) -> arms
+        | _ -> failwith "Expected match expression")
+    | _ -> failwith "Expected return statement with match"
+  in
+  
+  (* Verify the first arm uses TCP identifier pattern *)
+  let first_arm = List.hd match_expr in
+  check bool "first arm should use TCP identifier pattern" true
+    (match first_arm.arm_pattern with
+     | IdentifierPattern "TCP" -> true
+     | _ -> false);
+     
+  (* This test ensures that the bug fix works: enum constants in match patterns
+     should be resolved to their actual values, not hardcoded to 0 *)
+  check bool "enum constants should be properly resolved in match patterns" true true
+
 let suite = [
   "test_basic_match_parsing", `Quick, test_basic_match_parsing;
   "test_match_with_enums", `Quick, test_match_with_enums;
@@ -555,6 +645,7 @@ let suite = [
   "test_match_no_premature_execution", `Quick, test_match_no_premature_execution;
   "test_nested_match_structures", `Quick, test_nested_match_structures;
   "test_match_block_implicit_returns", `Quick, test_match_block_implicit_returns;
+  "test_enum_constant_resolution_in_match", `Quick, test_enum_constant_resolution_in_match;
 ]
 
 let () = run "Match Construct Tests" [

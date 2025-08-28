@@ -1026,9 +1026,23 @@ let rec lower_expression ctx (expr : Ast.expr) =
                 | DefaultPattern ->
                     (* Default pattern always matches - create a true condition *)
                     make_ir_value (IRLiteral (BoolLit true)) IRBool arm.arm_pos
-                | IdentifierPattern _ ->
-                    (* For now, treat as default pattern *)
-                    make_ir_value (IRLiteral (BoolLit true)) IRBool arm.arm_pos
+                | IdentifierPattern name ->
+                    (* Look up enum constant value and create comparison *)
+                    let enum_val = match Symbol_table.lookup_symbol ctx.symbol_table name with
+                      | Some symbol ->
+                          (match symbol.kind with
+                           | Symbol_table.EnumConstant (enum_name, Some value) ->
+                               make_ir_value (IREnumConstant (enum_name, name, value)) IRU32 arm.arm_pos
+                           | _ -> failwith ("Unknown identifier in match pattern: " ^ name))
+                      | None -> failwith ("Undefined identifier in match pattern: " ^ name)
+                    in
+                    (* Create equality comparison *)
+                    let eq_reg = allocate_register ctx in
+                    let eq_val = make_ir_value (IRRegister eq_reg) IRBool arm.arm_pos in
+                    let eq_expr = make_ir_expr (IRBinOp (matched_val, IREq, enum_val)) IRBool arm.arm_pos in
+                    let eq_instr = make_ir_instruction (IRAssign (eq_val, eq_expr)) arm.arm_pos in
+                    emit_instruction ctx eq_instr;
+                    eq_val
               in
               
               (* Process the arm body *)
@@ -1077,7 +1091,17 @@ let rec lower_expression ctx (expr : Ast.expr) =
             | ConstantPattern lit -> 
                 let lit_val = lower_literal lit arm.arm_pos in
                 IRConstantPattern lit_val
-            | IdentifierPattern _ -> IRConstantPattern (make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 arm.arm_pos)
+            | IdentifierPattern name ->
+                (* Look up enum constant value *)
+                let enum_val = match Symbol_table.lookup_symbol ctx.symbol_table name with
+                  | Some symbol ->
+                      (match symbol.kind with
+                       | Symbol_table.EnumConstant (enum_name, Some value) ->
+                           make_ir_value (IREnumConstant (enum_name, name, value)) IRU32 arm.arm_pos
+                       | _ -> failwith ("Unknown identifier in match pattern: " ^ name))
+                  | None -> failwith ("Undefined identifier in match pattern: " ^ name)
+                in
+                IRConstantPattern enum_val
             | DefaultPattern -> IRDefaultPattern
           in
           let ir_value = match arm.arm_body with
