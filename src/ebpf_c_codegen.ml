@@ -153,6 +153,10 @@ type c_context = {
   mutable register_name_hints: (int, string) Hashtbl.t;
   (* Track which registers can be inlined *)
   mutable inlinable_registers: (int, string) Hashtbl.t;
+  (* Pending string literals to be emitted at scope boundaries *)
+  mutable pending_string_literals: (string * string * int) list; (* (var_name, content, size) *)
+  (* Flag to defer string literal emission *)
+  mutable defer_string_literals: bool;
   (* Track which registers have been declared to avoid redeclaration *)
   mutable declared_registers: (int, unit) Hashtbl.t;
   (* Current function's context type for proper field access generation *)
@@ -177,6 +181,8 @@ let create_c_context () = {
   enable_temp_var_optimization = true;
   register_name_hints = Hashtbl.create 32;
   inlinable_registers = Hashtbl.create 32;
+  pending_string_literals = [];
+  defer_string_literals = false;
   declared_registers = Hashtbl.create 32;
   current_function_context_type = None;
   dynptr_backed_pointers = Hashtbl.create 32;
@@ -249,6 +255,21 @@ let fresh_var ctx prefix =
 let fresh_label ctx prefix =
   ctx.label_counter <- ctx.label_counter + 1;
   sprintf "%s_%d" prefix ctx.label_counter
+
+(** Emit all pending string literal declarations *)
+let emit_pending_string_literals ctx =
+  List.iter (fun (var_name, content, size) ->
+    let len = String.length content in
+    let max_content_len = size in (* Full size available for content *)
+    let actual_len = min len max_content_len in
+    let truncated_s = if actual_len < len then String.sub content 0 actual_len else content in
+    
+    emit_line ctx (sprintf "str_%d_t %s = {" size var_name);
+    emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+    emit_line ctx (sprintf "    .len = %d" actual_len);
+    emit_line ctx "};";
+  ) (List.rev ctx.pending_string_literals);
+  ctx.pending_string_literals <- []
 
 (** Escape string for C string literal *)
 let escape_c_string s =
@@ -1593,16 +1614,20 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
       (match ir_val.val_type with
        | IRStr size ->
            let temp_var = fresh_var ctx "str_lit" in
-                    let len = String.length s in
-         let max_content_len = size in (* Full size available for content *)
-         let actual_len = min len max_content_len in
-         let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
-           
-           (* Generate cleaner initialization with string literal + padding *)
-           emit_line ctx (sprintf "str_%d_t %s = {" size temp_var);
-           emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
-           emit_line ctx (sprintf "    .len = %d" actual_len);
-           emit_line ctx "};";
+           (if ctx.defer_string_literals then
+             (* Add to pending list for later emission *)
+             ctx.pending_string_literals <- (temp_var, s, size) :: ctx.pending_string_literals
+           else
+             (* Emit immediately as before *)
+             let len = String.length s in
+             let max_content_len = size in (* Full size available for content *)
+             let actual_len = min len max_content_len in
+             let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+
+             emit_line ctx (sprintf "str_%d_t %s = {" size temp_var);
+             emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+             emit_line ctx (sprintf "    .len = %d" actual_len);
+             emit_line ctx "};");
            temp_var
        | _ -> sprintf "\"%s\"" (escape_c_string s)) (* Fallback for non-string types *)
   | IRLiteral (ArrayLit init_style) ->
@@ -2060,12 +2085,16 @@ let generate_c_expression ctx ir_expr =
           (* Generate temporary variable for the result *)
           emit_line ctx (sprintf "%s %s;" result_type temp_var);
           
-          (* Pre-generate all string literals to avoid declarations in the middle of if-else chain *)
-          let arm_value_strings = List.map (fun arm ->
-            let arm_val_str = generate_c_value ctx arm.ir_arm_value in
-            (arm, arm_val_str)
+          (* Defer string literals during match arm value generation *)
+          ctx.defer_string_literals <- true;
+          let arm_values = List.map (fun arm ->
+            (arm, generate_c_value ctx arm.ir_arm_value)
           ) arms in
-
+          ctx.defer_string_literals <- false;
+          
+          (* Emit collected string literals before if-else chain *)
+          emit_pending_string_literals ctx;
+          
           (* Generate if-else chain *)
           let generate_match_arm is_first (arm, arm_val_str) =
             match arm.ir_arm_pattern with
@@ -2086,7 +2115,7 @@ let generate_c_expression ctx ir_expr =
           in
           
           (* Generate all arms *)
-          (match arm_value_strings with
+          (match arm_values with
            | [] -> () (* No arms - should not happen *)
            | first_arm :: rest_arms ->
                generate_match_arm true first_arm;

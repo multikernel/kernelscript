@@ -172,12 +172,88 @@ let test_bug_regression () =
   with
   | exn -> fail ("Bug regression test failed: " ^ Printexc.to_string exn)
 
+(** Test 5: String literal placement in match expressions - regression test for the specific bug *)
+let test_string_literal_placement_in_match () =
+  let program_text = {|
+enum Protocol { TCP = 6, UDP = 17, ICMP = 1 }
+enum Port { HTTP = 80, HTTPS = 443, SSH = 22 }
+
+@xdp fn test_match(ctx: *xdp_md) -> xdp_action {
+  var protocol: u32 = 6
+  var port: u32 = 22
+  
+  var qos_class = match (protocol) {
+    TCP: {
+      match (port) {
+        SSH: "high_priority",
+        HTTPS: "medium_priority", 
+        HTTP: "medium_priority",
+        default: "low_priority"
+      }
+    },
+    UDP: "udp_traffic",
+    ICMP: "icmp_traffic",
+    default: "unknown_protocol"
+  }
+  
+  return 2
+}
+|} in
+  
+  try
+    let ebpf_code = generate_ebpf_c_code program_text "test_string_placement" in
+    
+    (* Key fix: All string literal declarations should come BEFORE the if-else chain *)
+    (* Check that string literals are declared as variables, not inline *)
+    check bool "contains string literal declarations" true
+      (contains_pattern ebpf_code "str_[0-9]+_t str_lit_[0-9]+ = {");
+    
+    (* Check that enum constants are resolved correctly (not == 0) *)
+    check bool "SSH enum resolved correctly" true
+      (contains_pattern ebpf_code "== SSH");
+    check bool "HTTPS enum resolved correctly" true
+      (contains_pattern ebpf_code "== HTTPS");
+    check bool "HTTP enum resolved correctly" true
+      (contains_pattern ebpf_code "== HTTP");
+    check bool "TCP enum resolved correctly" true
+      (contains_pattern ebpf_code "== TCP");
+    
+    (* Critical: The specific bug pattern should not exist *)
+    (* The original bug was: string declaration immediately followed by else statement *)
+    check bool "no string literals immediately before else" false
+      (contains_pattern ebpf_code "str_[0-9]+_t.*=.*{[^}]*}[[:space:]]*else");
+    
+    (* Check that string literals contain the expected content *)
+    check bool "contains high_priority string" true
+      (contains_pattern ebpf_code "\\.data.*=.*\"high_priority\"");
+    check bool "contains medium_priority string" true
+      (contains_pattern ebpf_code "\\.data.*=.*\"medium_priority\"");
+    check bool "contains low_priority string" true
+      (contains_pattern ebpf_code "\\.data.*=.*\"low_priority\"");
+    check bool "contains udp_traffic string" true
+      (contains_pattern ebpf_code "\\.data.*=.*\"udp_traffic\"");
+    
+    (* Verify that the code compiles to valid C syntax *)
+    (* The key fix ensures that we don't have invalid C like: "} else if (...)" *)
+    check bool "no invalid C syntax patterns" false
+      (contains_pattern ebpf_code "}[[:space:]]*else if");
+    
+    (* Check that match expressions generate proper if-else chains *)
+    check bool "generates proper if-else structure" true
+      (contains_pattern ebpf_code "if.*==.*SSH.*{" && 
+       contains_pattern ebpf_code "else if.*==.*HTTPS.*{" &&
+       contains_pattern ebpf_code "else if.*==.*HTTP.*{");
+    
+  with
+  | exn -> fail ("String literal placement test failed: " ^ Printexc.to_string exn)
+
 (** Test suite *)
 let tests = [
   test_case "String literal type compatibility" `Quick test_string_literal_type_compatibility;
   test_case "String type definitions" `Quick test_string_type_definitions;
   test_case "eBPF code compilation" `Quick test_ebpf_compilation;
   test_case "Bug regression test" `Quick test_bug_regression;
+  test_case "String literal placement in match expressions" `Quick test_string_literal_placement_in_match;
 ]
 
 let () = run "eBPF String Generation Tests" [
