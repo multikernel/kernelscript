@@ -2060,9 +2060,14 @@ let generate_c_expression ctx ir_expr =
           (* Generate temporary variable for the result *)
           emit_line ctx (sprintf "%s %s;" result_type temp_var);
           
-          (* Generate if-else chain *)
-          let generate_match_arm is_first arm =
+          (* Pre-generate all string literals to avoid declarations in the middle of if-else chain *)
+          let arm_value_strings = List.map (fun arm ->
             let arm_val_str = generate_c_value ctx arm.ir_arm_value in
+            (arm, arm_val_str)
+          ) arms in
+
+          (* Generate if-else chain *)
+          let generate_match_arm is_first (arm, arm_val_str) =
             match arm.ir_arm_pattern with
             | IRConstantPattern const_val ->
                 let const_str = generate_c_value ctx const_val in
@@ -2081,7 +2086,7 @@ let generate_c_expression ctx ir_expr =
           in
           
           (* Generate all arms *)
-          (match arms with
+          (match arm_value_strings with
            | [] -> () (* No arms - should not happen *)
            | first_arm :: rest_arms ->
                generate_match_arm true first_arm;
