@@ -426,486 +426,91 @@
  (modules test_void_functions)
  (libraries kernelscript alcotest str test_utils))
 
-; Test rules for individual execution
-(rule
- (alias runtest_lexer)
- (action (run ./test_lexer.exe)))
 
-(rule
- (alias runtest_ast)
- (action (run ./test_ast.exe)))
-
-(rule
- (alias runtest_parser)
- (action (run ./test_parser.exe)))
-
-(rule
- (alias runtest_type_checker)
- (action (run ./test_type_checker.exe)))
-
-(rule
- (alias runtest_symbol_table)
- (action (run ./test_symbol_table.exe)))
-
-(rule
- (alias runtest_maps)
- (action (run ./test_maps.exe)))
-
-(rule
- (alias runtest_safety_checker)
- (action (run ./test_safety_checker.exe)))
-
-(rule
- (alias runtest_object_allocation)
- (action (run ./test_object_allocation.exe)))
-
-(rule
- (alias runtest_map_operations)
- (action (run ./test_map_operations.exe)))
-
-(rule
- (alias runtest_evaluator)
- (action (run ./test_evaluator.exe)))
-
-(rule
- (alias runtest_dynptr_bridge)
- (action (run ./test_dynptr_bridge.exe)))
-
-(rule
- (alias runtest_ir)
- (action (run ./test_ir.exe)))
-
-(rule
- (alias runtest_ir_analysis)
- (action (run ./test_ir_analysis.exe)))
-
-(rule
- (alias runtest_ir_function_system)
- (action (run ./test_ir_function_system.exe)))
-
-(rule
- (alias runtest_ebpf_c_codegen)
- (action (run ./test_ebpf_c_codegen.exe)))
-
-(rule
- (alias runtest_map_syntax)
- (action (run ./test_map_syntax.exe)))
-
-(rule
- (alias runtest_map_assignment)
- (action (run ./test_map_assignment.exe)))
-
-(rule
- (alias runtest_map_integration)
- (action (run ./test_map_integration.exe)))
-
-(rule
- (alias runtest_userspace)
- (action (run ./test_userspace.exe)))
-
-(rule
- (alias runtest_map_flags)
- (action (run ./test_map_flags.exe)))
-
-(rule
- (alias runtest_userspace_maps)
- (action (run ./test_userspace_maps.exe)))
-
-(rule
- (alias runtest_comment_positions)
- (action (run ./test_comment_positions.exe)))
-
-(rule
- (alias runtest_for_statements)
- (action (run ./test_for_statements.exe)))
-
-(rule
- (alias runtest_config)
- (action (run ./test_config.exe)))
-
-(rule
- (alias runtest_break_continue)
- (action (run ./test_break_continue.exe)))
-
-(rule
- (alias runtest_userspace_for_codegen)
- (action (run ./test_userspace_for_codegen.exe)))
-
-(rule
- (alias runtest_userspace_statements)
- (action (run ./test_userspace_statements.exe)))
-
-(rule
- (alias runtest_return_value_propagation)
- (action (run ./test_return_value_propagation.exe)))
-
-(rule
- (alias runtest_stdlib)
- (action (run ./test_stdlib.exe)))
-
-(rule
- (alias runtest_config_struct_generation)
- (action (run ./test_config_struct_generation.exe)))
-
-(rule
- (alias runtest_array_literals)
- (action (run ./test_array_literals.exe)))
-
-(rule
- (alias runtest_config_validation)
- (action (run ./test_config_validation.exe)))
-
-(rule
- (alias runtest_userspace_struct_flexibility)
- (action (run ./test_userspace_struct_flexibility.exe)))
-
-(rule
- (alias runtest_struct_field_access)
- (action (run ./test_struct_field_access.exe)))
-
-(rule
- (alias runtest_struct_initialization)
- (action (run ./test_struct_initialization.exe)))
-
-(rule
- (alias runtest_program_ref)
- (action (run ./test_program_ref.exe)))
-
-(rule
- (alias runtest_string_type)
- (action (run ./test_string_type.exe)))
-
-(rule
- (alias runtest_string_codegen)
- (action (run ./test_string_codegen.exe)))
-
-(rule
- (alias runtest_ebpf_string_generation)
- (action (run ./test_ebpf_string_generation.exe)))
-
-(rule
- (alias runtest_string_struct_fixes)
- (action (run ./test_string_struct_fixes.exe)))
-
-(rule
- (alias runtest_string_literal_bugs)
- (action (run ./test_string_literal_bugs.exe)))
-
-(rule
- (alias runtest_userspace_skeleton_header)
- (action (run ./test_userspace_skeleton_header.exe)))
-
-(rule
- (alias runtest_return_path_analysis)
- (action (run ./test_return_path_analysis.exe)))
-
-(rule
- (alias runtest_enum)
- (action (run ./test_enum.exe)))
-
-(rule
- (alias runtest_nested_if_codegen)
- (action (run ./test_nested_if_codegen.exe)))
-
-(rule
- (alias runtest_type_alias)
- (action (run ./test_type_alias.exe)))
-
-(rule
- (alias runtest_function_pointers)
- (action (run ./test_function_pointers.exe)))
-
-(rule
- (alias runtest_const_variables)
- (action (run ./test_const_variables.exe)))
-
-(rule
- (alias runtest_global_var)
- (action (run ./test_global_var.exe)))
-
-(rule
-(alias runtest_integer_literal)
-(action (run ./test_integer_literal.exe)))
-
-(rule
- (alias runtest_tail_call)
- (action (run ./test_tail_call.exe)))
-
-(rule
- (alias runtest_pointer_syntax)
- (action (run ./test_pointer_syntax.exe)))
-
-(rule
- (alias runtest_address_of_user_types)
- (action (run ./test_address_of_user_types.exe)))
-
-(rule
- (alias runtest_match)
- (action (run ./test_match.exe)))
-
-(rule
- (alias runtest_context_field_types)
- (action (run ./test_context_field_types.exe)))
-
-(rule
- (alias runtest_test_attribute)
- (action (run ./test_test_attribute.exe)))
-
-(rule
- (alias runtest_named_returns)
- (action (run ./test_named_returns.exe)))
-
-(rule
- (alias runtest_import_system)
- (action (run ./test_import_system.exe)))
-
-(rule
- (alias runtest_detach_api)
- (action (run ./test_detach_api.exe)))
-
-(rule
- (alias runtest_tc)
- (action (run ./test_tc.exe)))
-
-(rule
- (alias runtest_exec)
- (action (run ./test_exec.exe)))
-
-(rule
- (alias runtest_void_functions)
- (action (run ./test_void_functions.exe)))
-
-; Test aliases for organized execution
-(rule
- (alias map-tests)
- (deps
-  test_map_syntax.exe
-  test_map_assignment.exe
-  test_map_integration.exe
-  test_map_flags.exe
-  test_maps.exe
-  test_map_operations.exe
-  test_ringbuf.exe)
- (action
-  (progn
-   (run ./test_map_syntax.exe)
-   (run ./test_map_assignment.exe)
-   (run ./test_map_integration.exe)
-   (run ./test_map_flags.exe)
-   (run ./test_maps.exe)
-   (run ./test_map_operations.exe)
-   (run ./test_ringbuf.exe))))
-
-(rule
- (alias userspace-tests)
- (deps
-  test_userspace.exe
-  test_userspace_maps.exe
-  test_userspace_for_codegen.exe
-  test_userspace_statements.exe
-  test_return_value_propagation.exe
-  test_userspace_struct_flexibility.exe
-  test_userspace_skeleton_header.exe
-  test_string_codegen.exe
-  test_string_struct_fixes.exe
-  test_string_type.exe
-  test_string_literal_bugs.exe
-  test_exec.exe)
- (action
-  (progn
-   (run ./test_userspace.exe)
-   (run ./test_userspace_maps.exe)
-   (run ./test_userspace_for_codegen.exe)
-   (run ./test_userspace_statements.exe)
-   (run ./test_return_value_propagation.exe)
-   (run ./test_userspace_struct_flexibility.exe)
-   (run ./test_userspace_skeleton_header.exe)
-   (run ./test_string_codegen.exe)
-   (run ./test_string_struct_fixes.exe)
-   (run ./test_string_type.exe)
-   (run ./test_string_literal_bugs.exe)
-   (run ./test_exec.exe))))
-
-(rule
- (alias core-tests)
- (deps
-  test_btf_binary_parser.exe
-  test_lexer.exe
-  test_ast.exe
-  test_parser.exe
-  test_type_checker.exe
-  test_symbol_table.exe
-  test_comment_positions.exe
-  test_for_statements.exe
-  test_break_continue.exe
-  test_config.exe
-  test_config_struct_generation.exe
-  test_array_literals.exe
-  test_array_init.exe
-  test_config_validation.exe
-  test_tracepoint.exe
-  test_probe.exe
-  test_tc.exe
-  test_stdlib.exe
-  test_detach_api.exe
-  test_struct_field_access.exe
-  test_struct_initialization.exe
-  test_error_handling.exe
-  test_function_scope.exe
-  test_function_validation.exe
-  test_kfunc_attribute.exe
-  test_extern.exe
-  test_include.exe
-  test_private_attribute.exe
-  test_enum.exe
-  test_type_alias.exe
-  test_const_variables.exe
-  test_global_var.exe
-  test_evaluator.exe
-  test_function_pointers.exe
-  test_compound_index_assignment.exe
-  test_dynptr_bridge.exe
-  test_safety_checker.exe
-  test_object_allocation.exe
-  test_program_ref.exe
-  test_return_path_analysis.exe
-  test_tail_call.exe
-  test_struct_ops.exe
-  test_pointer_syntax.exe
-  test_address_of_user_types.exe
-  test_match.exe
-  test_test_attribute.exe
-  test_named_returns.exe
-  test_import_system.exe
-  test_void_functions.exe)
- (action
-  (progn
-   (run ./test_btf_binary_parser.exe)
-   (run ./test_lexer.exe)
-   (run ./test_ast.exe)
-   (run ./test_parser.exe)
-   (run ./test_type_checker.exe)
-   (run ./test_symbol_table.exe)
-   (run ./test_comment_positions.exe)
-   (run ./test_for_statements.exe)
-   (run ./test_break_continue.exe)
-   (run ./test_config.exe)
-   (run ./test_config_struct_generation.exe)
-   (run ./test_array_literals.exe)
-   (run ./test_array_init.exe)
-   (run ./test_config_validation.exe)
-   (run ./test_tracepoint.exe)
-   (run ./test_probe.exe)
-   (run ./test_tc.exe)
-   (run ./test_stdlib.exe)
-   (run ./test_detach_api.exe)
-   (run ./test_struct_field_access.exe)
-   (run ./test_struct_initialization.exe)
-   (run ./test_error_handling.exe)
-   (run ./test_function_scope.exe)
-   (run ./test_function_validation.exe)
-   (run ./test_kfunc_attribute.exe)
-   (run ./test_extern.exe)
-   (run ./test_include.exe)
-   (run ./test_private_attribute.exe)
-   (run ./test_enum.exe)
-   (run ./test_type_alias.exe)
-   (run ./test_const_variables.exe)
-   (run ./test_global_var.exe)
-   (run ./test_evaluator.exe)
-   (run ./test_function_pointers.exe)
-   (run ./test_compound_index_assignment.exe)
-   (run ./test_dynptr_bridge.exe)
-   (run ./test_safety_checker.exe)
-   (run ./test_object_allocation.exe)
-   (run ./test_program_ref.exe)
-   (run ./test_return_path_analysis.exe)
-   (run ./test_tail_call.exe)
-   (run ./test_struct_ops.exe)
-   (run ./test_pointer_syntax.exe)
-   (run ./test_address_of_user_types.exe)
-   (run ./test_match.exe)
-   (run ./test_test_attribute.exe)
-   (run ./test_named_returns.exe)
-   (run ./test_import_system.exe)
-   (run ./test_void_functions.exe))))
-
-(rule
- (alias ir-tests)
- (deps
-  test_ir.exe
-  test_ir_analysis.exe
-  test_ir_function_system.exe)
- (action
-  (progn
-   (run ./test_ir.exe)
-   (run ./test_ir_analysis.exe)
-   (run ./test_ir_function_system.exe))))
-
-(rule
-(alias codegen-tests)
-(deps test_ebpf_c_codegen.exe test_ebpf_string_generation.exe test_nested_if_codegen.exe test_integer_literal.exe test_context_field_types.exe test_global_var_ordering.exe test_bpf_loop_callbacks.exe)
-(action
- (progn
-  (run ./test_ebpf_c_codegen.exe)
-  (run ./test_ebpf_string_generation.exe)
-  (run ./test_nested_if_codegen.exe)
-  (run ./test_integer_literal.exe)
-  (run ./test_context_field_types.exe)
-  (run ./test_global_var_ordering.exe)
-  (run ./test_bpf_loop_callbacks.exe))))
 
 ; Top-level alias to run all tests
 (alias
  (name tests)
  (deps
-  (alias core-tests)
-  (alias map-tests)
-  (alias ir-tests)
-  (alias codegen-tests)
-  (alias userspace-tests)))
-
-(rule
- (alias runtest)
- (deps
-  ./test_ast.exe
-  ./test_lexer.exe
-  ./test_parser.exe
-  ./test_ir.exe
-  ./test_ir_analysis.exe
-  ./test_ebpf_c_codegen.exe
-  ./test_maps.exe
-  ./test_map_operations.exe
-  ./test_return_path_analysis.exe
-  ./test_safety_checker.exe
-  ./test_string_literal_bugs.exe
-  ./test_nested_if_codegen.exe
-  ./test_error_handling.exe
-  ./test_integer_literal.exe
-  ./test_tracepoint.exe
-  ./test_probe.exe
-  ./test_tc.exe
-  ./test_exec.exe
-  ./test_void_functions.exe)
- (action
-  (progn
-   (run ./test_ast.exe)
-   (run ./test_lexer.exe)
-   (run ./test_parser.exe)
-   (run ./test_ir.exe)
-   (run ./test_ir_analysis.exe)
-   (run ./test_ebpf_c_codegen.exe)
-   (run ./test_maps.exe)
-   (run ./test_map_operations.exe)
-   (run ./test_return_path_analysis.exe)
-   (run ./test_safety_checker.exe)
-   (run ./test_string_literal_bugs.exe)
-   (run ./test_nested_if_codegen.exe)
-   (run ./test_error_handling.exe)
-   (run ./test_integer_literal.exe)
-   (run ./test_tracepoint.exe)
-   (run ./test_probe.exe)
-   (run ./test_tc.exe)
-   (run ./test_exec.exe)
-   (run ./test_void_functions.exe)
-   (run ./test_detach_api.exe)))) 
+  test_ringbuf.exe
+  test_test_attribute.exe
+  test_btf_binary_parser.exe
+  test_extern.exe
+  test_include.exe
+  test_lexer.exe
+  test_ir_patterns.exe
+  test_ast.exe
+  test_parser.exe
+  test_type_checker.exe
+  test_symbol_table.exe
+  test_maps.exe
+  test_object_allocation.exe
+  test_safety_checker.exe
+  test_map_operations.exe
+  test_evaluator.exe
+  test_compound_index_assignment.exe
+  test_dynptr_bridge.exe
+  test_global_var_ordering.exe
+  test_string_to_array_unification.exe
+  test_truthy_falsy.exe
+  test_ir.exe
+  test_ir_analysis.exe
+  test_ir_function_system.exe
+  test_ebpf_c_codegen.exe
+  test_map_syntax.exe
+  test_map_assignment.exe
+  test_map_integration.exe
+  test_userspace.exe
+  test_map_flags.exe
+  test_userspace_maps.exe
+  test_comment_positions.exe
+  test_for_statements.exe
+  test_config.exe
+  test_break_continue.exe
+  test_bpf_loop_callbacks.exe
+  test_userspace_for_codegen.exe
+  test_userspace_statements.exe
+  test_return_value_propagation.exe
+  test_stdlib.exe
+  test_config_struct_generation.exe
+  test_array_literals.exe
+  test_array_init.exe
+  test_config_validation.exe
+  test_userspace_struct_flexibility.exe
+  test_struct_field_access.exe
+  test_struct_initialization.exe
+  test_program_ref.exe
+  test_function_pointers.exe
+  test_string_type.exe
+  test_string_codegen.exe
+  test_ebpf_string_generation.exe
+  test_userspace_skeleton_header.exe
+  test_match.exe
+  test_pinned_globals.exe
+  test_string_struct_fixes.exe
+  test_error_handling.exe
+  test_struct_ops.exe
+  test_pointer_syntax.exe
+  test_address_of_user_types.exe
+  test_kfunc_attribute.exe
+  test_private_attribute.exe
+  test_function_scope.exe
+  test_integer_literal.exe
+  test_string_literal_bugs.exe
+  test_return_path_analysis.exe
+  test_enum.exe
+  test_nested_if_codegen.exe
+  test_type_alias.exe
+  test_const_variables.exe
+  test_global_var.exe
+  test_function_validation.exe
+  test_tail_call.exe
+  test_context_field_types.exe
+  test_named_returns.exe
+  test_import_system.exe
+  test_tracepoint.exe
+  test_probe.exe
+  test_detach_api.exe
+  test_tc.exe
+  test_exec.exe
+  test_void_functions.exe)) 
