@@ -30,6 +30,21 @@ type python_function_call = {
   return_type: ir_type;
 }
 
+(** Convert AST types to C types *)
+let ast_type_to_c_type = function
+  | Ast.U8 -> "uint8_t" 
+  | Ast.U16 -> "uint16_t" 
+  | Ast.U32 -> "uint32_t" 
+  | Ast.U64 -> "uint64_t"
+  | Ast.I8 -> "int8_t" 
+  | Ast.I16 -> "int16_t" 
+  | Ast.I32 -> "int32_t" 
+  | Ast.I64 -> "int64_t"
+  | Ast.Bool -> "bool" 
+  | Ast.Char -> "char" 
+  | Ast.Void -> "void"
+  | _ -> "int" (* fallback for complex types *)
+
 (** Convert IR types to C types *)
 let rec c_type_from_ir_type = function
   | IRU8 -> "uint8_t"
@@ -80,16 +95,8 @@ let generate_kernelscript_bridge_code resolved_imports =
       let function_decls = List.map (fun symbol ->
         match symbol.Import_resolver.symbol_type with
         | Ast.Function (param_types, return_type) ->
-            let c_return_type = match return_type with
-              | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
-              | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
-              | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
-            in
-            let c_param_types = List.map (function
-              | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
-              | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
-              | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
-            ) param_types in
+            let c_return_type = ast_type_to_c_type return_type in
+            let c_param_types = List.map ast_type_to_c_type param_types in
             let params_str = if c_param_types = [] then "void" else String.concat ", " c_param_types in
             sprintf "extern %s %s_%s(%s);" c_return_type module_name symbol.symbol_name params_str
         | _ ->
@@ -186,16 +193,8 @@ let generate_mixed_bridge_code resolved_imports ir_programs =
         let function_decls = List.map (fun symbol ->
           match symbol.Import_resolver.symbol_type with
           | Ast.Function (param_types, return_type) ->
-              let c_return_type = match return_type with
-                | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
-                | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
-                | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
-              in
-              let c_param_types = List.map (function
-                | Ast.U8 -> "uint8_t" | Ast.U16 -> "uint16_t" | Ast.U32 -> "uint32_t" | Ast.U64 -> "uint64_t"
-                | Ast.I8 -> "int8_t" | Ast.I16 -> "int16_t" | Ast.I32 -> "int32_t" | Ast.I64 -> "int64_t"
-                | Ast.Bool -> "bool" | Ast.Char -> "char" | _ -> "int"
-              ) param_types in
+              let c_return_type = ast_type_to_c_type return_type in
+              let c_param_types = List.map ast_type_to_c_type param_types in
               let params_str = if c_param_types = [] then "void" else String.concat ", " c_param_types in
               sprintf "extern %s %s_%s(%s);" c_return_type module_name symbol.symbol_name params_str
           | _ ->
@@ -682,38 +681,28 @@ type userspace_context = {
   global_variables: ir_global_variable list;
   mutable inlinable_registers: (int, string) Hashtbl.t;
   mutable current_function: ir_function option;
-  mutable temp_var_counter: int;
   (* Ring buffer event handler registrations *)
   ring_buffer_handlers: (string, string) Hashtbl.t; (* map_name -> handler_function_name *)
 }
 
-let create_userspace_context ?(global_variables = []) () = {
+let create_context_base ?(global_variables = []) ~function_name ~is_main () = {
   temp_counter = ref 0;
-  function_name = "user_function";
-  is_main = false;
+  function_name;
+  is_main;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
   function_usage = create_function_usage ();
   global_variables;
   inlinable_registers = Hashtbl.create 32;
   current_function = None;
-  temp_var_counter = 0;
   ring_buffer_handlers = Hashtbl.create 16;
 }
 
-let create_main_context ?(global_variables = []) () = {
-  temp_counter = ref 0;
-  function_name = "main";
-  is_main = true;
-  register_vars = Hashtbl.create 32;
-  var_declarations = Hashtbl.create 32;
-  function_usage = create_function_usage ();
-  global_variables;
-  inlinable_registers = Hashtbl.create 32;
-  current_function = None;
-  temp_var_counter = 0;
-  ring_buffer_handlers = Hashtbl.create 16;
-}
+let create_userspace_context ?(global_variables = []) () = 
+  create_context_base ~global_variables ~function_name:"user_function" ~is_main:false ()
+
+let create_main_context ?(global_variables = []) () = 
+  create_context_base ~global_variables ~function_name:"main" ~is_main:true ()
 
 let fresh_temp_var ctx prefix =
   incr ctx.temp_counter;
@@ -795,26 +784,7 @@ let rec track_usage_in_instructions ctx instrs =
     | _ -> ()
   ) instrs
 
-(** Collect string sizes from IR *)
-let rec collect_string_sizes_from_ir_type = function
-  | IRStr size -> [size]
-  | IRPointer (inner_type, _) -> collect_string_sizes_from_ir_type inner_type
-  | IRArray (inner_type, _, _) -> collect_string_sizes_from_ir_type inner_type
-
-  | IRResult (ok_type, err_type) -> 
-      (collect_string_sizes_from_ir_type ok_type) @ (collect_string_sizes_from_ir_type err_type)
-  | _ -> []
-
-let collect_string_sizes_from_ir_value ir_value =
-  let type_sizes = collect_string_sizes_from_ir_type ir_value.val_type in
-  let literal_sizes = match ir_value.value_desc with
-    | IRLiteral (StringLit _) ->
-        (match ir_value.val_type with
-         | IRStr size -> [size]
-         | _ -> [])
-    | _ -> []
-  in
-    type_sizes @ literal_sizes
+(* Removed unused string size collection functions *)
 
 (** Collect string sizes from IR - but only those used in concatenation operations *)
 let rec collect_string_concat_sizes_from_ir_expr ir_expr =
@@ -1209,30 +1179,11 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
     let type_alias_defs = List.map (fun (alias_name, underlying_type) ->
       match underlying_type with
         | Ast.Array (element_type, size) ->
-            let element_c_type = match element_type with
-              | Ast.U8 -> "uint8_t"
-              | Ast.U16 -> "uint16_t"
-              | Ast.U32 -> "uint32_t"
-              | Ast.U64 -> "uint64_t"
-              | _ -> "uint8_t"
-            in
+            let element_c_type = ast_type_to_c_type element_type in
             (* Array typedef syntax: typedef element_type alias_name[size]; *)
             sprintf "typedef %s %s[%d];" element_c_type alias_name size
         | _ ->
-            let c_type = match underlying_type with
-              | Ast.U8 -> "uint8_t"
-              | Ast.U16 -> "uint16_t"
-              | Ast.U32 -> "uint32_t"
-              | Ast.U64 -> "uint64_t"
-              | Ast.I8 -> "int8_t"
-              | Ast.I16 -> "int16_t"
-              | Ast.I32 -> "int32_t"
-              | Ast.I64 -> "int64_t"
-              | Ast.Bool -> "bool"
-              | Ast.Char -> "char"
-              | Ast.Void -> "void"
-              | _ -> "uint32_t" (* fallback *)
-            in
+            let c_type = ast_type_to_c_type underlying_type in
             sprintf "typedef %s %s;" c_type alias_name
     ) type_aliases in
     "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
@@ -2259,19 +2210,7 @@ let generate_c_struct_from_ir ir_struct =
   in
   sprintf "struct %s {\n    %s;\n};" ir_struct.struct_name fields_str
   
-(** Generate proper C declaration for any IR type with variable name *)
-let generate_c_declaration ir_type var_name =
-  match ir_type with
-  | IRFunctionPointer (param_types, return_type) ->
-      let return_type_str = c_type_from_ir_type return_type in
-      let param_types_str = List.map c_type_from_ir_type param_types in
-      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*%s)(%s)" return_type_str var_name params_str
-  | IRStr size -> sprintf "char %s[%d]" var_name size
-  | IRArray (element_type, size, _) ->
-      let element_type_str = c_type_from_ir_type element_type in
-      sprintf "%s %s[%d]" element_type_str var_name size
-    | _ -> sprintf "%s %s" (c_type_from_ir_type ir_type) var_name
+
  
 (** Generate variable declarations for a function *)
 let generate_variable_declarations ctx =
@@ -2833,26 +2772,15 @@ let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
   let config_name = config_decl.config_name in
   let struct_name = sprintf "%s_config" config_name in
   
-  (* Generate C struct for config - using same logic as eBPF but with standard C types *)
+  (* Generate C struct for config - using reusable type conversion *)
   let field_declarations = List.map (fun field ->
-    let field_declaration = match field.Ast.field_type with
-      | Ast.U8 -> sprintf "    uint8_t %s;" field.Ast.field_name
-      | Ast.U16 -> sprintf "    uint16_t %s;" field.Ast.field_name
-      | Ast.U32 -> sprintf "    uint32_t %s;" field.Ast.field_name
-      | Ast.U64 -> sprintf "    uint64_t %s;" field.Ast.field_name
-      | Ast.I8 -> sprintf "    int8_t %s;" field.Ast.field_name
-      | Ast.I16 -> sprintf "    int16_t %s;" field.Ast.field_name
-      | Ast.I32 -> sprintf "    int32_t %s;" field.Ast.field_name
-      | Ast.I64 -> sprintf "    int64_t %s;" field.Ast.field_name
-      | Ast.Bool -> sprintf "    bool %s;" field.Ast.field_name
-      | Ast.Char -> sprintf "    char %s;" field.Ast.field_name
-      | Ast.Array (Ast.U16, size) -> sprintf "    uint16_t %s[%d];" field.Ast.field_name size
-      | Ast.Array (Ast.U32, size) -> sprintf "    uint32_t %s[%d];" field.Ast.field_name size
-      | Ast.Array (Ast.U64, size) -> sprintf "    uint64_t %s[%d];" field.Ast.field_name size
-      | Ast.Array (Ast.U8, size) -> sprintf "    uint8_t %s[%d];" field.Ast.field_name size
-      | _ -> sprintf "    uint32_t %s;" field.Ast.field_name  (* fallback *)
-    in
-    field_declaration
+    match field.Ast.field_type with
+      | Ast.Array (element_type, size) -> 
+          (* For arrays, the syntax is: element_type field_name[size]; *)
+          sprintf "    %s %s[%d];" (ast_type_to_c_type element_type) field.Ast.field_name size
+      | other_type -> 
+          (* For non-arrays, the syntax is: type field_name; *)
+          sprintf "    %s %s;" (ast_type_to_c_type other_type) field.Ast.field_name
   ) config_decl.Ast.config_fields in
   
   sprintf "struct %s {\n%s\n};" struct_name (String.concat "\n" field_declarations)
@@ -4085,23 +4013,9 @@ int main(void) {
        )
    | None -> ())
 
-(** Compatibility functions for tests *)
-let generate_c_statement _stmt = "/* IR-based statement generation */"
 
 (** Check if a variable name is an impl block instance *)
 let is_impl_block_variable ir_multi_prog var_name =
   List.exists (fun struct_ops_decl ->
     struct_ops_decl.ir_instance_name = var_name
   ) ir_multi_prog.struct_ops_instances
-
-
-
-
-
-
-
-
-
-
-
-
