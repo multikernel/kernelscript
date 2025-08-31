@@ -68,7 +68,6 @@ let rec c_type_from_ir_type = function
   | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRContext _ -> "void*" (* context pointers *)
   | IRAction _ -> "int" (* action return values *)
   | IRFunctionPointer (param_types, return_type) -> 
       (* For function pointers, we need special handling - this is used for type aliases *)
@@ -1322,7 +1321,6 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
       else
         name  (* Function parameters and regular variables use their names directly *)
   | IRRegister reg_id -> get_register_var_name ctx reg_id ir_value.val_type
-  | IRContextField (_ctx_type, field) -> sprintf "ctx->%s" field
   | IRMapRef map_name -> sprintf "%s_fd" map_name
   | IREnumConstant (_enum_name, constant_name, _value) ->
       (* Generate enum constant name instead of numeric value *)

@@ -52,17 +52,19 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     if param_count <> 1 then
       errors := "Main function must have exactly one parameter (context)" :: !errors;
     match ir_func.parameters with
-    | [(_, IRContext _)] -> ()
-    | [(_, IRPointer (IRContext _, _))] -> ()
-    | [(_, IRPointer (IRStruct ("__sk_buff", _), _))] -> ()  (* Also recognize __sk_buff as TC context *)
+    | [(_, IRStruct (struct_name, _))] when 
+        struct_name = "xdp_md" || struct_name = "__sk_buff" || 
+        struct_name = "pt_regs" || String.starts_with struct_name ~prefix:"trace_event_raw_" -> ()
+    | [(_, IRPointer (IRStruct (struct_name, _), _))] when 
+        struct_name = "xdp_md" || struct_name = "__sk_buff" || 
+        struct_name = "pt_regs" || String.starts_with struct_name ~prefix:"trace_event_raw_" -> ()
     | [(_, IRPointer (IRStruct (struct_name, _), _))] when String.starts_with struct_name ~prefix:"trace_event_raw_" -> ()  (* Recognize tracepoint BTF structs *)
     | _ -> errors := "Main function parameter must be a context type" :: !errors;
     
     (* Check return type based on context type *)
     let is_tc_program = match ir_func.parameters with
-      | [(_, IRPointer (IRContext TcCtx, _))] -> true
-      | [(_, IRContext TcCtx)] -> true
-      | [(_, IRPointer (IRStruct ("__sk_buff", _), _))] -> true  (* Also recognize __sk_buff as TC *)
+      | [(_, IRPointer (IRStruct ("__sk_buff", _), _))] -> true
+      | [(_, IRStruct ("__sk_buff", _))] -> true
       | _ -> false
     in
     

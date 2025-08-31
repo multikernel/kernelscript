@@ -169,7 +169,7 @@ let test_null_terminator_buffer_bug () =
   let assign_instr = make_ir_instruction (IRAssign (make_ir_value (IRVariable "test_str") (IRStr 5) test_pos, make_ir_expr (IRValue string_val) (IRStr 5) test_pos)) test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRStruct ("xdp_md", []))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test_prog" Xdp main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
@@ -203,7 +203,7 @@ let test_string_concat_bounds_bug () =
   let assign_instr = make_ir_instruction (IRAssign (result_var, concat_expr)) test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRStruct ("xdp_md", []))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test_prog" Xdp main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
@@ -242,7 +242,7 @@ let test_function_call_string_arg_bug () =
   let print_call = make_ir_instruction (IRCall (DirectCall "print", [result_var], Some (make_ir_value (IRRegister 2) IRU32 test_pos))) test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; print_call; return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRStruct ("xdp_md", []))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test_prog" Xdp main_func test_pos in
   
   let c_code = compile_to_c ir_prog in
@@ -281,7 +281,7 @@ let test_string_concat_loop_bounds_bug () =
   let assign_instr = make_ir_instruction (IRAssign (result_var, concat_expr)) test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [assign_instr; return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRContext XdpCtx)] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRStruct ("xdp_md", []))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test_prog" Xdp main_func test_pos in
   
   let c_code = compile_to_c ir_prog in

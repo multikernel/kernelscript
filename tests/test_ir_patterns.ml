@@ -79,7 +79,7 @@ let test_collect_string_sizes_bpf_loop () =
   let start_val = make_ir_value (IRLiteral (StringLit "start")) (IRStr 5) pos in
   let end_val = make_ir_value (IRLiteral (StringLit "end")) (IRStr 3) pos in
   let counter_val = make_ir_value (IRVariable "counter") IRU32 pos in
-  let ctx_val = make_ir_value (IRVariable "ctx") (IRContext XdpCtx) pos in
+  let ctx_val = make_ir_value (IRVariable "ctx") (IRStruct ("xdp_md", [])) pos in
   
   (* Body instruction with string literal *)
   let body_val = make_ir_value (IRLiteral (StringLit "body")) (IRStr 4) pos in

@@ -112,7 +112,7 @@ let test_context_access_lowering () =
   let ctx = create_context symbol_table in
   
   (* Set up ctx as a function parameter with XDP context type *)
-  let ctx_type = IRPointer (IRContext XdpCtx, make_bounds_info ()) in
+  let ctx_type = IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()) in
   Hashtbl.add ctx.function_parameters "ctx" ctx_type;
   
   let _ir_val = lower_expression ctx ctx_access in

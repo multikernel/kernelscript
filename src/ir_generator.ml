@@ -371,28 +371,19 @@ let extract_struct_ops_kernel_name attributes =
 
 (** Map struct names to their corresponding context types *)
 let struct_name_to_context_type = function
-  | "xdp_md" -> Some ("xdp", XdpCtx)
-  | "__sk_buff" -> Some ("tc", TcCtx)
+  | "xdp_md" -> Some "xdp"
+  | "__sk_buff" -> Some "tc"
+  | "pt_regs" -> Some "kprobe"
+  (* trace_event_raw_* structs are regular structs, not context types *)
   | _ -> None
 
 (** Determine result type for arrow access expressions *)
 let determine_arrow_access_type ctx obj_val field expr_type_opt =
   match obj_val.val_type with
-  | IRPointer (IRContext ctx_type, _) ->
-      (* Context field access - use context codegen as single source of truth *)
-      let ctx_type_str = match ctx_type with
-          | XdpCtx -> "xdp"
-          | TcCtx -> "tc"
-          | KprobeCtx -> "kprobe"
-          | TracepointCtx -> "tracepoint"
-       in
-                  (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
-            | Some c_type -> c_type_to_ir_type c_type
-            | None -> failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
   | IRPointer (IRStruct (struct_name, _), _) ->
-      (* Leverage field mapping infrastructure for context structs *)
+      (* Check if this is a context struct *)
       (match struct_name_to_context_type struct_name with
-       | Some (ctx_type_str, _) ->
+       | Some ctx_type_str ->
            (* Use field mapping to get precise type information *)
            (match Kernelscript_context.Context_codegen.get_context_field_c_type ctx_type_str field with
             | Some c_type -> c_type_to_ir_type c_type
@@ -427,12 +418,7 @@ let generate_array_bounds_check ctx array_val index_val pos =
       emit_instruction ctx instr
   | _ -> ()
 
-(** Convert IR context type to string *)
-let ir_context_type_to_string = function
-  | XdpCtx -> "xdp"
-  | TcCtx -> "tc"
-  | KprobeCtx -> "kprobe"
-  | TracepointCtx -> "tracepoint"
+
 
 (** Map context field names to IR access types using BTF-integrated context codegen *)
 (* No longer needed - we use BTF field names directly *)
@@ -851,21 +837,23 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Handle field access for different types *)
       (match obj_val.val_type with
-       | IRContext ctx_type ->
-           (* Handle context field access using centralized mapping *)
-           let ctx_type_str = ir_context_type_to_string ctx_type in
-           (match handle_context_field_access_comprehensive ctx_type_str obj_val field result_val expr.expr_pos with
-            | Some instr -> 
-                emit_instruction ctx instr;
-                result_val
+       | IRStruct (struct_name, _) ->
+           (* Check if this is a context struct *)
+           (match struct_name_to_context_type struct_name with
+            | Some ctx_type_str ->
+                (* Handle context field access using centralized mapping *)
+                (match handle_context_field_access_comprehensive ctx_type_str obj_val field result_val expr.expr_pos with
+                 | Some instr -> 
+                     emit_instruction ctx instr;
+                     result_val
+                 | None ->
+                     failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
             | None ->
-                failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
-       | IRStruct (_, _) ->
-           (* Handle struct field access *)
-           let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-           let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
-           emit_instruction ctx instr;
-           result_val
+                (* Handle regular struct field access *)
+                let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
+                let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
+                emit_instruction ctx instr;
+                result_val)
        | IRRingbuf (_, _) ->
            (* Handle ring buffer field access - convert to method calls *)
            (match field with
@@ -902,14 +890,15 @@ let rec lower_expression ctx (expr : Ast.expr) =
       (* Handle arrow access for different pointer types *)
       (match obj_val.val_type with
        | IRPointer (IRStruct (struct_name, _), _) ->
-           (* Check if this is a context struct that should be treated as context access *)
+           (* Check if this is a context struct pointer *)
            (match struct_name_to_context_type struct_name with
-            | Some (ctx_type_str, _) ->
-                (* This is a context struct - generate context access *)
-                (match handle_context_field_access_comprehensive ctx_type_str obj_val field result_val expr.expr_pos with
+            | Some ctx_type_str ->
+                (* Handle context pointer field access *)
+                let corrected_result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+                (match handle_context_field_access_comprehensive ctx_type_str obj_val field corrected_result_val expr.expr_pos with
                  | Some instr -> 
                      emit_instruction ctx instr;
-                     result_val
+                     corrected_result_val
                  | None ->
                      failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
             | None ->
@@ -918,17 +907,6 @@ let rec lower_expression ctx (expr : Ast.expr) =
                 let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
                 emit_instruction ctx instr;
                 result_val)
-       | IRPointer (IRContext ctx_type, _) ->
-           (* Handle context pointer field access *)
-           let ctx_type_str = ir_context_type_to_string ctx_type in
-           (* Create result_val with the correct determined type *)
-           let corrected_result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
-           (match handle_context_field_access_comprehensive ctx_type_str obj_val field corrected_result_val expr.expr_pos with
-            | Some instr -> 
-                emit_instruction ctx instr;
-                corrected_result_val
-            | None ->
-                failwith ("Unknown context field: " ^ field ^ " for context type: " ^ ctx_type_str))
        | _ ->
            (* For userspace code, allow arrow access on other types *)
            if ctx.is_userspace then

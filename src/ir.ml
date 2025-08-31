@@ -137,15 +137,11 @@ and ir_type =
   | IRStruct of string * (string * ir_type) list
   | IREnum of string * (string * Ast.integer_value) list
   | IRResult of ir_type * ir_type
-  | IRContext of context_type
   | IRAction of action_type
   | IRTypeAlias of string * ir_type (* Simple type aliases *)
   | IRStructOps of string * ir_struct_ops_def (* Future: struct_ops support *)
   | IRFunctionPointer of ir_type list * ir_type (* Function pointer: (param_types, return_type) *)
   | IRRingbuf of ir_type * int (* Ring buffer object: (value_type, size) *)
-
-and context_type = 
-  | XdpCtx | TcCtx | KprobeCtx | TracepointCtx
 
 and action_type =
   | Xdp_actionType | TcActionType | GenericActionType
@@ -222,7 +218,6 @@ and ir_value_desc =
   | IRLiteral of literal
   | IRVariable of string
   | IRRegister of int
-  | IRContextField of context_type * string
   | IRMapRef of string
   | IREnumConstant of string * string * Ast.integer_value  (* enum_name, constant_name, value *)
   | IRFunctionRef of string  (* Function reference by name *)
@@ -702,19 +697,19 @@ let rec ast_type_to_ir_type = function
       IRArray (ast_type_to_ir_type t, size, bounds)
   | Pointer (Struct "__sk_buff") -> 
       let bounds = make_bounds_info ~nullable:true () in
-      IRPointer (IRContext TcCtx, bounds)  (* Map *__sk_buff to pointer to TC context *)
+      IRPointer (IRStruct ("__sk_buff", []), bounds)  (* Map *__sk_buff to pointer to struct *)
   | Pointer t -> 
       let bounds = make_bounds_info ~nullable:true () in
       IRPointer (ast_type_to_ir_type t, bounds)
-  | Struct "__sk_buff" -> IRContext TcCtx  (* Map __sk_buff to TC context *)
+  | Struct "__sk_buff" -> IRStruct ("__sk_buff", [])  (* Map __sk_buff to struct *)
   | Struct name -> IRStruct (name, []) (* Fields filled by symbol table *)
   | Enum name -> IREnum (name, [])     (* Values filled by symbol table *)
   | Option t -> 
       let bounds = make_bounds_info ~nullable:true () in
       IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
-  | Xdp_md -> IRContext XdpCtx
-  | TracepointContext -> IRContext TracepointCtx
+  | Xdp_md -> IRStruct ("xdp_md", [])
+  | TracepointContext -> IRStruct ("trace_entry", [])
   | Xdp_action -> IRAction Xdp_actionType
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (param_types, return_type) -> 
@@ -838,9 +833,6 @@ let rec string_of_ir_type = function
   | IRResult (t1, t2) -> Printf.sprintf "result (%s, %s)" (string_of_ir_type t1) (string_of_ir_type t2)
   | IRTypeAlias (name, _) -> Printf.sprintf "type %s" name
   | IRStructOps (name, _) -> Printf.sprintf "struct_ops %s" name
-  | IRContext ctx -> Printf.sprintf "context %s" (match ctx with
-    | XdpCtx -> "xdp" | TcCtx -> "tc" | KprobeCtx -> "kprobe"
-    | TracepointCtx -> "tracepoint")
   | IRAction action -> Printf.sprintf "action %s" (match action with
     | Xdp_actionType -> "xdp" | TcActionType -> "tc"
     | GenericActionType -> "generic")
@@ -855,7 +847,6 @@ let rec string_of_ir_value_desc = function
   | IRLiteral lit -> string_of_literal lit
   | IRVariable name -> name
   | IRRegister reg -> Printf.sprintf "r%d" reg
-  | IRContextField (_, field) -> Printf.sprintf "ctx.%s" field
   | IRMapRef name -> Printf.sprintf "&%s" name
   | IREnumConstant (_enum_name, constant_name, _value) -> constant_name
   | IRFunctionRef function_name -> Printf.sprintf "fn:%s" function_name

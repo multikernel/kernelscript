@@ -42,7 +42,7 @@ let test_type_conversion () =
   check string "IRBool conversion" "__u8" (ebpf_type_from_ir_type IRBool);
   check string "IRPointer conversion" "__u8*" (ebpf_type_from_ir_type (IRPointer (IRU8, make_bounds_info ())));
   check string "IRArray conversion" "__u32[10]" (ebpf_type_from_ir_type (IRArray (IRU32, 10, make_bounds_info ())));
-  check string "IRContext conversion" "struct xdp_md" (ebpf_type_from_ir_type (IRContext XdpCtx))
+  check string "IRStruct conversion" "struct xdp_md" (ebpf_type_from_ir_type (IRStruct ("xdp_md", [])))
 
 (** Test map definition generation *)
 let test_map_definition () =
@@ -90,9 +90,10 @@ let test_context_access () =
   
   let ctx = create_c_context () in
   
-  let data_field = make_ir_value (IRContextField (XdpCtx, "data")) (IRPointer (IRU8, make_bounds_info ())) test_pos in
+  (* Context field access is now handled through regular struct access *)
+  let data_field = make_ir_value (IRVariable "ctx_data") (IRPointer (IRU8, make_bounds_info ())) test_pos in
   let result = generate_c_value ctx data_field in
-  check string "context data field access" "(void*)(long)ctx->data" result
+  check string "context data field access" "ctx_data" result
 
 (** Test bounds checking generation *)
 let test_bounds_checking () =
@@ -198,7 +199,7 @@ let test_function_generation () =
   let return_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   
   generate_c_function ctx main_func;
   
@@ -217,7 +218,7 @@ let test_complete_program () =
   let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_xdp" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_xdp" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   
   (* Add a simple map *)
   let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHash 1024 
@@ -271,7 +272,7 @@ let test_file_writing () =
   let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test" Xdp main_func test_pos in
   
   let test_filename = "test_output.c" in
@@ -859,7 +860,7 @@ let test_declaration_ordering_fix () =
   let return_instr = make_ir_instruction (IRReturn (Some dest_val)) dummy_pos in
   
   let main_block = make_ir_basic_block "entry" [map_instr; return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
   
   let ir_program = {
     Kernelscript.Ir.name = "test_program";
@@ -912,7 +913,7 @@ let test_bpf_printk_string_literal_fix () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [str_literal], Some result_var)) dummy_pos in
   
   let main_block = make_ir_basic_block "entry" [print_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
   
   let ir_program = {
     Kernelscript.Ir.name = "test_program";
@@ -967,7 +968,7 @@ let test_string_escaping_in_bpf_printk () =
     let print_instr = make_ir_instruction (IRCall (DirectCall "print", [str_literal], Some result_var)) dummy_pos in
     
     let main_block = make_ir_basic_block "entry" [print_instr] 0 in
-    let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRContext XdpCtx, make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+    let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
     
     let ir_program = {
       Kernelscript.Ir.name = "test_program";

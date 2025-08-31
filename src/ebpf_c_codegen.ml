@@ -52,8 +52,6 @@ type bounds_hint = { verified: bool; size_hint: int }
 (** Detect memory region type from IR value semantics *)
 let detect_memory_region_type ir_val =
   match ir_val.value_desc with
-  | IRContextField (XdpCtx, ("data" | "data_end" | "data_meta")) -> PacketData
-  | IRContextField (TcCtx, ("data" | "data_end")) -> PacketData
   | IRVariable _ -> LocalStack  (* Variables are typically stack-allocated *)
   | IRMapRef _ -> RegularMemory  (* Map references *)
   | IRLiteral _ -> RegularMemory  (* Literals *)
@@ -96,8 +94,7 @@ let detect_memory_region_enhanced ?(memory_info_map=None) ir_val =
              info.region_type
            with
            | Not_found -> LocalStack)  (* Default for unknown variables *)
-       | IRContextField (XdpCtx, ("data" | "data_end" | "data_meta")) -> PacketData
-       | IRContextField (TcCtx, ("data" | "data_end")) -> PacketData
+
        | IRMapRef _ -> RegularMemory
        | IRLiteral _ -> RegularMemory
        | IRRegister _ -> RegularMemory
@@ -229,8 +226,7 @@ let rec calculate_type_size ir_type =
       failwith "calculate_type_size: IRFunctionPointer should not appear in field assignments"
   | IRRingbuf (_, _) ->
       failwith "calculate_type_size: IRRingbuf should not appear in field assignments"
-  | IRContext _ ->
-      failwith "calculate_type_size: IRContext should not appear in field assignments"
+
 
 let indent ctx = String.make (ctx.indent_level * 4) ' '
 
@@ -354,10 +350,7 @@ let rec ebpf_type_from_ir_type = function
   | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRContext XdpCtx -> "struct xdp_md"
-  | IRContext TcCtx -> "struct __sk_buff"
-  | IRContext KprobeCtx -> "struct pt_regs"
-  | IRContext TracepointCtx -> "void"
+
   | IRAction Xdp_actionType -> "int"
   | IRAction TcActionType -> "int"
   | IRAction GenericActionType -> "int"
@@ -1256,7 +1249,7 @@ and check_dynptr_usage_in_expr expr =
 and check_dynptr_usage_in_value value =
   match value.value_desc with
   | IRMapAccess (_, _, _) -> true  (* Map access may use enhanced patterns *)
-  | IRContextField (_, _) -> true  (* Context field access may use enhanced patterns *)
+
   | _ -> false
 
 (** Check if dynptr functionality is used in a function *)
@@ -1698,16 +1691,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
        | Some expr -> expr
        | None -> get_meaningful_var_name ctx reg ir_val.val_type)
   | IRMapRef map_name -> sprintf "&%s" map_name
-  | IRContextField (ctx_type, field) ->
-      let ctx_var = "ctx" in (* Standard context parameter name *)
-      (* Use modular context code generation *)
-      let ctx_type_str = match ctx_type with
-        | XdpCtx -> "xdp"
-        | TcCtx -> "tc" 
-        | KprobeCtx -> "kprobe"
-        | _ -> failwith ("Unsupported context type in IRContextField")
-      in
-      Kernelscript_context.Context_codegen.generate_context_field_access ctx_type_str ctx_var field
+
   | IREnumConstant (_enum_name, constant_name, _value) ->
       (* Generate enum constant name instead of numeric value *)
       constant_name
@@ -3560,14 +3544,13 @@ let generate_c_function ctx ir_func =
      | _ ->
          (* Fall back to parameter-based detection *)
          (match ir_func.parameters with
-          | (_, IRContext XdpCtx) :: _ -> Some "xdp"
-          | (_, IRContext TcCtx) :: _ -> Some "tc"
-          | (_, IRContext KprobeCtx) :: _ -> Some "kprobe"
-          | (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
-          | (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
-          | (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
+          | (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
+          | (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
+          | (_, IRStruct ("pt_regs", _)) :: _ -> Some "kprobe"
           | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
           | (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
+          | (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"  (* Handle pt_regs as kprobe context *)
+          | (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"  (* Handle tracepoint context *)
           | _ -> None));
   
   let return_type_str = 
@@ -3615,15 +3598,14 @@ let generate_c_function ctx ir_func =
             | Some (Ast.Probe Ast.Kprobe), _ -> Some "kprobe"
             | Some Ast.Tracepoint, _ -> Some "tracepoint"
             (* Fall back to parameter-based detection for context functions *)
-            | _, (_, IRContext XdpCtx) :: _ -> Some "xdp"
-            | _, (_, IRContext TcCtx) :: _ -> Some "tc"
-            | _, (_, IRContext KprobeCtx) :: _ -> Some "kprobe"
-            | _, (_, IRContext TracepointCtx) :: _ -> Some "tracepoint"
-            | _, (_, IRPointer (IRContext XdpCtx, _)) :: _ -> Some "xdp"
-            | _, (_, IRPointer (IRContext TcCtx, _)) :: _ -> Some "tc"
-            | _, (_, IRPointer (IRContext KprobeCtx, _)) :: _ -> Some "kprobe"
-            | _, (_, IRPointer (IRContext TracepointCtx, _)) :: _ -> Some "tracepoint"
+            | _, (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
+            | _, (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
+            | _, (_, IRStruct ("pt_regs", _)) :: _ -> Some "kprobe"
+            | _, (_, IRStruct (struct_name, _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
+            | _, (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"
             | _, (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc" (* Handle __sk_buff as TC context *)
+            | _, (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"
+            | _, (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
             | _, [] -> None (* Parameterless function *)
             | _, _ -> None (* Other context types *)
           in

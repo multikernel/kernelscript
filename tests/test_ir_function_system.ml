@@ -66,7 +66,7 @@ let create_test_function name is_main params ret_type =
 
 let create_test_program () =
   let main_func = create_test_function "main" true 
-    [("ctx", IRContext XdpCtx)] 
+    [("ctx", IRStruct ("xdp_md", []))] 
     (Some (IRAction Xdp_actionType)) in
   {
     name = "test_program";
@@ -79,7 +79,7 @@ let create_test_program () =
 
 let test_valid_main_signature _ =
   let main_func = create_test_function "main" true 
-    [("ctx", IRContext XdpCtx)] 
+    [("ctx", IRStruct ("xdp_md", []))] 
     (Some (IRAction Xdp_actionType)) in
   let sig_info = validate_function_signature main_func in
   check bool "Main function should be valid" true sig_info.is_valid;
