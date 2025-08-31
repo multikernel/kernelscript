@@ -373,16 +373,16 @@ var test_map : hash<u32, u32>(1024)
           | IRMapRef "test_map" -> 
               (* Verify key is a register or literal *)
               (match key_val.value_desc with
-               | IRRegister _ | IRLiteral _ -> 
-                   (* Verify dest is a register *)
+               | IRTempVariable _ | IRLiteral _ -> 
+                   (* Verify dest is a temporary variable *)
                    (match dest_val.value_desc with
-                    | IRRegister _ -> 
+                    | IRTempVariable _ -> 
                         (* Verify load type is MapLookup *)
                         (match load_type with
                          | MapLookup -> print_endline "✓ IRMapLoad instruction ordering test passed"
                          | _ -> failwith "Expected MapLookup load type")
-                    | _ -> failwith "Expected register for dest argument")
-               | _ -> failwith "Expected register or literal for key argument")
+                    | _ -> failwith "Expected temporary variable for dest argument")
+               | _ -> failwith "Expected temporary variable or literal for key argument")
           | _ -> failwith "Expected IRMapRef for map argument")
      | _ -> failwith "Expected IRMapLoad instruction")
   with

@@ -250,7 +250,7 @@ fn main() -> i32 {
     (* Find variable declarations and function calls *)
     let declarations = List.filter_map (fun instr ->
       match instr.instr_desc with
-      | IRDeclareVariable (dest_val, _, _) -> Some dest_val
+      | IRVariableDecl (var_name, _, _) -> Some (make_ir_value (IRVariable var_name) IRU32 (make_position 0 0 "test.ks"))
       | _ -> None
     ) all_instructions in
     
@@ -266,7 +266,7 @@ fn main() -> i32 {
     
     (* The key test: verify that function call returns go to the same registers as variable declarations *)
     let get_register_from_value val_desc = match val_desc with
-      | IRRegister reg -> Some reg
+      | IRTempVariable name -> Some (Hashtbl.hash name)
       | _ -> None
     in
     
@@ -344,7 +344,7 @@ fn main() -> i32 {
     (* Verify the instruction has the correct structure *)
     if List.length struct_ops_registers > 0 then (
       let (result_val, struct_val) = List.hd struct_ops_registers in
-      check bool "result is register" true (match result_val.value_desc with IRRegister _ -> true | _ -> false);
+      check bool "result is temp variable" true (match result_val.value_desc with IRTempVariable _ -> true | _ -> false);
       check bool "struct is variable reference" true (match struct_val.value_desc with IRVariable _ -> true | _ -> false)
     )
     

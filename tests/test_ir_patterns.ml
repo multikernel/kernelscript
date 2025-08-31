@@ -143,31 +143,6 @@ let test_collect_string_sizes_no_op_instructions () =
   check (list int) "Comment instruction returns empty" [] (collect_string_sizes_from_instr comment_instr);
   check (list int) "Throw instruction returns empty" [] (collect_string_sizes_from_instr throw_instr)
 
-(** Test for collect_in_expr IRStructLiteral pattern fix *)
-
-let test_collect_registers_struct_literal () =
-  let pos = { line = 1; column = 1; filename = "test.ks" } in
-  
-  (* Create a struct literal with register values *)
-  let reg1 = make_ir_value (IRRegister 1) IRU32 pos in
-  let reg2 = make_ir_value (IRRegister 2) IRU64 pos in
-  
-  let struct_expr = make_ir_expr (IRStructLiteral ("TestStruct", [("field1", reg1); ("field2", reg2)])) 
-                                 (IRStruct ("TestStruct", [("field1", IRU32); ("field2", IRU64)])) pos in
-  
-      let dest_reg = make_ir_value (IRRegister 3) (IRStruct ("TestStruct", [("field1", IRU32); ("field2", IRU64)])) pos in
-  let assign_instr = make_ir_instruction (IRAssign (dest_reg, struct_expr)) pos in
-  
-  let block = make_ir_basic_block "test_block" [assign_instr] 0 in
-  let func = make_ir_function "test_func" [] None [block] pos in
-  
-  let registers = collect_registers_in_function func in
-  
-  (* Should collect all three registers *)
-  check int "Number of registers collected" 3 (List.length registers);
-  check bool "Should contain register 1" true (List.mem_assoc 1 registers);
-  check bool "Should contain register 2" true (List.mem_assoc 2 registers);
-  check bool "Should contain register 3" true (List.mem_assoc 3 registers)
 
 let test_comprehensive_pattern_coverage () =
   let pos = { line = 1; column = 1; filename = "test.ks" } in
@@ -206,7 +181,6 @@ let tests = [
   "test_collect_string_sizes_cond_return", `Quick, test_collect_string_sizes_cond_return;
   "test_collect_string_sizes_try_defer", `Quick, test_collect_string_sizes_try_defer;
   "test_collect_string_sizes_no_op_instructions", `Quick, test_collect_string_sizes_no_op_instructions;
-  "test_collect_registers_struct_literal", `Quick, test_collect_registers_struct_literal;
   "test_comprehensive_pattern_coverage", `Quick, test_comprehensive_pattern_coverage;
 ]
 

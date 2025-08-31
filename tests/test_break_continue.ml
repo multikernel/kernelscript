@@ -216,9 +216,9 @@ let test_break_continue_unbound_variable_naming () =
   let temp_reg = 3 in
   
   (* Create IR values representing loop variables *)
-  let counter_val = make_ir_value (IRRegister counter_reg) IRU32 test_pos in
-  let condition_val = make_ir_value (IRRegister condition_reg) IRBool test_pos in
-  let temp_val = make_ir_value (IRRegister temp_reg) IRU32 test_pos in
+  let counter_val = make_ir_value (IRTempVariable (Printf.sprintf "counter_%d" counter_reg)) IRU32 test_pos in
+  let condition_val = make_ir_value (IRTempVariable (Printf.sprintf "condition_%d" condition_reg)) IRBool test_pos in
+  let temp_val = make_ir_value (IRTempVariable (Printf.sprintf "temp_%d" temp_reg)) IRU32 test_pos in
   
   (* Create a modulo operation and comparison (similar to the original failing case) *)
   let two_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
@@ -234,7 +234,7 @@ let test_break_continue_unbound_variable_naming () =
   (* Create the bpf_loop instruction with these body instructions *)
   let start_val = make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos in
   let end_val = make_ir_value (IRLiteral (IntLit (Signed64 1000L, None))) IRU32 test_pos in
-  let ctx_val = make_ir_value (IRRegister 10) (IRPointer (IRU8, make_bounds_info ())) test_pos in
+  let ctx_val = make_ir_value (IRTempVariable "loop_ctx") (IRPointer (IRU8, make_bounds_info ())) test_pos in
   let body_instructions = [mod_assign; eq_assign] in
   
   let bpf_loop_instr = make_ir_instruction 
@@ -278,41 +278,6 @@ let test_break_continue_unbound_variable_naming () =
   
   check bool "No undeclared variable usage" false has_undeclared_usage
 
-let test_register_hints_respected_in_callbacks () =
-  let ctx = create_c_context () in
-  
-  (* Set register hints to use "tmp" prefix *)
-  Hashtbl.replace ctx.register_name_hints 1 "tmp";
-  Hashtbl.replace ctx.register_name_hints 2 "tmp";
-  
-  (* Create variables with types that would normally use "val" prefix *)
-  let _val1 = make_ir_value (IRRegister 1) IRU32 test_pos in
-  let _val2 = make_ir_value (IRRegister 2) IRU32 test_pos in
-  
-  (* Generate variable names *)
-  let name1 = get_meaningful_var_name ctx 1 IRU32 in
-  let name2 = get_meaningful_var_name ctx 2 IRU32 in
-  
-  (* With the fix, these should respect the hints and use "tmp" not "val" *)
-  check string "Register 1 uses hint prefix" "tmp_1" name1;
-  check string "Register 2 uses hint prefix" "tmp_2" name2
-
-let test_no_hints_uses_type_based_naming () =
-  let ctx = create_c_context () in
-  
-  (* Don't set any register hints *)
-  
-  (* Create variables with types that should use "val" prefix when no hints *)
-  let _val1 = make_ir_value (IRRegister 1) IRU32 test_pos in
-  let _val2 = make_ir_value (IRRegister 2) IRBool test_pos in
-  
-  (* Generate variable names *)
-  let name1 = get_meaningful_var_name ctx 1 IRU32 in
-  let name2 = get_meaningful_var_name ctx 2 IRBool in
-  
-  (* Without hints, should use type-based naming *)
-  check string "U32 without hints uses val prefix" "val_1" name1;
-  check string "Bool without hints uses cond prefix" "cond_2" name2
 
 let break_continue_tests = [
   "break_statement_parsing", `Quick, test_break_statement_parsing;
@@ -325,8 +290,6 @@ let break_continue_tests = [
   "multiple_break_continue_statements", `Quick, test_multiple_break_continue_statements;
   "break_evaluation", `Quick, test_break_evaluation;
   "break_continue_unbound_variable_naming", `Quick, test_break_continue_unbound_variable_naming;
-  "register_hints_respected_in_callbacks", `Quick, test_register_hints_respected_in_callbacks;
-  "no_hints_uses_type_based_naming", `Quick, test_no_hints_uses_type_based_naming;
 ]
 
 let () =

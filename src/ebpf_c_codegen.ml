@@ -55,7 +55,7 @@ let detect_memory_region_type ir_val =
   | IRVariable _ -> LocalStack  (* Variables are typically stack-allocated *)
   | IRMapRef _ -> RegularMemory  (* Map references *)
   | IRLiteral _ -> RegularMemory  (* Literals *)
-  | IRRegister _ -> RegularMemory  (* Registers *)
+  | IRTempVariable _ -> RegularMemory  (* Temporary variables *)
   | _ -> RegularMemory
 
 (** Check if IR value represents packet data *)
@@ -97,7 +97,7 @@ let detect_memory_region_enhanced ?(memory_info_map=None) ir_val =
 
        | IRMapRef _ -> RegularMemory
        | IRLiteral _ -> RegularMemory
-       | IRRegister _ -> RegularMemory
+       | IRTempVariable _ -> RegularMemory
        | _ -> RegularMemory)
   | None ->
       (* Fallback to heuristic detection *)
@@ -144,12 +144,7 @@ type c_context = {
   mutable pinned_globals: string list;
   (* Flag to indicate if we're generating code for a return context *)
   mutable in_return_context: bool;
-  (* Optimization flags *)
-  mutable enable_temp_var_optimization: bool;
-  (* Register to meaningful name mapping for optimization *)
-  mutable register_name_hints: (int, string) Hashtbl.t;
-  (* Track which registers can be inlined *)
-  mutable inlinable_registers: (int, string) Hashtbl.t;
+
   (* Pending string literals to be emitted at scope boundaries *)
   mutable pending_string_literals: (string * string * int) list; (* (var_name, content, size) *)
   (* Flag to defer string literal emission *)
@@ -175,9 +170,6 @@ let create_c_context () = {
   variable_type_aliases = [];
   pinned_globals = [];
   in_return_context = false;
-  enable_temp_var_optimization = true;
-  register_name_hints = Hashtbl.create 32;
-  inlinable_registers = Hashtbl.create 32;
   pending_string_literals = [];
   defer_string_literals = false;
   declared_registers = Hashtbl.create 32;
@@ -279,51 +271,6 @@ let emit_pending_string_literals ctx =
 let escape_c_string s =
   String.escaped s
 
-(** Optimization: Check if a register can be inlined *)
-let can_inline_register ctx reg =
-  ctx.enable_temp_var_optimization && Hashtbl.mem ctx.inlinable_registers reg
-
-(** Optimization: Get inlined expression for a register *)
-let get_inlined_expression ctx reg =
-  try
-    Some (Hashtbl.find ctx.inlinable_registers reg)
-  with Not_found -> None
-
-(** Optimization: Mark register as inlinable with expression *)
-let mark_register_inlinable ctx reg expr =
-  if ctx.enable_temp_var_optimization then
-    Hashtbl.replace ctx.inlinable_registers reg expr
-
-(** Optimization: Generate meaningful variable names *)
-let get_meaningful_var_name ctx reg ir_type =
-  if ctx.enable_temp_var_optimization then
-    (* First check if there are explicit register hints - these take precedence *)
-    match Hashtbl.find_opt ctx.register_name_hints reg with
-    | Some hint -> sprintf "%s_%d" hint reg
-    | None ->
-        (* For return-like types, use consistent naming when no explicit hints exist *)
-        let should_use_val_prefix = match ir_type with
-          | IRU32 | IRI32 | IRU64 | IRI64 -> true
-          | _ -> false
-        in
-        if should_use_val_prefix then
-          sprintf "val_%d" reg
-        else
-          let type_hint = match ir_type with
-            | IRBool -> "cond"
-            | IRStr _ -> "str"
-            | IRPointer _ -> "ptr"
-            | IRAction _ -> "action"
-            | _ -> "var"
-          in
-          sprintf "%s_%d" type_hint reg
-  else
-    sprintf "tmp_%d" reg
-
-(** Add register name hint for better variable names *)
-let add_register_hint ctx reg hint =
-  if ctx.enable_temp_var_optimization then
-    Hashtbl.replace ctx.register_name_hints reg hint
 
 (** Type conversion from IR types to C types *)
 
@@ -427,13 +374,15 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
   | IRConstAssign (dest_val, expr) -> 
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
-  | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
-      let dest_sizes = collect_string_sizes_from_value dest_val in
+
+  | IRVariableDecl (_var_name, typ, init_expr_opt) ->
+      (* New unified variable declaration - collect from both variable type and initializer *)
+      let var_type_sizes = collect_string_sizes_from_type typ in
       let init_sizes = match init_expr_opt with
-        | Some init_expr -> collect_string_sizes_from_expr init_expr
-        | None -> []
+       | Some init_expr -> collect_string_sizes_from_expr init_expr
+       | None -> []
       in
-      dest_sizes @ init_sizes
+      var_type_sizes @ init_sizes
   | IRCall (_, args, ret_opt) ->
       let args_sizes = List.fold_left (fun acc arg -> 
         acc @ (collect_string_sizes_from_value arg)) [] args in
@@ -652,8 +601,8 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
-    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
-        collect_from_value dest_val;
+    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+        (* New unified variable declaration *)
         (match init_expr_opt with
          | Some init_expr -> collect_from_expr init_expr
          | None -> ())
@@ -816,8 +765,8 @@ let collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
-    | IRDeclareVariable (dest_val, _typ, init_expr_opt) ->
-        collect_from_value dest_val;
+    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+        (* New unified variable declaration *)
         (match init_expr_opt with
          | Some init_expr -> collect_from_expr init_expr
          | None -> ())
@@ -1596,6 +1545,105 @@ let generate_struct_ops ctx ir_multi_program =
     emit_blank_line ctx
   ) ir_multi_program.struct_ops_instances
 
+(** Collect temporary variables and undeclared IRVariables that need to be declared at function level *)
+let collect_temp_variables_in_function ir_func =
+  let temp_vars = ref [] in
+  let declared_via_ir = ref [] in
+  
+  (* First pass: collect variables declared via IRVariableDecl *)
+  let collect_declared_vars ir_instr =
+    match ir_instr.instr_desc with
+    | IRVariableDecl (var_name, _, _) ->
+        declared_via_ir := var_name :: !declared_via_ir
+    | _ -> ()
+  in
+  
+  let collect_declared_from_instrs instrs =
+    List.iter collect_declared_vars instrs
+  in
+  
+  List.iter (fun block ->
+    collect_declared_from_instrs block.instructions
+  ) ir_func.basic_blocks;
+  
+  let collect_from_value ir_val =
+    match ir_val.value_desc with
+    | IRTempVariable name -> 
+        (* Skip struct literal variables - they need to be declared with initializers *)
+        if not (String.contains name 's' && String.contains name 'l') then
+          if not (List.mem_assoc name !temp_vars) then
+            temp_vars := (name, ir_val.val_type) :: !temp_vars
+    | IRVariable name ->
+        (* Collect IRVariable that are not function parameters and not declared via IRVariableDecl *)
+        let is_param = List.exists (fun (param_name, _) -> param_name = name) ir_func.parameters in
+        let is_declared_via_ir = List.mem name !declared_via_ir in
+        if not is_param && not is_declared_via_ir then
+          if not (List.mem_assoc name !temp_vars) then
+            temp_vars := (name, ir_val.val_type) :: !temp_vars
+    | _ -> ()
+  in
+  
+  let collect_from_expr ir_expr =
+    match ir_expr.expr_desc with
+    | IRValue ir_val -> collect_from_value ir_val
+    | IRBinOp (left, _, right) -> collect_from_value left; collect_from_value right
+    | IRUnOp (_, ir_val) -> collect_from_value ir_val
+    | IRCast (ir_val, _) -> collect_from_value ir_val
+    | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+    | IRStructLiteral (_, field_assignments) ->
+        List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
+    | IRMatch (matched_val, arms) ->
+        collect_from_value matched_val;
+        List.iter (fun arm -> collect_from_value arm.ir_arm_value) arms
+  in
+  
+  let rec collect_from_instr ir_instr =
+    match ir_instr.instr_desc with
+    | IRAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
+    | IRConstAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
+    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+        (match init_expr_opt with
+         | Some init_expr -> collect_from_expr init_expr
+         | None -> ())
+    | IRCall (_, args, ret_opt) ->
+        List.iter collect_from_value args;
+        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+    | IRMapLoad (map_val, key_val, dest_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
+    | IRMapStore (map_val, key_val, value_val, _) ->
+        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
+    | IRMapDelete (map_val, key_val) ->
+        collect_from_value map_val; collect_from_value key_val
+    | IRReturn (Some ret_val) -> collect_from_value ret_val
+    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+        collect_from_value cond_val;
+        List.iter collect_from_instr then_instrs;
+        (match else_instrs_opt with
+         | Some else_instrs -> List.iter collect_from_instr else_instrs
+         | None -> ())
+    | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->
+        collect_from_value start_val; collect_from_value end_val; 
+        collect_from_value counter_val; collect_from_value ctx_val;
+        List.iter collect_from_instr body_instructions
+    | _ -> () (* Other instructions don't contain values we need to collect *)
+  in
+  
+  List.iter (fun block ->
+    List.iter collect_from_instr block.instructions
+  ) ir_func.basic_blocks;
+  
+  !temp_vars
+
+(** Declare a variable on-demand if not already declared *)
+let declare_variable_if_needed ctx var_name var_type =
+  let var_hash = Hashtbl.hash var_name in
+  if not (Hashtbl.mem ctx.declared_registers var_hash) then (
+    (* Variable should have been declared at function start - this is a fallback *)
+    let declaration = generate_ebpf_c_declaration var_type var_name in
+    emit_line ctx (sprintf "%s;" declaration);
+    Hashtbl.replace ctx.declared_registers var_hash ()
+  )
+
 (** Generate C expression from IR value *)
 
 let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
@@ -1684,12 +1732,13 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
           (* If parameter mapping fails, use name directly (for non-parameter variables) *)
           name)
       else
-        name  (* Function parameters and regular variables use their names directly *)
-  | IRRegister reg -> 
-      (* Check if this register can be inlined *)
-      (match get_inlined_expression ctx reg with
-       | Some expr -> expr
-       | None -> get_meaningful_var_name ctx reg ir_val.val_type)
+        name  (* Function parameters and regular variables use their names directly - declared via IRVariableDecl or collected upfront *)
+  | IRTempVariable name -> 
+      (* Some temporary variables need special handling (e.g., struct literals) *)
+      (* Use declare-on-use as fallback for variables not pre-declared *)
+      declare_variable_if_needed ctx name ir_val.val_type;
+      name
+
   | IRMapRef map_name -> sprintf "&%s" map_name
 
   | IREnumConstant (_enum_name, constant_name, _value) ->
@@ -2034,8 +2083,7 @@ let generate_c_expression ctx ir_expr =
         let matched_str = generate_c_value ctx matched_val in
         
         (* Check if we can inline this match expression - be more conservative *)
-        let can_inline = ctx.enable_temp_var_optimization && 
-                        List.length arms <= 2 && 
+        let can_inline = List.length arms <= 2 && 
                         List.for_all (fun arm ->
                           match arm.ir_arm_value.value_desc with
                           | IRLiteral _ | IREnumConstant _ -> true
@@ -2159,6 +2207,7 @@ let generate_map_load ctx map_val key_val dest_val load_type =
       in
       
       (* Map lookup returns pointer directly - don't dereference it *)
+      (* Simple assignment - register already declared at function level *)
       emit_line ctx (sprintf "%s = bpf_map_lookup_elem(%s, &%s);" dest_str map_str key_var)
   | MapPeek ->
       emit_line ctx (sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str)
@@ -2283,7 +2332,7 @@ let generate_ringbuf_operation ctx ringbuf_val op =
       
       (* Get consistent variable name for the result register *)
       let result_var_name = match result_val.value_desc with
-        | IRRegister reg -> get_meaningful_var_name ctx reg result_val.val_type
+        | IRTempVariable name -> name
         | IRVariable name -> name
         | _ -> "dynptr_data"
       in
@@ -2315,7 +2364,7 @@ let generate_ringbuf_operation ctx ringbuf_val op =
         | None -> 
             (* Fallback: construct dynptr name from data pointer name *)
             let base_name = match data_val.value_desc with
-              | IRRegister reg -> sprintf "ptr_%d" reg
+              | IRTempVariable name -> sprintf "ptr_%s" name
               | IRVariable name -> name
               | _ -> "dynptr_data"
             in
@@ -2332,7 +2381,7 @@ let generate_ringbuf_operation ctx ringbuf_val op =
         | None -> 
             (* Fallback: construct dynptr name from data pointer name *)
             let base_name = match data_val.value_desc with
-              | IRRegister reg -> sprintf "ptr_%d" reg
+              | IRTempVariable name -> sprintf "ptr_%s" name
               | IRVariable name -> name
               | _ -> "dynptr_data"
             in
@@ -2378,21 +2427,6 @@ let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
 and generate_assignment ctx dest_val expr is_const =
   let assignment_prefix = if is_const then "const " else "" in
   
-  (* Optimization: Check if we can inline simple expressions *)
-  let can_inline_expr = ctx.enable_temp_var_optimization && 
-                       (match dest_val.value_desc with
-                        | IRRegister _ -> true
-                        | _ -> false) &&
-                       (match expr.expr_desc with
-                        | IRValue src_val -> 
-                            (match src_val.value_desc with
-                             | IRLiteral _ | IREnumConstant _ | IRVariable _ -> true
-                             | _ -> false)
-                        | IRBinOp (_, _, _) -> true
-                        | IRUnOp (_, _) -> true
-                        | IRCast (_, _) -> true
-                        | _ -> false) in
-  
   (* Check if this is a pinned global variable assignment *)
   (match dest_val.value_desc with
    | IRVariable name when List.mem name ctx.pinned_globals ->
@@ -2404,29 +2438,9 @@ and generate_assignment ctx dest_val expr is_const =
        emit_line ctx (sprintf "    update_pinned_globals(__pg);");
        emit_line ctx (sprintf "  }");
        emit_line ctx (sprintf "}")
-   | IRRegister reg when can_inline_expr ->
-       (* Optimization: Only inline very simple expressions to avoid correctness issues *)
-       let should_inline = match expr.expr_desc with
-         | IRValue src_val -> 
-             (match src_val.value_desc with
-              | IRLiteral _ | IREnumConstant _ -> true
-              | _ -> false)
-         | _ -> false
-       in
-        (* Prevent inlining for registers that might be named return variables *)
-        let might_be_return_var = 
-          (* Low-numbered registers are often used for important variables like return values *)
-          reg <= 15 && 
-          (* Common return value types *)
-          (match dest_val.val_type with
-          | IRU32 | IRI32 | IRU64 | IRI64 | IRBool | IRAction _ | IRStr _ | IRPointer _ -> true
-          | _ -> false) in
-       if should_inline && not might_be_return_var then (
-         let expr_str = generate_c_expression ctx expr in
-         mark_register_inlinable ctx reg expr_str;
-         (* Don't emit assignment - expression will be inlined *)
-         ()
-       ) else (
+   | IRTempVariable _ ->
+       (* Inlining optimization removed - always generate normal assignment *)
+       (
          (* Generate normal assignment for complex expressions *)
          let dest_str = generate_c_value ctx dest_val in
          let expr_str = generate_c_expression ctx expr in
@@ -2538,74 +2552,59 @@ let generate_truthy_conversion ctx ir_value =
 let rec generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) ->
-      (* Regular assignment without const keyword *)
+      (* Regular assignment without const keyword - for variables only, not registers *)
       generate_assignment ctx dest_val expr false
-      
   | IRConstAssign (dest_val, expr) ->
       (* Const assignment with const keyword *)
       generate_assignment ctx dest_val expr true
-      
-  | IRDeclareVariable (dest_val, typ, init_expr_opt) ->
-      (* Variable declaration with optional initialization *)
-      let var_name = match dest_val.value_desc with 
-        | IRRegister reg -> 
-            let name = get_meaningful_var_name ctx reg typ in
-            (* Store the declared name for this register to ensure consistency *)
-            Hashtbl.replace ctx.register_name_hints reg (String.split_on_char '_' name |> List.hd);
-            (* Mark this register as declared *)
-            Hashtbl.add ctx.declared_registers reg ();
-            name
-        | _ -> failwith "IRDeclareVariable target must be a register"
-      in
-      
-      (* Special handling for different types in variable declarations *)
-      (match typ with
-       | IRArray (element_type, size, _) ->
-           (* Array declaration with proper C syntax *)
-           let element_type_str = ebpf_type_from_ir_type element_type in
-           let array_decl = sprintf "%s %s[%d]" element_type_str var_name size in
-           (match init_expr_opt with
-            | Some init_expr ->
-                let init_str = generate_c_expression ctx init_expr in
-                emit_line ctx (sprintf "%s = %s;" array_decl init_str)
-            | None ->
-                emit_line ctx (sprintf "%s;" array_decl))
-       | IRStr dest_size ->
-           (* String variable declaration with special handling for string literals *)
-           let type_str = ebpf_type_from_ir_type typ in
-           (match init_expr_opt with
-            | Some init_expr ->
-                (match init_expr.expr_desc with
-                 | IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
-                     (* String literal initialization - generate compatible literal *)
-                     (match src_val.value_desc with
-                      | IRLiteral (StringLit s) ->
-                          let len = String.length s in
-                          let max_content_len = dest_size in
-                          let actual_len = min len max_content_len in
-                          let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
-                          emit_line ctx (sprintf "%s %s = {" type_str var_name);
-                          emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
-                          emit_line ctx (sprintf "    .len = %d" actual_len);
-                          emit_line ctx "};"
-                      | _ ->
-                          let init_str = generate_c_expression ctx init_expr in
-                          emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
-                 | _ ->
-                     (* Other initialization expressions *)
-                     let init_str = generate_c_expression ctx init_expr in
-                     emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
-            | None ->
-                emit_line ctx (sprintf "%s %s;" type_str var_name))
-       | _ ->
-           (* Regular variable declaration - use proper C declaration generator *)
-           let decl_str = generate_ebpf_c_declaration typ var_name in
-           (match init_expr_opt with
-            | Some init_expr ->
-                let init_str = generate_c_expression ctx init_expr in
-                emit_line ctx (sprintf "%s = %s;" decl_str init_str)
-            | None ->
-                emit_line ctx (sprintf "%s;" decl_str)))
+  | IRVariableDecl (var_name, typ, init_expr_opt) ->
+      (* New unified variable declaration - handles both user variables and temporary variables *)
+      (* Check if variable is already declared (e.g., in callback functions) *)
+      let var_hash = Hashtbl.hash var_name in
+      if Hashtbl.mem ctx.declared_registers var_hash then
+        (* Variable already declared, just generate assignment if there's an initializer *)
+        (match init_expr_opt with
+         | Some init_expr ->
+             let init_str = generate_c_expression ctx init_expr in
+             emit_line ctx (sprintf "%s = %s;" var_name init_str)
+         | None -> (* No initializer, no need to emit anything *) ())
+      else
+        (* Variable not declared yet, generate full declaration *)
+        let type_str = ebpf_type_from_ir_type typ in
+        (match init_expr_opt with
+         | Some init_expr ->
+             (* Check if this is a string assignment that needs special handling *)
+             (match typ, init_expr.expr_desc with
+              | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
+                  (* String to string assignment with compatible sizes - regenerate src with dest size *)
+                  let init_str = match src_val.value_desc with
+                    | IRLiteral (StringLit s) ->
+                        (* Regenerate string literal with destination size *)
+                        let temp_var = fresh_var ctx "str_lit" in
+                        let len = String.length s in
+                        let max_content_len = dest_size in
+                        let actual_len = min len max_content_len in
+                        let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+                        emit_line ctx (sprintf "str_%d_t %s = {" dest_size temp_var);
+                        emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+                        emit_line ctx (sprintf "    .len = %d" actual_len);
+                        emit_line ctx "};";
+                        temp_var
+                    | _ -> generate_c_expression ctx init_expr
+                  in
+                  emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+              | IRStr _, _ ->
+                  (* Other string expressions (concatenation, etc.) *)
+                  let init_str = generate_c_expression ctx init_expr in
+                  emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+              | _ ->
+                  (* Regular non-string assignment *)
+                  let init_str = generate_c_expression ctx init_expr in
+                  emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
+         | None ->
+             emit_line ctx (sprintf "%s %s;" type_str var_name));
+        (* Mark variable as declared *)
+        Hashtbl.replace ctx.declared_registers var_hash ()
       
   | IRCall (target, args, ret_opt) ->
       (* Handle different call targets *)
@@ -2683,6 +2682,7 @@ let rec generate_c_instruction ctx ir_instr =
       let args_str = String.concat ", " translated_args in
       (match ret_opt with
        | Some ret_val ->
+           (* Simple assignment - register already declared at function level *)
            let ret_str = generate_c_value ctx ret_val in
            emit_line ctx (sprintf "%s = %s(%s);" ret_str actual_name args_str)
        | None ->
@@ -2779,8 +2779,9 @@ let rec generate_c_instruction ctx ir_instr =
       
   | IRConfigAccess (config_name, field_name, result_val) ->
       (* For eBPF, config access goes through global maps *)
-      let result_str = generate_c_value ctx result_val in
       let config_map_name = sprintf "%s_config_map" config_name in
+      let result_str = generate_c_value ctx result_val in
+      (* Simple assignment - register already declared at function level *)
       emit_line ctx (sprintf "{ __u32 config_key = 0; /* global config key */");
       emit_line ctx (sprintf "  void* config_ptr = bpf_map_lookup_elem(&%s, &config_key);" config_map_name);
       emit_line ctx (sprintf "  if (config_ptr) {");
@@ -2789,9 +2790,10 @@ let rec generate_c_instruction ctx ir_instr =
       emit_line ctx (sprintf "}")
       
   | IRContextAccess (dest_val, context_type, field_name) ->
-      let dest_str = generate_c_value ctx dest_val in
       (* Use BTF-integrated context code generation directly *)
       let access_str = Kernelscript_context.Context_codegen.generate_context_field_access context_type "ctx" field_name in
+      (* Simple assignment - register already declared at function level *)
+      let dest_str = generate_c_value ctx dest_val in
       emit_line ctx (sprintf "%s = %s;" dest_str access_str)
 
   | IRBoundsCheck (value_val, min_bound, max_bound) ->
@@ -2959,35 +2961,26 @@ let rec generate_c_instruction ctx ir_instr =
       (* Create a separate context for the callback function *)
       let callback_ctx = create_c_context () in
       callback_ctx.indent_level <- 1; (* Start with one level of indentation *)
-      
-      (* Use consistent variable naming between callback declaration and usage *)
-      let setup_callback_variable_names callback_ctx registers =
-        (* For each register, determine its variable name and store in callback context *)
-        List.iter (fun (reg, _reg_type) ->
-          (* Store the variable name in the callback context's register hints *)
-          Hashtbl.replace callback_ctx.register_name_hints reg "tmp"
-        ) registers
-      in
-      
+
       (* Generate callback function signature *)
       emit_line callback_ctx (sprintf "static long %s(__u32 index, void *ctx_ptr) {" callback_name);
       increase_indent callback_ctx;
       
       (* Extract the variable name from counter_val for proper declaration in callback *)
       let counter_var_name = match counter_val.value_desc with
-        | IRRegister reg -> sprintf "tmp_%d" reg
+        | IRTempVariable name -> sprintf "tmp_%s" name
         | IRVariable name -> name
         | _ -> "loop_counter"
       in
       
-      (* Collect all registers used in the callback body *)
-      let callback_registers = ref [] in
+      (* Collect all temporary variables used in the callback body *)
+      let callback_variables = ref [] in
       let collect_callback_registers ir_instr =
         let collect_in_value ir_val =
           match ir_val.value_desc with
-          | IRRegister reg -> 
-              if not (List.mem_assoc reg !callback_registers) then
-                callback_registers := (reg, ir_val.val_type) :: !callback_registers
+          | IRTempVariable name -> 
+              if not (List.mem_assoc name !callback_variables) then
+                callback_variables := (name, ir_val.val_type) :: !callback_variables
           | _ -> ()
         in
         let collect_in_expr ir_expr =
@@ -3067,9 +3060,7 @@ let rec generate_c_instruction ctx ir_instr =
               List.iter collect_in_instr defer_instructions
           | IRConstAssign (dest_val, const_expr) ->
               collect_in_value dest_val; collect_in_expr const_expr
-          | IRDeclareVariable (dest_val, _, init_expr_opt) ->
-              collect_in_value dest_val;
-              Option.iter collect_in_expr init_expr_opt
+
           | IRCall (_, args, result_val_opt) ->
               List.iter collect_in_value args;
               Option.iter collect_in_value result_val_opt
@@ -3083,6 +3074,11 @@ let rec generate_c_instruction ctx ir_instr =
               collect_in_value ptr_val
           | IRRingbufOp (ringbuf_val, _) ->
               collect_in_value ringbuf_val
+          | IRVariableDecl (_, _, init_expr_opt) ->
+              (* New unified variable declaration *)
+              (match init_expr_opt with
+               | Some init_expr -> collect_in_expr init_expr
+               | None -> ())
           | IRJump _ | IRComment _ | IRBreak | IRContinue | IRThrow _ -> ()
         in
         collect_in_instr ir_instr
@@ -3090,52 +3086,27 @@ let rec generate_c_instruction ctx ir_instr =
       
       (* Collect registers from all body instructions *)
       List.iter collect_callback_registers body_instructions;
-      
-      (* Setup consistent variable naming for the callback context *)
-      setup_callback_variable_names callback_ctx !callback_registers;
-      
-      (* Get the counter register for exclusion *)
-      let counter_reg = match counter_val.value_desc with
-        | IRRegister reg -> Some reg
-        | _ -> None
-      in
-      
+
       (* Declare the loop counter variable in callback scope *)
       let counter_type = ebpf_type_from_ir_type counter_val.val_type in
       emit_line callback_ctx (sprintf "%s %s = index;" counter_type counter_var_name);
       
-      (* Add counter variable to callback context's register hints *)
-      (match counter_val.value_desc with
-       | IRRegister reg -> 
-           (* Map the counter register to its actual variable name in callback *)
-           let counter_hint = if counter_var_name = sprintf "tmp_%d" reg then "tmp" else "val" in
-           Hashtbl.replace callback_ctx.register_name_hints reg counter_hint
-       | _ -> ());
+      (* Counter variable naming is handled directly in the new architecture *)
       
-      (* Collect registers that will be declared by IRDeclareVariable instructions *)
-      let ir_declared_registers = ref [] in
-      List.iter (fun ir_instr ->
-        match ir_instr.instr_desc with
-        | IRDeclareVariable (dest_val, _, _) ->
-            (match dest_val.value_desc with
-             | IRRegister reg -> ir_declared_registers := reg :: !ir_declared_registers
-             | _ -> ())
-        | _ -> ()
-      ) body_instructions;
-      
-      (* Declare all variables used in the callback, excluding counter register and IR-declared ones *)
+      (* Centralized variable declaration for callback: collect all variables and declare them upfront *)
+      let callback_variables_sorted = List.sort (fun (n1, _) (n2, _) -> compare n1 n2) !callback_variables in
       let declared_vars = ref [counter_var_name] in (* Include counter to avoid redefinition *)
-      List.iter (fun (reg, reg_type) ->
-        let c_type = ebpf_type_from_ir_type reg_type in
-        let reg_name = sprintf "tmp_%d" reg in
-        (* Skip counter register, IR-declared registers, and already declared variables *)
-        if (match counter_reg with Some cr -> reg <> cr | None -> true) &&
-           not (List.mem reg !ir_declared_registers) &&
-           not (List.mem reg_name !declared_vars) then (
-          emit_line callback_ctx (sprintf "%s %s;" c_type reg_name);
-          declared_vars := reg_name :: !declared_vars
+      List.iter (fun (var_name, var_type) ->
+        (* Skip already declared variables *)
+        if not (List.mem var_name !declared_vars) then (
+          let declaration = generate_ebpf_c_declaration var_type var_name in
+          emit_line callback_ctx (sprintf "%s;" declaration);
+          declared_vars := var_name :: !declared_vars;
+          (* Mark variable as declared in the callback context *)
+          let var_hash = Hashtbl.hash var_name in
+          Hashtbl.replace callback_ctx.declared_registers var_hash ()
         )
-      ) (List.sort (fun (r1, _) (r2, _) -> compare r1 r2) !callback_registers);
+      ) callback_variables_sorted;
       
       emit_blank_line callback_ctx;
       
@@ -3286,9 +3257,9 @@ let rec generate_c_instruction ctx ir_instr =
       emit_line ctx (sprintf "/* struct_ops_register - handled by userspace */")
 
     | IRObjectNew (dest_val, obj_type) ->
-      let dest_str = generate_c_value ctx dest_val in
       let type_str = ebpf_type_from_ir_type obj_type in
-      (* Use proper kernel pattern: ptr = bpf_obj_new(type) *)
+      let dest_str = generate_c_value ctx dest_val in
+      (* Simple assignment - register already declared at function level *)
       emit_line ctx (sprintf "%s = bpf_obj_new(%s);" dest_str type_str)
       
   | IRObjectNewWithFlag _ ->
@@ -3318,14 +3289,13 @@ let generate_c_basic_block ctx ir_block =
     match instrs with
     | call_instr :: decl_instr :: rest ->
         (match call_instr.instr_desc, decl_instr.instr_desc with
-         | IRCall (target, args, Some ret_val), IRDeclareVariable (dest_val, typ, None) 
-           when ret_val.value_desc = dest_val.value_desc ->
+         | IRCall (target, args, Some ret_val), IRVariableDecl (decl_var_name, typ, None) 
+           when (match ret_val.value_desc with 
+                 | IRTempVariable ret_name -> ret_name = decl_var_name
+                 | IRVariable ret_name -> ret_name = decl_var_name
+                 | _ -> false) ->
              (* Combine function call with variable declaration *)
-             let var_name = get_meaningful_var_name ctx 
-               (match dest_val.value_desc with 
-                | IRRegister reg -> reg 
-                | _ -> failwith "IRDeclareVariable target must be a register") 
-               typ in
+             let var_name = decl_var_name in
              let type_str = ebpf_type_from_ir_type typ in
              let call_str = match target with
                | DirectCall name ->
@@ -3365,8 +3335,9 @@ let collect_register_variable_mapping ir_func =
          with _ -> ())
     | IRAssign (dest_val, _) ->
         (match dest_val.value_desc, !last_declared_var with
-         | IRRegister reg, Some var_name ->
-             register_var_map := (reg, var_name) :: !register_var_map;
+         | IRTempVariable name, Some var_name ->
+             let name_hash = Hashtbl.hash name in
+             register_var_map := (name_hash, var_name) :: !register_var_map;
              last_declared_var := None
          | _ -> ())
     | _ -> ()
@@ -3376,162 +3347,14 @@ let collect_register_variable_mapping ir_func =
   ) ir_func.basic_blocks;
   !register_var_map
 
-(** Helper function to collect registers from a value *)
-let collect_register_from_value registers ir_val =
-  match ir_val.value_desc with
-  | IRRegister reg -> 
-      if not (List.mem_assoc reg !registers) then
-        registers := (reg, ir_val.val_type) :: !registers
-  | _ -> ()
 
-(** Collect all registers used in a function with their types *)
-let collect_registers_in_function ir_func =
-  let registers = ref [] in
-  let collect_in_value = collect_register_from_value registers in
-  let collect_in_expr ir_expr =
-    match ir_expr.expr_desc with
-    | IRValue ir_val -> collect_in_value ir_val
-    | IRBinOp (left, _, right) -> collect_in_value left; collect_in_value right
-    | IRUnOp (_, ir_val) -> collect_in_value ir_val
-    | IRCast (ir_val, _) -> collect_in_value ir_val
-    | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
-    | IRStructLiteral (_, field_assignments) ->
-        List.iter (fun (_, field_val) -> collect_in_value field_val) field_assignments
-    | IRMatch (matched_val, arms) ->
-        (* Collect from matched expression and all arms *)
-        collect_in_value matched_val;
-        List.iter (fun arm -> collect_in_value arm.ir_arm_value) arms
-  in
-  let rec collect_in_instr ir_instr =
-    match ir_instr.instr_desc with
-    | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
-    | IRConstAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
-    | IRDeclareVariable (dest_val, typ, init_expr_opt) ->
-        (* Use the explicit type from the declaration, not the inferred type *)
-        (match dest_val.value_desc with
-         | IRRegister reg -> 
-             if not (List.mem_assoc reg !registers) then
-               registers := (reg, typ) :: !registers
-         | _ -> ());
-        (match init_expr_opt with
-         | Some init_expr -> collect_in_expr init_expr
-         | None -> ())
-    | IRCall (_, args, ret_opt) -> 
-        List.iter collect_in_value args;
-        Option.iter collect_in_value ret_opt
-    | IRMapLoad (map_val, key_val, dest_val, _) ->
-        collect_in_value map_val; collect_in_value key_val; collect_in_value dest_val
-    | IRMapStore (map_val, key_val, value_val, _) ->
-        collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
-    | IRMapDelete (map_val, key_val) ->
-        collect_in_value map_val; collect_in_value key_val
-    | IRConfigFieldUpdate (map_val, key_val, _field, value_val) ->
-        collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
-    | IRStructFieldAssignment (obj_val, _field, value_val) ->
-        collect_in_value obj_val; collect_in_value value_val
-    | IRConfigAccess (_config_name, _field_name, result_val) ->
-        collect_in_value result_val
-    | IRContextAccess (dest_val, context_type, field_name) -> 
-        (* Use BTF to determine the correct type based on the field *)
-        let c_type_to_ir_type = function
-          | "__u8*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-          | "__u16*" -> IRPointer (IRU16, make_bounds_info ~nullable:false ())
-          | "__u32*" -> IRPointer (IRU32, make_bounds_info ~nullable:false ())
-          | "__u64*" -> IRPointer (IRU64, make_bounds_info ~nullable:false ())
-          | "__u8" -> IRU8
-          | "__u16" -> IRU16
-          | "__u32" -> IRU32
-          | "__u64" -> IRU64
-          | "void*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-          | c_type -> failwith ("Unsupported context field C type: " ^ c_type)
-        in
-        let correct_type = 
-          match Kernelscript_context.Context_codegen.get_context_field_c_type context_type field_name with
-          | Some c_type -> c_type_to_ir_type c_type
-          | None -> IRU32  (* Default fallback *)
-        in
-        (match dest_val.value_desc with
-         | IRRegister reg -> 
-             if not (List.mem_assoc reg !registers) then
-               registers := (reg, correct_type) :: !registers
-         | _ -> ())
-    | IRBoundsCheck (ir_val, _, _) -> collect_in_value ir_val
-    | IRCondJump (cond_val, _, _) -> collect_in_value cond_val
-    | IRIf (cond_val, then_body, else_body) ->
-        collect_in_value cond_val;
-        List.iter collect_in_instr then_body;
-        (match else_body with
-         | Some else_instrs -> List.iter collect_in_instr else_instrs
-         | None -> ())
-    | IRIfElseChain (conditions_and_bodies, final_else) ->
-        List.iter (fun (cond_val, then_body) ->
-          collect_in_value cond_val;
-          List.iter collect_in_instr then_body
-        ) conditions_and_bodies;
-        (match final_else with
-         | Some else_instrs -> List.iter collect_in_instr else_instrs
-         | None -> ())
-    | IRMatchReturn (matched_val, arms) ->
-        collect_in_value matched_val;
-        List.iter (fun arm ->
-          (match arm.match_pattern with
-           | IRConstantPattern const_val -> collect_in_value const_val
-           | IRDefaultPattern -> ());
-          (match arm.return_action with
-           | IRReturnValue ret_val -> collect_in_value ret_val
-           | IRReturnCall (_, args) -> List.iter collect_in_value args
-           | IRReturnTailCall (_, args, _) -> List.iter collect_in_value args)
-        ) arms
-    | IRReturn ret_opt -> Option.iter collect_in_value ret_opt
-    | IRJump _ -> ()
-    | IRComment _ -> () (* Comments don't use registers *)
-    | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->
-        collect_in_value start_val; collect_in_value end_val; 
-        collect_in_value counter_val; collect_in_value ctx_val;
-        (* Also collect registers from body instructions *)
-        List.iter collect_in_instr body_instructions
-    | IRBreak -> ()
-    | IRContinue -> ()
-    | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
-        collect_in_value cond_val;
-        Option.iter collect_in_value ret_if_true;
-        Option.iter collect_in_value ret_if_false
-    | IRTry (try_instructions, _catch_clauses) ->
-        List.iter collect_in_instr try_instructions
-    | IRThrow _error_code ->
-        ()  (* Throw statements don't contain values to collect *)
-    | IRDefer defer_instructions ->
-        List.iter collect_in_instr defer_instructions
-    | IRTailCall (_, args, _) ->
-        List.iter collect_in_value args
-    | IRStructOpsRegister (instance_val, struct_ops_val) ->
-        collect_in_value instance_val; collect_in_value struct_ops_val
-    | IRObjectNew (dest_val, _) ->
-        collect_in_value dest_val
-    | IRObjectNewWithFlag (dest_val, _, flag_val) ->
-        collect_in_value dest_val; collect_in_value flag_val
-    | IRObjectDelete ptr_val ->
-        collect_in_value ptr_val
-    | IRRingbufOp (ringbuf_val, op) ->
-        collect_in_value ringbuf_val;
-        (* Also collect registers from ring buffer operation arguments *)
-        (match op with
-         | RingbufReserve result_val -> collect_in_value result_val
-         | RingbufSubmit data_val -> collect_in_value data_val  
-         | RingbufDiscard data_val -> collect_in_value data_val
-         | RingbufOnEvent _ -> ())
-  in
-  List.iter (fun block ->
-    List.iter collect_in_instr block.instructions
-  ) ir_func.basic_blocks;
-  List.sort (fun (r1, _) (r2, _) -> compare r1 r2) !registers
+
+
 
 (** Generate C function from IR function with type alias support *)
 
 let generate_c_function ctx ir_func =
   (* Clear per-function state to avoid conflicts between functions *)
-  Hashtbl.clear ctx.register_name_hints;
-  Hashtbl.clear ctx.inlinable_registers;
   Hashtbl.clear ctx.declared_registers;
   
   (* Determine current function's context type from first parameter or program type *)
@@ -3647,92 +3470,29 @@ let generate_c_function ctx ir_func =
   
   increase_indent ctx;
   
-  (* Function parameters are handled directly via IRVariable - no register mapping needed *)
+  (* Mark function parameters as already declared to avoid redeclaration *)
+  List.iter (fun (param_name, _param_type) ->
+    let param_hash = Hashtbl.hash param_name in
+    Hashtbl.replace ctx.declared_registers param_hash ()
+  ) ir_func.parameters;
   
-  (* Collect all registers used (parameters use IRVariable, not registers) *)
-  let all_registers = collect_registers_in_function ir_func in
+  (* Collect and declare all temporary variables at function level to avoid scoping issues *)
+  let temp_vars = collect_temp_variables_in_function ir_func in
+  List.iter (fun (var_name, var_type) ->
+    let var_hash = Hashtbl.hash var_name in
+    let declaration = generate_ebpf_c_declaration var_type var_name in
+    emit_line ctx (sprintf "%s;" declaration);
+    Hashtbl.replace ctx.declared_registers var_hash ()
+  ) temp_vars;
   
-  (* Collect registers that are handled by IRDeclareVariable instructions *)
-  let declared_registers = ref [] in
-  List.iter (fun block ->
-    List.iter (fun instr ->
-      match instr.instr_desc with
-      | IRDeclareVariable (dest_val, _, _) ->
-          (match dest_val.value_desc with
-           | IRRegister reg -> declared_registers := reg :: !declared_registers
-           | _ -> ())
-      (* IRRingbufOp registers are now handled by the regular collection process *)
-      | _ -> ()
-    ) block.instructions
-  ) ir_func.basic_blocks;
-  
-  (* Declare temporary variables for all registers *)
-  let register_variable_map = collect_register_variable_mapping ir_func in
-  
-  (* Add all pre-declared registers to the context's declared_registers hashtable *)
-  List.iter (fun reg -> Hashtbl.add ctx.declared_registers reg ()) !declared_registers;
-  
-  (* Generate proper variable declarations for all registers *)
-  let register_declarations = ref [] in
-  List.iter (fun (reg, reg_type) ->
-    (* Skip declaration if register can be inlined, is handled by IRDeclareVariable, or already declared by operations *)
-    if not (can_inline_register ctx reg) && not (List.mem reg !declared_registers) && not (Hashtbl.mem ctx.declared_registers reg) then (
-      let effective_type = match reg_type with
-        | IRTypeAlias (alias_name, _) -> alias_name  (* Use the alias name directly *)
-        | _ ->
-            (* Check if this register corresponds to a variable with a type alias *)
-            (match List.assoc_opt reg register_variable_map with
-             | Some var_name ->
-                 (* Add register hint for better variable names *)
-                 add_register_hint ctx reg var_name;
-                 (match List.assoc_opt var_name ctx.variable_type_aliases with
-                  | Some alias_name -> alias_name
-                  | None -> 
-                      (* Use the proper declaration function for complex types *)
-                      let var_name = get_meaningful_var_name ctx reg reg_type in
-                      let decl = generate_ebpf_c_declaration reg_type var_name in
-                      register_declarations := (decl ^ ";") :: !register_declarations;
-                      "" (* Skip the simple type processing below *)
-                  )
-             | None -> 
-                 (* Use the proper declaration function for complex types *)
-                 let var_name = get_meaningful_var_name ctx reg reg_type in
-                 let decl = generate_ebpf_c_declaration reg_type var_name in
-                 register_declarations := (decl ^ ";") :: !register_declarations;
-                 Hashtbl.add ctx.declared_registers reg ();
-                 "" (* Skip the simple type processing below *)
-            )
-      in
-      (* Handle simple types that use alias names *)
-      if effective_type <> "" then (
-        let var_name = get_meaningful_var_name ctx reg reg_type in
-        let simple_decl = sprintf "%s %s;" effective_type var_name in
-        register_declarations := simple_decl :: !register_declarations;
-        Hashtbl.add ctx.declared_registers reg ()
-      )
-    )
-  ) all_registers;
-  
-  (* Emit all variable declarations *)
-  let sorted_declarations = List.sort String.compare (List.rev !register_declarations) in
-  List.iter (emit_line ctx) sorted_declarations;
-  if all_registers <> [] then emit_blank_line ctx;
-  
-  (* Generate basic blocks *)
+  (* Generate basic blocks - instructions now just do assignments *)
   List.iter (generate_c_basic_block ctx) ir_func.basic_blocks;
   
   decrease_indent ctx;
   emit_line ctx "}";
   emit_blank_line ctx
 
-
-
-
-
-
-
 (** Helper function to compile C code to eBPF object *)
-
 let compile_c_to_ebpf c_filename obj_filename =
   let cmd = sprintf "clang -target bpf -O2 -g -c %s -o %s" c_filename obj_filename in
   let exit_code = Sys.command cmd in

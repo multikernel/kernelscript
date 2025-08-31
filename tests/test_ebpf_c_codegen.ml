@@ -1014,7 +1014,7 @@ let test_map_field_access_pointer_fix () =
   (* Create a value that represents a map access result *)
   let key_val = make_ir_value (IRLiteral (IntLit (Signed64 1L, None))) IRU32 dummy_pos in
   let map_access_val = make_ir_value 
-    (IRMapAccess ("buffer_map", key_val, (IRRegister 5, IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))))
+    (IRMapAccess ("buffer_map", key_val, (IRTempVariable "buffer_ptr", IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))))
     (IRPointer (IRStruct ("DataBuffer", [("size", IRU32)]), make_bounds_info ()))
     dummy_pos in
   
@@ -1046,11 +1046,12 @@ let test_variable_function_call_declaration () =
   
   (* Create a function call that returns to a register *)
   let result_reg = 0 in
-  let result_val = make_ir_value (IRRegister result_reg) IRU32 test_pos in
+  let result_val = make_ir_value (IRTempVariable (Printf.sprintf "result_%d" result_reg)) IRU32 test_pos in
   let call_instr = make_ir_instruction (IRCall (DirectCall "helper_function", [make_ir_value (IRLiteral (IntLit (Signed64 5L, None))) IRU32 test_pos], Some result_val)) test_pos in
   
   (* Create a variable declaration for the same register with no initialization *)
-  let decl_instr = make_ir_instruction (IRDeclareVariable (result_val, IRU32, None)) test_pos in
+  let var_name = Printf.sprintf "result_%d" result_reg in
+  let decl_instr = make_ir_instruction (IRVariableDecl (var_name, IRU32, None)) test_pos in
   
   (* Test the optimization that combines these into a single declaration *)
   let ir_block = make_ir_basic_block "test" [call_instr; decl_instr] 0 in

@@ -217,7 +217,7 @@ and ir_value = {
 and ir_value_desc =
   | IRLiteral of literal
   | IRVariable of string
-  | IRRegister of int
+  | IRTempVariable of string  (* Compiler-generated temporary variables *)
   | IRMapRef of string
   | IREnumConstant of string * string * Ast.integer_value  (* enum_name, constant_name, value *)
   | IRFunctionRef of string  (* Function reference by name *)
@@ -287,9 +287,9 @@ and ir_call_target =
   | FunctionPointerCall of ir_value  (* Function pointer call *)
 
 and ir_instr_desc =
-  | IRAssign of ir_value * ir_expr
+  | IRAssign of ir_value * ir_expr (* Assignment to variables *)
   | IRConstAssign of ir_value * ir_expr (* Dedicated const assignment instruction *)
-  | IRDeclareVariable of ir_value * ir_type * ir_expr option (* target, type, optional_initializer *)
+  | IRVariableDecl of string * ir_type * ir_expr option (* Unified variable declaration - var_name, type, optional_initializer *)
   | IRCall of ir_call_target * ir_value list * ir_value option
   | IRTailCall of string * ir_value list * int  (* function_name, args, prog_array_index *)
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
@@ -846,7 +846,7 @@ let rec string_of_ir_type = function
 let rec string_of_ir_value_desc = function
   | IRLiteral lit -> string_of_literal lit
   | IRVariable name -> name
-  | IRRegister reg -> Printf.sprintf "r%d" reg
+  | IRTempVariable name -> Printf.sprintf "tmp:%s" name
   | IRMapRef name -> Printf.sprintf "&%s" name
   | IREnumConstant (_enum_name, constant_name, _value) -> constant_name
   | IRFunctionRef function_name -> Printf.sprintf "fn:%s" function_name
@@ -903,12 +903,12 @@ let rec string_of_ir_instruction instr =
       Printf.sprintf "%s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
   | IRConstAssign (dest, expr) ->
       Printf.sprintf "const %s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
-  | IRDeclareVariable (dest, typ, init_opt) ->
+  | IRVariableDecl (var_name, typ, init_opt) ->
       let init_str = match init_opt with
         | None -> ""
         | Some init_expr -> Printf.sprintf " = %s" (string_of_ir_expr init_expr)
       in
-      Printf.sprintf "%s %s%s" (string_of_ir_value dest) (string_of_ir_type typ) init_str
+      Printf.sprintf "var %s: %s%s" var_name (string_of_ir_type typ) init_str
   | IRCall (target, args, ret_opt) ->
       let args_str = String.concat ", " (List.map string_of_ir_value args) in
       let ret_str = match ret_opt with

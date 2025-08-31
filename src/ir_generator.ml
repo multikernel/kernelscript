@@ -30,10 +30,8 @@ open Loop_analysis
 
 (** Context for IR generation *)
 type ir_context = {
-  (* Variable to register mapping *)
-  variables: (string, int) Hashtbl.t;
-  (* Next available register *)
-  mutable next_register: int;
+  (* Next available temporary variable ID *)
+  mutable next_temp_id: int;
   (* Current basic block being built *)
   mutable current_block: ir_instruction list;
   (* All basic blocks generated *)
@@ -57,8 +55,7 @@ type ir_context = {
   mutable in_bpf_loop_callback: bool; (* New field to track bpf_loop context *)
   mutable is_userspace: bool; (* New field to track if the program is userspace *)
   mutable in_try_block: bool; (* New field to track if we're inside a try block *)
-  (* Track which registers were declared with type aliases *)
-  register_aliases: (int, string * ir_type) Hashtbl.t; (* register -> (alias_name, underlying_type) *)
+
   (* Track variable names to their original declared type names *)
   variable_declared_types: (string, string) Hashtbl.t; (* variable_name -> original_type_name *)
   (* Track function parameters to avoid allocating registers for them *)
@@ -73,8 +70,7 @@ type ir_context = {
 
 (** Create new IR generation context *)
 let create_context ?(global_variables = []) ?(helper_functions = []) symbol_table = {
-  variables = Hashtbl.create 32;
-  next_register = 0;
+  next_temp_id = 0;
   current_block = [];
   blocks = [];
   next_block_id = 0;
@@ -87,7 +83,6 @@ let create_context ?(global_variables = []) ?(helper_functions = []) symbol_tabl
   in_bpf_loop_callback = false;
   is_userspace = false;
   in_try_block = false;
-  register_aliases = Hashtbl.create 32;
   variable_declared_types = Hashtbl.create 32;
   function_parameters = Hashtbl.create 32;
   global_variables = (let tbl = Hashtbl.create 16 in
@@ -100,30 +95,17 @@ let create_context ?(global_variables = []) ?(helper_functions = []) symbol_tabl
                      tbl);
 }
 
-(** Allocate a new register for intermediate values *)
-let allocate_register ctx =
-  let reg = ctx.next_register in
-  ctx.next_register <- reg + 1;
-  reg
 
-(** Helper function to allocate register and create IR value in one step *)
-let allocate_register_with_type ctx ir_type pos =
-  let reg = allocate_register ctx in
-  make_ir_value (IRRegister reg) ir_type pos
+(** Generate a new temporary variable name *)
+let generate_temp_variable ctx base_name =
+  let temp_name = Printf.sprintf "__%s_%d" base_name ctx.next_temp_id in
+  ctx.next_temp_id <- ctx.next_temp_id + 1;
+  temp_name
 
-(** Get or allocate register for variable *)
-let get_variable_register ctx name =
-  (* Check if this is a function parameter - if so, don't allocate a register *)
-  if Hashtbl.mem ctx.function_parameters name then
-    (* Function parameters don't get registers - they are accessed by name *)
-    failwith ("Function parameter " ^ name ^ " should not be accessed via register")
-  else
-    match Hashtbl.find_opt ctx.variables name with
-    | Some reg -> reg
-    | None ->
-        let reg = allocate_register ctx in
-        Hashtbl.add ctx.variables name reg;
-        reg
+(** Helper function to generate temporary variable and create IR value in one step *)
+let allocate_temp_variable ctx base_name ir_type pos =
+  let temp_name = generate_temp_variable ctx base_name in
+  make_ir_value (IRTempVariable temp_name) ir_type pos
 
 (** Create new basic block *)
 let create_basic_block ctx label =
@@ -146,32 +128,29 @@ let emit_instruction ctx instr =
   ctx.current_block <- instr :: ctx.current_block;
   ctx.stack_usage <- ctx.stack_usage + instr.instr_stack_usage
 
+(** Emit variable declaration - new unified approach *)
+let emit_variable_decl ctx var_name ir_type init_expr_opt pos =
+  let instr = make_ir_instruction (IRVariableDecl (var_name, ir_type, init_expr_opt)) pos in
+  emit_instruction ctx instr
+
 (** Expand ring buffer operations to IR instructions *)
 let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
   (* Get the ring buffer variable - could be local or global *)
   let (ringbuf_val, ringbuf_type) = 
-    if Hashtbl.mem ctx.variables ringbuf_name then
-      (* Local variable *)
-      let ringbuf_reg = Hashtbl.find ctx.variables ringbuf_name in
-      let ringbuf_type = match Hashtbl.find_opt ctx.variable_types ringbuf_name with
-        | Some ir_type -> ir_type
-        | None ->
-            (* Fall back to symbol table lookup *)
-            (match Symbol_table.lookup_symbol ctx.symbol_table ringbuf_name with
-             | Some symbol -> 
-                 (match symbol.kind with
-                  | Symbol_table.Variable var_ast_type -> 
-                      ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
-                  | _ -> failwith ("Variable is not a ringbuf: " ^ ringbuf_name))
-             | None -> failwith ("Ringbuf variable not found in symbol table: " ^ ringbuf_name))
-      in
-      (make_ir_value (IRRegister ringbuf_reg) ringbuf_type pos, ringbuf_type)
-    else if Hashtbl.mem ctx.global_variables ringbuf_name then
+    if Hashtbl.mem ctx.global_variables ringbuf_name then
       (* Global variable *)
       let global_var = Hashtbl.find ctx.global_variables ringbuf_name in
       (make_ir_value (IRVariable ringbuf_name) global_var.global_var_type pos, global_var.global_var_type)
     else
-      failwith ("Ring buffer variable not found: " ^ ringbuf_name)
+      (* Local variable - look up in symbol table *)
+      (match Symbol_table.lookup_symbol ctx.symbol_table ringbuf_name with
+       | Some symbol -> 
+           (match symbol.kind with
+            | Symbol_table.Variable var_ast_type -> 
+                let ringbuf_type = ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type in
+                (make_ir_value (IRVariable ringbuf_name) ringbuf_type pos, ringbuf_type)
+            | _ -> failwith ("Variable is not a ringbuf: " ^ ringbuf_name))
+       | None -> failwith ("Ringbuf variable not found in symbol table: " ^ ringbuf_name))
   in
   
   match operation with
@@ -183,8 +162,7 @@ let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
       in
       (* Create a special IR expression that directly represents the ringbuf reserve call *)
       (* This will be converted to the proper C call without intermediate assignments *)
-      let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) result_type pos in
+      let result_val = allocate_temp_variable ctx "ringbuf_reserve" result_type pos in
       let ringbuf_op = RingbufReserve result_val in
       let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
       emit_instruction ctx instr;
@@ -196,8 +174,7 @@ let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
         | [data] -> data
         | _ -> failwith ("Ring buffer submit() requires exactly one argument")
       in
-      let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) IRI32 pos in
+      let result_val = allocate_temp_variable ctx "ringbuf_submit" IRI32 pos in
       let ringbuf_op = RingbufSubmit data_val in
       let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
       emit_instruction ctx instr;
@@ -209,8 +186,7 @@ let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
         | [data] -> data
         | _ -> failwith ("Ring buffer discard() requires exactly one argument")
       in
-      let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) IRI32 pos in
+      let result_val = allocate_temp_variable ctx "ringbuf_discard" IRI32 pos in
       let ringbuf_op = RingbufDiscard data_val in
       let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
       emit_instruction ctx instr;
@@ -227,8 +203,7 @@ let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
              | _ -> failwith ("Ring buffer on_event() requires a function argument"))
         | _ -> failwith ("Ring buffer on_event() requires exactly one argument")
       in
-      let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) IRI32 pos in
+      let result_val = allocate_temp_variable ctx "ringbuf_on_event" IRI32 pos in
       let ringbuf_op = RingbufOnEvent handler_name in
       let instr = make_ir_instruction (IRRingbufOp (ringbuf_val, ringbuf_op)) pos in
       emit_instruction ctx instr;
@@ -447,9 +422,8 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
   
   match operation with
   | "lookup" ->
-      let result_reg = allocate_register ctx in
       (* Map lookup returns pointer to value type, not value type itself *)
-      let result_val = make_ir_value (IRRegister result_reg) 
+      let result_val = allocate_temp_variable ctx "map_lookup" 
         (IRPointer (map_def.map_value_type, make_bounds_info ())) pos in
       let instr = make_ir_instruction
         (IRMapLoad (map_val, key_val, result_val, MapLookup))
@@ -519,28 +493,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                   make_ir_value (IRLiteral (StringLit name)) IRU32 expr.expr_pos
               | _ ->
                   (* Regular variable lookup *)
-                  if Hashtbl.mem ctx.variables name then
-                    let reg = Hashtbl.find ctx.variables name in
-                    let var_type = 
-                      (* Always prioritize the tracked variable type from declaration *)
-                      match Hashtbl.find_opt ctx.variable_types name with
-                      | Some tracked_type -> tracked_type
-                      | None ->
-                          (* Fall back to expression type annotation *)
-                          (match expr.expr_type with
-                           | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
-                           | None -> 
-                               (* Final fallback to symbol table lookup *)
-                               (match Symbol_table.lookup_symbol ctx.symbol_table name with
-                                | Some symbol -> 
-                                    (match symbol.kind with
-                                     | Symbol_table.Variable var_ast_type -> 
-                                         ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
-                                     | _ -> IRU32)
-                                | None -> IRU32))
-                    in
-                    make_ir_value (IRRegister reg) var_type expr.expr_pos
-                  else if Hashtbl.mem ctx.function_parameters name then
+                  if Hashtbl.mem ctx.function_parameters name then
                     let param_type = Hashtbl.find ctx.function_parameters name in
                     make_ir_value (IRVariable name) param_type expr.expr_pos
                   else if Hashtbl.mem ctx.global_variables name then
@@ -569,12 +522,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
                               make_ir_value (IREnumConstant (enum_name, name, value)) final_ir_type expr.expr_pos
                           | Symbol_table.EnumConstant (_, None) ->
                               (* Enum constant without value - treat as variable *)
-                              let reg = get_variable_register ctx name in
                               let ir_type = match expr.expr_type with
                                 | Some ast_type -> ast_type_to_ir_type ast_type
                                 | None -> failwith ("Untyped identifier: " ^ name)
                               in
-                              make_ir_value (IRRegister reg) ir_type expr.expr_pos
+                              make_ir_value (IRVariable name) ir_type expr.expr_pos
                           | Symbol_table.TypeDef _ ->
                               (* This is a type definition (like impl blocks) - treat as variable *)
                               let ir_type = match expr.expr_type with
@@ -584,15 +536,14 @@ let rec lower_expression ctx (expr : Ast.expr) =
                               make_ir_value (IRVariable name) ir_type expr.expr_pos
                           | _ ->
                               (* Other symbol types - treat as variable *)
-                              let reg = get_variable_register ctx name in
                               let ir_type = match expr.expr_type with
                                 | Some ast_type -> ast_type_to_ir_type ast_type
                                 | None -> failwith ("Untyped identifier: " ^ name)
                               in
-                              make_ir_value (IRRegister reg) ir_type expr.expr_pos)
+                              make_ir_value (IRVariable name) ir_type expr.expr_pos)
                      | None ->
                          (* Symbol not found - treat as regular variable *)
-                         let reg = get_variable_register ctx name in
+
                          let ir_type = 
                            (* Always prioritize the tracked variable type from declaration *)
                            match Hashtbl.find_opt ctx.variable_types name with
@@ -611,7 +562,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                                           | _ -> failwith ("Untyped identifier: " ^ name))
                                      | None -> failwith ("Untyped identifier: " ^ name)))
                          in
-                         make_ir_value (IRRegister reg) ir_type expr.expr_pos)))
+                         make_ir_value (IRVariable name) ir_type expr.expr_pos)))
       
   | Ast.ConfigAccess (config_name, field_name) ->
       (* Handle config access like config.field_name *)
@@ -619,7 +570,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
         | Some ast_type -> ast_type_to_ir_type ast_type
         | None -> IRU32 (* Default type for config fields *)
       in
-      let result_val = allocate_register_with_type ctx result_type expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "config_access" result_type expr.expr_pos in
       
       (* Generate new IRConfigAccess instruction *)
       let config_access_instr = make_ir_instruction
@@ -654,7 +605,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            if name = "register" then
              (* Special handling for register() builtin function *)
               handle_register_builtin_call ctx args expr.expr_pos ()
-           else if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+           else if Hashtbl.mem ctx.function_parameters name then
              (* This is a variable holding a function pointer - use FunctionPointerCall *)
              let callee_val = lower_expression ctx callee_expr in
              if is_void_call then
@@ -668,12 +619,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
                make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos
              else
                (* Non-void function pointer call *)
-               let result_reg = allocate_register ctx in
                let result_type = match expr.expr_type with
                  | Some ast_type -> ast_type_to_ir_type ast_type
                  | None -> IRU32
                in
-               let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+               let result_val = allocate_temp_variable ctx "func_ptr_call" result_type expr.expr_pos in
                let instr = make_ir_instruction
                  (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
                  expr.expr_pos
@@ -693,12 +643,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
                make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos
              else
                (* Non-void function call *)
-               let result_reg = allocate_register ctx in
                let result_type = match expr.expr_type with
                  | Some ast_type -> ast_type_to_ir_type ast_type
                  | None -> IRU32
                in
-               let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+               let result_val = allocate_temp_variable ctx "func_call" result_type expr.expr_pos in
                let instr = make_ir_instruction
                  (IRCall (DirectCall name, arg_vals, Some result_val))
                  expr.expr_pos
@@ -713,37 +662,35 @@ let rec lower_expression ctx (expr : Ast.expr) =
                           else make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos in
              let value_val_opt = if List.length arg_vals > 1 then Some (List.nth arg_vals 1) else None in
              expand_map_operation ctx obj_name method_name key_val value_val_opt expr.expr_pos
-           else if Hashtbl.mem ctx.variables obj_name then
-             (* Local variable - check if this is a ring buffer variable *)
-             let var_type = match Hashtbl.find_opt ctx.variable_types obj_name with
-               | Some ir_type -> ir_type
+           else
+             (* Check if this is a local or global variable that supports method calls *)
+             let var_type_opt = 
+               (* First check tracked variable types *)
+               match Hashtbl.find_opt ctx.variable_types obj_name with
+               | Some ir_type -> Some ir_type
                | None ->
-                   (* Fall back to symbol table lookup for type resolution *)
-                   (match Symbol_table.lookup_symbol ctx.symbol_table obj_name with
-                    | Some symbol -> 
-                        (match symbol.kind with
-                         | Symbol_table.Variable var_ast_type -> 
-                             ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type
-                         | _ -> IRU32)
-                    | None -> IRU32)
+                   (* Check global variables *)
+                   if Hashtbl.mem ctx.global_variables obj_name then
+                     let global_var = Hashtbl.find ctx.global_variables obj_name in
+                     Some global_var.global_var_type
+                   else
+                     (* Fall back to symbol table lookup *)
+                     (match Symbol_table.lookup_symbol ctx.symbol_table obj_name with
+                      | Some symbol -> 
+                          (match symbol.kind with
+                           | Symbol_table.Variable var_ast_type -> 
+                               Some (ast_type_to_ir_type_with_context ctx.symbol_table var_ast_type)
+                           | _ -> None)
+                      | None -> None)
              in
-             (match var_type with
-              | IRRingbuf (_, _) ->
+             (match var_type_opt with
+              | Some (IRRingbuf (_, _)) ->
                   (* This is a ringbuf object that supports method calls *)
                   expand_ringbuf_operation ctx obj_name method_name arg_vals expr.expr_pos
-              | _ ->
-                  failwith ("Method call '" ^ method_name ^ "' not supported on variable '" ^ obj_name ^ "' of type: " ^ (string_of_ir_type var_type)))
-           else if Hashtbl.mem ctx.global_variables obj_name then
-             (* Global variable - check if this is a ring buffer variable *)
-             let global_var = Hashtbl.find ctx.global_variables obj_name in
-             (match global_var.global_var_type with
-              | IRRingbuf (_, _) ->
-                  (* This is a global ringbuf object that supports method calls *)
-                  expand_ringbuf_operation ctx obj_name method_name arg_vals expr.expr_pos
-              | _ ->
-                  failwith ("Method call '" ^ method_name ^ "' not supported on global variable '" ^ obj_name ^ "' of type: " ^ (string_of_ir_type global_var.global_var_type)))
-           else
-             failwith ("Unknown method call: " ^ obj_name ^ "." ^ method_name)
+              | Some var_type ->
+                  failwith ("Method call '" ^ method_name ^ "' not supported on variable '" ^ obj_name ^ "' of type: " ^ (string_of_ir_type var_type))
+              | None ->
+                  failwith ("Unknown method call: " ^ obj_name ^ "." ^ method_name))
        | _ ->
            (* Function pointer call - use FunctionPointerCall target *)
            let callee_val = lower_expression ctx callee_expr in
@@ -759,12 +706,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
              make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos
            else
              (* Non-void function pointer call *)
-             let result_reg = allocate_register ctx in
              let result_type = match expr.expr_type with
                | Some ast_type -> ast_type_to_ir_type ast_type
                | None -> IRU32
              in
-             let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+             let result_val = allocate_temp_variable ctx "func_ptr_call" result_type expr.expr_pos in
              let instr = make_ir_instruction
                (IRCall (FunctionPointerCall callee_val, arg_vals, Some result_val))
                expr.expr_pos
@@ -793,47 +739,42 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (* Generate bounds check *)
            generate_array_bounds_check ctx array_val index_val expr.expr_pos;
            
-           let result_reg = allocate_register ctx in
            let element_type = match array_val.val_type with
              | IRArray (elem_type, _, _) -> elem_type
              | IRStr _ -> IRChar  (* String indexing returns char *)
              | _ -> failwith "Array access on non-array type"
            in
-           let result_val = make_ir_value (IRRegister result_reg) element_type expr.expr_pos in
+           let result_val = allocate_temp_variable ctx "array_access" element_type expr.expr_pos in
            
            (match array_val.val_type with
             | IRStr _ ->
                 (* For strings, generate direct indexing: str.data[index] *)
                 let index_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) element_type expr.expr_pos in
-                let index_assign = make_ir_instruction (IRAssign (result_val, index_expr)) expr.expr_pos in
-                emit_instruction ctx index_assign
+                (* For strings, we need to emit a variable declaration and assignment *)
+                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") element_type (Some index_expr) expr.expr_pos
             | _ ->
                 (* For arrays, generate pointer arithmetic and load *)
-                let ptr_reg = allocate_register ctx in
-                let ptr_val = make_ir_value (IRRegister ptr_reg) 
+                let ptr_val = allocate_temp_variable ctx "array_ptr" 
                   (IRPointer (element_type, make_bounds_info ())) expr.expr_pos in
                 
                 (* ptr = &array[index] *)
                 let ptr_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) 
                   ptr_val.val_type expr.expr_pos in
-                let ptr_assign = make_ir_instruction (IRAssign (ptr_val, ptr_expr)) expr.expr_pos in
-                emit_instruction ctx ptr_assign;
+                emit_variable_decl ctx (match ptr_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") ptr_val.val_type (Some ptr_expr) expr.expr_pos;
                 
                 (* result = *ptr *)
                 let load_expr = make_ir_expr (IRValue ptr_val) element_type expr.expr_pos in
-                let load_assign = make_ir_instruction (IRAssign (result_val, load_expr)) expr.expr_pos in
-                emit_instruction ctx load_assign);
+                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") element_type (Some load_expr) expr.expr_pos);
            
            result_val)
            
   | Ast.FieldAccess (obj_expr, field) ->
       let obj_val = lower_expression ctx obj_expr in
-      let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
         | None -> IRU32
       in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "field_access" result_type expr.expr_pos in
       
       (* Handle field access for different types *)
       (match obj_val.val_type with
@@ -851,8 +792,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
             | None ->
                 (* Handle regular struct field access *)
                 let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-                let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
-                emit_instruction ctx instr;
+                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
                 result_val)
        | IRRingbuf (_, _) ->
            (* Handle ring buffer field access - convert to method calls *)
@@ -872,8 +812,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (* For userspace code, allow field access on other types (assuming it will be handled by C compilation) *)
            if ctx.is_userspace then
              let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-             let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
-             emit_instruction ctx instr;
+             emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
              result_val
            else
              failwith ("Field access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
@@ -881,11 +820,9 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.ArrowAccess (obj_expr, field) ->
       (* Arrow access (pointer->field) - similar to field access but for pointers *)
       let obj_val = lower_expression ctx obj_expr in
-      let result_reg = allocate_register ctx in
-      
       (* Determine result type using dedicated type resolution *)
       let result_type = determine_arrow_access_type ctx obj_val field expr.expr_type in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "arrow_access" result_type expr.expr_pos in
       
       (* Handle arrow access for different pointer types *)
       (match obj_val.val_type with
@@ -894,7 +831,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (match struct_name_to_context_type struct_name with
             | Some ctx_type_str ->
                 (* Handle context pointer field access *)
-                let corrected_result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+                let corrected_result_val = result_val in
                 (match handle_context_field_access_comprehensive ctx_type_str obj_val field corrected_result_val expr.expr_pos with
                  | Some instr -> 
                      emit_instruction ctx instr;
@@ -904,15 +841,13 @@ let rec lower_expression ctx (expr : Ast.expr) =
             | None ->
                 (* Regular struct pointer - use field access *)
                 let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-                let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
-                emit_instruction ctx instr;
+                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
                 result_val)
        | _ ->
            (* For userspace code, allow arrow access on other types *)
            if ctx.is_userspace then
              let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-             let instr = make_ir_instruction (IRAssign (result_val, field_expr)) expr.expr_pos in
-             emit_instruction ctx instr;
+             emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
              result_val
            else
              failwith ("Arrow access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
@@ -922,7 +857,6 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let right_val = lower_expression ctx right_expr in
       let ir_op = lower_binary_op op in
       
-      let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type ast_type
         | None -> 
@@ -937,18 +871,16 @@ let rec lower_expression ctx (expr : Ast.expr) =
               (* Default to left operand type *)
               | _ -> left_val.val_type)
       in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "binop" result_type expr.expr_pos in
       
       let bin_expr = make_ir_expr (IRBinOp (left_val, ir_op, right_val)) result_type expr.expr_pos in
-      let instr = make_ir_instruction (IRAssign (result_val, bin_expr)) expr.expr_pos in
-      emit_instruction ctx instr;
+      emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some bin_expr) expr.expr_pos;
       result_val
       
   | Ast.UnaryOp (op, operand_expr) ->
       let operand_val = lower_expression ctx operand_expr in
       let ir_op = lower_unary_op op in
       
-      let result_reg = allocate_register ctx in
       (* Calculate the correct result type based on the operation *)
       let result_type = match op with
         | AddressOf -> 
@@ -968,21 +900,19 @@ let rec lower_expression ctx (expr : Ast.expr) =
             (* For other unary ops (Not, Neg), result type is same as operand *)
             operand_val.val_type
       in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "unop" result_type expr.expr_pos in
       
-             (* Handle all unary operations uniformly to avoid register reference issues *)
-       let un_expr = make_ir_expr (IRUnOp (ir_op, operand_val)) result_type expr.expr_pos in
-       let instr = make_ir_instruction (IRAssign (result_val, un_expr)) expr.expr_pos in
-       emit_instruction ctx instr;
+      (* Handle all unary operations uniformly to avoid register reference issues *)
+      let un_expr = make_ir_expr (IRUnOp (ir_op, operand_val)) result_type expr.expr_pos in
+      emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some un_expr) expr.expr_pos;
        result_val
       
   | Ast.StructLiteral (struct_name, field_assignments) ->
-      let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
         | None -> IRStruct (struct_name, [])
       in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "struct_literal" result_type expr.expr_pos in
       
       (* Lower each field assignment expression *)
       let lowered_field_assignments = List.map (fun (field_name, field_expr) ->
@@ -992,8 +922,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Generate struct literal instruction *)
       let struct_expr = make_ir_expr (IRStructLiteral (struct_name, lowered_field_assignments)) result_type expr.expr_pos in
-      let instr = make_ir_instruction (IRAssign (result_val, struct_expr)) expr.expr_pos in
-      emit_instruction ctx instr;
+      emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some struct_expr) expr.expr_pos;
       result_val
 
   | Ast.Match (matched_expr, arms) ->
@@ -1005,8 +934,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       if has_block_arms then
         (* For match expressions with block arms, generate conditional statements *)
-        let result_reg = allocate_register ctx in
-        let result_val = make_ir_value (IRRegister result_reg) IRU32 expr.expr_pos in
+        let result_val = allocate_temp_variable ctx "match_result" IRU32 expr.expr_pos in
         
         (* Generate if-else chain for the match arms *)
         let rec generate_conditions arms_remaining =
@@ -1016,11 +944,9 @@ let rec lower_expression ctx (expr : Ast.expr) =
               let condition_val = match arm.arm_pattern with
                 | ConstantPattern lit ->
                     let const_val = lower_literal lit arm.arm_pos in
-                    let eq_reg = allocate_register ctx in
-                    let eq_val = make_ir_value (IRRegister eq_reg) IRBool arm.arm_pos in
+                    let eq_val = allocate_temp_variable ctx "match_eq" IRBool arm.arm_pos in
                     let eq_expr = make_ir_expr (IRBinOp (matched_val, IREq, const_val)) IRBool arm.arm_pos in
-                    let eq_instr = make_ir_instruction (IRAssign (eq_val, eq_expr)) arm.arm_pos in
-                    emit_instruction ctx eq_instr;
+                    emit_variable_decl ctx (match eq_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRBool (Some eq_expr) arm.arm_pos;
                     eq_val
                 | DefaultPattern ->
                     (* Default pattern always matches - create a true condition *)
@@ -1036,11 +962,9 @@ let rec lower_expression ctx (expr : Ast.expr) =
                       | None -> failwith ("Undefined identifier in match pattern: " ^ name)
                     in
                     (* Create equality comparison *)
-                    let eq_reg = allocate_register ctx in
-                    let eq_val = make_ir_value (IRRegister eq_reg) IRBool arm.arm_pos in
+                    let eq_val = allocate_temp_variable ctx "match_enum_eq" IRBool arm.arm_pos in
                     let eq_expr = make_ir_expr (IRBinOp (matched_val, IREq, enum_val)) IRBool arm.arm_pos in
-                    let eq_instr = make_ir_instruction (IRAssign (eq_val, eq_expr)) arm.arm_pos in
-                    emit_instruction ctx eq_instr;
+                    emit_variable_decl ctx (match eq_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRBool (Some eq_expr) arm.arm_pos;
                     eq_val
               in
               
@@ -1052,15 +976,13 @@ let rec lower_expression ctx (expr : Ast.expr) =
               (match arm.arm_body with
                | SingleExpr expr ->
                    let expr_val = lower_expression ctx expr in
-                   let assign_instr = make_ir_instruction (IRAssign (result_val, make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos)) arm.arm_pos in
-                   emit_instruction ctx assign_instr
+                   emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") expr_val.val_type (Some (make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos)) arm.arm_pos
                | Block stmts ->
                    (* Process block statements - they will be executed conditionally *)
                    List.iter (lower_statement ctx) stmts;
                    (* If no explicit assignment to result, use default value *)
                    let default_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 arm.arm_pos in
-                   let assign_instr = make_ir_instruction (IRAssign (result_val, make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos in
-                   emit_instruction ctx assign_instr);
+                   emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRU32 (Some (make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos);
               
               then_instructions := List.rev ctx.current_block;
               ctx.current_block <- old_block;
@@ -1116,20 +1038,17 @@ let rec lower_expression ctx (expr : Ast.expr) =
           | [] -> IRU32  (* Default type for empty match *)
         in
         
-        let result_reg = allocate_register ctx in
-        let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+        let result_val = allocate_temp_variable ctx "match_result" result_type expr.expr_pos in
         
         let match_expr = make_ir_expr (IRMatch (matched_val, ir_arms)) result_type expr.expr_pos in
-        let assign_instr = make_ir_instruction (IRAssign (result_val, match_expr)) expr.expr_pos in
-        emit_instruction ctx assign_instr;
+        emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_val.val_type (Some match_expr) expr.expr_pos;
         
         result_val
 
   | Ast.New typ ->
       (* Object allocation using bpf_obj_new() or malloc() depending on context *)
       let ir_type = ast_type_to_ir_type typ in
-      let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) (IRPointer (ir_type, make_bounds_info ())) expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "new_obj" (IRPointer (ir_type, make_bounds_info ())) expr.expr_pos in
       
       let alloc_instr = make_ir_instruction (IRObjectNew (result_val, ir_type)) expr.expr_pos in
       emit_instruction ctx alloc_instr;
@@ -1139,8 +1058,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
   | Ast.NewWithFlag (typ, flag_expr) ->
       (* Object allocation with GFP flag - only valid in kernel context *)
       let ir_type = ast_type_to_ir_type typ in
-      let result_reg = allocate_register ctx in
-      let result_val = make_ir_value (IRRegister result_reg) (IRPointer (ir_type, make_bounds_info ())) expr.expr_pos in
+      let result_val = allocate_temp_variable ctx "new_obj_flag" (IRPointer (ir_type, make_bounds_info ())) expr.expr_pos in
       
       (* Lower the flag expression *)
       let flag_val = lower_expression ctx flag_expr in
@@ -1151,7 +1069,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       result_val
 
 (** Helper function to handle register() builtin function calls *)
-and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type () =
+and handle_register_builtin_call ctx args expr_pos ?target_type () =
   if List.length args = 1 then
     let struct_arg = List.hd args in
     (* Handle impl block references specially *)
@@ -1175,13 +1093,10 @@ and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type
           (* Not an identifier - use normal processing *)
           lower_expression ctx struct_arg
     in
-    (* Create result value - use provided target or allocate new register *)
-    let result_val = match target_register, target_type with
-      | Some reg, Some typ -> make_ir_value (IRRegister reg) typ expr_pos
-      | None, _ -> 
-          let result_reg = allocate_register ctx in
-          make_ir_value (IRRegister result_reg) IRU32 expr_pos
-      | Some reg, None -> make_ir_value (IRRegister reg) IRU32 expr_pos
+    (* Create result value - always use proper temp variable allocation *)
+    let result_val = match target_type with
+      | Some typ -> allocate_temp_variable ctx "struct_ops_reg" typ expr_pos
+      | None -> allocate_temp_variable ctx "struct_ops_reg" IRU32 expr_pos
     in
     let instr = make_ir_instruction (IRStructOpsRegister (result_val, struct_val)) expr_pos in
     emit_instruction ctx instr;
@@ -1190,7 +1105,7 @@ and handle_register_builtin_call ctx args expr_pos ?target_register ?target_type
     failwith "register() takes exactly one argument"
 
 (** Helper function to resolve type aliases and track them *)
-and resolve_type_alias ctx reg ast_type =
+and resolve_type_alias ctx _reg ast_type =
   match ast_type with
   | UserType alias_name ->
       (match Symbol_table.lookup_symbol ctx.symbol_table alias_name with
@@ -1198,9 +1113,6 @@ and resolve_type_alias ctx reg ast_type =
            (match symbol.kind with
             | Symbol_table.TypeDef (Ast.TypeAlias (_, underlying_type, _)) -> 
                 let underlying_ir_type = ast_type_to_ir_type underlying_type in
-                (* Store the alias information for this register *)
-                Hashtbl.replace ctx.register_aliases reg (alias_name, underlying_ir_type);
-                (* Create IRTypeAlias to preserve the alias name *)
                 IRTypeAlias (alias_name, underlying_ir_type)
             | _ -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
         | None -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type)
@@ -1224,11 +1136,11 @@ and track_map_origin ctx name = function
       Hashtbl.remove ctx.map_origin_variables name
 
 (** Helper function to resolve declaration type and initialization *)
-and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
+and resolve_declaration_type_and_init ctx typ_opt expr_opt =
   match typ_opt, expr_opt with
   | Some ast_type, Some expr ->
       (* Use explicitly declared type, but process initialization expression *)
-      let target_type = resolve_type_alias ctx reg ast_type in
+      let target_type = ast_type_to_ir_type_with_context ctx.symbol_table ast_type in
       (* For function calls, manually handle them to use the target register *)
       (match expr.Ast.expr_desc with
        | Ast.Call (callee_expr, args) ->
@@ -1236,14 +1148,14 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
            (* Special handling for register() builtin function *)
            (match callee_expr.Ast.expr_desc with
             | Ast.Identifier "register" ->
-                                      let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_register:reg ~target_type:target_type () in
+              let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_type:target_type () in
                 (target_type, None)
             | _ ->
                 (* Regular function call handling *)
                 let arg_vals = List.map (lower_expression ctx) args in
                 let call_target = match callee_expr.Ast.expr_desc with
                   | Ast.Identifier name ->
-                      if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                      if Hashtbl.mem ctx.function_parameters name then
                         let callee_val = lower_expression ctx callee_expr in
                         FunctionPointerCall callee_val
                       else
@@ -1252,7 +1164,7 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
                       let callee_val = lower_expression ctx callee_expr in
                       FunctionPointerCall callee_val
                 in
-                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let result_val = allocate_temp_variable ctx "func_call" target_type expr.Ast.expr_pos in
                 let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
                 emit_instruction ctx instr;
                 (target_type, None))
@@ -1272,14 +1184,14 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
            (* Special handling for register() builtin function *)
            (match callee_expr.Ast.expr_desc with
             | Ast.Identifier "register" ->
-                let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_register:reg ~target_type:inferred_type () in
+                let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_type:inferred_type () in
                 (inferred_type, None)
             | _ ->
                 (* Regular function call handling *)
                 let arg_vals = List.map (lower_expression ctx) args in
                 let call_target = match callee_expr.Ast.expr_desc with
                   | Ast.Identifier name ->
-                      if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                      if Hashtbl.mem ctx.function_parameters name then
                         let callee_val = lower_expression ctx callee_expr in
                         FunctionPointerCall callee_val
                       else
@@ -1288,7 +1200,7 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
                       let callee_val = lower_expression ctx callee_expr in
                       FunctionPointerCall callee_val
                 in
-                let result_val = make_ir_value (IRRegister reg) inferred_type expr.Ast.expr_pos in
+                let result_val = allocate_temp_variable ctx "func_call_inferred" inferred_type expr.Ast.expr_pos in
                 let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
                 emit_instruction ctx instr;
                 (inferred_type, None))
@@ -1306,7 +1218,7 @@ and resolve_declaration_type_and_init ctx reg typ_opt expr_opt =
            (inferred_type, Some value))
   | Some ast_type, None ->
       (* Declared type, no initialization *)
-      let target_type = resolve_type_alias ctx reg ast_type in
+      let target_type = ast_type_to_ir_type_with_context ctx.symbol_table ast_type in
       (target_type, None)
   | None, None ->
       (* No type and no expression - default *)
@@ -1320,11 +1232,9 @@ and resolve_const_type ctx typ_opt expr =
   | None -> value.val_type
 
 (** Helper function to declare a variable *)
-and declare_variable ctx name reg target_type init_value_opt pos =
+and declare_variable ctx name target_type init_value_opt pos =
   let size = calculate_stack_usage target_type in
   ctx.stack_usage <- ctx.stack_usage + size;
-  
-  let target_val = make_ir_value (IRRegister reg) target_type pos in
   
   (* Track the variable type for later lookups *)
   Hashtbl.replace ctx.variable_types name target_type;
@@ -1338,19 +1248,32 @@ and declare_variable ctx name reg target_type init_value_opt pos =
     | None -> None
   in
   
+  (* Use IRRegisterDef for clean SSA-style register allocation *)
+  let init_expr = match init_expr_opt with
+    | Some expr -> expr
+    | None -> 
+        (* Create a default initialization expression based on type *)
+        let default_value = match target_type with
+          | IRU32 | IRI32 -> make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 pos
+          | IRU64 | IRI64 -> make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU64 pos
+          | IRBool -> make_ir_value (IRLiteral (BoolLit false)) IRBool pos
+          | _ -> make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) target_type pos
+        in
+        make_ir_expr (IRValue default_value) target_type pos
+  in
   let instr = make_ir_instruction 
-    (IRDeclareVariable (target_val, target_type, init_expr_opt)) 
+    (IRVariableDecl (name, target_type, Some init_expr)) 
     ~stack_usage:size
     pos in
   emit_instruction ctx instr
 
 (** Helper function to declare a const variable *)
-and declare_const_variable ctx _name reg target_type expr pos =
+and declare_const_variable ctx name target_type expr pos =
   let value = lower_expression ctx expr in
   let size = calculate_stack_usage target_type in
   ctx.stack_usage <- ctx.stack_usage + size;
   
-  let target_val = make_ir_value (IRRegister reg) target_type pos in
+  let target_val = make_ir_value (IRVariable name) target_type pos in
   let coerced_value = 
     if target_type <> value.val_type then
       make_ir_value value.value_desc target_type value.val_pos
@@ -1422,8 +1345,8 @@ and lower_statement ctx stmt =
         let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
         emit_instruction ctx instr
       else
-        (* Local variable assignment *)
-        let reg = get_variable_register ctx name in
+        (* Local variable assignment - use register definition for clean SSA *)
+        (* Use variable name directly in new architecture *)
         (* Get the target variable's actual type from the symbol table *)
         let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
           | Some symbol -> 
@@ -1432,7 +1355,6 @@ and lower_statement ctx stmt =
                | _ -> value.val_type)
           | None -> value.val_type (* Fallback to value type if not found *)
         in
-        let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
         
         (* If the target type is different from the value type, create a cast expression *)
         let value_expr = 
@@ -1441,8 +1363,10 @@ and lower_statement ctx stmt =
           else
             make_ir_expr (IRValue value) target_type stmt.stmt_pos
         in
-        let instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
-        emit_instruction ctx instr
+        (* Emit variable assignment using new architecture *)
+        let target_val = make_ir_value (IRVariable name) target_type stmt.stmt_pos in
+        let assign_instr = make_ir_instruction (IRAssign (target_val, value_expr)) stmt.stmt_pos in
+        emit_instruction ctx assign_instr
   
   | Ast.CompoundAssignment (name, op, expr) ->
       let value = lower_expression ctx expr in
@@ -1451,18 +1375,16 @@ and lower_statement ctx stmt =
       if Hashtbl.mem ctx.global_variables name then
         (* Global variable compound assignment *)
         let global_var = Hashtbl.find ctx.global_variables name in
-        let target_val = make_ir_value (IRVariable name) global_var.global_var_type stmt.stmt_pos in
-        
         (* Create binary operation: target = target op value *)
         let current_val = make_ir_value (IRVariable name) global_var.global_var_type stmt.stmt_pos in
         let ir_op = lower_binary_op op in
         let bin_expr = make_ir_expr (IRBinOp (current_val, ir_op, value)) global_var.global_var_type stmt.stmt_pos in
-        
+        let target_val = make_ir_value (IRVariable name) global_var.global_var_type stmt.stmt_pos in
         let instr = make_ir_instruction (IRAssign (target_val, bin_expr)) stmt.stmt_pos in
         emit_instruction ctx instr
       else
         (* Local variable compound assignment *)
-        let reg = get_variable_register ctx name in
+        (* Use variable name directly in new architecture *)
         (* Get the target variable's actual type from the symbol table *)
         let target_type = match Symbol_table.lookup_symbol ctx.symbol_table name with
           | Some symbol -> 
@@ -1471,15 +1393,15 @@ and lower_statement ctx stmt =
                | _ -> value.val_type)
           | None -> value.val_type (* Fallback to value type if not found *)
         in
-        let target_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
-        
         (* Create binary operation: target = target op value *)
-        let current_val = make_ir_value (IRRegister reg) target_type stmt.stmt_pos in
+        let current_val = make_ir_value (IRVariable name) target_type stmt.stmt_pos in
         let ir_op = lower_binary_op op in
         let bin_expr = make_ir_expr (IRBinOp (current_val, ir_op, value)) target_type stmt.stmt_pos in
         
-        let instr = make_ir_instruction (IRAssign (target_val, bin_expr)) stmt.stmt_pos in
-        emit_instruction ctx instr
+        (* Emit variable assignment using new architecture *)
+        let target_val = make_ir_value (IRVariable name) target_type stmt.stmt_pos in
+        let assign_instr = make_ir_instruction (IRAssign (target_val, bin_expr)) stmt.stmt_pos in
+        emit_instruction ctx assign_instr
       
   | Ast.CompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
       let key_val = lower_expression ctx key_expr in
@@ -1492,25 +1414,20 @@ and lower_statement ctx stmt =
            let map_val = make_ir_value (IRMapRef map_name) (IRPointer (IRU8, make_bounds_info ())) stmt.stmt_pos in
            (* Generate: map[key] = map[key] op value *)
            (* First, load the current value - use map value type, not operand type *)
-           let current_val_reg = allocate_register ctx in
-           let current_val = make_ir_value (IRRegister current_val_reg) 
+           let current_val = allocate_temp_variable ctx "map_current" 
              (IRPointer (map_def.map_value_type, make_bounds_info ())) stmt.stmt_pos in
            let load_instr = make_ir_instruction (IRMapLoad (map_val, key_val, current_val, MapLookup)) stmt.stmt_pos in
            emit_instruction ctx load_instr;
            
            (* Then, perform the operation - current_val is pointer, so dereference for operation *)
            let ir_op = lower_binary_op op in
-           let deref_current_reg = allocate_register ctx in
-           let deref_current_val = make_ir_value (IRRegister deref_current_reg) map_def.map_value_type stmt.stmt_pos in
-           let deref_instr = make_ir_instruction (IRAssign (deref_current_val, make_ir_expr (IRUnOp (IRDeref, current_val)) map_def.map_value_type stmt.stmt_pos)) stmt.stmt_pos in
-           emit_instruction ctx deref_instr;
+           let deref_current_val = allocate_temp_variable ctx "map_deref" map_def.map_value_type stmt.stmt_pos in
+           emit_variable_decl ctx (match deref_current_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") map_def.map_value_type (Some (make_ir_expr (IRUnOp (IRDeref, current_val)) map_def.map_value_type stmt.stmt_pos)) stmt.stmt_pos;
            let bin_expr = make_ir_expr (IRBinOp (deref_current_val, ir_op, value_val)) map_def.map_value_type stmt.stmt_pos in
            
-           (* Create a temporary register for the result *)
-           let result_reg = allocate_register ctx in
-           let result_val = make_ir_value (IRRegister result_reg) map_def.map_value_type stmt.stmt_pos in
-           let assign_instr = make_ir_instruction (IRAssign (result_val, bin_expr)) stmt.stmt_pos in
-           emit_instruction ctx assign_instr;
+           (* Create a temporary variable for the result *)
+           let result_val = allocate_temp_variable ctx "map_result" map_def.map_value_type stmt.stmt_pos in
+           emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") map_def.map_value_type (Some bin_expr) stmt.stmt_pos;
            
            (* Finally, store the result back *)
            let store_instr = make_ir_instruction (IRMapStore (map_val, key_val, result_val, MapUpdate)) stmt.stmt_pos in
@@ -1565,14 +1482,13 @@ and lower_statement ctx stmt =
           emit_instruction ctx instr)
       
   | Ast.Declaration (name, typ_opt, expr_opt) ->
-      let reg = get_variable_register ctx name in
       
       (* Handle function call and new expression declarations elegantly by proper instruction ordering *)
       (match expr_opt with
        | Some expr when (match expr.expr_desc with Ast.Call _ | Ast.New _ | Ast.NewWithFlag _ -> true | _ -> false) ->
-           (* For function calls and new expressions: emit declaration first, then operation with assignment *)
+           (* For function calls and new expressions: handle directly without separate declaration *)
            let target_type = match typ_opt with
-             | Some ast_type -> resolve_type_alias ctx reg ast_type
+             | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
              | None ->
                  (* Infer type from expression if no explicit type *)
                  (match expr.expr_type with
@@ -1588,16 +1504,16 @@ and lower_statement ctx stmt =
                        | _ -> IRU32))
            in
            
-           (* Emit declaration first *)
-           declare_variable ctx name reg target_type None stmt.stmt_pos;
+           (* Track the variable type for later lookups *)
+           Hashtbl.replace ctx.variable_types name target_type;
            
-           (* Then emit the operation as assignment *)
+           (* Handle the operation directly with IRRegisterDef *)
            (match expr.Ast.expr_desc with
             | Ast.Call (callee_expr, args) ->
                 (* Special handling for register() builtin function *)
                 (match callee_expr.Ast.expr_desc with
                  | Ast.Identifier "register" ->
-                     let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_register:reg ~target_type:target_type () in
+                     let _ = handle_register_builtin_call ctx args expr.Ast.expr_pos ~target_type:target_type () in
                      ()
                  | _ ->
                      (* Regular function call handling *)
@@ -1605,11 +1521,13 @@ and lower_statement ctx stmt =
                      (* Check if this is a method call and handle it specially *)
                      (match callee_expr.Ast.expr_desc with
                       | Ast.FieldAccess (_, _) ->
-                          (* This is a method call - evaluate the full expression directly *)
-                          (* The lower_expression will handle method calls and assign result to target register *)
+                          (* This is a method call - emit variable declaration first, then assignment *)
+                          let target_val = make_ir_value (IRVariable name) target_type expr.Ast.expr_pos in
+                          (* Emit variable declaration without initializer *)
+                          emit_variable_decl ctx name target_type None expr.Ast.expr_pos;
+                          (* Evaluate the method call expression *)
                           let result_val = lower_expression ctx expr in
-                          (* Emit assignment to ensure the result gets to the correct target register *)
-                          let target_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                          (* Emit assignment to ensure the result gets to the correct target variable *)
                           let assign_expr = make_ir_expr (IRValue result_val) target_type expr.Ast.expr_pos in
                           let assign_instr = make_ir_instruction (IRAssign (target_val, assign_expr)) expr.Ast.expr_pos in
                           emit_instruction ctx assign_instr
@@ -1617,7 +1535,7 @@ and lower_statement ctx stmt =
                           (* Regular function call handling *)
                           let call_target = match callee_expr.Ast.expr_desc with
                             | Ast.Identifier name ->
-                                if Hashtbl.mem ctx.variables name || Hashtbl.mem ctx.function_parameters name then
+                                if Hashtbl.mem ctx.function_parameters name then
                                   let callee_val = lower_expression ctx callee_expr in
                                   FunctionPointerCall callee_val
                                 else
@@ -1626,19 +1544,29 @@ and lower_statement ctx stmt =
                                 let callee_val = lower_expression ctx callee_expr in
                                 FunctionPointerCall callee_val
                           in
-                          let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                          (* Generate variable declaration first, then function call *)
+                          let result_val = make_ir_value (IRVariable name) target_type expr.Ast.expr_pos in
+                          (* Emit variable declaration without initializer *)
+                          emit_variable_decl ctx name target_type None expr.Ast.expr_pos;
+                          (* Then emit function call that assigns to the variable *)
                           let instr = make_ir_instruction (IRCall (call_target, arg_vals, Some result_val)) expr.Ast.expr_pos in
                           emit_instruction ctx instr))
             | Ast.New typ ->
-                (* Handle new expression: emit allocation instruction *)
+                (* Handle new expression: emit variable declaration first, then allocation instruction *)
                 let ir_type = ast_type_to_ir_type typ in
-                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let result_val = make_ir_value (IRVariable name) target_type expr.Ast.expr_pos in
+                (* Emit variable declaration without initializer *)
+                emit_variable_decl ctx name target_type None expr.Ast.expr_pos;
+                (* Then emit allocation instruction *)
                 let alloc_instr = make_ir_instruction (IRObjectNew (result_val, ir_type)) expr.Ast.expr_pos in
                 emit_instruction ctx alloc_instr
             | Ast.NewWithFlag (typ, flag_expr) ->
-                (* Handle new expression with flag: emit allocation instruction with flag *)
+                (* Handle new expression with flag: emit variable declaration first, then allocation instruction with flag *)
                 let ir_type = ast_type_to_ir_type typ in
-                let result_val = make_ir_value (IRRegister reg) target_type expr.Ast.expr_pos in
+                let result_val = make_ir_value (IRVariable name) target_type expr.Ast.expr_pos in
+                (* Emit variable declaration without initializer *)
+                emit_variable_decl ctx name target_type None expr.Ast.expr_pos;
+                (* Then emit allocation instruction with flag *)
                 let flag_val = lower_expression ctx flag_expr in
                 let alloc_instr = make_ir_instruction (IRObjectNewWithFlag (result_val, ir_type, flag_val)) expr.Ast.expr_pos in
                 emit_instruction ctx alloc_instr
@@ -1646,14 +1574,13 @@ and lower_statement ctx stmt =
        | _ ->
            (* Non-function call declarations: use existing logic *)
            let (target_type, init_value_opt) = 
-             resolve_declaration_type_and_init ctx reg typ_opt expr_opt in
-           declare_variable ctx name reg target_type init_value_opt stmt.stmt_pos)
+             resolve_declaration_type_and_init ctx typ_opt expr_opt in
+           declare_variable ctx name target_type init_value_opt stmt.stmt_pos)
       
   | Ast.ConstDeclaration (name, typ_opt, expr) ->
-      let reg = get_variable_register ctx name in
       let target_type = resolve_const_type ctx typ_opt expr in
       
-      declare_const_variable ctx name reg target_type expr stmt.stmt_pos
+      declare_const_variable ctx name target_type expr stmt.stmt_pos
       
     | Ast.Return expr_opt ->
       let return_val = match expr_opt with
@@ -1798,7 +1725,7 @@ and lower_statement ctx stmt =
                         (* First check if the identifier is a function parameter or variable (function pointer) *)
                         let is_function_pointer = 
                           Hashtbl.mem ctx.function_parameters name || 
-                          Hashtbl.mem ctx.variables name
+                          Hashtbl.mem ctx.variable_types name
                         in
                         
                         if is_function_pointer then
@@ -2045,8 +1972,7 @@ and lower_statement ctx stmt =
       let end_val = lower_expression ctx end_expr in
       
       (* Create loop counter variable *)
-      let counter_reg = get_variable_register ctx var in
-      let counter_val = make_ir_value (IRRegister counter_reg) IRU32 stmt.stmt_pos in
+      let counter_val = make_ir_value (IRVariable var) IRU32 stmt.stmt_pos in
       
       (* Different IR generation based on loop strategy *)
       (match loop_strategy with
@@ -2056,8 +1982,8 @@ and lower_statement ctx stmt =
             | Loop_analysis.Bounded (start_int, end_int) ->
                 for i = start_int to end_int - 1 do
                   let iter_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 (Int64.of_int i), None))) IRU32 stmt.stmt_pos in
-                  let assign_iter = make_ir_instruction (IRAssign (counter_val, make_ir_expr (IRValue iter_val) IRU32 stmt.stmt_pos)) stmt.stmt_pos in
-                  emit_instruction ctx assign_iter;
+                  let assign_instr = make_ir_instruction (IRAssign (counter_val, make_ir_expr (IRValue iter_val) IRU32 stmt.stmt_pos)) stmt.stmt_pos in
+                  emit_instruction ctx assign_instr;
                   List.iter (lower_statement ctx) body_stmts;
                 done
             | _ -> failwith "Unrolled loop should have bounded info")
@@ -2083,8 +2009,7 @@ and lower_statement ctx stmt =
            let body_instructions = List.rev body_ctx.current_block in
            
            (* Create loop context register *)
-           let loop_ctx_reg = allocate_register ctx in
-           let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
+           let loop_ctx_val = allocate_temp_variable ctx "loop_ctx" 
              (IRPointer (IRStruct ("loop_ctx", []), make_bounds_info ())) stmt.stmt_pos in
            
            (* Create the bpf_loop instruction with IR body *)
@@ -2102,8 +2027,8 @@ and lower_statement ctx stmt =
            
            (* Initialize counter *)
            let init_expr = make_ir_expr (IRValue start_val) IRU32 stmt.stmt_pos in
-           let init_instr = make_ir_instruction (IRAssign (counter_val, init_expr)) stmt.stmt_pos in
-           emit_instruction ctx init_instr;
+           let assign_instr = make_ir_instruction (IRAssign (counter_val, init_expr)) stmt.stmt_pos in
+           emit_instruction ctx assign_instr;
            
            (* Loop labels *)
            let loop_header = Printf.sprintf "loop_header_%d" ctx.next_block_id in
@@ -2116,11 +2041,9 @@ and lower_statement ctx stmt =
            let _pre_loop_block = create_basic_block ctx "pre_loop" in
            
            (* Loop condition check *)
-           let cond_reg = allocate_register ctx in
-           let cond_val = make_ir_value (IRRegister cond_reg) IRBool stmt.stmt_pos in
+           let cond_val = allocate_temp_variable ctx "loop_cond" IRBool stmt.stmt_pos in
            let cond_expr = make_ir_expr (IRBinOp (counter_val, IRLt, end_val)) IRBool stmt.stmt_pos in
-           let cond_instr = make_ir_instruction (IRAssign (cond_val, cond_expr)) stmt.stmt_pos in
-           emit_instruction ctx cond_instr;
+           emit_variable_decl ctx (match cond_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRBool (Some cond_expr) stmt.stmt_pos;
            
            let loop_cond_jump = make_ir_instruction 
              (IRCondJump (cond_val, loop_body, loop_exit)) 
@@ -2134,8 +2057,8 @@ and lower_statement ctx stmt =
            (* Increment counter *)
            let one_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 1L, None))) IRU32 stmt.stmt_pos in
            let inc_expr = make_ir_expr (IRBinOp (counter_val, IRAdd, one_val)) IRU32 stmt.stmt_pos in
-           let inc_instr = make_ir_instruction (IRAssign (counter_val, inc_expr)) stmt.stmt_pos in
-           emit_instruction ctx inc_instr;
+           let assign_instr = make_ir_instruction (IRAssign (counter_val, inc_expr)) stmt.stmt_pos in
+           emit_instruction ctx assign_instr;
            
            (* Jump back to header *)
            let back_jump = make_ir_instruction (IRJump loop_header) stmt.stmt_pos in
@@ -2152,10 +2075,8 @@ and lower_statement ctx stmt =
       let _ = lower_expression ctx iterable_expr in
       
       (* Create iterator variables *)
-      let index_reg = get_variable_register ctx index_var in
-      let value_reg = get_variable_register ctx value_var in
-      let index_val = make_ir_value (IRRegister index_reg) IRU32 stmt.stmt_pos in
-      let _value_val = make_ir_value (IRRegister value_reg) IRU32 stmt.stmt_pos in
+      let index_val = make_ir_value (IRVariable index_var) IRU32 stmt.stmt_pos in
+      let _value_val = make_ir_value (IRVariable value_var) IRU32 stmt.stmt_pos in
       
       (* ForIter always uses bpf_loop() for now *)
       let iter_comment = make_ir_instruction 
@@ -2165,8 +2086,7 @@ and lower_statement ctx stmt =
       emit_instruction ctx iter_comment;
       
       (* Placeholder for bpf_loop implementation *)
-      let loop_ctx_reg = allocate_register ctx in
-      let loop_ctx_val = make_ir_value (IRRegister loop_ctx_reg) 
+      let loop_ctx_val = allocate_temp_variable ctx "iter_ctx" 
         (IRPointer (IRStruct ("iter_ctx", []), make_bounds_info ())) stmt.stmt_pos in
       
       (* Create a separate context for the loop body *)
@@ -2407,9 +2327,9 @@ let lower_function ctx prog_name ?(program_type : program_type option = None) ?(
   ctx.current_function <- Some func_def.func_name;
   
   (* Reset for new function *)
-  Hashtbl.clear ctx.variables;
+  Hashtbl.clear ctx.variable_types;
   Hashtbl.clear ctx.function_parameters;
-  ctx.next_register <- 0;
+  (* next_register field removed in new architecture *)
   ctx.current_block <- [];
   ctx.blocks <- [];
   ctx.stack_usage <- 0;
@@ -2438,6 +2358,17 @@ let lower_function ctx prog_name ?(program_type : program_type option = None) ?(
     Hashtbl.add ctx.function_parameters name ir_type;
     (name, ir_type)
   ) func_def.func_params in
+  
+  (* Declare named return variable if present *)
+  (match Ast.get_return_variable_name func_def.func_return_type with
+   | Some var_name ->
+       let return_type = match Ast.get_return_type func_def.func_return_type with
+         | Some ast_type -> ast_type_to_ir_type_with_context ctx.symbol_table ast_type
+         | None -> IRU32
+       in
+       (* Emit variable declaration for named return variable *)
+       emit_variable_decl ctx var_name return_type None func_def.func_pos
+   | None -> ());
   
   (* Helper function to lower statement with access to preceding statements *)
   let lower_statement_with_context all_statements current_index stmt =

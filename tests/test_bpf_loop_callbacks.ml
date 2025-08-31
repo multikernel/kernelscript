@@ -84,9 +84,10 @@ let test_variable_redefinition_prevention () =
   
   (* Create instructions that could potentially lead to redefinition *)
   let reg_id = 5 in
-  let var_val = make_ir_value (IRRegister reg_id) IRU32 test_pos in
-  let declare_instr1 = make_ir_instruction (IRDeclareVariable (var_val, IRU32, None)) test_pos in
-  let declare_instr2 = make_ir_instruction (IRDeclareVariable (var_val, IRU32, None)) test_pos in
+  let _var_val = make_ir_value (IRTempVariable (Printf.sprintf "tmp_%d" reg_id)) IRU32 test_pos in
+  let var_name = Printf.sprintf "tmp_%d" reg_id in
+  let declare_instr1 = make_ir_instruction (IRVariableDecl (var_name, IRU32, None)) test_pos in
+  let declare_instr2 = make_ir_instruction (IRVariableDecl (var_name, IRU32, None)) test_pos in
   
   (* Generate both instructions *)
   generate_c_instruction ctx declare_instr1;
@@ -115,8 +116,9 @@ let test_variable_naming_consistency () =
   
   (* Create a variable declaration and usage that would expose naming issues *)
   let test_reg = 10 in
-  let var_val = make_ir_value (IRRegister test_reg) IRU32 test_pos in
-  let declare_instr = make_ir_instruction (IRDeclareVariable (var_val, IRU32, None)) test_pos in
+  let _var_val = make_ir_value (IRTempVariable (Printf.sprintf "tmp_%d" test_reg)) IRU32 test_pos in
+  let var_name = Printf.sprintf "tmp_%d" test_reg in
+  let declare_instr = make_ir_instruction (IRVariableDecl (var_name, IRU32, None)) test_pos in
   
   generate_c_instruction ctx declare_instr;
   
@@ -134,8 +136,9 @@ let test_missing_variable_declarations () =
   
   (* Create a simple declaration to test basic functionality *)
   let test_reg = 25 in
-  let var_val = make_ir_value (IRRegister test_reg) IRU32 test_pos in
-  let declare_instr = make_ir_instruction (IRDeclareVariable (var_val, IRU32, None)) test_pos in
+  let _var_val = make_ir_value (IRTempVariable (Printf.sprintf "tmp_%d" test_reg)) IRU32 test_pos in
+  let var_name = Printf.sprintf "tmp_%d" test_reg in
+  let declare_instr = make_ir_instruction (IRVariableDecl (var_name, IRU32, None)) test_pos in
   
   generate_c_instruction ctx declare_instr;
   
@@ -173,8 +176,9 @@ let test_register_collection_completeness () =
   
   (* Create a basic instruction that should generate code *)
   let var1_reg = 1 in
-  let var1_val = make_ir_value (IRRegister var1_reg) IRU32 test_pos in
-  let instr = make_ir_instruction (IRDeclareVariable (var1_val, IRU32, None)) test_pos in
+  let _var1_val = make_ir_value (IRTempVariable (Printf.sprintf "tmp_%d" var1_reg)) IRU32 test_pos in
+  let var1_name = Printf.sprintf "tmp_%d" var1_reg in
+  let instr = make_ir_instruction (IRVariableDecl (var1_name, IRU32, None)) test_pos in
   
   generate_c_instruction ctx instr;
   

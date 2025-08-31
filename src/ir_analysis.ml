@@ -350,7 +350,7 @@ module RingBufferAnalysis = struct
           | IRRingbufOp (ringbuf_val, RingbufOnEvent handler_name) ->
               let ringbuf_name = match ringbuf_val.value_desc with
                 | IRVariable name -> name
-                | IRRegister reg -> Printf.sprintf "ringbuf_%d" reg
+                | IRTempVariable name -> Printf.sprintf "ringbuf_%s" name
                 | _ -> failwith "IRRingbufOp requires a ring buffer variable"
               in
               handler_registrations := (ringbuf_name, handler_name) :: !handler_registrations
