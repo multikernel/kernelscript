@@ -256,6 +256,14 @@ let fresh_label ctx prefix =
   ctx.label_counter <- ctx.label_counter + 1;
   sprintf "%s_%d" prefix ctx.label_counter
 
+(** Initialize all modular context code generators *)
+let initialize_context_generators () =
+  Kernelscript_context.Xdp_codegen.register ();
+  Kernelscript_context.Tc_codegen.register ();
+  Kernelscript_context.Kprobe_codegen.register ();
+  Kernelscript_context.Tracepoint_codegen.register ();
+  Kernelscript_context.Fprobe_codegen.register ()
+
 (** Emit all pending string literal declarations *)
 let emit_pending_string_literals ctx =
   List.iter (fun (var_name, content, size) ->
@@ -3384,16 +3392,18 @@ let collect_register_variable_mapping ir_func =
   ) ir_func.basic_blocks;
   !register_var_map
 
+(** Helper function to collect registers from a value *)
+let collect_register_from_value registers ir_val =
+  match ir_val.value_desc with
+  | IRRegister reg -> 
+      if not (List.mem_assoc reg !registers) then
+        registers := (reg, ir_val.val_type) :: !registers
+  | _ -> ()
+
 (** Collect all registers used in a function with their types *)
 let collect_registers_in_function ir_func =
   let registers = ref [] in
-  let collect_in_value ir_val =
-    match ir_val.value_desc with
-    | IRRegister reg -> 
-        if not (List.mem_assoc reg !registers) then
-          registers := (reg, ir_val.val_type) :: !registers
-    | _ -> ()
-  in
+  let collect_in_value = collect_register_from_value registers in
   let collect_in_expr ir_expr =
     match ir_expr.expr_desc with
     | IRValue ir_val -> collect_in_value ir_val
@@ -3733,170 +3743,11 @@ let generate_c_function ctx ir_func =
   emit_line ctx "}";
   emit_blank_line ctx
 
-(** Generate complete C program from IR *)
-
-let generate_c_program ?_config_declarations ir_prog =
-  let ctx = create_c_context () in
-  
-  (* Initialize modular context code generators *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  Kernelscript_context.Fprobe_codegen.register ();
-  
-  (* Add standard includes *)
-  let program_types = [ir_prog.program_type] in
-  generate_includes ctx ~program_types ~ir_program:(Some ir_prog) ();
-  
-  (* Generate dynptr safety macros only if needed for single program *)
-  let uses_dynptr = check_dynptr_usage_in_program ir_prog in
-  if uses_dynptr then generate_dynptr_macros ctx;
-  
-  (* Generate string type definitions *)
-  let temp_multi_prog = {
-    source_name = ir_prog.name;
-    programs = [ir_prog];
-    kernel_functions = [];
-    global_maps = [];
-    global_configs = [];
-    global_variables = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
-    userspace_program = None;
-    userspace_bindings = [];
-    ring_buffer_registry = Ir.create_empty_ring_buffer_registry ();
-    multi_pos = ir_prog.ir_pos;
-  } in
-  generate_string_typedefs ctx temp_multi_prog;
-  
-  (* Generate enum definitions *)
-  generate_enum_definitions ctx temp_multi_prog;
-  
-  (* Struct definitions are generated in the main entry point to avoid duplication *)
-  
-  (* Generate type alias definitions *)
-  let type_aliases = collect_type_aliases_from_multi_program temp_multi_prog in
-  generate_type_alias_definitions ctx type_aliases;
-  
-  (* Generate config maps from temporary multi-program structure *)
-  if temp_multi_prog.global_configs <> [] then
-    List.iter (generate_config_map_definition ctx) temp_multi_prog.global_configs;
-
-  (* With attributed functions, all maps are global - no program-scoped maps *)
-  
-  (* Generate entry function - this will collect callbacks *)
-  generate_c_function ctx ir_prog.entry_function;
-  
-  (* Now emit any pending callbacks before other functions *)
-  if ctx.pending_callbacks <> [] then (
-    (* Insert callbacks at the beginning of the output, after includes and maps *)
-    let current_output = ctx.output_lines in
-    ctx.output_lines <- [];
-    List.iter (emit_line ctx) ctx.pending_callbacks;
-    ctx.pending_callbacks <- [];
-    emit_blank_line ctx;
-    (* Prepend current output *)
-    ctx.output_lines <- current_output @ ctx.output_lines;
-  );
-  
-  (* With attributed functions, each program has only the entry function - no nested functions *)
-  
-  (* Add license (required for eBPF) *)
-  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
-  
-  (* Return generated code *)
-  String.concat "\n" ctx.output_lines
-
-(** Generate complete C program from multiple IR programs *)
-
-let generate_c_multi_program ?_config_declarations ?(type_aliases=[]) ?(variable_type_aliases=[]) ?symbol_table ?(btf_path=None) ir_multi_prog =
-  let ctx = create_c_context () in
-  
-  (* Initialize modular context code generators *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  Kernelscript_context.Kprobe_codegen.register ();
-  Kernelscript_context.Tracepoint_codegen.register ();
-  Kernelscript_context.Fprobe_codegen.register ();
-  
-  (* Store variable type aliases for later lookup *)
-  ctx.variable_type_aliases <- variable_type_aliases;
-  
-  (* Add standard includes *)
-  let program_types = List.map (fun prog -> prog.program_type) ir_multi_prog.programs in
-  generate_includes ctx ~program_types ~ir_multi_prog:(Some ir_multi_prog) ();
-  
-  (* Generate string type definitions *)
-      generate_string_typedefs ctx ir_multi_prog;
-  
-  (* Generate enum definitions *)
-      generate_enum_definitions ctx ir_multi_prog;
-  
-  (* Generate declarations in original AST order to preserve source order *)
-      generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
-  
-  (* Generate struct definitions *)
-      let struct_defs = collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog in
-  generate_struct_definitions ~btf_path ctx struct_defs;
-  
-  (* Generate config maps from IR multi-program *)
-      if ir_multi_prog.global_configs <> [] then
-    List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
-  
-  (* Generate global map definitions *)
-      List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
-  
-  (* Generate global variables BEFORE functions that use them *)
-      generate_global_variables ctx ir_multi_prog.global_variables;
-  
-  (* Generate struct_ops definitions and instances *)
-      generate_struct_ops ctx ir_multi_prog;
-  
-  (* With attributed functions, all maps are global - no program-scoped maps *)
-  
-  (* First pass: collect all callbacks *)
-  let temp_ctx = create_c_context () in
-  List.iter (fun ir_prog ->
-    (* With attributed functions, each program has only its entry function *)
-    generate_c_function temp_ctx ir_prog.entry_function
-  ) ir_multi_prog.programs;
-  
-  (* Emit collected callbacks *)
-  if temp_ctx.pending_callbacks <> [] then (
-    List.iter (emit_line ctx) temp_ctx.pending_callbacks;
-    emit_blank_line ctx;
-  );
-  
-  (* Generate kernel functions once - they are shared across all programs *)
-      List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
-
-  (* Generate attributed functions (each program has only the entry function) *)
-  List.iter (fun ir_prog ->
-    (* With attributed functions, each program contains only its entry function - no nested functions *)
-    generate_c_function ctx ir_prog.entry_function
-  ) ir_multi_prog.programs;
-  
-  (* Add license (required for eBPF) *)
-  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
-  
-  (* Return generated code *)
-  String.concat "\n" ctx.output_lines
 
 
 
-(** Main compilation entry point *)
 
-let compile_to_c ?_config_declarations ir_program =
-  let c_code = generate_c_program ?_config_declarations ir_program in
-  c_code
 
-(** Helper function to write C code to file *)
-
-let write_c_to_file ir_program filename =
-  let c_code = compile_to_c ir_program in
-  let oc = open_out filename in
-  output_string oc c_code;
-  close_out oc;
-  c_code
 
 (** Helper function to compile C code to eBPF object *)
 
@@ -3908,9 +3759,6 @@ let compile_c_to_ebpf c_filename obj_filename =
   else
     Error (sprintf "Compilation failed with exit code %d" exit_code)
 
-(** Generate config access expression *)
-let generate_config_access _ctx config_name field_name =
-  sprintf "get_%s_config()->%s" config_name field_name
 
 (** Generate ProgArray map for tail calls *)
 let generate_prog_array_map ctx prog_array_size =
@@ -3929,17 +3777,13 @@ let generate_prog_array_map ctx prog_array_size =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
-    ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None)
+    ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None)
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
   
   (* Initialize modular context code generators *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  Kernelscript_context.Kprobe_codegen.register ();
-  Kernelscript_context.Tracepoint_codegen.register ();
-  Kernelscript_context.Fprobe_codegen.register ();
+  initialize_context_generators ();
   
   (* Generate headers and includes *)
   let program_types = List.map (fun ir_prog -> ir_prog.program_type) ir_multi_prog.programs in
@@ -4050,24 +3894,46 @@ let compile_multi_to_c_with_tail_calls
   
   (final_output, final_tail_call_analysis)
 
-(** Multi-program compilation entry point with automatic tail call handling *)
+(** Multi-program compilation entry point that returns both code and tail call analysis *)
+let compile_multi_to_c ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
+  compile_multi_to_c_with_tail_calls 
+    ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ~btf_path ir_multi_program
 
-let compile_multi_to_c ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(tail_call_analysis=None) ir_multi_program =
-  (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
-  let (c_code, _final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-    ~type_aliases ~variable_type_aliases ~tail_call_analysis ir_multi_program in
-  
-  (* Tail call analysis results calculated and stored *)
+(** Alias for backward compatibility with existing code *)
+let compile_multi_to_c_with_analysis = compile_multi_to_c
+
+(** Generate complete C program from multiple IR programs - main interface *)
+let generate_c_multi_program ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(btf_path=None) ir_multi_prog =
+  let (c_code, _) = compile_multi_to_c ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~btf_path ir_multi_prog in
   c_code
 
-(** Multi-program compilation entry point that returns both code and tail call analysis *)
+(** Generate complete C program from IR *)
+let generate_c_program ir_prog =
+  (* Convert single program to multi-program and use the main compilation function *)
+  let temp_multi_prog = {
+    source_name = ir_prog.name;
+    programs = [ir_prog];
+    kernel_functions = [];
+    global_maps = [];
+    global_configs = [];
+    global_variables = [];
+    struct_ops_declarations = [];
+    struct_ops_instances = [];
+    userspace_program = None;
+    userspace_bindings = [];
+    ring_buffer_registry = Ir.create_empty_ring_buffer_registry ();
+    multi_pos = ir_prog.ir_pos;
+  } in
+  generate_c_multi_program temp_multi_prog
 
-let compile_multi_to_c_with_analysis ?(_config_declarations=[]) ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
-  (* Always use the intelligent tail call compilation that auto-detects and handles tail calls *)
-      let (c_code, final_tail_call_analysis) = compile_multi_to_c_with_tail_calls 
-        ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ~btf_path ir_multi_program in
-  
-  (* Tail call analysis results calculated and stored *)
-  (c_code, final_tail_call_analysis)
+(** Main compilation entry point *)
+let compile_to_c ir_program =
+  generate_c_program ir_program
 
-
+(** Helper function to write C code to file *)
+let write_c_to_file ir_program filename =
+  let c_code = compile_to_c ir_program in
+  let oc = open_out filename in
+  output_string oc c_code;
+  close_out oc;
+  c_code

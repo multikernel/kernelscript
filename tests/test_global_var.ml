@@ -850,7 +850,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let ir_multi_prog = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
     
     (* Generate eBPF C code *)
-    let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_multi_prog in
+    let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_multi_prog in
     
     (* Verify that global variables appear in the C code *)
     let check_c_code_contains pattern description =

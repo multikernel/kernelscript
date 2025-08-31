@@ -228,7 +228,7 @@ let test_complete_program () =
   (* Create multi-program structure with global maps *)
   let multi_ir = make_ir_multi_program "test_xdp" [ir_prog] [] [map_def] test_pos in
   
-  let c_code = compile_multi_to_c multi_ir in
+  let (c_code, _) = compile_multi_to_c multi_ir in
   
   (* Verify the generated C code contains expected elements *)
   check bool "program contains vmlinux.h include" true (contains_substr c_code "#include \"vmlinux.h\"");

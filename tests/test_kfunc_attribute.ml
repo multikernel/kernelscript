@@ -159,8 +159,7 @@ let test_ebpf_kfunc_declarations () =
   ) typed_ast in
   
   (* Generate eBPF C code *)
-  let c_code = Ebpf_c_codegen.compile_multi_to_c_with_analysis ~kfunc_declarations ir in
-  let (generated_code, _) = c_code in
+  let (generated_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ~kfunc_declarations ir in
   
   (* Check that kfunc declarations are generated *)
   check bool "Contains kfunc declaration" true

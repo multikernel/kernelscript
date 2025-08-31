@@ -613,7 +613,7 @@ fn main() -> i32 {
     check bool "blocked_ports field in IR" true (List.mem "blocked_ports" field_names);
     
     (* Step 4: Generate eBPF C code and verify struct and map definitions are present *)
-    let ebpf_code = compile_multi_to_c ir in
+    let (ebpf_code, _) = compile_multi_to_c ir in
     
     (* Test that struct network_config is defined *)
     check bool "struct network_config defined" true 

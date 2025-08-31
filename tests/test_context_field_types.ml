@@ -66,7 +66,7 @@ let test_xdp_context_field_types () =
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
+  let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
   
   (* Check that the generated C code uses correct pointer types *)
   let lines = String.split_on_char '\n' c_code in
@@ -133,7 +133,7 @@ let test_context_field_arithmetic () =
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
+  let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
   
   (* Check that pointer arithmetic works correctly *)
   let lines = String.split_on_char '\n' c_code in
@@ -220,7 +220,7 @@ let test_tc_context_field_types () =
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
+  let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
   
   (* Check that TC context fields use correct types *)
   let lines = String.split_on_char '\n' c_code in
@@ -275,7 +275,7 @@ let test_xdp_context_field_pointer_preservation () =
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
+  let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
   
   (* Check that pointer variables are declared correctly *)
   let lines = String.split_on_char '\n' c_code in
@@ -361,7 +361,7 @@ let test_exact_rate_limiter_reproduction () =
   let ir_program = Kernelscript.Ir_generator.generate_ir ~use_type_annotations:true typed_ast symbol_table "test" in
   
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
+  let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_program in
   
   (* Save the C code to a file for debugging *)
   let oc = open_out "/tmp/exact_rate_limiter_test.c" in
