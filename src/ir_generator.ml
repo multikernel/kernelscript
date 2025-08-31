@@ -106,6 +106,11 @@ let allocate_register ctx =
   ctx.next_register <- reg + 1;
   reg
 
+(** Helper function to allocate register and create IR value in one step *)
+let allocate_register_with_type ctx ir_type pos =
+  let reg = allocate_register ctx in
+  make_ir_value (IRRegister reg) ir_type pos
+
 (** Get or allocate register for variable *)
 let get_variable_register ctx name =
   (* Check if this is a function parameter - if so, don't allocate a register *)
@@ -319,6 +324,51 @@ let c_type_to_ir_type = function
   | "void*" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
   | c_type -> failwith ("Unsupported context field C type: " ^ c_type)
 
+(** Unified AST literal to IR type conversion *)
+let literal_to_ir_type = function
+  | IntLit _ -> IRU32
+  | BoolLit _ -> IRBool
+  | CharLit _ -> IRChar
+  | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
+  | NullLit -> IRPointer (IRU32, make_bounds_info ~nullable:true ())
+  | NoneLit -> IRU32
+  | ArrayLit _ -> IRU32  (* Default for arrays *)
+
+(** Unified AST to IR type conversion for basic types *)
+let ast_basic_type_to_ir_type = function
+  | Ast.U8 -> IRU8
+  | Ast.U16 -> IRU16
+  | Ast.U32 -> IRU32
+  | Ast.U64 -> IRU64
+  | Ast.I8 -> IRI8
+  | Ast.I16 -> IRI16
+  | Ast.I32 -> IRI32
+  | Ast.I64 -> IRI64
+  | Ast.Bool -> IRBool
+  | Ast.Char -> IRChar
+  | _ -> failwith "Not a basic type"
+
+(** Helper to add maps to context hashtable *)
+let add_maps_to_context ctx maps =
+  List.iter (fun (map_def : ir_map_def) -> 
+    Hashtbl.add ctx.maps map_def.map_name map_def
+  ) maps
+
+(** Helper to copy maps between contexts *)
+let copy_maps_to_context source_ctx target_ctx =
+  Hashtbl.iter (fun map_name map_def -> 
+    Hashtbl.add target_ctx.maps map_name map_def
+  ) source_ctx.maps
+
+(** Helper to extract kernel struct name from @struct_ops attribute **)
+let extract_struct_ops_kernel_name attributes =
+  List.fold_left (fun acc attr ->
+    match attr with
+    | Ast.AttributeWithArg ("struct_ops", name) -> name
+    | _ -> acc
+  ) "" attributes
+
+
 (** Map struct names to their corresponding context types *)
 let struct_name_to_context_type = function
   | "xdp_md" -> Some ("xdp", XdpCtx)
@@ -402,32 +452,6 @@ let handle_context_field_access_comprehensive ctx_type _obj_val field result_val
       (* Field doesn't exist in BTF *)
       None
 
-(** Expand built-in context methods *)
-let expand_context_method ctx method_name _args pos =
-  let result_reg = allocate_register ctx in
-  let result_type = match method_name with
-    | "packet" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-    | "packet_end" -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-    | "data_len" -> IRU32
-    | _ -> failwith ("Unknown context method: " ^ method_name)
-  in
-  let result_val = make_ir_value (IRRegister result_reg) result_type pos in
-  
-  (* Map context methods to field names - these are different from regular field access *)
-  let (ctx_type_str, field_name) = match method_name with
-    | "packet" -> ("xdp", "data")  (* Default to XDP for method calls *)
-    | "packet_end" -> ("xdp", "data_end")
-    | "data_len" -> ("tc", "len")  (* TC-specific method *)
-    | _ -> failwith ("Unknown context method: " ^ method_name)
-  in
-  
-  let instr = make_ir_instruction
-    (IRContextAccess (result_val, ctx_type_str, field_name))
-    ~verifier_hints:[HelperCall method_name]
-    pos
-  in
-  emit_instruction ctx instr;
-  result_val
 
 (** Expand map operations *)
 let expand_map_operation ctx map_name operation key_val value_val_opt pos =
@@ -605,12 +629,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
   | Ast.ConfigAccess (config_name, field_name) ->
       (* Handle config access like config.field_name *)
-      let result_reg = allocate_register ctx in
       let result_type = match expr.expr_type with
         | Some ast_type -> ast_type_to_ir_type ast_type
         | None -> IRU32 (* Default type for config fields *)
       in
-      let result_val = make_ir_value (IRRegister result_reg) result_type expr.expr_pos in
+      let result_val = allocate_register_with_type ctx result_type expr.expr_pos in
       
       (* Generate new IRConfigAccess instruction *)
       let config_access_instr = make_ir_instruction
@@ -697,10 +720,8 @@ let rec lower_expression ctx (expr : Ast.expr) =
                emit_instruction ctx instr;
                result_val
        | Ast.FieldAccess ({expr_desc = Ast.Identifier obj_name; _}, method_name) ->
-           (* Method call (e.g., ctx.method() or ringbuf.operation()) *)
-           if obj_name = "ctx" then
-             expand_context_method ctx method_name arg_vals expr.expr_pos
-           else if Hashtbl.mem ctx.maps obj_name then
+           (* Method call (e.g., ringbuf.operation()) *)
+           if Hashtbl.mem ctx.maps obj_name then
              (* Handle map operations *)
              let key_val = if List.length arg_vals > 0 then List.hd arg_vals 
                           else make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 expr.expr_pos in
@@ -2664,38 +2685,25 @@ and generate_coordinator_logic _ctx _ir_functions =
   make_ir_coordinator_logic setup_logic event_processing cleanup_logic config_management
   
 
+(** Convert config field type to IR type with unified logic **)
+let rec config_field_type_to_ir_type field_type =
+  match field_type with
+  | Ast.U8 | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
+  | Ast.U16 | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
+  | Ast.U32 | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
+  | Ast.U64 | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
+  | Ast.Bool -> IRBool
+  | Ast.Char -> IRChar
+  | Ast.Array (elem_type, size) ->
+      let ir_elem_type = config_field_type_to_ir_type elem_type in
+      let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
+      IRArray (ir_elem_type, size, bounds_info)
+  | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field_type))
+
 let convert_config_declarations_to_ir config_declarations =
   List.map (fun config_decl ->
     let ir_fields = List.map (fun field ->
-      let ir_type = match field.Ast.field_type with
-        | Ast.U8 -> IRU8
-        | Ast.U16 -> IRU16
-        | Ast.U32 -> IRU32
-        | Ast.U64 -> IRU64
-        | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
-        | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
-        | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
-        | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
-        | Ast.Bool -> IRBool
-        | Ast.Char -> IRChar
-        | Ast.Array (elem_type, size) ->
-            let ir_elem_type = match elem_type with
-              | Ast.U8 -> IRU8
-              | Ast.U16 -> IRU16
-              | Ast.U32 -> IRU32
-              | Ast.U64 -> IRU64
-              | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
-              | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
-              | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
-              | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
-              | Ast.Bool -> IRBool
-              | Ast.Char -> IRChar
-              | _ -> failwith ("Unsupported array element type: " ^ (Ast.string_of_bpf_type elem_type))
-            in
-            let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
-            IRArray (ir_elem_type, size, bounds_info)
-        | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field.Ast.field_type))
-      in
+      let ir_type = config_field_type_to_ir_type field.Ast.field_type in
       (field.Ast.field_name, ir_type)
     ) config_decl.Ast.config_fields in
     {
@@ -3030,17 +3038,13 @@ let lower_multi_program ast symbol_table source_name =
   
   (* Add all global maps (regular + from global variables) to main context for userspace processing *)
   let all_global_maps = ir_global_maps @ ir_global_var_maps in
-  List.iter (fun (map_def : ir_map_def) -> 
-    Hashtbl.add ctx.maps map_def.map_name map_def
-  ) all_global_maps;
+  add_maps_to_context ctx all_global_maps;
   
   (* Also add all program-scoped maps to main context for userspace processing *)
   List.iter (fun prog_def ->
     let program_scoped_maps = prog_def.prog_maps in
     let ir_program_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) program_scoped_maps in
-    List.iter (fun (map_def : ir_map_def) -> 
-      Hashtbl.add ctx.maps map_def.map_name map_def
-    ) ir_program_maps
+    add_maps_to_context ctx ir_program_maps
   ) all_prog_defs;
   
   (* Separate global functions by scope and extract @helper attributed functions as kernel shared functions *)
@@ -3076,9 +3080,7 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower kernel functions once - they are shared across all programs *)
   let kernel_ctx = create_context ~global_variables:ir_global_variables ~helper_functions:helper_function_names symbol_table in
   (* Copy maps from main context to kernel context *)
-  Hashtbl.iter (fun map_name map_def -> 
-    Hashtbl.add kernel_ctx.maps map_name map_def
-  ) ctx.maps;
+  copy_maps_to_context ctx kernel_ctx;
   let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None ~func_target:None) all_kernel_shared_functions in
   
   (* Lower each program *)
@@ -3086,9 +3088,7 @@ let lower_multi_program ast symbol_table source_name =
     (* Create a fresh context for each program *)
     let prog_ctx = create_context ~global_variables:ir_global_variables ~helper_functions:helper_function_names symbol_table in
     (* Copy maps from main context to program context *)
-    Hashtbl.iter (fun map_name map_def -> 
-      Hashtbl.add prog_ctx.maps map_name map_def
-    ) ctx.maps;
+    copy_maps_to_context ctx prog_ctx;
     lower_single_program prog_ctx prog_def ir_global_maps all_kernel_shared_functions
   ) all_prog_defs in
   
@@ -3140,9 +3140,7 @@ let lower_multi_program ast symbol_table source_name =
       
       let userspace_ctx = create_context ~global_variables:ir_global_variables symbol_table in
       (* Copy maps from main context to userspace context *)
-      Hashtbl.iter (fun map_name map_def -> 
-        Hashtbl.add userspace_ctx.maps map_name map_def
-      ) ctx.maps;
+      copy_maps_to_context ctx userspace_ctx;
       let ir_functions = List.map (fun func -> lower_userspace_function userspace_ctx func) userspace_functions in
       Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
@@ -3225,11 +3223,7 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower struct_ops declarations to IR *)
   let ir_struct_ops_declarations = List.map (fun struct_def ->
     (* Extract kernel struct name from @struct_ops attribute *)
-    let kernel_struct_name = List.fold_left (fun acc attr ->
-      match attr with
-      | Ast.AttributeWithArg ("struct_ops", name) -> name
-      | _ -> acc
-    ) "" struct_def.struct_attributes in
+    let kernel_struct_name = extract_struct_ops_kernel_name struct_def.struct_attributes in
     
     let ir_methods = List.map (fun (field_name, field_type) ->
       let ir_field_type = match field_type with
@@ -3255,11 +3249,7 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower impl blocks to struct_ops declarations *)
   let ir_impl_block_declarations = List.map (fun impl_block ->
     (* Extract kernel struct name from @struct_ops attribute *)
-    let kernel_struct_name = List.fold_left (fun acc attr ->
-      match attr with
-      | Ast.AttributeWithArg ("struct_ops", name) -> name
-      | _ -> acc
-    ) "" impl_block.impl_attributes in
+    let kernel_struct_name = extract_struct_ops_kernel_name impl_block.impl_attributes in
     
     (* Convert impl block functions to struct_ops methods *)
     let ir_methods = List.filter_map (fun item ->
@@ -3289,11 +3279,7 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower struct_ops instances to IR - create from impl blocks *)
   let ir_struct_ops_instances = List.map (fun impl_block ->
     (* Extract kernel struct name from @struct_ops attribute *)
-    let kernel_struct_name = List.fold_left (fun acc attr ->
-      match attr with
-      | Ast.AttributeWithArg ("struct_ops", name) -> name
-      | _ -> acc
-    ) "" impl_block.impl_attributes in
+    let kernel_struct_name = extract_struct_ops_kernel_name impl_block.impl_attributes in
     
     (* Convert impl block items to struct_ops instance fields *)
     let ir_instance_fields = List.filter_map (fun item ->
@@ -3333,28 +3319,8 @@ let lower_multi_program ast symbol_table source_name =
   in
   
 
-  (* Helper function to convert AST literals to IR values *)
-  let ast_literal_to_ir_value literal pos =
-    match literal with
-    | Ast.IntLit (i, orig) -> make_ir_value (IRLiteral (IntLit (i, orig))) IRU32 pos
-    | Ast.BoolLit b -> make_ir_value (IRLiteral (BoolLit b)) IRBool pos
-    | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) pos
-    | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar pos
-    | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) pos
-    | Ast.NoneLit -> make_ir_value (IRLiteral NoneLit) IRU32 pos
-    | Ast.ArrayLit init_style ->
-        (* Handle enhanced array literal lowering *)
-        (match init_style with
-         | ZeroArray ->
-             (* [] - zero initialize, size determined by context *)
-             make_ir_value (IRLiteral (ArrayLit ZeroArray)) (IRArray (IRU32, 0, make_bounds_info ())) pos
-         | FillArray fill_lit ->
-             (* [0] - fill entire array with single value, size from context *)
-             make_ir_value (IRLiteral (ArrayLit (FillArray fill_lit))) (IRArray (IRU32, 0, make_bounds_info ())) pos
-         | ExplicitArray literals ->
-             (* [a,b,c] - explicit values, zero-fill rest *)
-             make_ir_value (IRLiteral (ArrayLit (ExplicitArray literals))) (IRArray (IRU32, List.length literals, make_bounds_info ())) pos)
-  in
+  (* Use the unified literal conversion function *)
+  let ast_literal_to_ir_value = lower_literal in
   
   (* Convert config declarations to IR *)
   let ir_global_configs = List.map (fun config_decl ->
@@ -3371,19 +3337,7 @@ let lower_multi_program ast symbol_table source_name =
         | Ast.Bool -> IRBool
         | Ast.Char -> IRChar
         | Ast.Array (elem_type, size) ->
-            let ir_elem_type = match elem_type with
-              | Ast.U8 -> IRU8
-              | Ast.U16 -> IRU16
-              | Ast.U32 -> IRU32
-              | Ast.U64 -> IRU64
-              | Ast.I8 -> IRI8
-              | Ast.I16 -> IRI16
-              | Ast.I32 -> IRI32
-              | Ast.I64 -> IRI64
-              | Ast.Bool -> IRBool
-              | Ast.Char -> IRChar
-              | _ -> failwith ("Unsupported array element type: " ^ (Ast.string_of_bpf_type elem_type))
-            in
+            let ir_elem_type = ast_basic_type_to_ir_type elem_type in
             let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
             IRArray (ir_elem_type, size, bounds_info)
         | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field.Ast.field_type))

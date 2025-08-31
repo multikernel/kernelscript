@@ -100,13 +100,20 @@ let test_program_lowering () =
   check bool "main function flag" true ir_prog.entry_function.is_main
 
 let test_context_access_lowering () =
+  (* Register XDP context codegen for the test *)
+  Kernelscript_context.Xdp_codegen.register ();
+  
   let ctx_access = make_expr 
-    (Call (make_expr (FieldAccess (make_expr (Identifier "ctx") (make_test_position ()), "packet")) (make_test_position ()), [])) 
+    (ArrowAccess (make_expr (Identifier "ctx") (make_test_position ()), "data")) 
     (make_test_position ()) in
   let ctx_access = { ctx_access with expr_type = Some (Pointer U8) } in
   
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   let ctx = create_context symbol_table in
+  
+  (* Set up ctx as a function parameter with XDP context type *)
+  let ctx_type = IRPointer (IRContext XdpCtx, make_bounds_info ()) in
+  Hashtbl.add ctx.function_parameters "ctx" ctx_type;
   
   let _ir_val = lower_expression ctx ctx_access in
   (* Should generate context access instruction *)
