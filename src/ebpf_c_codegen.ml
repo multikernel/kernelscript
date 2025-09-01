@@ -47,8 +47,6 @@ type enhanced_memory_info = {
 (** Variable name to enhanced memory info mapping *)
 type memory_info_map = (string, enhanced_memory_info) Hashtbl.t
 
-type bounds_hint = { verified: bool; size_hint: int }
-
 (** Detect memory region type from IR value semantics *)
 let detect_memory_region_type ir_val =
   match ir_val.value_desc with
@@ -58,11 +56,6 @@ let detect_memory_region_type ir_val =
   | IRTempVariable _ -> RegularMemory  (* Temporary variables *)
   | _ -> RegularMemory
 
-(** Check if IR value represents packet data *)
-let is_packet_data_value ir_val =
-  match detect_memory_region_type ir_val with
-  | PacketData -> true
-  | _ -> false
 
 (** Check if IR value represents map-derived data - heuristic approach *)
 let is_map_value_parameter ir_val =
@@ -74,12 +67,6 @@ let is_map_value_parameter ir_val =
            (* Heuristic: variables with certain names are likely map-derived *)
            String.contains name '_' && (String.length name > 3)
        | _ -> false)
-  | _ -> false
-
-(** Check if IR value is local stack memory *)
-let is_local_stack_value ir_val =
-  match detect_memory_region_type ir_val with
-  | LocalStack -> true
   | _ -> false
 
 (** Enhanced memory region detection using provided memory info *)
@@ -102,21 +89,6 @@ let detect_memory_region_enhanced ?(memory_info_map=None) ir_val =
   | None ->
       (* Fallback to heuristic detection *)
       detect_memory_region_type ir_val
-
-(** Get enhanced bounds information *)
-let get_enhanced_bounds_info ?(memory_info_map=None) ir_val =
-  match memory_info_map with
-  | Some info_map ->
-      (match ir_val.value_desc with
-       | IRVariable var_name ->
-           (try
-             let info = Hashtbl.find info_map var_name in
-             Some { verified = info.bounds_verified; size_hint = 
-               match info.size_hint with Some s -> s | None -> 0 }
-           with
-           | Not_found -> None)
-       | _ -> None)
-  | None -> None
 
 (** C code generation context *)
 type c_context = {
@@ -2393,38 +2365,8 @@ let generate_ringbuf_operation ctx ringbuf_val op =
       (* on_event is userspace-only operation *)
       failwith "Ring buffer on_event() operation is not supported in eBPF programs - it's userspace-only"
 
-(** Generate C code for IR instruction *)
-
-(** Helper function to convert AST expressions to C code for bpf_loop callbacks *)
-let rec generate_ast_expr_to_c (expr : Ast.expr) counter_var =
-  match expr.Ast.expr_desc with
-  | Ast.Literal (Ast.IntLit (i, _)) -> Ast.IntegerValue.to_string i
-  | Ast.Literal (Ast.BoolLit b) -> if b then "true" else "false"
-  | Ast.Identifier name when name = "i" -> counter_var (* Map loop variable to counter *)
-  | Ast.Identifier name -> name
-  | Ast.BinaryOp (left, op, right) ->
-      let left_c = generate_ast_expr_to_c left counter_var in
-      let right_c = generate_ast_expr_to_c right counter_var in
-      let op_c = match op with
-        | Ast.Add -> "+"
-        | Ast.Sub -> "-"
-        | Ast.Mul -> "*"
-        | Ast.Div -> "/"
-        | Ast.Mod -> "%"
-        | Ast.Eq -> "=="
-        | Ast.Ne -> "!="
-        | Ast.Lt -> "<"
-        | Ast.Le -> "<="
-        | Ast.Gt -> ">"
-        | Ast.Ge -> ">="
-        | Ast.And -> "&&"
-        | Ast.Or -> "||"
-      in
-      sprintf "(%s %s %s)" left_c op_c right_c
-  | _ -> "/* complex expr */"
-
 (** Generate assignment instruction with optional const keyword *)
-and generate_assignment ctx dest_val expr is_const =
+let generate_assignment ctx dest_val expr is_const =
   let assignment_prefix = if is_const then "const " else "" in
   
   (* Check if this is a pinned global variable assignment *)
@@ -3454,16 +3396,6 @@ let generate_c_function ctx ir_func =
   decrease_indent ctx;
   emit_line ctx "}";
   emit_blank_line ctx
-
-(** Helper function to compile C code to eBPF object *)
-let compile_c_to_ebpf c_filename obj_filename =
-  let cmd = sprintf "clang -target bpf -O2 -g -c %s -o %s" c_filename obj_filename in
-  let exit_code = Sys.command cmd in
-  if exit_code = 0 then
-    Ok obj_filename
-  else
-    Error (sprintf "Compilation failed with exit code %d" exit_code)
-
 
 (** Generate ProgArray map for tail calls *)
 let generate_prog_array_map ctx prog_array_size =
