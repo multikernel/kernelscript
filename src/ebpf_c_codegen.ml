@@ -3315,44 +3315,7 @@ let generate_c_basic_block ctx ir_block =
   
   optimize_instructions ir_block.instructions
 
-(** Collect mapping from registers to variable names *)
-let collect_register_variable_mapping ir_func =
-  let register_var_map = ref [] in
-  let last_declared_var = ref None in
-  let collect_from_instr ir_instr =
-    match ir_instr.instr_desc with
-    | IRComment comment ->
-        (* Parse comments like "Declaration ip" to extract variable names *)
-        (try
-           let prefix = "Declaration " in
-           if String.length comment > String.length prefix && 
-              String.sub comment 0 (String.length prefix) = prefix then (
-             let var_name = String.sub comment (String.length prefix) 
-                                     (String.length comment - String.length prefix) in
-             let clean_var_name = String.trim var_name in
-             last_declared_var := Some clean_var_name
-           )
-         with _ -> ())
-    | IRAssign (dest_val, _) ->
-        (match dest_val.value_desc, !last_declared_var with
-         | IRTempVariable name, Some var_name ->
-             let name_hash = Hashtbl.hash name in
-             register_var_map := (name_hash, var_name) :: !register_var_map;
-             last_declared_var := None
-         | _ -> ())
-    | _ -> ()
-  in
-  List.iter (fun block ->
-    List.iter collect_from_instr block.instructions
-  ) ir_func.basic_blocks;
-  !register_var_map
-
-
-
-
-
 (** Generate C function from IR function with type alias support *)
-
 let generate_c_function ctx ir_func =
   (* Clear per-function state to avoid conflicts between functions *)
   Hashtbl.clear ctx.declared_registers;
