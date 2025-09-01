@@ -426,6 +426,11 @@
  (modules test_void_functions)
  (libraries kernelscript alcotest str test_utils))
 
+(executable
+ (name test_definition_order)
+ (modules test_definition_order)
+ (libraries kernelscript alcotest))
+
 
 
 ; Top-level alias to run all tests
@@ -513,4 +518,5 @@
   test_detach_api.exe
   test_tc.exe
   test_exec.exe
-  test_void_functions.exe)) 
+  test_void_functions.exe
+  test_definition_order.exe)) 
