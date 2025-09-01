@@ -200,6 +200,12 @@ let emit_line ctx line =
 let emit_blank_line ctx =
   ctx.output_lines <- ctx.output_lines @ [""]
 
+let concat = List.concat
+let concat_map f l = List.concat (List.map f l)
+let concat_map_opt f = function
+  | Some l -> concat_map f l
+  | None -> []
+
 let increase_indent ctx = ctx.indent_level <- ctx.indent_level + 1
 
 let decrease_indent ctx = ctx.indent_level <- ctx.indent_level - 1
@@ -356,13 +362,9 @@ let rec collect_string_sizes_from_instr ir_instr =
       in
       var_type_sizes @ init_sizes
   | IRCall (_, args, ret_opt) ->
-      let args_sizes = List.fold_left (fun acc arg -> 
-        acc @ (collect_string_sizes_from_value arg)) [] args in
-      let ret_sizes = match ret_opt with
-        | Some ret_val -> collect_string_sizes_from_value ret_val
-        | None -> []
-      in
-      args_sizes @ ret_sizes
+  let args_sizes = concat_map collect_string_sizes_from_value args in
+  let ret_sizes = match ret_opt with Some ret_val -> collect_string_sizes_from_value ret_val | None -> [] in
+  args_sizes @ ret_sizes
   | IRMapLoad (map_val, key_val, dest_val, _) ->
       (collect_string_sizes_from_value map_val) @ 
       (collect_string_sizes_from_value key_val) @ 
@@ -392,24 +394,17 @@ let rec collect_string_sizes_from_instr ir_instr =
       collect_string_sizes_from_value cond_val
   | IRIf (cond_val, then_instrs, else_instrs_opt) ->
       let cond_sizes = collect_string_sizes_from_value cond_val in
-      let then_sizes = List.fold_left (fun acc instr -> 
-        acc @ (collect_string_sizes_from_instr instr)) [] then_instrs in
-      let else_sizes = match else_instrs_opt with
-        | Some else_instrs -> List.fold_left (fun acc instr -> 
-            acc @ (collect_string_sizes_from_instr instr)) [] else_instrs
-        | None -> []
-      in
+      let then_sizes = concat_map collect_string_sizes_from_instr then_instrs in
+      let else_sizes = concat_map_opt collect_string_sizes_from_instr else_instrs_opt in
       cond_sizes @ then_sizes @ else_sizes
   | IRIfElseChain (conditions_and_bodies, final_else) ->
-      let cond_sizes = List.fold_left (fun acc (cond_val, then_instrs) ->
-        let cond_sizes = collect_string_sizes_from_value cond_val in
-        let then_sizes = List.fold_left (fun acc instr -> 
-          acc @ (collect_string_sizes_from_instr instr)) [] then_instrs in
-        acc @ cond_sizes @ then_sizes
-      ) [] conditions_and_bodies in
+      let cond_sizes = concat_map (fun (cond_val, then_instrs) ->
+        let cond_sz = collect_string_sizes_from_value cond_val in
+        let then_sz = concat_map collect_string_sizes_from_instr then_instrs in
+        cond_sz @ then_sz
+      ) conditions_and_bodies in
       let else_sizes = match final_else with
-        | Some else_instrs -> List.fold_left (fun acc instr -> 
-            acc @ (collect_string_sizes_from_instr instr)) [] else_instrs
+        | Some else_instrs -> concat_map collect_string_sizes_from_instr else_instrs
         | None -> []
       in
       cond_sizes @ else_sizes
@@ -440,8 +435,7 @@ let rec collect_string_sizes_from_instr ir_instr =
       (collect_string_sizes_from_value end_val) @ 
       (collect_string_sizes_from_value counter_val) @ 
       (collect_string_sizes_from_value ctx_val) @
-      (List.fold_left (fun acc instr -> 
-        acc @ (collect_string_sizes_from_instr instr)) [] body_instructions)
+  (concat_map collect_string_sizes_from_instr body_instructions)
   | IRBreak -> []
   | IRContinue -> []
   | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
@@ -456,16 +450,13 @@ let rec collect_string_sizes_from_instr ir_instr =
       in
       cond_sizes @ true_sizes @ false_sizes
   | IRTry (try_instructions, _catch_clauses) ->
-      List.fold_left (fun acc instr -> 
-        acc @ (collect_string_sizes_from_instr instr)) [] try_instructions
+      concat_map collect_string_sizes_from_instr try_instructions
   | IRThrow _error_code ->
       [] (* Throw statements don't contain values to collect *)
   | IRDefer defer_instructions ->
-      List.fold_left (fun acc instr -> 
-        acc @ (collect_string_sizes_from_instr instr)) [] defer_instructions
+      concat_map collect_string_sizes_from_instr defer_instructions
   | IRTailCall (_, args, _) ->
-      List.fold_left (fun acc arg ->
-        acc @ (collect_string_sizes_from_value arg)) [] args
+      concat_map collect_string_sizes_from_value args
   | IRStructOpsRegister (instance_val, struct_ops_val) ->
       (collect_string_sizes_from_value instance_val) @ (collect_string_sizes_from_value struct_ops_val)
   | IRObjectNew (dest_val, _) ->
@@ -478,23 +469,13 @@ let rec collect_string_sizes_from_instr ir_instr =
       collect_string_sizes_from_value ringbuf_val
 
 let collect_string_sizes_from_function ir_func =
-  List.fold_left (fun acc block ->
-    List.fold_left (fun acc instr ->
-      acc @ (collect_string_sizes_from_instr instr)
-    ) acc block.instructions
-  ) [] ir_func.basic_blocks
+  concat_map (fun block -> concat_map collect_string_sizes_from_instr block.instructions) ir_func.basic_blocks
 
 let collect_string_sizes_from_multi_program ir_multi_prog =
-  let program_sizes = List.fold_left (fun acc ir_prog ->
-    let entry_sizes = collect_string_sizes_from_function ir_prog.entry_function in
-    acc @ entry_sizes
-  ) [] ir_multi_prog.programs in
-  
+  let program_sizes = concat_map (fun ir_prog -> collect_string_sizes_from_function ir_prog.entry_function) ir_multi_prog.programs in
+
   (* Also collect from kernel functions *)
-  let kernel_func_sizes = List.fold_left (fun acc ir_func ->
-    let func_sizes = collect_string_sizes_from_function ir_func in
-    acc @ func_sizes
-  ) [] ir_multi_prog.kernel_functions in
+  let kernel_func_sizes = concat_map (fun ir_func -> collect_string_sizes_from_function ir_func) ir_multi_prog.kernel_functions in
   
   (* NOTE: We used to collect string sizes from all userspace structs here, but this was incorrect.
      Only structs that are actually used by eBPF programs should be considered.
