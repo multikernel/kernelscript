@@ -79,34 +79,6 @@ let rec c_type_from_ir_type = function
       (* Ring buffer objects are represented as ring_buffer pointers in userspace *)
       "struct ring_buffer*"
 
-(** Generate bridge code for imported KernelScript modules *)
-let generate_kernelscript_bridge_code resolved_imports =
-  let ks_imports = List.filter (fun import ->
-    match import.Import_resolver.source_type with
-    | Ast.KernelScript -> true
-    | _ -> false
-  ) resolved_imports in
-  
-  if ks_imports = [] then ""
-  else
-    let bridge_code = List.map (fun import ->
-      let module_name = import.Import_resolver.module_name in
-      let function_decls = List.map (fun symbol ->
-        match symbol.Import_resolver.symbol_type with
-        | Ast.Function (param_types, return_type) ->
-            let c_return_type = ast_type_to_c_type return_type in
-            let c_param_types = List.map ast_type_to_c_type param_types in
-            let params_str = if c_param_types = [] then "void" else String.concat ", " c_param_types in
-            sprintf "extern %s %s_%s(%s);" c_return_type module_name symbol.symbol_name params_str
-        | _ ->
-            sprintf "// %s (non-function symbol)" symbol.symbol_name
-      ) import.ks_symbols in
-      sprintf "// External functions from %s module\n%s" module_name (String.concat "\n" function_decls)
-    ) ks_imports in
-    
-    sprintf "\n// Bridge code for imported KernelScript modules\n%s\n"
-      (String.concat "\n\n" bridge_code)
-
 (** Collect Python function calls from IR programs *)
 let collect_python_function_calls ir_programs resolved_imports =
   let python_calls = ref [] in
@@ -1117,11 +1089,6 @@ let collect_type_aliases_from_userspace_program userspace_prog =
   
   List.rev !type_aliases
 
-(** Helper function to take first n elements from a list *)
-let rec list_take n lst =
-  match n, lst with
-  | 0, _ | _, [] -> []
-  | n, x :: xs -> x :: list_take (n - 1) xs
 
 (** Get printf format specifier for IR type *)
 let get_printf_format_specifier ir_type =
@@ -1176,7 +1143,12 @@ let fix_format_specifiers format_string arg_types =
   else
     (* Need to add format specifiers for missing arguments *)
     let missing_count = needed_specs - existing_specs in
-         let missing_types = List.rev (list_take missing_count (List.rev arg_types)) in
+    let missing_types = 
+      let rec take n lst = match n, lst with
+        | 0, _ | _, [] -> []
+        | n, x :: xs -> x :: take (n - 1) xs
+      in
+      List.rev (take missing_count (List.rev arg_types)) in
     let missing_specs = List.map get_printf_format_specifier missing_types in
     format_string ^ String.concat "" missing_specs
 
@@ -2573,17 +2545,6 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
 %s    %s
 }|} adjusted_return_type ir_func.func_name adjusted_params var_decls body_c
 
-(** Generate skeleton definitions and initialization for global variables *)
-let generate_skeleton_code base_name global_variables =
-  (* Use standard libbpf skeleton - no custom skeleton generation needed *)
-  if global_variables = [] then
-    ""
-  else
-    let shared_vars = List.filter (fun gv -> not gv.is_local) global_variables in
-    if shared_vars = [] then
-      ""
-    else
-      sprintf "/* Standard libbpf skeleton */\nstruct %s_bpf *obj = NULL;\n" base_name
 
 (** Generate struct_ops registration code *)
 let generate_struct_ops_registration_code ir_multi_program =
@@ -4146,10 +4107,3 @@ int main(void) {
          printf "✅ Generated Python wrapper: %s\n" python_filepath
        )
    | None -> ())
-
-
-(** Check if a variable name is an impl block instance *)
-let is_impl_block_variable ir_multi_prog var_name =
-  List.exists (fun struct_ops_decl ->
-    struct_ops_decl.ir_instance_name = var_name
-  ) ir_multi_prog.struct_ops_instances
