@@ -760,7 +760,6 @@ let rec ast_type_to_ir_type = function
       IRPointer (ast_type_to_ir_type t, bounds)
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
   | Xdp_md -> IRStruct ("xdp_md", [])
-  | TracepointContext -> IRStruct ("trace_entry", [])
   | Xdp_action -> IREnum ("xdp_action", []) (* Treat as regular enum *)
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (param_types, return_type) -> 

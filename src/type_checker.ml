@@ -966,7 +966,6 @@ and type_check_arrow_access ctx obj field pos =
     | Pointer (Struct name) | Pointer (UserType name) -> name
     (* Map context types to their corresponding struct names *)
     | Pointer Xdp_md -> "xdp_md"
-    | Pointer TracepointContext -> "trace_entry"
     | _ -> 
         type_error ("Arrow access requires pointer-to-struct type, got " ^ string_of_bpf_type typed_obj.texpr_type) pos
   in

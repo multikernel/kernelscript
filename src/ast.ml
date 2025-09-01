@@ -73,7 +73,6 @@ type bpf_type =
   | Map of bpf_type * bpf_type * map_type * int  (* key_type, value_type, map_type, size *)
   (* Built-in context types *)
   | Xdp_md
-  | TracepointContext
   | Xdp_action
   (* Program reference types *)
   | ProgramRef of program_type
@@ -706,7 +705,6 @@ let rec string_of_bpf_type = function
         (string_of_map_type map_type)
         size
   | Xdp_md -> "xdp_md"
-  | TracepointContext -> "TracepointContext"
   | Xdp_action -> "xdp_action"
   | ProgramRef pt -> string_of_program_type pt
   | ProgramHandle -> "ProgramHandle"

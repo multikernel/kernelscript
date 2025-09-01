@@ -112,7 +112,7 @@ fn sys_enter_read_handler(ctx: *trace_event_raw_sys_enter) -> i32 {
 let test_tracepoint_parsing_errors _ =
   (* Test invalid format without category/event separator *)
   let source = "@tracepoint(\"invalid_format\")
-fn invalid_handler(ctx: *TracepointContext) -> i32 {
+fn invalid_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
     return 0
 }" in
   (* Just check that parsing/type checking fails, not the exact error message *)
@@ -126,7 +126,7 @@ fn invalid_handler(ctx: *TracepointContext) -> i32 {
 let test_tracepoint_old_format_rejection _ =
   (* Test old @tracepoint format without arguments *)
   let source = "@tracepoint
-fn old_handler(ctx: *TracepointContext) -> i32 {
+fn old_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
     return 0
 }" in
   (* Just check that parsing/type checking fails *)
