@@ -67,7 +67,7 @@ let create_test_function name is_main params ret_type =
 let create_test_program () =
   let main_func = create_test_function "main" true 
     [("ctx", IRStruct ("xdp_md", []))] 
-    (Some (IRAction Xdp_actionType)) in
+    (Some (IREnum ("xdp_action", []))) in
   {
     name = "test_program";
     program_type = Xdp;
@@ -80,7 +80,7 @@ let create_test_program () =
 let test_valid_main_signature _ =
   let main_func = create_test_function "main" true 
     [("ctx", IRStruct ("xdp_md", []))] 
-    (Some (IRAction Xdp_actionType)) in
+    (Some (IREnum ("xdp_action", []))) in
   let sig_info = validate_function_signature main_func in
   check bool "Main function should be valid" true sig_info.is_valid;
       check string "Function name" "main" sig_info.func_name;
@@ -90,7 +90,7 @@ let test_invalid_main_signature _ =
   let invalid_func = {
     func_name = "main";
     parameters = [];  (* Missing context parameter *)
-    return_type = Some (IRAction Xdp_actionType);
+    return_type = Some (IREnum ("xdp_action", []));
     basic_blocks = [];
     total_stack_usage = 0;
     max_loop_depth = 0;

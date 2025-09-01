@@ -510,15 +510,8 @@ let rec lower_expression ctx (expr : Ast.expr) =
                                 | Some ast_type -> ast_type_to_ir_type ast_type
                                 | None -> IRU32
                               in
-                              (* Detect action types by enum name and constant name *)
-                              let final_ir_type = match ir_type with
-                                | IRAction _ -> ir_type  (* Keep action type intact *)
-                                | _ -> 
-                                    (* Check if this is an action constant *)
-                                    (match enum_name, name with
-                                     | "xdp_action", _ -> IRAction Xdp_actionType
-                                     | _ -> ir_type)
-                              in
+                              (* Use the inferred type directly - no special handling for action types *)
+                              let final_ir_type = ir_type in
                               make_ir_value (IREnumConstant (enum_name, name, value)) final_ir_type expr.expr_pos
                           | Symbol_table.EnumConstant (_, None) ->
                               (* Enum constant without value - treat as variable *)
@@ -2462,6 +2455,42 @@ let lower_map_declaration symbol_table (map_decl : Ast.map_declaration) =
     ?pin_path:pin_path
     map_decl.Ast.map_pos
 
+(** Convert config field type to IR type with unified logic **)
+let rec config_field_type_to_ir_type field_type =
+  match field_type with
+  | Ast.U8 | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
+  | Ast.U16 | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
+  | Ast.U32 | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
+  | Ast.U64 | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
+  | Ast.Bool -> IRBool
+  | Ast.Char -> IRChar
+  | Ast.Array (elem_type, size) ->
+      let ir_elem_type = config_field_type_to_ir_type elem_type in
+      let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
+      IRArray (ir_elem_type, size, bounds_info)
+  | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field_type))
+
+(** Lower AST config declaration to IR global config *)
+let lower_config_declaration _symbol_table (config_decl : Ast.config_declaration) =
+  let ir_fields = List.map (fun field ->
+    let ir_type = config_field_type_to_ir_type field.Ast.field_type in
+    let default_value = match field.Ast.field_default with
+      | Some literal -> Some (lower_literal literal field.Ast.field_pos)
+      | None -> None
+    in
+    make_ir_config_field 
+      field.Ast.field_name 
+      ir_type 
+      default_value 
+      false  (* is_mutable: configs are read-only by default *)
+      field.Ast.field_pos
+  ) config_decl.Ast.config_fields in
+  
+  make_ir_global_config 
+    config_decl.Ast.config_name 
+    ir_fields 
+    config_decl.Ast.config_pos
+
 (** Lower AST global variable declaration to IR global variable *)
 let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global_variable_declaration) =
   let ir_type = match global_var_decl.global_var_type with
@@ -2583,21 +2612,6 @@ and generate_coordinator_logic _ctx _ir_functions =
   
   make_ir_coordinator_logic setup_logic event_processing cleanup_logic config_management
   
-
-(** Convert config field type to IR type with unified logic **)
-let rec config_field_type_to_ir_type field_type =
-  match field_type with
-  | Ast.U8 | Ast.I8 -> IRU8   (* Map signed to unsigned for IR *)
-  | Ast.U16 | Ast.I16 -> IRU16 (* Map signed to unsigned for IR *)
-  | Ast.U32 | Ast.I32 -> IRU32 (* Map signed to unsigned for IR *)
-  | Ast.U64 | Ast.I64 -> IRU64 (* Map signed to unsigned for IR *)
-  | Ast.Bool -> IRBool
-  | Ast.Char -> IRChar
-  | Ast.Array (elem_type, size) ->
-      let ir_elem_type = config_field_type_to_ir_type elem_type in
-      let bounds_info = { min_size = Some size; max_size = Some size; alignment = 1; nullable = false } in
-      IRArray (ir_elem_type, size, bounds_info)
-  | _ -> failwith ("Unsupported config field type: " ^ (Ast.string_of_bpf_type field_type))
 
 let convert_config_declarations_to_ir config_declarations =
   List.map (fun config_decl ->
@@ -2752,12 +2766,142 @@ let validate_multiple_programs prog_defs =
       failwith (Printf.sprintf "Program '%s' was converted incorrectly - should have exactly one function" prog_def.prog_name)
   ) prog_defs
 
-(** Lower complete AST to multi-program IR *)
+(** Check if a struct is used only in userspace contexts *)
+let is_struct_userspace_only ast struct_name =
+  let is_used_in_ebpf = ref false in
+  let is_used_in_userspace = ref false in
+  
+  let rec check_type_usage = function
+    | Ast.UserType name when name = struct_name -> true
+    | Ast.Struct name when name = struct_name -> true
+    | Ast.Pointer inner_type -> check_type_usage inner_type
+    | Ast.Array (inner_type, _) -> check_type_usage inner_type
+    | Ast.Function (param_types, return_type) ->
+        List.exists check_type_usage param_types || check_type_usage return_type
+    | _ -> false
+  in
+  
+  let check_function_usage func_def is_ebpf_context =
+    (* Check if function uses the struct *)
+    let uses_struct = 
+      List.exists (fun (_, param_type) -> check_type_usage param_type) func_def.func_params ||
+      (match func_def.func_return_type with 
+       | Some (Ast.Unnamed rt) -> check_type_usage rt 
+       | Some (Ast.Named (_, rt)) -> check_type_usage rt
+       | None -> false)
+    in
+    
+    if uses_struct then (
+      if is_ebpf_context then
+        is_used_in_ebpf := true
+      else if func_def.func_name = "main" then
+        is_used_in_userspace := true
+    )
+  in
+  
+  (* Check all function declarations *)
+  List.iter (function
+    | Ast.AttributedFunction attr_func -> 
+        (* eBPF functions are wrapped in AttributedFunction *)
+        check_function_usage attr_func.attr_function true
+    | Ast.GlobalFunction func_def -> 
+        (* Regular userspace functions *)
+        check_function_usage func_def false
+
+    | _ -> ()
+  ) ast;
+  
+  (* A struct is userspace-only if it's used in userspace but not in eBPF *)
+  !is_used_in_userspace && not !is_used_in_ebpf
+
 let lower_multi_program ast symbol_table source_name =
-  let ctx = create_context symbol_table in
+  (* Collect global variables early so they can be used in context creation *)
+  let global_var_decls = List.filter_map (function
+    | Ast.GlobalVarDecl v -> Some v
+    | _ -> None
+  ) ast in
+  
+  let ir_global_variables = List.map (fun global_var_decl ->
+    lower_global_variable_declaration symbol_table global_var_decl
+  ) global_var_decls in
+  
+
+  
+  let ctx = create_context ~global_variables:ir_global_variables symbol_table in
   
   (* Analyze assignment patterns for optimization early *)
   let _optimization_info = analyze_assignment_patterns ctx ast in
+  
+  (* Collect source declarations in original order *)
+  let source_declarations = ref [] in
+  let declaration_order = ref 0 in
+  
+  (* Helper function to add a declaration to source order *)
+  let add_source_declaration decl_desc pos =
+    let decl = make_ir_source_declaration decl_desc !declaration_order pos in
+    source_declarations := decl :: !source_declarations;
+    incr declaration_order
+  in
+  
+  (* Process AST declarations in order to collect source declarations *)
+  List.iter (function
+    | Ast.TypeDef (Ast.TypeAlias (name, underlying_type, pos)) ->
+        let ir_type = ast_type_to_ir_type_with_context symbol_table underlying_type in
+        add_source_declaration (IRDeclTypeAlias (name, ir_type, pos)) pos
+    | Ast.TypeDef (Ast.StructDef (name, fields, pos)) ->
+        let ir_fields = List.map (fun (field_name, field_type) ->
+          (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
+        ) fields in
+        add_source_declaration (IRDeclStructDef (name, ir_fields, pos)) pos
+    | Ast.TypeDef (Ast.EnumDef (name, values, pos)) ->
+        let ir_values = List.map (fun (enum_name, opt_value) ->
+          (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
+        ) values in
+        add_source_declaration (IRDeclEnumDef (name, ir_values, pos)) pos
+    | Ast.MapDecl map_decl ->
+        (* Convert and add map declaration *)
+        let ir_map_def = lower_map_declaration symbol_table map_decl in
+        add_source_declaration (IRDeclMapDef ir_map_def) map_decl.map_pos
+    | Ast.ConfigDecl config_decl ->
+        (* Convert and add config declaration *)
+        let ir_config_def = lower_config_declaration symbol_table config_decl in
+        add_source_declaration (IRDeclConfigDef ir_config_def) config_decl.config_pos
+    | Ast.GlobalVarDecl global_var_decl ->
+        (* Convert and add global variable declaration *)
+        let ir_global_var = lower_global_variable_declaration symbol_table global_var_decl in
+        add_source_declaration (IRDeclGlobalVarDef ir_global_var) global_var_decl.global_var_pos
+    | Ast.AttributedFunction _attr_func ->
+        (* We'll add attributed function declarations when we process them as programs *)
+        ()
+    | Ast.GlobalFunction func_def ->
+        (* Convert and add global function declaration with correct context *)
+        let ir_func = 
+          if func_def.func_scope = Ast.Kernel then
+            (* Kernel function - use regular context *)
+            lower_function ctx "global" ~program_type:None ~func_target:None func_def
+          else
+            (* Userspace function - use userspace context *)
+            lower_userspace_function ctx func_def
+        in
+        add_source_declaration (IRDeclFunctionDef ir_func) func_def.func_pos
+    | Ast.StructDecl struct_def ->
+        (* Check if this struct is used only in userspace contexts *)
+        let is_userspace_only = is_struct_userspace_only ast struct_def.struct_name in
+        if not is_userspace_only then (
+          (* Convert and add struct definition to source declarations (for eBPF) *)
+          let ir_fields = List.map (fun (field_name, field_type) ->
+            (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
+          ) struct_def.struct_fields in
+          add_source_declaration (IRDeclStructDef (struct_def.struct_name, ir_fields, struct_def.struct_pos)) struct_def.struct_pos
+        )
+        (* Note: userspace-only structs will be handled separately in userspace_structs *)
+    | Ast.ImplBlock _impl_block ->
+        (* We'll add impl block declarations when we process them *)
+        ()
+    | _ ->
+        (* Skip other declarations for now *)
+        ()
+  ) ast;
   
   (* Extract impl blocks as struct_ops declarations *)
   let impl_block_declarations = List.filter_map (function
@@ -2888,17 +3032,11 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> None
   ) ast in
   
-  (* Collect global variable declarations *)
-  let global_var_decls = List.filter_map (function
-    | Ast.GlobalVarDecl v -> Some v
-    | _ -> None
-  ) ast in
-  
   (* Lower global maps *)
   let ir_global_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) global_map_decls in
   
   (* Separate global variable declarations into maps and regular variables *)
-  let (global_var_maps, regular_global_vars) = List.fold_left (fun (maps, vars) global_var_decl ->
+  let (global_var_maps, _) = List.fold_left (fun (maps, vars) global_var_decl ->
     match global_var_decl.Ast.global_var_type with
     | Some (Ast.Map (key_type, value_type, map_type, size)) ->
         (* Convert global variable with map type to IR map definition *)
@@ -2932,7 +3070,7 @@ let lower_multi_program ast symbol_table source_name =
         (maps, ir_global_var :: vars)
   ) ([], []) global_var_decls in
   
-  let ir_global_variables = List.rev regular_global_vars in
+  (* ir_global_variables already created above *)
   let ir_global_var_maps = List.rev global_var_maps in
   
   (* Add all global maps (regular + from global variables) to main context for userspace processing *)
@@ -3280,6 +3418,7 @@ let lower_multi_program ast symbol_table source_name =
     ~struct_ops_instances:ir_struct_ops_instances
     ?userspace_program:userspace_program 
     ~userspace_bindings:userspace_bindings 
+    ~source_declarations:(List.rev !source_declarations)
     multi_pos
 
 (** Main entry point for IR generation *)

@@ -180,8 +180,7 @@ let rec calculate_type_size ir_type =
       failwith ("calculate_type_size: IREnum should not appear in field assignments, got: " ^ enum_name) 
   | IRResult (_, _) ->
       failwith "calculate_type_size: IRResult should not appear in field assignments"
-  | IRAction _ ->
-      failwith "calculate_type_size: IRAction should not appear in field assignments"
+  (* IRAction removed - xdp_action is now handled as regular enum *)
   | IRTypeAlias (alias_name, _) ->
       failwith ("calculate_type_size: IRTypeAlias should be resolved by type checker, got: " ^ alias_name)
   | IRStructOps (ops_name, _) ->
@@ -270,16 +269,12 @@ let rec ebpf_type_from_ir_type = function
   | IRPointer (inner_type, _) -> sprintf "%s*" (ebpf_type_from_ir_type inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ebpf_type_from_ir_type inner_type) size
   | IRStruct (name, _) -> sprintf "struct %s" name
-              | IREnum (name, _) -> sprintf "enum %s" name
+  | IREnum (name, _) -> sprintf "enum %s" name
 
   | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-
-  | IRAction Xdp_actionType -> "int"
-  | IRAction TcActionType -> "int"
-  | IRAction GenericActionType -> "int"
-    | IRFunctionPointer (param_types, return_type) ->
+  | IRFunctionPointer (param_types, return_type) ->
       let return_type_str = ebpf_type_from_ir_type return_type in
       let param_types_str = List.map ebpf_type_from_ir_type param_types in
       let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
@@ -660,302 +655,6 @@ let generate_string_typedefs ctx ir_multi_prog =
     emit_blank_line ctx
   )
 
-(** Collect struct definitions from IR multi-program *)
-let collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog =
-  let struct_defs = ref [] in
-  
-  (* No more hardcoded cheating - structs should have their fields properly resolved in IR *)
-  
-  let rec collect_from_type ir_type =
-    match ir_type with
-          | IRStruct (name, struct_fields) ->
-        if not (List.mem_assoc name !struct_defs) then (
-          (* Filter out kernel-defined structs that would conflict with vmlinux.h *)
-          let should_include_struct = 
-            (* Check if this struct comes from a .kh file via symbol table *)
-            match symbol_table with
-            | Some st ->
-                (match Symbol_table.lookup_symbol st name with
-                 | Some symbol ->
-                     (match symbol.Symbol_table.kind with
-                      | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
-                          not (Filename.check_suffix struct_pos.filename ".kh")
-                      | _ -> true)  (* Not a struct type definition, include it *)
-                 | None -> true)  (* Not found in symbol table, include it *)
-            | None -> true  (* No symbol table provided, include all structs *)
-          in
-          if should_include_struct then (
-            (* Only collect structs that actually have fields - ignore empty structs that are likely type aliases *)
-            if struct_fields <> [] then
-              struct_defs := (name, struct_fields) :: !struct_defs
-            (* Remove warning - empty structs are expected for type aliases *)
-          )
-        )
-    | IRPointer (inner_type, _) -> 
-        (* Recursively collect from the pointed-to type *)
-        collect_from_type inner_type
-    | _ -> ()
-  in
-  
-  let rec collect_from_value ir_val =
-    collect_from_type ir_val.val_type
-  and collect_from_expr ir_expr =
-    collect_from_type ir_expr.expr_type;
-    match ir_expr.expr_desc with
-    | IRStructLiteral (_struct_name, field_assignments) ->
-        (* Also collect struct type from the literal itself *)
-        List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
-    | IRValue ir_val -> collect_from_value ir_val
-    | IRBinOp (left, _, right) -> collect_from_value left; collect_from_value right
-    | IRUnOp (_, ir_val) -> collect_from_value ir_val
-    | IRCast (ir_val, _) -> collect_from_value ir_val
-    | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
-    | IRMatch (matched_val, arms) ->
-        (* Collect from matched expression and all arms *)
-        collect_from_value matched_val;
-        List.iter (fun arm -> collect_from_value arm.ir_arm_value) arms
-  and collect_from_instr ir_instr =
-    match ir_instr.instr_desc with
-    | IRAssign (dest_val, expr) -> 
-        collect_from_value dest_val; collect_from_expr expr
-    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
-        (* New unified variable declaration *)
-        (match init_expr_opt with
-         | Some init_expr -> collect_from_expr init_expr
-         | None -> ())
-    | IRCall (_, args, ret_opt) ->
-        List.iter collect_from_value args;
-        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
-    | IRMapLoad (map_val, key_val, dest_val, _) ->
-        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
-    | IRMapStore (map_val, key_val, value_val, _) ->
-        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
-    | IRMapDelete (map_val, key_val) ->
-        collect_from_value map_val; collect_from_value key_val
-    | IRReturn (Some ret_val) -> collect_from_value ret_val
-    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
-        collect_from_value cond_val;
-                 List.iter collect_from_instr then_instrs;
-        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
-    | IRIfElseChain (conditions_and_bodies, final_else) ->
-        List.iter (fun (cond_val, then_instrs) ->
-          collect_from_value cond_val;
-          List.iter collect_from_instr then_instrs
-        ) conditions_and_bodies;
-        (match final_else with Some instrs -> List.iter collect_from_instr instrs | None -> ())
-    | _ -> ()
-  in
-  
-  let collect_from_map_def map_def =
-    collect_from_type map_def.map_key_type;
-    collect_from_type map_def.map_value_type
-  in
-  
-  let collect_from_function ir_func =
-    List.iter (fun block ->
-      List.iter collect_from_instr block.instructions
-    ) ir_func.basic_blocks;
-    (* Also collect from function parameters and return type *)
-    List.iter (fun (_, param_type) -> collect_from_type param_type) ir_func.parameters;
-    (match ir_func.return_type with Some ret_type -> collect_from_type ret_type | None -> ())
-  in
-  
-  (* Collect from global maps *)
-  List.iter collect_from_map_def ir_multi_prog.global_maps;
-  
-  (* Collect from all programs *)
-  List.iter (fun ir_prog ->
-    collect_from_function ir_prog.entry_function;
-  ) ir_multi_prog.programs;
-  
-  (* Also collect from kernel functions *)
-  List.iter collect_from_function ir_multi_prog.kernel_functions;
-  
-  (* Collect struct names referenced by struct_ops attributes *)
-  let collect_struct_ops_referenced_structs () =
-    let struct_ops_structs = ref [] in
-    
-    (* Check struct_ops declarations for referenced kernel structs *)
-    List.iter (fun struct_ops_decl ->
-      if not (List.mem_assoc struct_ops_decl.ir_kernel_struct_name !struct_defs) then
-        struct_ops_structs := struct_ops_decl.ir_kernel_struct_name :: !struct_ops_structs
-    ) ir_multi_prog.struct_ops_declarations;
-    
-    (* Check struct_ops instances for referenced kernel structs *)
-    List.iter (fun struct_ops_inst ->
-      if not (List.mem_assoc struct_ops_inst.ir_instance_type !struct_defs) then
-        struct_ops_structs := struct_ops_inst.ir_instance_type :: !struct_ops_structs
-    ) ir_multi_prog.struct_ops_instances;
-    
-    !struct_ops_structs
-  in
-  
-  (* Collect userspace structs that are referenced by struct_ops *)
-  let struct_ops_referenced_structs = collect_struct_ops_referenced_structs () in
-  (match ir_multi_prog.userspace_program with
-   | Some userspace_prog ->
-       List.iter (fun struct_def ->
-         let struct_name = struct_def.struct_name in
-         (* Include struct if it's referenced by struct_ops declarations/instances *)
-         let is_struct_ops_referenced = List.mem struct_name struct_ops_referenced_structs in
-         if is_struct_ops_referenced then (
-           let struct_fields = struct_def.struct_fields in
-           if not (List.mem_assoc struct_name !struct_defs) then
-             struct_defs := (struct_name, struct_fields) :: !struct_defs
-         )
-       ) userspace_prog.userspace_structs
-   | None -> ());
-  
-  List.rev !struct_defs
-
-(** Generate struct definitions *)
-let generate_struct_definitions ?(btf_path=None) ctx struct_defs =
-  (* No more filtering - all structs come from user code or includes *)
-  let _ = btf_path in  (* Suppress unused parameter warning *)
-  
-  if struct_defs <> [] then (
-    emit_line ctx "/* Struct definitions */";
-    List.iter (fun (struct_name, fields) ->
-      emit_line ctx (sprintf "struct %s {" struct_name);
-      increase_indent ctx;
-      List.iter (fun (field_name, field_type) ->
-        (* Handle array fields with correct C syntax, preserving type aliases *)
-        let field_declaration = match field_type with
-        | IRArray (inner_type, size, _) ->
-            let inner_c_type = ebpf_type_from_ir_type inner_type in
-            sprintf "%s %s[%d];" inner_c_type field_name size
-        | IRTypeAlias (alias_name, _) ->
-            (* Preserve type alias names in struct fields to match original source code *)
-            sprintf "%s %s;" alias_name field_name
-        | IRFunctionPointer (param_types, return_type) ->
-            (* Generate correct function pointer syntax *)
-            let return_type_str = ebpf_type_from_ir_type return_type in
-            let param_types_str = List.map ebpf_type_from_ir_type param_types in
-            let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-            sprintf "%s (*%s)(%s);" return_type_str field_name params_str
-        | _ ->
-            let c_type = ebpf_type_from_ir_type field_type in
-            sprintf "%s %s;" c_type field_name
-        in
-        emit_line ctx field_declaration
-      ) fields;
-      decrease_indent ctx;
-      emit_line ctx "};"
-    ) struct_defs;
-    emit_blank_line ctx
-  )
-
-(** Collect type aliases from IR multi-program *)
-let collect_type_aliases_from_multi_program ir_multi_prog =
-  let type_aliases = ref [] in
-  
-  let collect_from_type ir_type =
-    match ir_type with
-    | IRTypeAlias (name, underlying_type) ->
-        if not (List.mem_assoc name !type_aliases) then
-          type_aliases := (name, underlying_type) :: !type_aliases
-    | _ -> ()
-  in
-  
-  let rec collect_from_value ir_val =
-    collect_from_type ir_val.val_type
-  and collect_from_expr ir_expr =
-    collect_from_type ir_expr.expr_type
-  and collect_from_instr ir_instr =
-    match ir_instr.instr_desc with
-    | IRAssign (dest_val, expr) -> 
-        collect_from_value dest_val; collect_from_expr expr
-    | IRCall (_, args, ret_opt) ->
-        List.iter collect_from_value args;
-        (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
-    | IRMapLoad (map_val, key_val, dest_val, _) ->
-        collect_from_value map_val; collect_from_value key_val; collect_from_value dest_val
-    | IRMapStore (map_val, key_val, value_val, _) ->
-        collect_from_value map_val; collect_from_value key_val; collect_from_value value_val
-    | IRMapDelete (map_val, key_val) ->
-        collect_from_value map_val; collect_from_value key_val
-    | IRReturn (Some ret_val) -> collect_from_value ret_val
-    | IRIf (cond_val, then_instrs, else_instrs_opt) ->
-        collect_from_value cond_val;
-        List.iter collect_from_instr then_instrs;
-        (match else_instrs_opt with Some instrs -> List.iter collect_from_instr instrs | None -> ())
-    | _ -> ()
-  in
-  
-  let collect_from_map_def map_def =
-    collect_from_type map_def.map_key_type;
-    collect_from_type map_def.map_value_type
-  in
-  
-  let collect_from_function ir_func =
-    List.iter (fun block ->
-      List.iter collect_from_instr block.instructions
-    ) ir_func.basic_blocks;
-    (* Also collect from function parameters and return type *)
-    List.iter (fun (_, param_type) -> collect_from_type param_type) ir_func.parameters;
-    (match ir_func.return_type with Some ret_type -> collect_from_type ret_type | None -> ())
-  in
-  
-  (* Collect from global maps *)
-  List.iter collect_from_map_def ir_multi_prog.global_maps;
-  
-  (* Collect from all programs *)
-  List.iter (fun ir_prog ->
-    collect_from_function ir_prog.entry_function;
-  ) ir_multi_prog.programs;
-  
-  List.rev !type_aliases
-
-(** Generate type alias definitions *)
-let generate_type_alias_definitions ctx type_aliases =
-  if type_aliases <> [] then (
-    emit_line ctx "/* Type alias definitions */";
-    List.iter (fun (alias_name, underlying_type) ->
-      let c_type = ebpf_type_from_ir_type underlying_type in
-      emit_line ctx (sprintf "typedef %s %s;" c_type alias_name)
-    ) type_aliases;
-    emit_blank_line ctx
-  )
-
-(** Generate type alias definitions from AST types *)
-let generate_ast_type_alias_definitions ctx type_aliases =
-  if type_aliases <> [] then (
-    emit_line ctx "/* Type alias definitions */";
-    List.iter (fun (alias_name, underlying_type) ->
-      match underlying_type with
-        | Ast.Array (element_type, size) ->
-            let element_c_type = match element_type with
-              | Ast.U8 -> "__u8"
-              | Ast.U16 -> "__u16"
-              | Ast.U32 -> "__u32"
-              | Ast.U64 -> "__u64"
-              | Ast.I8 -> "__s8"
-              | Ast.I16 -> "__s16"
-              | Ast.I32 -> "__s32"
-              | Ast.I64 -> "__s64"
-              | _ -> "__u8"
-            in
-            (* Array typedef syntax: typedef element_type alias_name[size]; *)
-            emit_line ctx (sprintf "typedef %s %s[%d];" element_c_type alias_name size)
-        | _ ->
-            let c_type = match underlying_type with
-              | Ast.U8 -> "__u8"
-              | Ast.U16 -> "__u16"
-              | Ast.U32 -> "__u32"
-              | Ast.U64 -> "__u64"
-              | Ast.I8 -> "__s8"
-              | Ast.I16 -> "__s16"
-              | Ast.I32 -> "__s32"
-              | Ast.I64 -> "__s64"
-              | Ast.Bool -> "__u8"  (* eBPF uses __u8 for bool *)
-              | Ast.Char -> "char"
-              | _ -> "__u32" (* fallback *)
-            in
-            emit_line ctx (sprintf "typedef %s %s;" c_type alias_name)
-    ) type_aliases;
-    emit_blank_line ctx
-  )
-
 (** Generate config struct definition and map *)
 let generate_config_map_definition ctx config_decl =
   let config_name = config_decl.config_name in
@@ -1014,39 +713,6 @@ let generate_config_map_definition ctx config_decl =
   emit_line ctx "}";
   emit_blank_line ctx
 
-(** Generate declarations in original AST order to preserve source order *)
-let generate_declarations_in_source_order ctx _ir_multi_program type_aliases =
-  (* We need to generate declarations in the order they appeared in the original source.
-     Since we don't have direct access to the AST here, we need to reconstruct the order.
-     For now, we'll use a simple heuristic: type aliases first, then structs. *)
-  
-  (* Generate type alias definitions from AST first *)
-  generate_ast_type_alias_definitions ctx type_aliases;
-  
-  (* Config maps are now generated from the main multi-program generation function to avoid duplication *)
-  (* Remove this generation here as it's handled in generate_c_multi_program *)
-
-  (* With attributed functions, all maps are global - no program-scoped maps *)
-  
-  (* Generate entry function - this will collect callbacks *)
-  (* generate_c_function ctx ir_multi_program.entry_function; *)
-  
-  (* Now emit any pending callbacks before other functions *)
-  if ctx.pending_callbacks <> [] then (
-    (* Insert callbacks at the beginning of the output, after includes and maps *)
-    let current_output = ctx.output_lines in
-    ctx.output_lines <- [];
-    List.iter (emit_line ctx) ctx.pending_callbacks;
-    ctx.pending_callbacks <- [];
-    emit_blank_line ctx;
-    (* Prepend current output *)
-    ctx.output_lines <- current_output @ ctx.output_lines;
-  );
-  
-  (* With attributed functions, each program has only the entry function - no nested functions *)
-  
-  (* Function has side effects on ctx, no return value needed *)
-  ()
 
 (** Check if IR multi-program contains object allocation instructions *)
 let rec check_object_allocation_usage_in_instrs instrs =
@@ -2117,7 +1783,140 @@ let generate_c_expression ctx ir_expr =
           (* Return the temporary variable *)
           temp_var
 
-
+(** Generate ALL declarations in original source order - complete implementation *)
+let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ?_symbol_table ~_btf_path _tail_call_analysis =
+  (* Process source declarations in their original order - handle ALL declaration types *)
+  List.iter (fun source_decl ->
+    match source_decl.Ir.decl_desc with
+    | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
+        (* Generate type alias definition with special handling for function pointers *)
+        (match ir_type with
+         | IRFunctionPointer (param_types, return_type) ->
+             (* Special syntax for function pointer typedefs *)
+             let return_type_str = ebpf_type_from_ir_type return_type in
+             let param_types_str = List.map ebpf_type_from_ir_type param_types in
+             let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+             emit_line ctx (sprintf "typedef %s (*%s)(%s);" return_type_str name params_str);
+         | IRArray (inner_type, size, _) ->
+             (* Special syntax for array typedefs: typedef element_type alias_name[size]; *)
+             let element_type_str = ebpf_type_from_ir_type inner_type in
+             emit_line ctx (sprintf "typedef %s %s[%d];" element_type_str name size);
+         | _ ->
+             (* Regular type alias *)
+             let c_type = ebpf_type_from_ir_type ir_type in
+             emit_line ctx (sprintf "typedef %s %s;" c_type name));
+        emit_blank_line ctx
+    
+    | Ir.IRDeclStructDef (name, fields, pos) ->
+        (* Filter out kernel-defined structs (same logic as enums) *)
+        let should_include_struct = match _symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
+                        let is_builtin = struct_pos.filename = "<builtin>" in
+                        let is_btf_struct = Filename.check_suffix struct_pos.filename ".kh" in
+                        not is_builtin && not is_btf_struct
+                    | _ -> true)  (* Not a struct, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
+          | None -> 
+              (* Fallback: check the position from the declaration itself *)
+              let is_builtin = pos.filename = "<builtin>" in
+              let is_btf_struct = Filename.check_suffix pos.filename ".kh" in
+              not is_builtin && not is_btf_struct
+        in
+        if should_include_struct then (
+          (* Generate struct definition *)
+          emit_line ctx (sprintf "struct %s {" name);
+          increase_indent ctx;
+          List.iter (fun (field_name, field_type) ->
+            let field_declaration = match field_type with
+              | IRArray (inner_type, size, _) ->
+                  (* Special syntax for array fields: element_type field_name[size]; *)
+                  let element_type_str = ebpf_type_from_ir_type inner_type in
+                  sprintf "%s %s[%d];" element_type_str field_name size
+              | _ ->
+                  (* Regular field *)
+                  let c_type = ebpf_type_from_ir_type field_type in
+                  sprintf "%s %s;" c_type field_name
+            in
+            emit_line ctx field_declaration;
+          ) fields;
+          decrease_indent ctx;
+          emit_line ctx "};";
+          emit_blank_line ctx
+        )
+    
+    | Ir.IRDeclEnumDef (name, values, pos) ->
+        (* Filter out kernel-defined enums (same logic as original collect_enum_definitions) *)
+        let should_include_enum = match _symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
+                        let is_builtin = enum_pos.filename = "<builtin>" in
+                        let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
+                        not is_builtin && not is_btf_enum
+                    | _ -> true)  (* Not an enum, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
+          | None -> 
+              (* Fallback: check the position from the declaration itself *)
+              let is_builtin = pos.filename = "<builtin>" in
+              let is_btf_enum = Filename.check_suffix pos.filename ".kh" in
+              not is_builtin && not is_btf_enum
+        in
+        if should_include_enum then (
+          (* Generate enum definition *)
+          emit_line ctx (sprintf "enum %s {" name);
+          increase_indent ctx;
+          let value_count = List.length values in
+          List.iteri (fun i (const_name, value) ->
+            let line = sprintf "%s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
+            emit_line ctx line
+          ) values;
+          decrease_indent ctx;
+          emit_line ctx "};";
+          emit_blank_line ctx
+        )
+    
+    | Ir.IRDeclMapDef map_def ->
+        (* Generate map definition *)
+        generate_map_definition ctx map_def
+    
+    | Ir.IRDeclConfigDef config_def ->
+        (* Generate config map definition *)
+        generate_config_map_definition ctx config_def
+    
+    | Ir.IRDeclGlobalVarDef global_var ->
+        (* Generate global variable definition *)
+        let var_type_str = ebpf_type_from_ir_type global_var.global_var_type in
+        let init_str = match global_var.global_var_init with
+          | Some init_val -> 
+              let expr_str = generate_c_value ctx init_val in
+              sprintf " = %s" expr_str
+          | None -> ""
+        in
+        emit_line ctx (sprintf "%s %s%s;" var_type_str global_var.global_var_name init_str);
+        emit_blank_line ctx
+    
+    | Ir.IRDeclFunctionDef _func_def ->
+        (* Skip function generation here - functions will be handled by existing logic after this unified function *)
+        (* This avoids forward reference issues while still preserving order for other declaration types *)
+        ()
+    
+    | Ir.IRDeclStructOpsDef struct_ops_def ->
+        (* Generate struct_ops definition *)
+        emit_line ctx (sprintf "/* eBPF struct_ops declaration for %s */" struct_ops_def.ir_kernel_struct_name);
+        emit_line ctx (sprintf "/* struct %s_ops implementation would be auto-generated by libbpf */" struct_ops_def.ir_struct_ops_name);
+        emit_blank_line ctx
+    
+    | Ir.IRDeclStructOpsInstance struct_ops_instance ->
+        (* Generate struct_ops instance *)
+        emit_line ctx (sprintf "/* eBPF struct_ops instance: %s */" struct_ops_instance.ir_instance_name);
+        emit_blank_line ctx
+  ) ir_multi_prog.Ir.source_declarations
 
 (** Generate bounds checking *)
 
@@ -2847,12 +2646,12 @@ let rec generate_c_instruction ctx ir_instr =
           ctx.in_return_context <- true;
           
           let ret_str = match ret_val.value_desc with
-            (* Use context-specific action constant mapping *)
-            | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction Xdp_actionType ->
+            (* Use context-specific action constant mapping for enum types *)
+            | IRLiteral (IntLit (i, _)) when (match ret_val.val_type with IREnum ("xdp_action", _) -> true | _ -> false) ->
                 (match Kernelscript_context.Context_codegen.map_context_action_constant "xdp" (Int64.to_int (Ast.IntegerValue.to_int64 i)) with
                  | Some action -> action
                  | None -> Ast.IntegerValue.to_string i)
-            | IRLiteral (IntLit (i, _)) when ret_val.val_type = IRAction TcActionType ->
+            | IRLiteral (IntLit (i, _)) when (match ret_val.val_type with IREnum ("tc_action", _) -> true | _ -> false) ->
                 (match Kernelscript_context.Context_codegen.map_context_action_constant "tc" (Int64.to_int (Ast.IntegerValue.to_int64 i)) with
                  | Some action -> action
                  | None -> Ast.IntegerValue.to_string i)
@@ -3441,54 +3240,21 @@ let compile_multi_to_c_with_tail_calls
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_prog;
   
-  (* Generate enum definitions *)
-  generate_enum_definitions ?symbol_table ctx ir_multi_prog;
+  (* Generate all declarations in original source order *)
+  generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path tail_call_analysis;
   
-  (* Generate declarations in original AST order to preserve source order *)
-  generate_declarations_in_source_order ctx ir_multi_prog type_aliases;
-  
-  (* Generate struct definitions *)
-  let struct_defs = collect_struct_definitions_from_multi_program ?symbol_table ir_multi_prog in
-  generate_struct_definitions ~btf_path ctx struct_defs;
-  
-  (* Generate global map definitions BEFORE functions that use them *)
-  List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
-  
-  (* Generate config maps from IR multi-program BEFORE functions that use them *)
-  if ir_multi_prog.global_configs <> [] then
-    List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
-  
-  (* Generate ProgArray map BEFORE functions that use it *)
-  let prog_array_size = match tail_call_analysis with
-    | Some analysis -> analysis.Tail_call_analyzer.prog_array_size
-    | None -> 0
-  in
-  
-  if prog_array_size > 0 then
-    generate_prog_array_map ctx prog_array_size;
-  
-  (* Generate global variables BEFORE functions that use them *)
-  generate_global_variables ctx ir_multi_prog.global_variables;
-  
-  (* Generate kernel functions once - they are shared across all programs *)
-  List.iter (generate_c_function ctx) ir_multi_prog.kernel_functions;
-
-  (* First pass: collect all callbacks *)
+  (* Note: kernel functions and program entry functions are now generated by the unified function above *)
+  (* First pass: collect all callbacks for functions that might not be in source_declarations *)
   let temp_ctx = create_c_context () in
-      List.iter (fun ir_prog ->
-      generate_c_function temp_ctx ir_prog.entry_function
-   ) ir_multi_prog.programs;
+  List.iter (fun ir_prog ->
+    generate_c_function temp_ctx ir_prog.entry_function
+  ) ir_multi_prog.programs;
   
   (* Emit collected callbacks BEFORE the actual functions *)
   if temp_ctx.pending_callbacks <> [] then (
     List.iter (emit_line ctx) temp_ctx.pending_callbacks;
     emit_blank_line ctx;
   );
-  
-  (* Generate C functions for each eBPF program after maps and configs are defined *)
-  List.iter (fun ir_prog ->
-    generate_c_function ctx ir_prog.entry_function
-  ) ir_multi_prog.programs;
 
   (* Generate struct_ops definitions and instances after functions are defined *)
   generate_struct_ops ctx ir_multi_prog;
@@ -3540,6 +3306,7 @@ let generate_c_program ir_prog =
     userspace_program = None;
     userspace_bindings = [];
     ring_buffer_registry = Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = ir_prog.ir_pos;
   } in
   generate_c_multi_program temp_multi_prog

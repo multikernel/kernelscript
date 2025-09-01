@@ -214,7 +214,7 @@ fn main() -> i32 {
   let userspace_c_code = match ir.userspace_program with
     | Some userspace_prog -> 
         Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir 
-          ~type_aliases userspace_prog ir.global_maps ir "test.ks"
+          ~_type_aliases:type_aliases userspace_prog ir.global_maps ir "test.ks"
     | None -> 
         failwith "No userspace program generated" in
   
@@ -368,7 +368,7 @@ fn main() -> i32 {
   let userspace_c_code = match ir.userspace_program with
     | Some userspace_prog -> 
         Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir 
-          ~type_aliases userspace_prog ir.global_maps ir "test.ks"
+          ~_type_aliases:type_aliases userspace_prog ir.global_maps ir "test.ks"
     | None -> 
         failwith "No userspace program generated" in
   

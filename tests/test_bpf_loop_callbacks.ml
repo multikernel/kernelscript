@@ -60,7 +60,7 @@ let test_forward_declaration_placement () =
   
   (* Create a main function that uses the callback *)
   let main_block = make_ir_basic_block "entry" [] 0 in
-  let main_func = make_ir_function "main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
   
   (* Generate both functions *)
   generate_c_function ctx callback_func;

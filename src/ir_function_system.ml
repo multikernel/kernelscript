@@ -69,7 +69,7 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     in
     
     match ir_func.return_type with
-    | Some (IRAction _) when not is_tc_program -> ()  (* Action types for programs that use actions *)
+    | Some (IREnum ("xdp_action", _)) when not is_tc_program -> ()  (* xdp_action enum for programs that use actions *)
     | Some (IRI32) when is_tc_program -> ()  (* int return type for TC programs *)
     | Some (IRU32) when is_tc_program -> ()  (* Allow u32/int for TC programs *)
     | Some _ when is_tc_program -> errors := "TC programs must return int (i32)" :: !errors;

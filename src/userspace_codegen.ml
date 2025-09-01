@@ -68,7 +68,6 @@ let rec c_type_from_ir_type = function
   | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
   | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
   | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRAction _ -> "int" (* action return values *)
   | IRFunctionPointer (param_types, return_type) -> 
       (* For function pointers, we need special handling - this is used for type aliases *)
       let return_type_str = c_type_from_ir_type return_type in
@@ -1179,6 +1178,133 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
     ) type_aliases in
     "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
   ) else ""
+
+(** Generate ALL declarations in original source order for userspace - complete implementation *)
+let generate_declarations_in_source_order_userspace ?symbol_table ir_multi_prog =
+  let declarations = ref [] in
+  
+  (* Process source declarations in their original order - handle ALL declaration types *)
+  List.iter (fun source_decl ->
+    match source_decl.Ir.decl_desc with
+    | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
+        (* Generate type alias definition with special handling for function pointers *)
+        let typedef_str = match ir_type with
+         | IRFunctionPointer (param_types, return_type) ->
+             (* Special syntax for function pointer typedefs *)
+             let return_type_str = c_type_from_ir_type return_type in
+             let param_types_str = List.map c_type_from_ir_type param_types in
+             let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+             sprintf "typedef %s (*%s)(%s);" return_type_str name params_str
+         | IRArray (inner_type, size, _) ->
+             (* Special syntax for array typedefs: typedef element_type alias_name[size]; *)
+             let element_type_str = c_type_from_ir_type inner_type in
+             sprintf "typedef %s %s[%d];" element_type_str name size
+         | _ ->
+             (* Regular type alias *)
+             let c_type = c_type_from_ir_type ir_type in
+             sprintf "typedef %s %s;" c_type name
+        in
+        declarations := typedef_str :: !declarations
+    
+    | Ir.IRDeclStructDef (name, fields, pos) ->
+        (* Filter out kernel-defined structs *)
+        let should_include_struct = match symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
+                        let is_builtin = struct_pos.filename = "<builtin>" in
+                        let is_btf_struct = Filename.check_suffix struct_pos.filename ".kh" in
+                        not is_builtin && not is_btf_struct
+                    | _ -> true)  (* Not a struct, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
+          | None -> 
+              (* Fallback: check the position from the declaration itself *)
+              let is_builtin = pos.filename = "<builtin>" in
+              let is_btf_struct = Filename.check_suffix pos.filename ".kh" in
+              not is_builtin && not is_btf_struct
+        in
+        if should_include_struct then (
+          (* Generate struct definition *)
+          let field_lines = List.map (fun (field_name, field_type) ->
+            let field_declaration = match field_type with
+              | IRArray (inner_type, size, _) ->
+                  (* Special syntax for array fields: element_type field_name[size]; *)
+                  let element_type_str = c_type_from_ir_type inner_type in
+                  sprintf "    %s %s[%d];" element_type_str field_name size
+              | _ ->
+                  (* Regular field *)
+                  let c_type = c_type_from_ir_type field_type in
+                  sprintf "    %s %s;" c_type field_name
+            in
+            field_declaration
+          ) fields in
+          let struct_def = sprintf "struct %s {\n%s\n};" name (String.concat "\n" field_lines) in
+          declarations := struct_def :: !declarations
+        )
+    
+    | Ir.IRDeclEnumDef (name, values, pos) ->
+        (* Filter out kernel-defined enums *)
+        let should_include_enum = match symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
+                        let is_builtin = enum_pos.filename = "<builtin>" in
+                        let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
+                        not is_builtin && not is_btf_enum
+                    | _ -> true)  (* Not an enum, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
+          | None -> 
+              (* Fallback: check the position from the declaration itself *)
+              let is_builtin = pos.filename = "<builtin>" in
+              let is_btf_enum = Filename.check_suffix pos.filename ".kh" in
+              not is_builtin && not is_btf_enum
+        in
+        if should_include_enum then (
+          (* Generate enum definition *)
+          let value_count = List.length values in
+          let enum_lines = List.mapi (fun i (const_name, value) ->
+            let line = sprintf "    %s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
+            line
+          ) values in
+          let enum_def = sprintf "enum %s {\n%s\n};" name (String.concat "\n" enum_lines) in
+          declarations := enum_def :: !declarations
+        )
+    
+    | Ir.IRDeclMapDef _map_def ->
+        (* Skip maps in userspace - they're handled separately *)
+        ()
+    
+    | Ir.IRDeclConfigDef _config_def ->
+        (* Skip configs in userspace - they're handled separately *)
+        ()
+    
+    | Ir.IRDeclGlobalVarDef _global_var ->
+        (* Skip global variables in userspace - they're handled separately *)
+        ()
+    
+    | Ir.IRDeclFunctionDef _func_def ->
+        (* Skip functions in userspace - they're handled separately *)
+        ()
+    
+    | Ir.IRDeclStructOpsDef _struct_ops_def ->
+        (* Skip struct_ops in userspace - they're handled separately *)
+        ()
+    
+    | Ir.IRDeclStructOpsInstance _struct_ops_instance ->
+        (* Skip struct_ops instances in userspace - they're handled separately *)
+        ()
+  ) ir_multi_prog.Ir.source_declarations;
+  
+  (* Return the declarations in the correct order (reverse since we prepended) *)
+  let ordered_declarations = List.rev !declarations in
+  if ordered_declarations <> [] then
+    String.concat "\n\n" ordered_declarations ^ "\n\n"
+  else
+    ""
 
 (** Determine which ELF section a global variable belongs to *)
 let determine_global_var_section (global_var : ir_global_variable) =
@@ -3281,7 +3407,7 @@ print(f"KernelScript Python wrapper initialized with {len(_maps)} maps")
 |} base_name map_metadata (String.concat "\n\n" struct_definitions) map_exports
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(_type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?_symbol_table (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
     let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
@@ -3381,11 +3507,8 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let string_typedefs = generate_string_typedefs string_sizes in
   let string_helpers = generate_string_helpers string_sizes in
   
-  (* Generate enum definitions *)
-  let enum_definitions = generate_enum_definitions_userspace ?symbol_table userspace_prog in
-  
-  (* Generate type alias definitions from AST *)
-  let type_alias_definitions = generate_type_alias_definitions_userspace_from_ast type_aliases in
+  (* Generate all declarations in original source order *)
+  let unified_declarations = generate_declarations_in_source_order_userspace ?symbol_table:_symbol_table ir_multi_prog in
 
   (* Generate eBPF object instance - also needed for struct_ops *)
   let needs_skeleton = ir_multi_prog.global_variables <> [] || uses_bpf_functions || ir_multi_prog.struct_ops_instances <> [] in
@@ -3440,18 +3563,25 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ty
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
   
   (* Filter out config structs from IR structs since we generate them separately from config_declarations *)
-  let non_config_ir_structs = List.filter (fun ir_struct ->
-    not (String.contains ir_struct.struct_name '_' && 
-         String.ends_with ~suffix:"_config" ir_struct.struct_name)
+  (* These are structs that are used only in userspace contexts (like main function parameters) *)
+  let userspace_only_structs = List.filter (fun ir_struct ->
+    (* Filter: include only userspace-only structs, exclude header structs *)
+    let is_header_struct = Filename.check_suffix ir_struct.struct_pos.filename ".kh" in
+    (* Also exclude structs that are already handled by IR-based source declarations *)
+    (* This requires checking if the struct is used in eBPF contexts *)
+    let is_used_in_ebpf = 
+      (* Check if this struct appears in any source declarations (which means it's used in eBPF) *)
+      List.exists (fun source_decl ->
+        match source_decl.Ir.decl_desc with
+        | Ir.IRDeclStructDef (name, _, _) when name = ir_struct.struct_name -> true
+        | _ -> false
+      ) ir_multi_prog.source_declarations
+    in
+    not is_header_struct && not is_used_in_ebpf
   ) userspace_prog.userspace_structs in
   
-  (* Filter out structs from .kh header files - they should not appear in userspace code *)
-  let user_defined_ir_structs = List.filter (fun ir_struct ->
-    not (Filename.check_suffix ir_struct.struct_pos.filename ".kh")
-  ) non_config_ir_structs in
-  
-  let structs = String.concat "\n\n" 
-    ((List.map generate_c_struct_from_ir user_defined_ir_structs) @ config_structs) in
+  let userspace_struct_defs = List.map generate_c_struct_from_ir userspace_only_structs in
+  let structs = String.concat "\n\n" (userspace_struct_defs @ config_structs) in
   
 
   
@@ -4058,13 +4188,13 @@ static void handle_signal(int sig) {
 %s
 
 %s
-|} includes string_typedefs type_alias_definitions string_helpers daemon_globals enum_definitions structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
+|} includes string_typedefs unified_declarations string_helpers daemon_globals "" structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
 let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) ?symbol_table (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog -> 
-        generate_complete_userspace_program_from_ir ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ?symbol_table userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~_type_aliases:type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ?_symbol_table:symbol_table userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 

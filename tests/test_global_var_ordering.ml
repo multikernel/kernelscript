@@ -30,7 +30,7 @@ let test_global_var_ordering () =
   (* Create a simple XDP function that uses these global variables *)
   let return_instr = make_ir_instruction (IRReturn (Some (make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos))) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_func" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_func" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
   
   let ir_prog = make_ir_program "test_func" Xdp main_func test_pos in
   

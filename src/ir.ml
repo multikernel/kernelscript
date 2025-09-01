@@ -37,6 +37,7 @@ type ir_multi_program = {
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
   userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
   ring_buffer_registry: ir_ring_buffer_registry; (* Centralized ring buffer tracking *)
+  source_declarations: ir_source_declaration list; (* All declarations in original source order *)
   multi_pos: ir_position;
 }
 
@@ -137,14 +138,10 @@ and ir_type =
   | IRStruct of string * (string * ir_type) list
   | IREnum of string * (string * Ast.integer_value) list
   | IRResult of ir_type * ir_type
-  | IRAction of action_type
   | IRTypeAlias of string * ir_type (* Simple type aliases *)
   | IRStructOps of string * ir_struct_ops_def (* Future: struct_ops support *)
   | IRFunctionPointer of ir_type list * ir_type (* Function pointer: (param_types, return_type) *)
   | IRRingbuf of ir_type * int (* Ring buffer object: (value_type, size) *)
-
-and action_type =
-  | Xdp_actionType | TcActionType | GenericActionType
 
 and bounds_info = {
   min_size: int option;
@@ -470,6 +467,24 @@ and ir_global_variable = {
   is_pinned: bool; (* true if declared with 'pin' keyword *)
 }
 
+(** Source-ordered declaration for preserving original order *)
+and ir_source_declaration = {
+  decl_desc: ir_declaration_desc;
+  decl_order: int; (* Original source order index *)
+  decl_pos: ir_position;
+}
+
+and ir_declaration_desc =
+  | IRDeclTypeAlias of string * ir_type * ir_position (* name, underlying_type, original_pos *)
+  | IRDeclStructDef of string * (string * ir_type) list * ir_position (* name, fields, original_pos *)
+  | IRDeclEnumDef of string * (string * Ast.integer_value) list * ir_position (* name, values, original_pos *)
+  | IRDeclMapDef of ir_map_def
+  | IRDeclConfigDef of ir_global_config
+  | IRDeclGlobalVarDef of ir_global_variable
+  | IRDeclFunctionDef of ir_function
+  | IRDeclStructOpsDef of ir_struct_ops_declaration
+  | IRDeclStructOpsInstance of ir_struct_ops_instance
+
 (** Utility functions for creating IR nodes *)
 
 let make_bounds_info ?min_size ?max_size ?(alignment = 1) ?(nullable = false) () = {
@@ -571,7 +586,8 @@ let create_empty_ring_buffer_registry () = {
 
 let make_ir_multi_program source_name programs kernel_functions global_maps 
                           ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = []) 
-                          ?userspace_program ?(userspace_bindings = []) ?(ring_buffer_registry = create_empty_ring_buffer_registry ()) pos = {
+                          ?userspace_program ?(userspace_bindings = []) ?(ring_buffer_registry = create_empty_ring_buffer_registry ()) 
+                          ?(source_declarations = []) pos = {
   source_name;
   programs;
   kernel_functions;
@@ -583,6 +599,7 @@ let make_ir_multi_program source_name programs kernel_functions global_maps
   userspace_program;
   userspace_bindings;
   ring_buffer_registry;
+  source_declarations;
   multi_pos = pos;
 }
 
@@ -664,6 +681,40 @@ let make_ir_global_variable name var_type init pos ?(is_local=false) ?(is_pinned
   is_pinned;
 }
 
+(** Helper functions for creating source declarations *)
+let make_ir_source_declaration desc order pos = {
+  decl_desc = desc;
+  decl_order = order;
+  decl_pos = pos;
+}
+
+let make_ir_type_alias_decl name underlying_type order pos =
+  make_ir_source_declaration (IRDeclTypeAlias (name, underlying_type, pos)) order pos
+
+let make_ir_struct_def_decl name fields order pos =
+  make_ir_source_declaration (IRDeclStructDef (name, fields, pos)) order pos
+
+let make_ir_enum_def_decl name values order pos =
+  make_ir_source_declaration (IRDeclEnumDef (name, values, pos)) order pos
+
+let make_ir_map_def_decl map_def order =
+  make_ir_source_declaration (IRDeclMapDef map_def) order map_def.map_pos
+
+let make_ir_config_def_decl config_def order =
+  make_ir_source_declaration (IRDeclConfigDef config_def) order config_def.config_pos
+
+let make_ir_global_var_def_decl global_var order =
+  make_ir_source_declaration (IRDeclGlobalVarDef global_var) order global_var.global_var_pos
+
+let make_ir_function_def_decl function_def order =
+  make_ir_source_declaration (IRDeclFunctionDef function_def) order function_def.func_pos
+
+let make_ir_struct_ops_def_decl struct_ops_def order =
+  make_ir_source_declaration (IRDeclStructOpsDef struct_ops_def) order struct_ops_def.ir_struct_ops_pos
+
+let make_ir_struct_ops_instance_decl struct_ops_instance order =
+  make_ir_source_declaration (IRDeclStructOpsInstance struct_ops_instance) order struct_ops_instance.ir_instance_pos
+
 (** Utility functions for match expressions *)
 let make_ir_match_arm pattern value pos = {
   ir_arm_pattern = pattern;
@@ -710,7 +761,7 @@ let rec ast_type_to_ir_type = function
   | Result (t1, t2) -> IRResult (ast_type_to_ir_type t1, ast_type_to_ir_type t2)
   | Xdp_md -> IRStruct ("xdp_md", [])
   | TracepointContext -> IRStruct ("trace_entry", [])
-  | Xdp_action -> IRAction Xdp_actionType
+  | Xdp_action -> IREnum ("xdp_action", []) (* Treat as regular enum *)
   | UserType name -> IRStruct (name, []) (* Resolved by type checker *)
   | Function (param_types, return_type) -> 
       (* Function types are represented as proper function pointers *)
@@ -786,6 +837,11 @@ let rec ast_type_to_ir_type_with_context symbol_table ast_type =
       (* Recursively handle array element types with context *)
       let bounds = make_bounds_info ~min_size:size ~max_size:size () in
       IRArray (ast_type_to_ir_type_with_context symbol_table elem_type, size, bounds)
+  | Function (param_types, return_type) ->
+      (* Function types with context-aware type resolution *)
+      let ir_param_types = List.map (ast_type_to_ir_type_with_context symbol_table) param_types in
+      let ir_return_type = ast_type_to_ir_type_with_context symbol_table return_type in
+      IRFunctionPointer (ir_param_types, ir_return_type)
   | Enum name ->
       (* Check if this enum is defined in the symbol table *)
       (match Symbol_table.lookup_symbol symbol_table name with
@@ -833,9 +889,6 @@ let rec string_of_ir_type = function
   | IRResult (t1, t2) -> Printf.sprintf "result (%s, %s)" (string_of_ir_type t1) (string_of_ir_type t2)
   | IRTypeAlias (name, _) -> Printf.sprintf "type %s" name
   | IRStructOps (name, _) -> Printf.sprintf "struct_ops %s" name
-  | IRAction action -> Printf.sprintf "action %s" (match action with
-    | Xdp_actionType -> "xdp" | TcActionType -> "tc"
-    | GenericActionType -> "generic")
   | IRFunctionPointer (param_types, return_type) ->
       let param_strs = List.map string_of_ir_type param_types in
       let return_str = string_of_ir_type return_type in

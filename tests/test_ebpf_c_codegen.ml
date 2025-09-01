@@ -199,7 +199,7 @@ let test_function_generation () =
   let return_val = make_ir_value (IRLiteral (IntLit (Signed64 42L, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
   
   generate_c_function ctx main_func;
   
@@ -218,7 +218,7 @@ let test_complete_program () =
   let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in (* XDP_PASS *)
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test_xdp" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test_xdp" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
   
   (* Add a simple map *)
   let map_def = make_ir_map_def "packet_count" IRU32 IRU64 IRHash 1024 
@@ -272,7 +272,7 @@ let test_file_writing () =
   let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
   let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
   let main_block = make_ir_basic_block "entry" [return_instr] 0 in
-  let main_func = make_ir_function "test" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true test_pos in
+  let main_func = make_ir_function "test" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
   let ir_prog = make_ir_program "test" Xdp main_func test_pos in
   
   let test_filename = "test_output.c" in
@@ -474,6 +474,7 @@ let test_no_empty_struct_generation () =
     userspace_program = None;
     userspace_bindings = [];
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = dummy_pos;
   } in
   
@@ -533,6 +534,7 @@ let test_type_alias_struct_ordering () =
     userspace_program = None;
     userspace_bindings = [];
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = dummy_pos;
   } in
   
@@ -613,47 +615,71 @@ let test_struct_definition_with_aliases () =
 
 (** Test kernel struct filtering to prevent redefinition errors *)
 let test_kernel_struct_filtering () =
+  (* Test that kernel-defined structs are filtered out and don't appear in generated C code *)
+  let user_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test.ks" } in
+  let kernel_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "vmlinux.kh" } in
+  let builtin_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "<builtin>" } in
   
-  (* Test the new clean architecture: kernel structs never reach code generation *)
-  (* With clean architecture, only user-defined structs should appear in compilation pipeline *)
-  let user_struct_fields = [
-    ("count", Kernelscript.Ir.IRU64);
-    ("timestamp", Kernelscript.Ir.IRU64)
-  ] in
+  (* Create source declarations that include both user-defined and kernel structs *)
+  let user_struct_decl = {
+    Kernelscript.Ir.decl_desc = Kernelscript.Ir.IRDeclStructDef ("PacketStats", [
+      ("count", Kernelscript.Ir.IRU64);
+      ("timestamp", Kernelscript.Ir.IRU64)
+    ], user_pos);
+    decl_order = 0;
+    decl_pos = user_pos;
+  } in
   
-  let another_user_struct_fields = [
-    ("value", Kernelscript.Ir.IRU32);
-    ("enabled", Kernelscript.Ir.IRBool)
-  ] in
+  (* Kernel struct from .kh file should be filtered out *)
+  let kernel_struct_decl = {
+    Kernelscript.Ir.decl_desc = Kernelscript.Ir.IRDeclStructDef ("__sk_buff", [
+      ("len", Kernelscript.Ir.IRU32);
+      ("data", Kernelscript.Ir.IRPointer (Kernelscript.Ir.IRU8, Kernelscript.Ir.make_bounds_info ()))
+    ], kernel_pos);
+    decl_order = 1;
+    decl_pos = kernel_pos;
+  } in
   
-  (* Only user-defined structs in compilation pipeline *)
-  (* Kernel structs (__sk_buff, xdp_md) are handled by include system, never reach here *)
-  let struct_defs = [
-    ("PacketStats", user_struct_fields);
-    ("UserConfig", another_user_struct_fields)
-  ] in
+  (* Builtin struct should also be filtered out *)
+  let builtin_struct_decl = {
+    Kernelscript.Ir.decl_desc = Kernelscript.Ir.IRDeclStructDef ("xdp_md", [
+      ("data", Kernelscript.Ir.IRU32);
+      ("data_end", Kernelscript.Ir.IRU32)
+    ], builtin_pos);
+    decl_order = 2;
+    decl_pos = builtin_pos;
+  } in
   
-  (* Generate struct definitions - no filtering needed for kernel structs *)
-  let ctx = create_c_context () in
-  generate_struct_definitions ~btf_path:None ctx struct_defs;
+  let multi_ir = {
+    Kernelscript.Ir.source_name = "test";
+    programs = [];
+    kernel_functions = [];
+    global_maps = [];
+    global_variables = [];
+    global_configs = [];
+    struct_ops_declarations = [];
+    struct_ops_instances = [];
+    userspace_program = None;
+    userspace_bindings = [];
+    ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [user_struct_decl; kernel_struct_decl; builtin_struct_decl];
+    multi_pos = user_pos;
+  } in
   
-  let output = String.concat "\n" ctx.output_lines in
+  (* Generate C code using the unified function *)
+  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
   
-  (* Verify that all user-defined structs are generated *)
-  check bool "user struct PacketStats is generated" true (contains_substr output "struct PacketStats {");
-  check bool "user struct has count field" true (contains_substr output "__u64 count;");
-  check bool "user struct has timestamp field" true (contains_substr output "__u64 timestamp;");
+  (* Verify that user-defined structs are generated *)
+  check bool "user struct PacketStats is generated" true (contains_substr c_code "struct PacketStats {");
+  check bool "user struct has count field" true (contains_substr c_code "__u64 count;");
+  check bool "user struct has timestamp field" true (contains_substr c_code "__u64 timestamp;");
   
-  check bool "user struct UserConfig is generated" true (contains_substr output "struct UserConfig {");
-  check bool "user struct has value field" true (contains_substr output "__u32 value;");
-  check bool "user struct has enabled field" true (contains_substr output "__u8 enabled;");
+  (* Critical: Verify that kernel structs are NOT generated (they come from vmlinux.h) *)
+  check bool "kernel struct __sk_buff is NOT generated" false (contains_substr c_code "struct __sk_buff {");
+  check bool "builtin struct xdp_md is NOT generated" false (contains_substr c_code "struct xdp_md {");
   
-  (* Clean architecture: No kernel structs should appear (they're handled by includes) *)
-  check bool "no kernel structs in output" false (contains_substr output "struct __sk_buff {");
-  check bool "no kernel structs in output" false (contains_substr output "struct xdp_md {");
-  
-  (* Verify that the comment section is present *)
-  check bool "struct definitions comment present" true (contains_substr output "Struct definitions");
+  (* Verify that vmlinux.h include is present (this provides kernel structs) *)
+  check bool "vmlinux.h include present" true (contains_substr c_code "#include \"vmlinux.h\"");
   
   ()
 
@@ -761,6 +787,7 @@ let test_complete_type_alias_fix_integration () =
     userspace_program = None;
     userspace_bindings = [];
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = dummy_pos;
   } in
   
@@ -830,6 +857,7 @@ let test_string_size_collection_from_userspace_structs () =
     userspace_program = Some userspace_program;
     userspace_bindings = [];
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = dummy_pos;
   } in
   
@@ -860,7 +888,7 @@ let test_declaration_ordering_fix () =
   let return_instr = make_ir_instruction (IRReturn (Some dest_val)) dummy_pos in
   
   let main_block = make_ir_basic_block "entry" [map_instr; return_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true dummy_pos in
   
   let ir_program = {
     Kernelscript.Ir.name = "test_program";
@@ -881,6 +909,7 @@ let test_declaration_ordering_fix () =
     userspace_program = None;
     userspace_bindings = [];
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = dummy_pos;
   } in
   
@@ -913,7 +942,7 @@ let test_bpf_printk_string_literal_fix () =
   let print_instr = make_ir_instruction (IRCall (DirectCall "print", [str_literal], Some result_var)) dummy_pos in
   
   let main_block = make_ir_basic_block "entry" [print_instr] 0 in
-  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+  let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true dummy_pos in
   
   let ir_program = {
     Kernelscript.Ir.name = "test_program";
@@ -934,6 +963,7 @@ let test_bpf_printk_string_literal_fix () =
     userspace_program = None;
     userspace_bindings = [];
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+    source_declarations = [];
     multi_pos = dummy_pos;
   } in
   
@@ -968,7 +998,7 @@ let test_string_escaping_in_bpf_printk () =
     let print_instr = make_ir_instruction (IRCall (DirectCall "print", [str_literal], Some result_var)) dummy_pos in
     
     let main_block = make_ir_basic_block "entry" [print_instr] 0 in
-    let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IRAction Xdp_actionType)) [main_block] ~is_main:true dummy_pos in
+    let main_func = make_ir_function "test_main" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true dummy_pos in
     
     let ir_program = {
       Kernelscript.Ir.name = "test_program";
@@ -989,6 +1019,7 @@ let test_string_escaping_in_bpf_printk () =
       userspace_program = None;
       userspace_bindings = [];
       ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
+      source_declarations = [];
       multi_pos = dummy_pos;
     } in
     
@@ -1097,6 +1128,7 @@ let suite =
     ("Struct fields use alias names", `Quick, test_struct_fields_use_alias_names);
     ("Struct definition with aliases", `Quick, test_struct_definition_with_aliases);
     ("Kernel struct filtering", `Quick, test_kernel_struct_filtering);
+
     ("Complete type alias fix integration", `Quick, test_complete_type_alias_fix_integration);
     ("Map field access pointer fix", `Quick, test_map_field_access_pointer_fix);
     (* Bug fix regression tests *)
