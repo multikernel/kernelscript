@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -48,3 +49,4 @@ jobs:
     - name: Run example tests
       run: eval $(opam env) && bash tests/test_all_examples.sh || true
       continue-on-error: true
+
