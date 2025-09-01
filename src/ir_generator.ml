@@ -1962,7 +1962,7 @@ and lower_statement ctx stmt =
           (* For userspace, always use BpfLoopHelper to generate C for loops *)
           Loop_analysis.BpfLoopHelper
         else
-          (* For eBPF, use the eBPF-specific strategy *)
+          (* For eBPF, use the original eBPF-specific strategy *)
           Loop_analysis.get_ebpf_loop_strategy loop_analysis
       in
       
@@ -2019,55 +2019,45 @@ and lower_statement ctx stmt =
            emit_instruction ctx bpf_loop_instr
            
        | Loop_analysis.SimpleLoop ->
-           (* Use traditional goto-based loop for simple bounded cases *)
-           let simple_loop_comment = make_ir_instruction 
-             (IRComment "(* Using simple loop for bounded case *)")
-             stmt.stmt_pos in
-           emit_instruction ctx simple_loop_comment;
-           
-           (* Initialize counter *)
-           let init_expr = make_ir_expr (IRValue start_val) IRU32 stmt.stmt_pos in
-           let assign_instr = make_ir_instruction (IRAssign (counter_val, init_expr)) stmt.stmt_pos in
-           emit_instruction ctx assign_instr;
-           
-           (* Loop labels *)
-           let loop_header = Printf.sprintf "loop_header_%d" ctx.next_block_id in
-           let loop_body = Printf.sprintf "loop_body_%d" (ctx.next_block_id + 1) in
-           let loop_exit = Printf.sprintf "loop_exit_%d" (ctx.next_block_id + 2) in
-           
-           (* Jump to loop header *)
-           let jump_to_header = make_ir_instruction (IRJump loop_header) stmt.stmt_pos in
-           emit_instruction ctx jump_to_header;
-           let _pre_loop_block = create_basic_block ctx "pre_loop" in
-           
-           (* Loop condition check *)
-           let cond_val = allocate_temp_variable ctx "loop_cond" IRBool stmt.stmt_pos in
-           let cond_expr = make_ir_expr (IRBinOp (counter_val, IRLt, end_val)) IRBool stmt.stmt_pos in
-           emit_variable_decl ctx (match cond_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRBool (Some cond_expr) stmt.stmt_pos;
-           
-           let loop_cond_jump = make_ir_instruction 
-             (IRCondJump (cond_val, loop_body, loop_exit)) 
-             stmt.stmt_pos in
-           emit_instruction ctx loop_cond_jump;
-           let _header_block = create_basic_block ctx loop_header in
-           
-           (* Loop body *)
-           List.iter (lower_statement ctx) body_stmts;
-           
-           (* Increment counter *)
-           let one_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 1L, None))) IRU32 stmt.stmt_pos in
-           let inc_expr = make_ir_expr (IRBinOp (counter_val, IRAdd, one_val)) IRU32 stmt.stmt_pos in
-           let assign_instr = make_ir_instruction (IRAssign (counter_val, inc_expr)) stmt.stmt_pos in
-           emit_instruction ctx assign_instr;
-           
-           (* Jump back to header *)
-           let back_jump = make_ir_instruction (IRJump loop_header) stmt.stmt_pos in
-           emit_instruction ctx back_jump;
-           let _body_block = create_basic_block ctx loop_body in
-           
-           (* Exit block *)
-           let _exit_block = create_basic_block ctx loop_exit in
-           ())
+           (* Use UnrolledLoop for all SimpleLoop cases to maintain variable scoping *)
+           (* This avoids both basic block ordering issues and callback scoping issues *)
+           (match loop_analysis.bound_info with
+            | Loop_analysis.Bounded (start_int, end_int) ->
+                let simple_loop_comment = make_ir_instruction 
+                  (IRComment "(* Using unrolled loop for simple bounded case *)")
+                  stmt.stmt_pos in
+                emit_instruction ctx simple_loop_comment;
+                
+                (* Unroll the loop iterations *)
+                for i = start_int to end_int - 1 do
+                  let iter_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 (Int64.of_int i), None))) IRU32 stmt.stmt_pos in
+                  let assign_instr = make_ir_instruction (IRAssign (counter_val, make_ir_expr (IRValue iter_val) IRU32 stmt.stmt_pos)) stmt.stmt_pos in
+                  emit_instruction ctx assign_instr;
+                  List.iter (lower_statement ctx) body_stmts;
+                done
+            | _ -> 
+                (* Fallback to BpfLoopHelper for unbounded simple loops *)
+                let bpf_loop_comment = make_ir_instruction 
+                  (IRComment "(* Using bpf_loop() for unbounded simple loop *)")
+                  stmt.stmt_pos in
+                emit_instruction ctx bpf_loop_comment;
+                
+                (* Process loop body in isolated context to collect instructions *)
+                let body_instructions = ref [] in
+                let old_current_block = ctx.current_block in
+                ctx.current_block <- [];
+                List.iter (lower_statement ctx) body_stmts;
+                body_instructions := List.rev ctx.current_block;
+                ctx.current_block <- old_current_block;
+                
+                (* Create a dummy context value for the loop *)
+                let loop_ctx_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 stmt.stmt_pos in
+                
+                (* Emit IRBpfLoop instruction with collected body *)
+                let bpf_loop_instr = make_ir_instruction 
+                  (IRBpfLoop (start_val, end_val, counter_val, loop_ctx_val, !body_instructions))
+                  stmt.stmt_pos in
+                emit_instruction ctx bpf_loop_instr))
       
   | Ast.ForIter (index_var, value_var, iterable_expr, body_stmts) ->
       (* For-iter loops are always considered unbounded *)
