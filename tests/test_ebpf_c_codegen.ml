@@ -1096,6 +1096,52 @@ let test_variable_function_call_declaration () =
   (* Should NOT generate separate variable declaration without initialization *)
   check bool "no uninitialized declaration" false (contains_substr output "__u32 val_0;")
 
+(** Integration test: eBPF function generation bug fix *)
+let test_ebpf_function_generation_bug_fix () =
+  (* This test catches the specific bug where eBPF functions were missing from generated code *)
+  
+  (* Initialize context codegens *)
+  Kernelscript_context.Xdp_codegen.register ();
+  
+  (* Create a minimal XDP program IR directly (bypassing parsing/type checking complexity) *)
+  let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in (* XDP_PASS *)
+  let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
+  let main_block = make_ir_basic_block "entry" [return_instr] 0 in
+  let main_func = make_ir_function "simple_filter" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
+  
+  (* Set the program type for XDP *)
+  main_func.func_program_type <- Some Kernelscript.Ast.Xdp;
+  
+  let ir_prog = make_ir_program "simple_filter" Xdp main_func test_pos in
+  
+  (* Create multi-program structure *)
+  let multi_ir = make_ir_multi_program "test" [ir_prog] [] [] test_pos in
+  
+  (* CRITICAL: Use the complete compilation pipeline that was buggy *)
+  let (ebpf_c_code, _) = compile_multi_to_c_with_tail_calls multi_ir in
+  
+  (* Verify that the XDP function is actually generated in the eBPF code *)
+  check bool "eBPF code contains SEC(\"xdp\") annotation" true (contains_substr ebpf_c_code "SEC(\"xdp\")");
+  check bool "eBPF code contains simple_filter function" true (contains_substr ebpf_c_code "simple_filter");
+  check bool "eBPF code contains xdp_md parameter" true (contains_substr ebpf_c_code "struct xdp_md*");
+  check bool "eBPF code contains return statement" true (contains_substr ebpf_c_code "return 2");
+  check bool "eBPF code contains function signature" true (contains_substr ebpf_c_code "enum xdp_action simple_filter");
+  
+  (* Verify the function is not just declared but actually has a body *)
+  let func_start = try 
+    Str.search_forward (Str.regexp "enum xdp_action simple_filter") ebpf_c_code 0
+  with Not_found -> -1 in
+  let func_body = try
+    Str.search_forward (Str.regexp "return 2") ebpf_c_code func_start
+  with Not_found -> -1 in
+  
+  check bool "XDP function has complete implementation" true (func_start >= 0 && func_body > func_start);
+  
+  (* Verify GPL license is present *)
+  check bool "eBPF code contains GPL license" true (contains_substr ebpf_c_code "GPL");
+  
+  ()
+
 (** Test suite definition *)
 let suite =
   [
@@ -1137,6 +1183,8 @@ let suite =
     ("BPF printk string literal fix", `Quick, test_bpf_printk_string_literal_fix);
     ("String escaping in bpf_printk", `Quick, test_string_escaping_in_bpf_printk);
     ("Variable function call declaration", `Quick, test_variable_function_call_declaration);
+    (* Integration test to catch missing eBPF function generation bug *)
+    ("eBPF function generation bug fix", `Quick, test_ebpf_function_generation_bug_fix);
   ]
 
 (** Run all tests *)
