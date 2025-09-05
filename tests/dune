@@ -433,7 +433,7 @@
 
 
 
-; Top-level alias to run all tests
+; Top-level alias to build all tests
 (alias
  (name tests)
  (deps
@@ -519,4 +519,337 @@
   test_tc.exe
   test_exec.exe
   test_void_functions.exe
-  test_definition_order.exe)) 
+  test_definition_order.exe))
+
+; Runtest rules to actually execute the tests
+(rule
+ (alias runtest)
+ (action (run ./test_ringbuf.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_test_attribute.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_btf_binary_parser.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_extern.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_include.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_lexer.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ir_patterns.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ast.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_parser.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_type_checker.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_symbol_table.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_maps.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_object_allocation.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_safety_checker.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_map_operations.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_evaluator.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_compound_index_assignment.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_dynptr_bridge.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_global_var_ordering.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_string_to_array_unification.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_truthy_falsy.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ir.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ir_analysis.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ir_function_system.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ebpf_c_codegen.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_map_syntax.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_map_assignment.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_map_integration.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_userspace.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_map_flags.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_userspace_maps.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_comment_positions.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_for_statements.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_config.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_break_continue.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_bpf_loop_callbacks.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_userspace_for_codegen.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_userspace_statements.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_return_value_propagation.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_stdlib.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_config_struct_generation.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_array_literals.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_array_init.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_config_validation.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_userspace_struct_flexibility.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_struct_field_access.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_struct_initialization.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_program_ref.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_function_pointers.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_string_type.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_string_codegen.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_ebpf_string_generation.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_userspace_skeleton_header.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_match.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_pinned_globals.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_string_struct_fixes.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_error_handling.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_struct_ops.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_pointer_syntax.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_address_of_user_types.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_kfunc_attribute.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_private_attribute.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_function_scope.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_integer_literal.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_string_literal_bugs.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_return_path_analysis.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_enum.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_nested_if_codegen.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_type_alias.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_const_variables.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_global_var.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_function_validation.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_tail_call.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_context_field_types.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_named_returns.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_import_system.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_tracepoint.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_probe.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_detach_api.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_tc.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_exec.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_void_functions.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_definition_order.exe))) 
