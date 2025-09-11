@@ -1890,15 +1890,39 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
         generate_config_map_definition ctx config_def
     
     | Ir.IRDeclGlobalVarDef global_var ->
-        (* Generate global variable definition *)
+        (* Generate global variable definition with proper attributes *)
         let var_type_str = ebpf_type_from_ir_type global_var.global_var_type in
-        let init_str = match global_var.global_var_init with
-          | Some init_val -> 
-              let expr_str = generate_c_value ctx init_val in
-              sprintf " = %s" expr_str
-          | None -> ""
-        in
-        emit_line ctx (sprintf "%s %s%s;" var_type_str global_var.global_var_name init_str);
+        let var_name = global_var.global_var_name in
+        let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
+        
+        (* Generate global variables section comment if this is the first global variable *)
+        let has_global_vars_comment = List.exists (fun line -> 
+          try 
+            let _ = Str.search_forward (Str.regexp_string "/* Global variables */") line 0 in true
+          with Not_found -> false
+        ) ctx.output_lines in
+        if not has_global_vars_comment then (
+          emit_line ctx "/* Global variables */";
+        );
+        
+        (* Generate __hidden macro definition if this is the first local variable encountered *)
+        let has_hidden_def = List.exists (fun line -> 
+          try 
+            let _ = Str.search_forward (Str.regexp_string "#define __hidden") line 0 in true
+          with Not_found -> false
+        ) ctx.output_lines in
+        if global_var.is_local && not has_hidden_def then (
+          emit_line ctx "#define __hidden __attribute__((visibility(\"hidden\")))";
+          emit_blank_line ctx
+        );
+        
+        (* Generate variable declaration with initialization if present *)
+        (match global_var.global_var_init with
+         | Some init_val -> 
+             let expr_str = generate_c_value ctx init_val in
+             emit_line ctx (sprintf "%s%s %s = %s;" local_attr var_type_str var_name expr_str)
+         | None -> 
+             emit_line ctx (sprintf "%s%s %s;" local_attr var_type_str var_name));
         emit_blank_line ctx
     
     | Ir.IRDeclFunctionDef _func_def ->
