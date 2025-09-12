@@ -34,8 +34,23 @@ let test_global_var_ordering () =
   
   let ir_prog = make_ir_program "test_func" Xdp main_func test_pos in
   
-  (* Create multi-program structure with global variables *)
-  let multi_ir = make_ir_multi_program "test" [ir_prog] [] [] ~global_variables:[global_var1; global_var2] test_pos in
+  (* Create source declarations for global variables *)
+  let global_var_decl1 = { 
+    decl_desc = IRDeclGlobalVarDef global_var1; 
+    decl_order = 0; 
+    decl_pos = test_pos 
+  } in
+  let global_var_decl2 = { 
+    decl_desc = IRDeclGlobalVarDef global_var2; 
+    decl_order = 1; 
+    decl_pos = test_pos 
+  } in
+  
+  (* Create multi-program structure with proper source declarations *)
+  let multi_ir = make_ir_multi_program "test" [ir_prog] [] [] 
+    ~global_variables:[global_var1; global_var2] 
+    ~source_declarations:[global_var_decl1; global_var_decl2] 
+    test_pos in
   
   let c_code = generate_c_multi_program multi_ir in
   
