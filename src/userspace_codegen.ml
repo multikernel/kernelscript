@@ -688,12 +688,21 @@ let c_reserved_keywords = [
   "stdin"; "stdout"; "stderr"; "errno"; "NULL"
 ]
 
-(** Sanitize variable name to avoid C reserved keywords *)
+(** Sanitize variable name to avoid C reserved keywords and ensure consistent naming *)
 let sanitize_var_name var_name =
-  if List.mem var_name c_reserved_keywords then
-    var_name ^ "_var"
+  (* Add var_ prefix to all user variables for consistent naming *)
+  let is_temp_var = 
+    String.contains var_name '_' && (
+      (String.length var_name > 0 && String.get var_name 0 >= '0' && String.get var_name 0 <= '9') ||
+      (try ignore (Str.search_forward (Str.regexp "temp\\|key\\|value\\|match") var_name 0); true with Not_found -> false)
+    ) in
+  if is_temp_var then
+    (* This looks like a generated temporary variable, don't add prefix *)
+    if List.mem var_name c_reserved_keywords then var_name ^ "_var" else var_name
   else
-    var_name
+    (* This is a user variable, add var_ prefix *)
+    let base_name = if List.mem var_name c_reserved_keywords then var_name ^ "_var" else var_name in
+    "var_" ^ base_name
 
 let fresh_temp_var ctx prefix =
   incr ctx.temp_counter;
@@ -1437,7 +1446,7 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
                let section = determine_global_var_section global_var in
                sprintf "obj->%s->%s" section name)
       else
-        name  (* Function parameters and regular variables use their names directly *)
+        sanitize_var_name name  (* Function parameters and regular variables use sanitized names *)
   | IRTempVariable name -> 
       (* Temporary variables use their names directly *)
       name
@@ -1900,11 +1909,11 @@ let rec generate_c_instruction_from_ir ctx instruction =
                 (* Check if initializer is a simple string literal *)
                 (match init_expr.expr_desc with
                  | IRValue (ir_val) when (match ir_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
-                     (* Simple string literal - can use direct initialization *)
-                     sprintf "%s = %s;" string_decl init_str
+                     (* Simple string literal - use safe initialization with length checking *)
+                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size sanitized_name init_str sanitized_name init_str size sanitized_name size
                  | _ ->
-                     (* Complex expression (function call, concatenation, etc.) - use strcpy *)
-                     sprintf "%s;\n    strcpy(%s, %s);" string_decl sanitized_name init_str)
+                     (* Complex expression (function call, concatenation, etc.) - use safe strcpy with length checking *)
+                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size sanitized_name init_str sanitized_name init_str size sanitized_name size)
             | None ->
                 sprintf "%s;" string_decl)
        | IRArray (element_type, size, _) ->

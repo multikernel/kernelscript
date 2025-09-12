@@ -2323,22 +2323,21 @@ let rec generate_c_instruction ctx ir_instr =
              (match typ, init_expr.expr_desc with
               | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
                   (* String to string assignment with compatible sizes - regenerate src with dest size *)
-                  let init_str = match src_val.value_desc with
+                  (match src_val.value_desc with
                     | IRLiteral (StringLit s) ->
-                        (* Regenerate string literal with destination size *)
-                        let temp_var = fresh_var ctx "str_lit" in
+                        (* Generate direct struct assignment for string literals *)
                         let len = String.length s in
                         let max_content_len = dest_size in
                         let actual_len = min len max_content_len in
                         let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
-                        emit_line ctx (sprintf "str_%d_t %s = {" dest_size temp_var);
+                        emit_line ctx (sprintf "%s %s = {" type_str var_name);
                         emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
                         emit_line ctx (sprintf "    .len = %d" actual_len);
-                        emit_line ctx "};";
-                        temp_var
-                    | _ -> generate_c_expression ctx init_expr
-                  in
-                  emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+                        emit_line ctx "};"
+                    | _ -> 
+                        (* For non-literal strings, use regular assignment *)
+                        let init_str = generate_c_expression ctx init_expr in
+                        emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
               | IRStr _, _ ->
                   (* Other string expressions (concatenation, etc.) *)
                   let init_str = generate_c_expression ctx init_expr in
