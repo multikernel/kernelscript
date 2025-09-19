@@ -249,6 +249,7 @@ let test_function_call_string_arg_bug () =
   
   (* POSITIVE TEST: Should use .data field for string variables *)
   let has_string_data_access = 
+    contains_substr c_code "result_str.data" ||
     contains_substr c_code "tmp_1.data" ||
     contains_substr c_code "var_1.data" ||
     contains_substr c_code "val_1.data" ||
@@ -258,7 +259,7 @@ let test_function_call_string_arg_bug () =
   
   (* REGRESSION TEST: Should NOT pass struct directly *)
   Alcotest.(check bool) "does NOT pass struct directly to bpf_printk" 
-    false (contains_substr c_code "bpf_printk(\"%s\", tmp_1);");
+    false (contains_substr c_code "bpf_printk(\"%s\", result_str);");
   
   (* POSITIVE TEST: Generates proper bpf_printk call *)
   Alcotest.(check bool) "generates bpf_printk call" 
