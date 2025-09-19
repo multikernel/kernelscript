@@ -2814,25 +2814,71 @@ let is_struct_userspace_only ast struct_name =
   (* A struct is userspace-only if it's used in userspace but not in eBPF *)
   !is_used_in_userspace && not !is_used_in_ebpf
 
-let lower_multi_program ast symbol_table source_name =
-  (* Collect global variables early so they can be used in context creation *)
-  let global_var_decls = List.filter_map (function
-    | Ast.GlobalVarDecl v -> Some v
-    | _ -> None
-  ) ast in
-  
-  let ir_global_variables = List.map (fun global_var_decl ->
-    lower_global_variable_declaration symbol_table global_var_decl
-  ) global_var_decls in
-  
+(** Convert a global variable declaration with map type to IR map definition *)
+let convert_global_var_to_map symbol_table global_var_decl =
+  match global_var_decl.Ast.global_var_type with
+  | Some (Ast.Map (key_type, value_type, map_type, size)) ->
+      let ir_key_type = ast_type_to_ir_type_with_context symbol_table key_type in
+      let ir_value_type = ast_type_to_ir_type_with_context symbol_table value_type in
+      let ir_map_type = ast_map_type_to_ir_map_type map_type in
+      let pin_path = 
+        if global_var_decl.Ast.is_pinned then
+          Some (Printf.sprintf "/sys/fs/bpf/%s/maps/%s" symbol_table.project_name global_var_decl.Ast.global_var_name)
+        else
+          None
+      in
+      Some (make_ir_map_def
+        global_var_decl.Ast.global_var_name
+        ir_key_type
+        ir_value_type
+        ir_map_type
+        size
+        ~ast_key_type:key_type
+        ~ast_value_type:value_type
+        ~ast_map_type:map_type
+        ~flags:0
+        ~is_global:true
+        ?pin_path:pin_path
+        global_var_decl.Ast.global_var_pos)
+  | _ -> None
 
+(** Check if a global variable declaration has a map type *)
+let is_global_var_map global_var_decl =
+  match global_var_decl.Ast.global_var_type with
+  | Some (Ast.Map _) -> true
+  | _ -> false
+
+let lower_multi_program ast symbol_table source_name =
+  (* Phase 1: Collect and categorize declarations in source order *)
+  let (ordered_declarations, all_maps, all_global_vars) = 
+    List.fold_left (fun (decls, maps, vars) decl ->
+      match decl with
+      | Ast.MapDecl map_decl -> 
+          let ir_map = lower_map_declaration symbol_table map_decl in
+          ((decl, `Map ir_map) :: decls, ir_map :: maps, vars)
+      | Ast.GlobalVarDecl var_decl when is_global_var_map var_decl ->
+          let ir_map = match convert_global_var_to_map symbol_table var_decl with
+            | Some map -> map
+            | None -> failwith "Expected map conversion to succeed"
+          in
+          let ir_var = lower_global_variable_declaration symbol_table var_decl in
+          ((decl, `MapFromGlobalVar (ir_map, ir_var)) :: decls, ir_map :: maps, ir_var :: vars)
+      | Ast.GlobalVarDecl var_decl ->
+          let ir_var = lower_global_variable_declaration symbol_table var_decl in
+          ((decl, `GlobalVar ir_var) :: decls, maps, ir_var :: vars)
+      | other ->
+          ((decl, `Other other) :: decls, maps, vars)
+    ) ([], [], []) ast
+  in
   
-  let ctx = create_context ~global_variables:ir_global_variables symbol_table in
+  (* Phase 2: Create context with ALL maps available *)
+  let ctx = create_context ~global_variables:all_global_vars symbol_table in
+  add_maps_to_context ctx all_maps;
   
   (* Analyze assignment patterns for optimization early *)
   let _optimization_info = analyze_assignment_patterns ctx ast in
   
-  (* Collect source declarations in original order *)
+  (* Phase 3: Process declarations in original order *)
   let source_declarations = ref [] in
   let declaration_order = ref 0 in
   
@@ -2843,65 +2889,73 @@ let lower_multi_program ast symbol_table source_name =
     incr declaration_order
   in
   
-  (* Process AST declarations in order to collect source declarations *)
-  List.iter (function
-    | Ast.TypeDef (Ast.TypeAlias (name, underlying_type, pos)) ->
-        let ir_type = ast_type_to_ir_type_with_context symbol_table underlying_type in
-        add_source_declaration (IRDeclTypeAlias (name, ir_type, pos)) pos
-    | Ast.TypeDef (Ast.StructDef (name, fields, pos)) ->
-        let ir_fields = List.map (fun (field_name, field_type) ->
-          (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
-        ) fields in
-        add_source_declaration (IRDeclStructDef (name, ir_fields, pos)) pos
-    | Ast.TypeDef (Ast.EnumDef (name, values, pos)) ->
-        let ir_values = List.map (fun (enum_name, opt_value) ->
-          (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
-        ) values in
-        add_source_declaration (IRDeclEnumDef (name, ir_values, pos)) pos
-    | Ast.MapDecl map_decl ->
-        (* Convert and add map declaration *)
-        let ir_map_def = lower_map_declaration symbol_table map_decl in
-        add_source_declaration (IRDeclMapDef ir_map_def) map_decl.map_pos
-    | Ast.ConfigDecl config_decl ->
-        (* Convert and add config declaration *)
-        let ir_config_def = lower_config_declaration symbol_table config_decl in
-        add_source_declaration (IRDeclConfigDef ir_config_def) config_decl.config_pos
-    | Ast.GlobalVarDecl global_var_decl ->
-        (* Convert and add global variable declaration *)
-        let ir_global_var = lower_global_variable_declaration symbol_table global_var_decl in
-        add_source_declaration (IRDeclGlobalVarDef ir_global_var) global_var_decl.global_var_pos
-    | Ast.AttributedFunction _attr_func ->
-        (* We'll add attributed function declarations when we process them as programs *)
-        ()
-    | Ast.GlobalFunction func_def ->
-        (* Convert and add global function declaration with correct context *)
-        let ir_func = 
-          if func_def.func_scope = Ast.Kernel then
-            (* Kernel function - use regular context *)
-            lower_function ctx "global" ~program_type:None ~func_target:None func_def
-          else
-            (* Userspace function - use userspace context *)
-            lower_userspace_function ctx func_def
-        in
-        add_source_declaration (IRDeclFunctionDef ir_func) func_def.func_pos
-    | Ast.StructDecl struct_def ->
-        (* Check if this struct is used only in userspace contexts *)
-        let is_userspace_only = is_struct_userspace_only ast struct_def.struct_name in
-        if not is_userspace_only then (
-          (* Convert and add struct definition to source declarations (for eBPF) *)
-          let ir_fields = List.map (fun (field_name, field_type) ->
-            (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
-          ) struct_def.struct_fields in
-          add_source_declaration (IRDeclStructDef (struct_def.struct_name, ir_fields, struct_def.struct_pos)) struct_def.struct_pos
-        )
-        (* Note: userspace-only structs will be handled separately in userspace_structs *)
-    | Ast.ImplBlock _impl_block ->
-        (* We'll add impl block declarations when we process them *)
-        ()
-    | _ ->
-        (* Skip other declarations for now *)
-        ()
-  ) ast;
+  (* Helper function to get position from AST declaration *)
+  let get_decl_pos = function
+    | Ast.TypeDef (Ast.TypeAlias (_, _, pos)) -> pos
+    | Ast.TypeDef (Ast.StructDef (_, _, pos)) -> pos
+    | Ast.TypeDef (Ast.EnumDef (_, _, pos)) -> pos
+    | Ast.MapDecl map_decl -> map_decl.map_pos
+    | Ast.ConfigDecl config_decl -> config_decl.config_pos
+    | Ast.GlobalVarDecl global_var_decl -> global_var_decl.global_var_pos
+    | Ast.GlobalFunction func_def -> func_def.func_pos
+    | Ast.StructDecl struct_def -> struct_def.struct_pos
+    | Ast.AttributedFunction attr_func -> attr_func.attr_function.func_pos
+    | Ast.ImplBlock impl_block -> impl_block.impl_pos
+    | _ -> { line = 1; column = 1; filename = source_name }
+  in
+  
+  (* Process declarations in original order using our categorized list *)
+  List.rev ordered_declarations |> List.iter (fun (original_decl, processed) ->
+    let pos = get_decl_pos original_decl in
+    match processed with
+    | `Map ir_map -> 
+        add_source_declaration (IRDeclMapDef ir_map) pos
+    | `MapFromGlobalVar (ir_map, ir_var) ->
+        (* For global variables with map types, add both the map and the variable *)
+        add_source_declaration (IRDeclMapDef ir_map) pos;
+        add_source_declaration (IRDeclGlobalVarDef ir_var) pos
+    | `GlobalVar ir_var ->
+        add_source_declaration (IRDeclGlobalVarDef ir_var) pos
+    | `Other decl ->
+        (* Handle other declaration types *)
+        (match decl with
+         | Ast.TypeDef (Ast.TypeAlias (name, underlying_type, pos)) ->
+             let ir_type = ast_type_to_ir_type_with_context symbol_table underlying_type in
+             add_source_declaration (IRDeclTypeAlias (name, ir_type, pos)) pos
+         | Ast.TypeDef (Ast.StructDef (name, fields, pos)) ->
+             let ir_fields = List.map (fun (field_name, field_type) ->
+               (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
+             ) fields in
+             add_source_declaration (IRDeclStructDef (name, ir_fields, pos)) pos
+         | Ast.TypeDef (Ast.EnumDef (name, values, pos)) ->
+             let ir_values = List.map (fun (enum_name, opt_value) ->
+               (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
+             ) values in
+             add_source_declaration (IRDeclEnumDef (name, ir_values, pos)) pos
+         | Ast.ConfigDecl config_decl ->
+             let ir_config_def = lower_config_declaration symbol_table config_decl in
+             add_source_declaration (IRDeclConfigDef ir_config_def) config_decl.config_pos
+         | Ast.GlobalFunction func_def ->
+             let ir_func = 
+               if func_def.func_scope = Ast.Kernel then
+                 lower_function ctx "global" ~program_type:None ~func_target:None func_def
+               else
+                 lower_userspace_function ctx func_def
+             in
+             add_source_declaration (IRDeclFunctionDef ir_func) func_def.func_pos
+         | Ast.StructDecl struct_def ->
+             let is_userspace_only = is_struct_userspace_only ast struct_def.struct_name in
+             if not is_userspace_only then (
+               let ir_fields = List.map (fun (field_name, field_type) ->
+                 (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
+               ) struct_def.struct_fields in
+               add_source_declaration (IRDeclStructDef (struct_def.struct_name, ir_fields, struct_def.struct_pos)) struct_def.struct_pos
+             )
+         | Ast.AttributedFunction _ | Ast.ImplBlock _ -> 
+             (* These are handled elsewhere *)
+             ()
+         | _ -> () )
+  );
   
   (* Extract impl blocks as struct_ops declarations *)
   let impl_block_declarations = List.filter_map (function
@@ -3026,63 +3080,53 @@ let lower_multi_program ast symbol_table source_name =
   if all_prog_defs <> [] then
     validate_multiple_programs all_prog_defs;
   
-  (* Collect global map declarations *)
-  let global_map_decls = List.filter_map (function
-    | Ast.MapDecl m when m.is_global -> Some m
-    | _ -> None
-  ) ast in
-  
-  (* Lower global maps *)
-  let ir_global_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) global_map_decls in
-  
-  (* Separate global variable declarations into maps and regular variables *)
-  let (global_var_maps, _) = List.fold_left (fun (maps, vars) global_var_decl ->
-    match global_var_decl.Ast.global_var_type with
-    | Some (Ast.Map (key_type, value_type, map_type, size)) ->
-        (* Convert global variable with map type to IR map definition *)
-        let ir_key_type = ast_type_to_ir_type_with_context ctx.symbol_table key_type in
-        let ir_value_type = ast_type_to_ir_type_with_context ctx.symbol_table value_type in
-        let ir_map_type = ast_map_type_to_ir_map_type map_type in
-        let pin_path = 
-          if global_var_decl.Ast.is_pinned then
-            Some (Printf.sprintf "/sys/fs/bpf/%s/maps/%s" ctx.symbol_table.project_name global_var_decl.Ast.global_var_name)
-          else
-            None
-        in
-        let ir_map_def = make_ir_map_def
-          global_var_decl.Ast.global_var_name
-          ir_key_type
-          ir_value_type
-          ir_map_type
-          size
-          ~ast_key_type:key_type
-          ~ast_value_type:value_type
-          ~ast_map_type:map_type
-          ~flags:0
-          ~is_global:true
-          ?pin_path:pin_path
-          global_var_decl.Ast.global_var_pos
-        in
-        (ir_map_def :: maps, vars)
-    | _ ->
-        (* Regular global variable *)
-        let ir_global_var = lower_global_variable_declaration ctx.symbol_table global_var_decl in
-        (maps, ir_global_var :: vars)
-  ) ([], []) global_var_decls in
-  
-  (* ir_global_variables already created above *)
-  let ir_global_var_maps = List.rev global_var_maps in
-  
-  (* Add all global maps (regular + from global variables) to main context for userspace processing *)
-  let all_global_maps = ir_global_maps @ ir_global_var_maps in
-  add_maps_to_context ctx all_global_maps;
-  
   (* Also add all program-scoped maps to main context for userspace processing *)
   List.iter (fun prog_def ->
     let program_scoped_maps = prog_def.prog_maps in
     let ir_program_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) program_scoped_maps in
     add_maps_to_context ctx ir_program_maps
   ) all_prog_defs;
+  
+  (* Use maps from Phase 1 - no need to reprocess global maps *)
+  let all_global_maps = all_maps in
+  
+  (* Convert ir_map_def list to map_flag_info list for userspace bindings *)
+  let ir_map_def_to_map_flag_info (ir_map : ir_map_def) : Maps.map_flag_info =
+    (* Find assignments to this specific map *)
+    let all_map_assignments = Map_assignment.extract_map_assignments_from_ast ast in
+    let map_assignments = List.filter (fun assignment -> 
+      assignment.Map_assignment.map_name = ir_map.map_name
+    ) all_map_assignments in
+    
+    (* Extract initial values from assignments with literal keys and values *)
+    let initial_values = List.filter_map (fun assignment ->
+      match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
+      | Literal key_lit, Literal value_lit ->
+          let key_str = match key_lit with
+            | IntLit (i, _) -> Ast.IntegerValue.to_string i
+            | StringLit s -> "\"" ^ s ^ "\""
+            | _ -> "0"
+          in
+          let value_str = match value_lit with
+            | IntLit (i, _) -> Ast.IntegerValue.to_string i
+            | StringLit s -> "\"" ^ s ^ "\""
+            | BoolLit b -> if b then "1" else "0"
+            | _ -> "0"
+          in
+          Some (key_str ^ ":" ^ value_str)
+      | _ -> None
+    ) map_assignments in
+    
+    {
+      Maps.map_name = ir_map.map_name;
+      has_initial_values = List.length initial_values > 0;
+      initial_values;
+      key_type = string_of_ir_type ir_map.map_key_type;
+      value_type = string_of_ir_type ir_map.map_value_type;
+    }
+  in
+  
+  let map_flag_infos = List.map ir_map_def_to_map_flag_info all_global_maps in
   
   (* Separate global functions by scope and extract @helper attributed functions as kernel shared functions *)
   let all_global_functions = List.filter_map (function
@@ -3115,7 +3159,7 @@ let lower_multi_program ast symbol_table source_name =
   let helper_function_names = List.map (fun func -> func.Ast.func_name) helper_functions in
   
   (* Lower kernel functions once - they are shared across all programs *)
-  let kernel_ctx = create_context ~global_variables:ir_global_variables ~helper_functions:helper_function_names symbol_table in
+  let kernel_ctx = create_context ~global_variables:all_global_vars ~helper_functions:helper_function_names symbol_table in
   (* Copy maps from main context to kernel context *)
   copy_maps_to_context ctx kernel_ctx;
   let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None ~func_target:None) all_kernel_shared_functions in
@@ -3123,10 +3167,10 @@ let lower_multi_program ast symbol_table source_name =
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
-    let prog_ctx = create_context ~global_variables:ir_global_variables ~helper_functions:helper_function_names symbol_table in
+    let prog_ctx = create_context ~global_variables:all_global_vars ~helper_functions:helper_function_names symbol_table in
     (* Copy maps from main context to program context *)
     copy_maps_to_context ctx prog_ctx;
-    lower_single_program prog_ctx prog_def ir_global_maps all_kernel_shared_functions
+    lower_single_program prog_ctx prog_def all_global_maps all_kernel_shared_functions
   ) all_prog_defs in
   
   (* Convert AST userspace functions to IR userspace program *)
@@ -3175,79 +3219,12 @@ let lower_multi_program ast symbol_table source_name =
           struct_def.Ast.struct_pos
       ) struct_definitions in
       
-      let userspace_ctx = create_context ~global_variables:ir_global_variables symbol_table in
+      let userspace_ctx = create_context ~global_variables:all_global_vars symbol_table in
       (* Copy maps from main context to userspace context *)
       copy_maps_to_context ctx userspace_ctx;
       let ir_functions = List.map (fun func -> lower_userspace_function userspace_ctx func) userspace_functions in
       Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
-  
-  (* Extract all map assignments from the AST to analyze initial values *)
-  let all_map_assignments = Map_assignment.extract_map_assignments_from_ast ast in
-  
-  (* Convert ir_map_def list to map_flag_info list for userspace bindings *)
-  let ir_map_def_to_map_flag_info (ir_map : ir_map_def) : Maps.map_flag_info =
-    (* Find assignments to this specific map *)
-    let map_assignments = List.filter (fun assignment -> 
-      assignment.Map_assignment.map_name = ir_map.map_name
-    ) all_map_assignments in
-    
-    (* Extract initial values from assignments with literal keys and values *)
-    let initial_values = List.filter_map (fun assignment ->
-      match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
-      | Literal key_lit, Literal value_lit ->
-          let key_str = match key_lit with
-            | IntLit (i, _) -> Ast.IntegerValue.to_string i
-            | StringLit s -> "\"" ^ s ^ "\""
-            | CharLit c -> "'" ^ String.make 1 c ^ "'"
-            | BoolLit b -> string_of_bool b
-            | NullLit -> "null"
-            | NoneLit -> "none"
-            | ArrayLit init_style -> 
-                (match init_style with
-                 | ZeroArray -> "[]"
-                 | FillArray lit -> "[" ^ (match lit with
-                     | IntLit (i, _) -> Ast.IntegerValue.to_string i
-                     | StringLit s -> "\"" ^ s ^ "\""
-                     | CharLit c -> "'" ^ String.make 1 c ^ "'"
-                     | BoolLit b -> string_of_bool b
-                     | NullLit -> "null"
-                     | NoneLit -> "none"
-                     | ArrayLit _ -> "[]") ^ "]"
-                 | ExplicitArray literals ->
-                     "[" ^ (String.concat ", " (List.map (function
-                       | IntLit (i, _) -> Ast.IntegerValue.to_string i
-                       | StringLit s -> "\"" ^ s ^ "\""
-                       | CharLit c -> "'" ^ String.make 1 c ^ "'"
-                       | BoolLit b -> string_of_bool b
-                       | NullLit -> "null"
-                       | NoneLit -> "none"
-                       | ArrayLit _ -> "[]"  (* Nested arrays simplified *)
-                     ) literals)) ^ "]")
-          in
-          let value_str = match value_lit with
-            | IntLit (i, _) -> Ast.IntegerValue.to_string i
-            | StringLit s -> "\"" ^ s ^ "\""
-            | CharLit c -> "'" ^ String.make 1 c ^ "'"
-            | BoolLit b -> string_of_bool b
-            | NullLit -> "null"
-            | NoneLit -> "none"
-            | ArrayLit _ -> "{...}"
-          in
-          Some (key_str ^ ":" ^ value_str)
-      | _ -> None
-    ) map_assignments in
-    
-    {
-      map_name = ir_map.map_name;
-      has_initial_values = List.length map_assignments > 0;
-      initial_values = initial_values;
-      key_type = string_of_ir_type ir_map.map_key_type;
-      value_type = string_of_ir_type ir_map.map_value_type;
-    }
-  in
-  
-  let map_flag_infos = List.map ir_map_def_to_map_flag_info ir_global_maps in
   
   (* Extract config declarations from AST *)
   let config_declarations = List.filter_map (function
@@ -3350,12 +3327,6 @@ let lower_multi_program ast symbol_table source_name =
       impl_block.impl_pos
   ) impl_block_declarations in
   
-  (* Generate userspace bindings *)
-  let userspace_bindings = 
-    generate_userspace_bindings_from_multi_programs all_prog_defs userspace_functions map_flag_infos config_declarations
-  in
-  
-
   (* Use the unified literal conversion function *)
   let ast_literal_to_ir_value = lower_literal in
   
@@ -3396,7 +3367,8 @@ let lower_multi_program ast symbol_table source_name =
       config_decl.Ast.config_pos
   ) config_declarations in
   
-
+  (* Generate userspace bindings *)
+  let userspace_bindings = generate_userspace_bindings_from_multi_programs all_prog_defs userspace_functions map_flag_infos config_declarations in
 
   (* Create multi-program IR *)
   let multi_pos = match all_prog_defs with
@@ -3407,19 +3379,11 @@ let lower_multi_program ast symbol_table source_name =
   (* Combine both traditional struct_ops declarations and impl block declarations *)
   let combined_struct_ops_declarations = ir_struct_ops_declarations @ ir_impl_block_declarations in
   
-  make_ir_multi_program 
-    source_name 
-    ir_programs 
-    ir_kernel_functions 
-    all_global_maps 
-    ~global_configs:ir_global_configs
-    ~global_variables:ir_global_variables
+  make_ir_multi_program source_name ir_programs ir_kernel_functions all_global_maps 
+    ~global_configs:ir_global_configs ~global_variables:all_global_vars
     ~struct_ops_declarations:combined_struct_ops_declarations
-    ~struct_ops_instances:ir_struct_ops_instances
-    ?userspace_program:userspace_program 
-    ~userspace_bindings:userspace_bindings 
-    ~source_declarations:(List.rev !source_declarations)
-    multi_pos
+    ~struct_ops_instances:ir_struct_ops_instances ?userspace_program:userspace_program 
+    ~userspace_bindings:userspace_bindings ~source_declarations:(List.rev !source_declarations) multi_pos
 
 (** Main entry point for IR generation *)
 let generate_ir ?(use_type_annotations=false) ast symbol_table source_name =
