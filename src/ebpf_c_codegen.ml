@@ -1652,13 +1652,14 @@ let generate_c_expression ctx ir_expr =
                       (* Direct struct field access *)
                       sprintf "%s.%s" obj_str field)))
       
-  | IRStructLiteral (_struct_name, field_assignments) ->
-      (* Generate C struct literal: {.field1 = value1, .field2 = value2} *)
+  | IRStructLiteral (struct_name, field_assignments) ->
+      (* Generate C compound literal: (struct Type){.field1 = value1, .field2 = value2} *)
       let field_strs = List.map (fun (field_name, field_val) ->
         let field_value_str = generate_c_value ctx field_val in
         sprintf ".%s = %s" field_name field_value_str
       ) field_assignments in
-      sprintf "{%s}" (String.concat ", " field_strs)
+      let struct_type = sprintf "struct %s" struct_name in
+      sprintf "(%s){%s}" struct_type (String.concat ", " field_strs)
 
   | IRMatch (matched_val, arms) ->
       (* For match expressions, always generate control flow when in return context *)

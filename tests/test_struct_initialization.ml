@@ -303,6 +303,11 @@ fn main() -> i32 {
          | IRStructLiteral (struct_name, _) ->
            if struct_name = "TestStruct" then has_struct_literal := true
          | _ -> ())
+      | IRVariableDecl (_, _, Some expr) ->
+        (match expr.expr_desc with
+         | IRStructLiteral (struct_name, _) ->
+           if struct_name = "TestStruct" then has_struct_literal := true
+         | _ -> ())
       | _ -> ()
     in
     
