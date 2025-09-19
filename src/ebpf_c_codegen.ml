@@ -3261,6 +3261,9 @@ let compile_multi_to_c_with_tail_calls
   
   if kfunc_declarations <> [] then emit_blank_line ctx;
   
+  (* Generate string type definitions *)
+  generate_string_typedefs ctx ir_multi_prog;
+  
   (* Generate all declarations in original source order *)
   generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path tail_call_analysis;
   
