@@ -3264,8 +3264,38 @@ let compile_multi_to_c_with_tail_calls
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_prog;
   
-  (* Generate all declarations in original source order *)
-  generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path tail_call_analysis;
+  (* Generate declarations in source order when available, otherwise use IR structure *)
+  if ir_multi_prog.source_declarations <> [] then (
+    (* Use source declarations for proper ordering (from elegant 3-phase IR generation) *)
+    generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path tail_call_analysis
+  ) else (
+    (* Fallback for direct IR creation (tests, etc.) *)
+    (* Generate type aliases *)
+    if type_aliases <> [] then (
+      emit_line ctx "/* Type alias definitions */";
+      List.iter (fun (alias_name, bpf_type) ->
+        let c_type = ast_type_to_c_type bpf_type in
+        emit_line ctx (sprintf "typedef %s %s;" c_type alias_name);
+      ) type_aliases;
+      emit_blank_line ctx
+    );
+    
+    (* Generate global maps *)
+    if ir_multi_prog.global_maps <> [] then (
+      emit_line ctx "/* Global maps */";
+      List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
+      emit_blank_line ctx
+    );
+    
+    (* Generate global variables *)
+    generate_global_variables ctx ir_multi_prog.global_variables;
+    
+    (* Generate config maps *)
+    if ir_multi_prog.global_configs <> [] then (
+      List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
+      emit_blank_line ctx
+    )
+  );
   
   (* Generate program entry functions - these were skipped in the unified function above *)
   List.iter (fun ir_prog ->

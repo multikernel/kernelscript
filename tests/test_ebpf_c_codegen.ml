@@ -1090,11 +1090,11 @@ let test_variable_function_call_declaration () =
   
   let output = String.concat "\n" ctx.output_lines in
   
-  (* Should generate: __u32 val_0 = helper_function(5); *)
-  check bool "combined declaration with function call" true (contains_substr output "val_0 = helper_function(5)");
+  (* Should generate: __u32 result_0 = helper_function(5); *)
+  check bool "combined declaration with function call" true (contains_substr output "result_0 = helper_function(5)");
   
   (* Should NOT generate separate variable declaration without initialization *)
-  check bool "no uninitialized declaration" false (contains_substr output "__u32 val_0;")
+  check bool "no uninitialized declaration" false (contains_substr output "__u32 result_0;")
 
 (** Integration test: eBPF function generation bug fix *)
 let test_ebpf_function_generation_bug_fix () =
