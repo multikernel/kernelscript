@@ -16,6 +16,7 @@
 
 open Alcotest
 open Kernelscript.Parse
+open Test_utils
 
 let contains_substring line pattern =
   try
@@ -24,28 +25,8 @@ let contains_substring line pattern =
   with Not_found -> false
 
 let test_xdp_context_field_types () =
-  (* Register context codegens *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  
+  (* Create AST using proper XDP definitions from test_utils *)
   let source = {|
-    struct xdp_md {
-      data: u64,
-      data_end: u64,
-      data_meta: u64,
-      ingress_ifindex: u32,
-      rx_queue_index: u32,
-      egress_ifindex: u32,
-    }
-    
-    enum xdp_action {
-      XDP_ABORTED = 0,
-      XDP_DROP = 1,
-      XDP_PASS = 2,
-      XDP_REDIRECT = 3,
-      XDP_TX = 4,
-    }
-    
     @xdp fn test_context_fields(ctx: *xdp_md) -> xdp_action {
       var data_ptr = ctx->data
       var data_end_ptr = ctx->data_end
@@ -61,7 +42,8 @@ let test_xdp_context_field_types () =
   
   let ast = parse_string source in
   
-  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  (* Use test_utils helper to create symbol table with proper XDP builtin types *)
+  let symbol_table = Helpers.create_test_symbol_table ~include_xdp:true ~include_tc:false ~include_struct_ops:false ast in
   
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
@@ -74,7 +56,7 @@ let test_xdp_context_field_types () =
   (* Look for variable declarations - they should be pointer types, not __u64 *)
   let has_correct_pointer_types = List.exists (fun line ->
     String.contains line '*' && 
-    (contains_substring line "ptr_" || contains_substring line "var_") &&
+    (contains_substring line "data_ptr" || contains_substring line "data_end_ptr") &&
     contains_substring line "__u8"
   ) lines in
   
@@ -94,28 +76,7 @@ let test_xdp_context_field_types () =
   check bool "Should use correct casting for context field access" true has_correct_casting
 
 let test_context_field_arithmetic () =
-  (* Register context codegens *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  
   let source = {|
-    struct xdp_md {
-      data: u64,
-      data_end: u64,
-      data_meta: u64,
-      ingress_ifindex: u32,
-      rx_queue_index: u32,
-      egress_ifindex: u32,
-    }
-    
-    enum xdp_action {
-      XDP_ABORTED = 0,
-      XDP_DROP = 1,
-      XDP_PASS = 2,
-      XDP_REDIRECT = 3,
-      XDP_TX = 4,
-    }
-    
     @xdp fn test_pointer_arithmetic(ctx: *xdp_md) -> xdp_action {
       var packet_size = ctx->data_end - ctx->data
       if (packet_size > 0) {
@@ -128,7 +89,7 @@ let test_context_field_arithmetic () =
   
   let ast = parse_string source in
   
-  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let symbol_table = Helpers.create_test_symbol_table ~include_xdp:true ~include_tc:false ~include_struct_ops:false ast in
   
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
@@ -140,66 +101,13 @@ let test_context_field_arithmetic () =
   
   (* Look for pointer arithmetic between context fields *)
   let has_pointer_arithmetic = List.exists (fun line ->
-    contains_substring line "ptr_" && String.contains line '-'
+    (contains_substring line "__arrow_access_" || contains_substring line "packet_size") && String.contains line '-'
   ) lines in
   
   check bool "Should generate pointer arithmetic for context fields" true has_pointer_arithmetic
 
 let test_tc_context_field_types () =
-  (* Register context codegens *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  
   let source = {|
-    struct __sk_buff {
-      len: u32,
-      pkt_type: u32,
-      mark: u32,
-      queue_mapping: u32,
-      protocol: u32,
-      vlan_present: u32,
-      vlan_tci: u32,
-      vlan_proto: u32,
-      priority: u32,
-      ingress_ifindex: u32,
-      ifindex: u32,
-      tc_index: u32,
-      cb: u32[5],
-      hash: u32,
-      tc_classid: u32,
-      data: u32,
-      data_end: u32,
-      napi_id: u32,
-      family: u32,
-      remote_ip4: u32,
-      local_ip4: u32,
-      remote_ip6: u32[4],
-      local_ip6: u32[4],
-      remote_port: u32,
-      local_port: u32,
-      data_meta: u32,
-      flow_keys: u32,
-      tstamp: u64,
-      wire_len: u32,
-      gso_segs: u32,
-      sk: u32,
-      gso_size: u32,
-      tstamp_type: u8,
-      hwtstamp: u64,
-    }
-    
-    enum tc_action {
-      TC_ACT_UNSPEC = 255,
-      TC_ACT_OK = 0,
-      TC_ACT_RECLASSIFY = 1,
-      TC_ACT_SHOT = 2,
-      TC_ACT_PIPE = 3,
-      TC_ACT_STOLEN = 4,
-      TC_ACT_QUEUED = 5,
-      TC_ACT_REPEAT = 6,
-      TC_ACT_REDIRECT = 7,
-    }
-    
     @tc("ingress") fn test_tc_context_fields(ctx: *__sk_buff) -> tc_action {
       var data_ptr = ctx->data
       var data_end_ptr = ctx->data_end
@@ -215,7 +123,7 @@ let test_tc_context_field_types () =
   
   let ast = parse_string source in
   
-  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let symbol_table = Helpers.create_test_symbol_table ~include_xdp:false ~include_tc:true ~include_struct_ops:false ast in
   
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
@@ -233,28 +141,7 @@ let test_tc_context_field_types () =
   check bool "Should use correct types for TC context fields" true has_correct_tc_types
 
 let test_xdp_context_field_pointer_preservation () =
-  (* Register context codegens *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  
   let source = {|
-    struct xdp_md {
-      data: u64,
-      data_end: u64,
-      data_meta: u64,
-      ingress_ifindex: u32,
-      rx_queue_index: u32,
-      egress_ifindex: u32,
-    }
-    
-    enum xdp_action {
-      XDP_ABORTED = 0,
-      XDP_DROP = 1,
-      XDP_PASS = 2,
-      XDP_REDIRECT = 3,
-      XDP_TX = 4,
-    }
-    
     @xdp fn test_pointer_preservation(ctx: *xdp_md) -> xdp_action {
       var packet_start = ctx->data
       var packet_end = ctx->data_end
@@ -270,7 +157,7 @@ let test_xdp_context_field_pointer_preservation () =
   
   let ast = parse_string source in
   
-  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let symbol_table = Helpers.create_test_symbol_table ~include_xdp:true ~include_tc:false ~include_struct_ops:false ast in
   
   let ir_program = Kernelscript.Ir_generator.generate_ir ast symbol_table "test" in
   
@@ -284,9 +171,9 @@ let test_xdp_context_field_pointer_preservation () =
   (* This should NOT match pointer arithmetic like: var_5 = ((__u64)ptr_2) - ((__u64)ptr_0) *)
   let has_incorrect_u64_assignment = List.exists (fun line ->
     contains_substring line "__u64" &&
-    contains_substring line "var_" &&
+    (contains_substring line "packet_start" || contains_substring line "packet_end") &&
     contains_substring line "=" &&
-    contains_substring line "ptr_" &&
+    (contains_substring line "data_ptr" || contains_substring line "data_end_ptr") &&
     not (String.contains line '-') &&  (* Exclude pointer arithmetic *)
     not (String.contains line '+')     (* Exclude pointer arithmetic *)
   ) lines in
@@ -303,28 +190,7 @@ let test_xdp_context_field_pointer_preservation () =
   check bool "Context field access uses correct casting" true has_correct_casting
 
 let test_exact_rate_limiter_reproduction () =
-  (* Register context codegens *)
-  Kernelscript_context.Xdp_codegen.register ();
-  Kernelscript_context.Tc_codegen.register ();
-  
   let source = {|
-    struct xdp_md {
-      data: u64,
-      data_end: u64,
-      data_meta: u64,
-      ingress_ifindex: u32,
-      rx_queue_index: u32,
-      egress_ifindex: u32,
-    }
-    
-    enum xdp_action {
-      XDP_ABORTED = 0,
-      XDP_DROP = 1,
-      XDP_PASS = 2,
-      XDP_REDIRECT = 3,
-      XDP_TX = 4,
-    }
-    
     var packet_counts : hash<u32, u64>(1024)
     
     config network {
@@ -353,7 +219,7 @@ let test_exact_rate_limiter_reproduction () =
   
   let ast = parse_string source in
   
-  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let symbol_table = Helpers.create_test_symbol_table ~include_xdp:true ~include_tc:false ~include_struct_ops:false ast in
   
   (* Type check first to ensure annotations are in place *)
   let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
@@ -374,9 +240,9 @@ let test_exact_rate_limiter_reproduction () =
   (* Look for INCORRECT variable declarations where pointers are assigned to __u64 variables *)
   let has_incorrect_u64_assignment = List.exists (fun line ->
     contains_substring line "__u64" &&
-    contains_substring line "var_" &&
+    (contains_substring line "packet_start" || contains_substring line "packet_end") &&
     contains_substring line "=" &&
-    contains_substring line "ptr_" &&
+    (contains_substring line "data_ptr" || contains_substring line "data_end_ptr") &&
     not (String.contains line '-') &&  (* Exclude pointer arithmetic *)
     not (String.contains line '+')     (* Exclude pointer arithmetic *)
   ) lines in

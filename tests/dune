@@ -384,7 +384,7 @@
 (executable
  (name test_context_field_types)
  (modules test_context_field_types)
- (libraries kernelscript alcotest str))
+ (libraries kernelscript alcotest str test_utils))
 
 (executable
  (name test_named_returns)
