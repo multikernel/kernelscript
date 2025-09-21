@@ -676,6 +676,7 @@ let is_truthy_type bpf_type =
   | Str _ -> true                                         (* strings: empty is falsy, non-empty is truthy *)
   | Pointer _ -> true                                     (* pointers: null is falsy, non-null is truthy *)
   | Enum _ -> true                                        (* enums: based on numeric value *)
+  | Null -> true                                          (* null literal: always falsy but allowed in boolean context *)
   | _ -> false                                            (* other types not allowed in boolean context *)
 
 (** Helper function to extract return type from a block of statements *)
