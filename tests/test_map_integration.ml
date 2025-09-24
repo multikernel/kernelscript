@@ -450,7 +450,7 @@ fn get_value(key: u32) -> TestEnum {
   | Some c_code ->
       (* Check that the generated code contains the correct dereferencing pattern *)
       let has_deref_pattern = string_contains_substring c_code "__val" &&
-                             string_contains_substring c_code "*(ptr_" in
+                             string_contains_substring c_code "*(__map_lookup_" in
       let has_bad_pointer_return = string_contains_substring c_code "return ptr_" in
       
       (* Verify the fix is applied: should have dereferencing but not direct pointer returns *)
