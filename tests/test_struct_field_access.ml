@@ -601,7 +601,9 @@ struct PacketStats {
        contains_substr c_code "Counter var_" || 
        contains_substr c_code "Counter tmp_" ||
        contains_substr c_code "Counter cond_" ||
-       contains_substr c_code "Counter val_" in
+       contains_substr c_code "Counter val_" ||
+       contains_substr c_code "Counter count_val" ||
+       contains_substr c_code "Counter __field_access_" in
      check bool "Counter used in variable declarations" true has_counter_var;
     
     check bool "type alias field access test passed" true true
