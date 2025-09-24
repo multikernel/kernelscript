@@ -1024,6 +1024,20 @@ let generate_global_variables ctx global_variables =
     let pinned_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
     let regular_vars = List.filter (fun gv -> not gv.is_pinned) global_variables in
     
+    (* Separate ring buffer variables from ALL global variables (both pinned and regular) *)
+    let (all_ringbuf_vars, _) = List.partition (fun global_var ->
+      match global_var.global_var_type with
+      | IRRingbuf (_, _) -> true
+      | _ -> false
+    ) global_variables in
+    
+    (* Separate regular (non-ringbuf) variables from regular_vars for later processing *)
+    let (_, non_ringbuf_vars) = List.partition (fun global_var ->
+      match global_var.global_var_type with
+      | IRRingbuf (_, _) -> true
+      | _ -> false
+    ) regular_vars in
+    
     (* Generate pinned globals struct if there are any pinned variables *)
     if pinned_vars <> [] then (
       (* Track pinned globals in the context *)
@@ -1064,14 +1078,7 @@ let generate_global_variables ctx global_variables =
       emit_blank_line ctx
     );
     
-    (* Separate ring buffer variables from regular variables *)
-    let (ringbuf_vars, non_ringbuf_vars) = List.partition (fun global_var ->
-      match global_var.global_var_type with
-      | IRRingbuf (_, _) -> true
-      | _ -> false
-    ) regular_vars in
-    
-    (* Generate ring buffer maps *)
+    (* Generate ring buffer maps for ALL ring buffers (both pinned and regular) *)
     List.iter (fun global_var ->
       match global_var.global_var_type with
       | IRRingbuf (_, size) ->
@@ -1082,7 +1089,7 @@ let generate_global_variables ctx global_variables =
           emit_line ctx (sprintf "} %s SEC(\".maps\");" global_var.global_var_name);
           emit_blank_line ctx
       | _ -> () (* Should not happen due to filtering above *)
-    ) ringbuf_vars;
+    ) all_ringbuf_vars;
     
     (* Generate regular (non-pinned, non-ringbuf) global variables *)
     List.iter (fun global_var ->
@@ -1786,7 +1793,19 @@ let generate_c_expression ctx ir_expr =
 
 (** Generate ALL declarations in original source order - complete implementation *)
 let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ?_symbol_table ~_btf_path _tail_call_analysis =
-  (* Process source declarations in their original order - handle ALL declaration types *)
+  (* First, collect all global variables from source declarations to handle pinned globals properly *)
+  let all_global_vars = List.fold_left (fun acc source_decl ->
+    match source_decl.Ir.decl_desc with
+    | Ir.IRDeclGlobalVarDef global_var -> global_var :: acc
+    | _ -> acc
+  ) [] ir_multi_prog.Ir.source_declarations |> List.rev in
+  
+  (* Generate global variables using the unified logic that handles pinned globals *)
+  if all_global_vars <> [] then (
+    generate_global_variables ctx all_global_vars
+  );
+  
+  (* Process source declarations in their original order - handle ALL declaration types except global vars *)
   List.iter (fun source_decl ->
     match source_decl.Ir.decl_desc with
     | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
@@ -1890,41 +1909,9 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
         (* Generate config map definition *)
         generate_config_map_definition ctx config_def
     
-    | Ir.IRDeclGlobalVarDef global_var ->
-        (* Generate global variable definition with proper attributes *)
-        let var_type_str = ebpf_type_from_ir_type global_var.global_var_type in
-        let var_name = global_var.global_var_name in
-        let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
-        
-        (* Generate global variables section comment if this is the first global variable *)
-        let has_global_vars_comment = List.exists (fun line -> 
-          try 
-            let _ = Str.search_forward (Str.regexp_string "/* Global variables */") line 0 in true
-          with Not_found -> false
-        ) ctx.output_lines in
-        if not has_global_vars_comment then (
-          emit_line ctx "/* Global variables */";
-        );
-        
-        (* Generate __hidden macro definition if this is the first local variable encountered *)
-        let has_hidden_def = List.exists (fun line -> 
-          try 
-            let _ = Str.search_forward (Str.regexp_string "#define __hidden") line 0 in true
-          with Not_found -> false
-        ) ctx.output_lines in
-        if global_var.is_local && not has_hidden_def then (
-          emit_line ctx "#define __hidden __attribute__((visibility(\"hidden\")))";
-          emit_blank_line ctx
-        );
-        
-        (* Generate variable declaration with initialization if present *)
-        (match global_var.global_var_init with
-         | Some init_val -> 
-             let expr_str = generate_c_value ctx init_val in
-             emit_line ctx (sprintf "%s%s %s = %s;" local_attr var_type_str var_name expr_str)
-         | None -> 
-             emit_line ctx (sprintf "%s%s %s;" local_attr var_type_str var_name));
-        emit_blank_line ctx
+    | Ir.IRDeclGlobalVarDef _global_var ->
+        (* Skip individual global variable processing - already handled at the beginning *)
+        ()
     
     | Ir.IRDeclFunctionDef _func_def ->
         (* Skip function generation here - functions will be handled by existing logic after this unified function *)
