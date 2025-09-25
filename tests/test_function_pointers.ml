@@ -354,14 +354,13 @@ fn main() -> i32 {
     check bool "C code should contain function pointer assignment" true (String.contains c_code '=' && String.contains c_code 'a');
     
     (* Check that the C code does NOT contain calls to undefined function pointer variable names *)
-    let has_bad_add_op_call = try ignore (Str.search_forward (Str.regexp "add_op(") c_code 0); true with Not_found -> false in
-    let has_bad_mul_op_call = try ignore (Str.search_forward (Str.regexp "mul_op(") c_code 0); true with Not_found -> false in
+    let has_bad_add_op_call = try ignore (Str.search_forward (Str.regexp "\\badd_op(") c_code 0); true with Not_found -> false in
+    let has_bad_mul_op_call = try ignore (Str.search_forward (Str.regexp "\\bmul_op(") c_code 0); true with Not_found -> false in
     
     check bool "C code should not call add_op as function" false has_bad_add_op_call;
     check bool "C code should not call mul_op as function" false has_bad_mul_op_call;
     
-    (* Check that the C code contains proper function pointer calls (var_X(...)) *)
-    let has_function_pointer_calls = try ignore (Str.search_forward (Str.regexp "var_[0-9]+(") c_code 0); true with Not_found -> false in
+    let has_function_pointer_calls = try ignore (Str.search_forward (Str.regexp "var_\\(add_op\\|mul_op\\)(") c_code 0); true with Not_found -> false in
     check bool "C code should contain function pointer calls" true has_function_pointer_calls;
     
     check bool "Test passed - function pointer calls generate correct IR" true true

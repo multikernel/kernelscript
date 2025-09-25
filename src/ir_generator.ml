@@ -598,7 +598,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
            if name = "register" then
              (* Special handling for register() builtin function *)
               handle_register_builtin_call ctx args expr.expr_pos ()
-           else if Hashtbl.mem ctx.function_parameters name then
+           else if Hashtbl.mem ctx.function_parameters name || 
+                   (Hashtbl.mem ctx.variable_types name && 
+                    match Hashtbl.find ctx.variable_types name with 
+                    | IRFunctionPointer _ -> true 
+                    | _ -> false) then
              (* This is a variable holding a function pointer - use FunctionPointerCall *)
              let callee_val = lower_expression ctx callee_expr in
              if is_void_call then
@@ -1148,7 +1152,11 @@ and resolve_declaration_type_and_init ctx typ_opt expr_opt =
                 let arg_vals = List.map (lower_expression ctx) args in
                 let call_target = match callee_expr.Ast.expr_desc with
                   | Ast.Identifier name ->
-                      if Hashtbl.mem ctx.function_parameters name then
+                      if Hashtbl.mem ctx.function_parameters name || 
+                         (Hashtbl.mem ctx.variable_types name && 
+                          match Hashtbl.find ctx.variable_types name with 
+                          | IRFunctionPointer _ -> true 
+                          | _ -> false) then
                         let callee_val = lower_expression ctx callee_expr in
                         FunctionPointerCall callee_val
                       else
@@ -1528,7 +1536,11 @@ and lower_statement ctx stmt =
                           (* Regular function call handling *)
                           let call_target = match callee_expr.Ast.expr_desc with
                             | Ast.Identifier name ->
-                                if Hashtbl.mem ctx.function_parameters name then
+                                if Hashtbl.mem ctx.function_parameters name || 
+                                   (Hashtbl.mem ctx.variable_types name && 
+                                    match Hashtbl.find ctx.variable_types name with 
+                                    | IRFunctionPointer _ -> true 
+                                    | _ -> false) then
                                   let callee_val = lower_expression ctx callee_expr in
                                   FunctionPointerCall callee_val
                                 else
