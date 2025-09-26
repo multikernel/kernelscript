@@ -14,6 +14,7 @@
  * limitations under the License.
  *)
 
+open Alcotest
 open Kernelscript
 open Ast
 
@@ -67,20 +68,18 @@ fn packet_filter(ctx: *xdp_md) -> u32 {
   ) ast in
   
   (* Verify we have the expected variables *)
-  assert (List.length pinned_vars = 2);
-  assert (List.length regular_vars = 1);
-  assert (List.length local_vars = 1);
+  check int "Should have 2 pinned variables" 2 (List.length pinned_vars);
+  check int "Should have 1 regular variable" 1 (List.length regular_vars);
+  check int "Should have 1 local variable" 1 (List.length local_vars);
   
   (* Check specific pinned variables *)
   let session_count = List.find (fun gv -> gv.global_var_name = "session_count") pinned_vars in
   let debug_enabled = List.find (fun gv -> gv.global_var_name = "debug_enabled") pinned_vars in
   
-  assert (session_count.is_pinned = true);
-  assert (session_count.is_local = false);
-  assert (debug_enabled.is_pinned = true);
-  assert (debug_enabled.is_local = false);
-  
-  Printf.printf "✅ Pinned globals parsing test passed\n"
+  check bool "session_count should be pinned" true session_count.is_pinned;
+  check bool "session_count should not be local" false session_count.is_local;
+  check bool "debug_enabled should be pinned" true debug_enabled.is_pinned;
+  check bool "debug_enabled should not be local" false debug_enabled.is_local
 
 let test_invalid_pin_local () =
   let program_text = {|
@@ -92,13 +91,12 @@ pin local var invalid_var: u32 = 123
     let ast = Parse.parse_string program_text in
     let symbol_table = Symbol_table.create_symbol_table () in
     let _ctx = Type_checker.type_check_ast ~symbol_table:(Some symbol_table) ast in
-    failwith "Expected type error for pin local var"
+    fail "Expected type error for pin local var"
   with
   | Type_checker.Type_error (msg, _) ->
-      assert (contains_substring msg "Cannot pin local variables");
-      Printf.printf "✅ Pin local validation test passed\n"
+      check bool "Error message should mention cannot pin local variables" true (contains_substring msg "Cannot pin local variables")
   | exn ->
-      failwith ("Unexpected error: " ^ Printexc.to_string exn)
+      fail ("Unexpected error: " ^ Printexc.to_string exn)
 
 let test_ebpf_codegen_pinned_globals () =
   let program_text = {|
@@ -124,18 +122,16 @@ fn test_program(ctx: *xdp_md) -> u32 {
   let ebpf_code = Ebpf_c_codegen.generate_c_multi_program ir_multi_prog in
   
   (* Verify the generated code contains pinned globals structures *)
-  assert (contains_substring ebpf_code "struct __pinned_globals");
-  assert (contains_substring ebpf_code "global_counter");
-  assert (contains_substring ebpf_code "enable_logging");
-  assert (contains_substring ebpf_code "__pinned_globals SEC(\".maps\")");
-  assert (contains_substring ebpf_code "get_pinned_globals");
-  assert (contains_substring ebpf_code "update_pinned_globals");
+  check bool "Should contain pinned globals struct" true (contains_substring ebpf_code "struct __pinned_globals");
+  check bool "Should contain global_counter" true (contains_substring ebpf_code "global_counter");
+  check bool "Should contain enable_logging" true (contains_substring ebpf_code "enable_logging");
+  check bool "Should contain pinned globals map section" true (contains_substring ebpf_code "__pinned_globals SEC(\".maps\")");
+  check bool "Should contain get_pinned_globals function" true (contains_substring ebpf_code "get_pinned_globals");
+  check bool "Should contain update_pinned_globals function" true (contains_substring ebpf_code "update_pinned_globals");
   
   (* Verify transparent access is generated *)
-  assert (contains_substring ebpf_code "__pg->global_counter");
-  assert (contains_substring ebpf_code "__pg->enable_logging");
-  
-  Printf.printf "✅ eBPF codegen pinned globals test passed\n"
+  check bool "Should contain transparent access to global_counter" true (contains_substring ebpf_code "__pg->global_counter");
+  check bool "Should contain transparent access to enable_logging" true (contains_substring ebpf_code "__pg->enable_logging")
 
 let test_ir_generation_pinned_globals () =
   let program_text = {|
@@ -158,19 +154,19 @@ fn test_func(ctx: *xdp_md) -> u32 {
   let pinned_global = List.find (fun gv -> gv.Ir.global_var_name = "shared_state") ir_multi_prog.Ir.global_variables in
   let regular_global = List.find (fun gv -> gv.Ir.global_var_name = "regular_var") ir_multi_prog.Ir.global_variables in
   
-  assert (pinned_global.Ir.is_pinned = true);
-  assert (pinned_global.Ir.is_local = false);
-  assert (regular_global.Ir.is_pinned = false);
-  assert (regular_global.Ir.is_local = false);
-  
-  Printf.printf "✅ IR generation pinned globals test passed\n"
+  check bool "Pinned global should be marked as pinned" true pinned_global.Ir.is_pinned;
+  check bool "Pinned global should not be local" false pinned_global.Ir.is_local;
+  check bool "Regular global should not be pinned" false regular_global.Ir.is_pinned;
+  check bool "Regular global should not be local" false regular_global.Ir.is_local
 
-let run_tests () =
-  Printf.printf "Running pinned global variables tests...\n";
-  test_parse_pinned_globals ();
-  test_invalid_pin_local ();
-  test_ebpf_codegen_pinned_globals ();
-  test_ir_generation_pinned_globals ();
-  Printf.printf "✅ All pinned globals tests passed!\n"
+(** Test runner *)
+let tests = [
+  "parse pinned globals", `Quick, test_parse_pinned_globals;
+  "invalid pin local", `Quick, test_invalid_pin_local;
+  "ebpf codegen pinned globals", `Quick, test_ebpf_codegen_pinned_globals;
+  "ir generation pinned globals", `Quick, test_ir_generation_pinned_globals;
+]
 
-let () = run_tests () 
+let () = Alcotest.run "Pinned Global Variables Tests" [
+  "pinned_globals", tests;
+] 
