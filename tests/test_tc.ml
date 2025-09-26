@@ -622,7 +622,7 @@ fn packet_dropper(ctx: *xdp_md) -> xdp_action {
        false);
   check bool "Should contain XDP section" true
     (try 
-       let _ = Str.search_forward (Str.regexp_string "SEC(\"prog\")") c_code 0 in
+       let _ = Str.search_forward (Str.regexp_string "SEC(\"xdp\")") c_code 0 in
        true
      with Not_found -> 
        false);
