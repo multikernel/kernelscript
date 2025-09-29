@@ -2826,6 +2826,49 @@ let is_struct_userspace_only ast struct_name =
   (* A struct is userspace-only if it's used in userspace but not in eBPF *)
   !is_used_in_userspace && not !is_used_in_ebpf
 
+(** Check if a struct should be excluded from eBPF (not used by eBPF programs) *)
+let should_exclude_struct_from_ebpf ast struct_name =
+  let is_used_in_ebpf = ref false in
+  
+  let rec check_type_usage = function
+    | Ast.UserType name when name = struct_name -> true
+    | Ast.Struct name when name = struct_name -> true
+    | Ast.Pointer inner_type -> check_type_usage inner_type
+    | Ast.Array (inner_type, _) -> check_type_usage inner_type
+    | Ast.Function (param_types, return_type) ->
+        List.exists check_type_usage param_types || check_type_usage return_type
+    | _ -> false
+  in
+  
+  let check_function_usage func_def is_ebpf_context =
+    (* Check if function uses the struct *)
+    let uses_struct = 
+      List.exists (fun (_, param_type) -> check_type_usage param_type) func_def.func_params ||
+      (match func_def.func_return_type with 
+       | Some (Ast.Unnamed rt) -> check_type_usage rt 
+       | Some (Ast.Named (_, rt)) -> check_type_usage rt
+       | None -> false)
+    in
+    
+    if uses_struct && is_ebpf_context then
+      is_used_in_ebpf := true
+  in
+  
+  (* Check all function declarations *)
+  List.iter (function
+    | Ast.AttributedFunction attr_func -> 
+        (* eBPF functions are wrapped in AttributedFunction *)
+        check_function_usage attr_func.attr_function true
+    | Ast.GlobalFunction func_def -> 
+        (* Regular userspace functions *)
+        check_function_usage func_def false
+
+    | _ -> ()
+  ) ast;
+  
+  (* Exclude struct if it's not used in eBPF *)
+  not !is_used_in_ebpf
+
 (** Convert a global variable declaration with map type to IR map definition *)
 let convert_global_var_to_map symbol_table global_var_decl =
   match global_var_decl.Ast.global_var_type with
@@ -2935,10 +2978,15 @@ let lower_multi_program ast symbol_table source_name =
              let ir_type = ast_type_to_ir_type_with_context symbol_table underlying_type in
              add_source_declaration (IRDeclTypeAlias (name, ir_type, pos)) pos
          | Ast.TypeDef (Ast.StructDef (name, fields, pos)) ->
-             let ir_fields = List.map (fun (field_name, field_type) ->
-               (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
-             ) fields in
-             add_source_declaration (IRDeclStructDef (name, ir_fields, pos)) pos
+             (* Only filter user-defined structs, not kernel structs from .kh files *)
+             let is_kernel_struct = Filename.check_suffix pos.filename ".kh" in
+             let should_include = is_kernel_struct || not (should_exclude_struct_from_ebpf ast name) in
+             if should_include then (
+               let ir_fields = List.map (fun (field_name, field_type) ->
+                 (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
+               ) fields in
+               add_source_declaration (IRDeclStructDef (name, ir_fields, pos)) pos
+             )
          | Ast.TypeDef (Ast.EnumDef (name, values, pos)) ->
              let ir_values = List.map (fun (enum_name, opt_value) ->
                (enum_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
@@ -2956,8 +3004,10 @@ let lower_multi_program ast symbol_table source_name =
              in
              add_source_declaration (IRDeclFunctionDef ir_func) func_def.func_pos
          | Ast.StructDecl struct_def ->
-             let is_userspace_only = is_struct_userspace_only ast struct_def.struct_name in
-             if not is_userspace_only then (
+             (* Only filter user-defined structs, not kernel structs from .kh files *)
+             let is_kernel_struct = Filename.check_suffix struct_def.struct_pos.filename ".kh" in
+             let should_include = is_kernel_struct || not (should_exclude_struct_from_ebpf ast struct_def.struct_name) in
+             if should_include then (
                let ir_fields = List.map (fun (field_name, field_type) ->
                  (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
                ) struct_def.struct_fields in

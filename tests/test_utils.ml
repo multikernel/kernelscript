@@ -27,6 +27,9 @@ open Kernelscript.Ast
 (** Common test position for when position doesn't matter *)
 let test_pos = make_position 1 1 "test.ks"
 
+(** Position for kernel structs (simulates .kh header files) *)
+let kernel_pos = make_position 1 1 "kernel_structs.kh"
+
 (** XDP-related test types and constants *)
 module Xdp = struct
   (** XDP action enum values *)
@@ -158,7 +161,7 @@ module StructOps = struct
     StructDecl {
       struct_name = "tcp_congestion_ops";
       struct_fields = tcp_congestion_ops_fields;
-      struct_pos = test_pos;
+      struct_pos = kernel_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "tcp_congestion_ops")];
     }
   
@@ -167,7 +170,7 @@ module StructOps = struct
     StructDecl {
       struct_name = "bpf_iter_ops";
       struct_fields = bpf_iter_ops_fields;
-      struct_pos = test_pos;
+      struct_pos = kernel_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "bpf_iter_ops")];
     }
   
@@ -176,7 +179,7 @@ module StructOps = struct
     StructDecl {
       struct_name = "bpf_struct_ops_test";
       struct_fields = bpf_struct_ops_test_fields;
-      struct_pos = test_pos;
+      struct_pos = kernel_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "bpf_struct_ops_test")];
     }
   
@@ -185,7 +188,7 @@ module StructOps = struct
     StructDecl {
       struct_name = "sched_ext_ops";
       struct_fields = sched_ext_ops_fields;
-      struct_pos = test_pos;
+      struct_pos = kernel_pos;
       struct_attributes = [AttributeWithArg ("struct_ops", "sched_ext_ops")];
     }
   
