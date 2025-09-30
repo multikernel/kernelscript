@@ -3294,22 +3294,6 @@ let compile_multi_to_c_with_tail_calls
     )
   );
   
-  (* Generate program entry functions - these were skipped in the unified function above *)
-  List.iter (fun ir_prog ->
-    generate_c_function ctx ir_prog.entry_function
-  ) ir_multi_prog.programs;
-  
-  (* Generate kernel functions *)
-  List.iter (fun ir_func ->
-    generate_c_function ctx ir_func
-  ) ir_multi_prog.kernel_functions;
-
-  (* Generate struct_ops definitions and instances after functions are defined *)
-  generate_struct_ops ctx ir_multi_prog;
-  
-  (* Add license (required for eBPF) *)
-  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
-  
   (* Create or use provided tail call analysis result *)
   let final_tail_call_analysis = match tail_call_analysis with
     | Some analysis -> analysis
@@ -3320,6 +3304,25 @@ let compile_multi_to_c_with_tail_calls
         errors = [];
       }
   in
+  
+  (* Generate prog_array map for tail calls if needed (before functions that use it) *)
+  generate_prog_array_map ctx final_tail_call_analysis.prog_array_size;
+  
+  (* Generate kernel functions first to preserve source order *)
+  List.iter (fun ir_func ->
+    generate_c_function ctx ir_func
+  ) ir_multi_prog.kernel_functions;
+  
+  (* Generate program entry functions after kernel functions *)
+  List.iter (fun ir_prog ->
+    generate_c_function ctx ir_prog.entry_function
+  ) ir_multi_prog.programs;
+
+  (* Generate struct_ops definitions and instances after functions are defined *)
+  generate_struct_ops ctx ir_multi_prog;
+  
+  (* Add license (required for eBPF) *)
+  emit_line ctx "char _license[] SEC(\"license\") = \"GPL\";";
   
   (* Assemble final output *)
   let final_output = String.concat "\n" ctx.output_lines in
