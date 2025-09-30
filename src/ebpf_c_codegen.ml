@@ -217,6 +217,28 @@ let fresh_var ctx prefix =
   ctx.var_counter <- ctx.var_counter + 1;
   sprintf "%s_%d" prefix ctx.var_counter
 
+(** Helper to check if a position indicates a kernel-defined type *)
+let is_kernel_defined_type pos =
+  let is_builtin = pos.Ast.filename = "<builtin>" in
+  let is_btf_type = Filename.check_suffix pos.Ast.filename ".kh" in
+  is_builtin || is_btf_type
+
+(** Helper to check if a struct should be included, excluding truct_ops *)
+let should_include_struct_with_struct_ops struct_name struct_ops_declarations pos =
+  (* Check if this is a struct_ops struct (always include these) *)
+  let is_struct_ops_struct = 
+    List.exists (fun struct_ops_decl -> 
+      struct_ops_decl.ir_kernel_struct_name = struct_name
+    ) struct_ops_declarations
+  in
+  
+  if is_struct_ops_struct then
+    (* Always include struct_ops structs, even if they come from kernel headers *)
+    true
+  else
+    (* Apply normal filtering for non-struct_ops structs *)
+    not (is_kernel_defined_type pos)
+
 let fresh_label ctx prefix =
   ctx.label_counter <- ctx.label_counter + 1;
   sprintf "%s_%d" prefix ctx.label_counter
@@ -513,9 +535,7 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
                 | Some symbol ->
                     (match symbol.Symbol_table.kind with
                      | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
-                         let is_builtin = enum_pos.filename = "<builtin>" in
-                         let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
-                         not is_builtin && not is_btf_enum
+                         not (is_kernel_defined_type enum_pos)
                      | _ -> true)  (* Not an enum, include it *)
                 | None -> true)  (* Not found in symbol table, include it *)
            | None -> true  (* No symbol table, include it *)
@@ -593,9 +613,7 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
         match symbol.Symbol_table.kind with
         | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, enum_pos)) ->
             (* Only include user-defined enums - filter out both builtins and BTF-extracted enums *)
-            let is_builtin_enum = enum_pos.filename = "<builtin>" in
-            let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
-            if not is_builtin_enum && not is_btf_enum then (
+            if not (is_kernel_defined_type enum_pos) then (
               let processed_values = List.map (fun (const_name, opt_value) ->
                 (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
               ) enum_values in
@@ -1829,34 +1847,18 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
     
     | Ir.IRDeclStructDef (name, fields, pos) ->
         (* Filter out kernel-defined structs, but include struct_ops structs *)
-        let is_struct_ops_struct = 
-          List.exists (fun struct_ops_decl -> 
-            struct_ops_decl.ir_kernel_struct_name = name
-          ) ir_multi_prog.struct_ops_declarations
-        in
-        
-        let should_include_struct = 
-          if is_struct_ops_struct then
-            (* Always include struct_ops structs, even if they come from kernel headers *)
-            true
-          else
-            (* Apply normal filtering for non-struct_ops structs *)
-            match _symbol_table with
-            | Some st ->
-                (match Symbol_table.lookup_symbol st name with
-                 | Some symbol ->
-                     (match symbol.Symbol_table.kind with
-                      | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
-                          let is_builtin = struct_pos.filename = "<builtin>" in
-                          let is_btf_struct = Filename.check_suffix struct_pos.filename ".kh" in
-                          not is_builtin && not is_btf_struct
-                      | _ -> true)  (* Not a struct, include it *)
-                 | None -> true)  (* Not found in symbol table, include it *)
-            | None -> 
-                (* Fallback: check the position from the declaration itself *)
-                let is_builtin = pos.filename = "<builtin>" in
-                let is_btf_struct = Filename.check_suffix pos.filename ".kh" in
-                not is_builtin && not is_btf_struct
+        let should_include_struct = match _symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
+                        should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations struct_pos
+                    | _ -> true)  (* Not a struct, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
+          | None -> 
+              (* Fallback: check the position from the declaration itself *)
+              should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations pos
         in
         if should_include_struct then (
           (* Generate struct definition *)
@@ -1888,16 +1890,12 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
                | Some symbol ->
                    (match symbol.Symbol_table.kind with
                     | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
-                        let is_builtin = enum_pos.filename = "<builtin>" in
-                        let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
-                        not is_builtin && not is_btf_enum
+                        not (is_kernel_defined_type enum_pos)
                     | _ -> true)  (* Not an enum, include it *)
                | None -> true)  (* Not found in symbol table, include it *)
           | None -> 
               (* Fallback: check the position from the declaration itself *)
-              let is_builtin = pos.filename = "<builtin>" in
-              let is_btf_enum = Filename.check_suffix pos.filename ".kh" in
-              not is_builtin && not is_btf_enum
+              not (is_kernel_defined_type pos)
         in
         if should_include_enum then (
           (* Generate enum definition *)
