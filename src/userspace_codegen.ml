@@ -643,8 +643,10 @@ type userspace_context = {
   is_main: bool;
   (* Track register to variable name mapping for better C code *)
   register_vars: (int, string) Hashtbl.t;
-  (* Track variable declarations needed *)
+  (* Track variable declarations needed - elegant IR-based approach *)
   var_declarations: (string, ir_type) Hashtbl.t; (* var_name -> ir_type *)
+  (* Track IR values for elegant variable naming *)
+  ir_var_values: (string, ir_value) Hashtbl.t; (* var_name -> ir_value *)
   (* Track variables declared via IRVariableDecl instructions *)
   declared_via_ir: (string, unit) Hashtbl.t; (* var_name -> unit *)
   (* Track function usage for optimization *)
@@ -663,6 +665,7 @@ let create_context_base ?(global_variables = []) ~function_name ~is_main () = {
   is_main;
   register_vars = Hashtbl.create 32;
   var_declarations = Hashtbl.create 32;
+  ir_var_values = Hashtbl.create 32;
   declared_via_ir = Hashtbl.create 32;
   function_usage = create_function_usage ();
   global_variables;
@@ -688,21 +691,27 @@ let c_reserved_keywords = [
   "stdin"; "stdout"; "stderr"; "errno"; "NULL"
 ]
 
-(** Sanitize variable name to avoid C reserved keywords and ensure consistent naming *)
+(** Generate appropriate C variable name based on variable origin *)
+let generate_c_var_name_from_ir_value ir_value =
+  match ir_value.value_desc with
+  | IRVariable name ->
+      (* User-defined variables get var_ prefix for consistency *)
+      let base_name = if List.mem name c_reserved_keywords then name ^ "_var" else name in
+      "var_" ^ base_name
+  | IRTempVariable name ->
+      (* Compiler-generated temporaries use their names directly *)
+      if List.mem name c_reserved_keywords then name ^ "_var" else name
+  | _ ->
+      (* For other value types, this function shouldn't be called *)
+      failwith "generate_c_var_name_from_ir_value called on non-variable IR value"
+
 let sanitize_var_name var_name =
-  (* Add var_ prefix to all user variables for consistent naming *)
-  let is_temp_var = 
-    String.contains var_name '_' && (
-      (String.length var_name > 0 && String.get var_name 0 >= '0' && String.get var_name 0 <= '9') ||
-      (try ignore (Str.search_forward (Str.regexp "temp\\|key\\|value\\|match\\|__binop\\|__map\\|__func\\|tmp_") var_name 0); true with Not_found -> false)
-    ) in
-  if is_temp_var then
-    (* This looks like a generated temporary variable, don't add prefix *)
-    if List.mem var_name c_reserved_keywords then var_name ^ "_var" else var_name
-  else
-    (* This is a user variable, add var_ prefix *)
-    let base_name = if List.mem var_name c_reserved_keywords then var_name ^ "_var" else var_name in
-    "var_" ^ base_name
+  (* This is a fallback for cases where we only have the name string *)
+  (* In an ideal world, this function would be eliminated entirely *)
+  if List.mem var_name c_reserved_keywords then 
+    var_name ^ "_var" 
+  else 
+    var_name
 
 let fresh_temp_var ctx prefix =
   incr ctx.temp_counter;
@@ -1449,10 +1458,11 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
                let section = determine_global_var_section global_var in
                sprintf "obj->%s->%s" section name)
       else
-        sanitize_var_name name  (* Function parameters and regular variables use sanitized names *)
-  | IRTempVariable name -> 
-      (* Temporary variables use their names directly *)
-      name
+        (* Use elegant IR-based variable naming *)
+        generate_c_var_name_from_ir_value ir_value
+  | IRTempVariable _name -> 
+      (* Use elegant IR-based variable naming *)
+      generate_c_var_name_from_ir_value ir_value
 
   | IRMapRef map_name -> sprintf "%s_fd" map_name
   | IREnumConstant (_enum_name, constant_name, _value) ->
@@ -1898,14 +1908,28 @@ let rec generate_c_instruction_from_ir ctx instruction =
       generate_variable_assignment ctx dest src true
 
   | IRVariableDecl (var_name, typ, init_expr_opt) ->
-      (* New unified variable declaration - handles both user variables and temporary variables *)
-      let sanitized_name = sanitize_var_name var_name in
+      (* New unified variable declaration using elegant IR-based approach *)
+      (* Create a synthetic IR value to determine the correct variable type *)
+      (* Determine if this is a user variable or compiler-generated temporary *)
+      let is_temp_var = 
+        String.contains var_name '_' && (
+          (String.length var_name > 0 && String.get var_name 0 >= '0' && String.get var_name 0 <= '9') ||
+          (try ignore (Str.search_forward (Str.regexp "__binop\\|__map\\|__func\\|tmp_") var_name 0); true with Not_found -> false)
+        ) in
+      let synthetic_ir_value = {
+        value_desc = if is_temp_var then IRTempVariable var_name else IRVariable var_name;
+        val_type = typ;
+        stack_offset = None;
+        bounds_checked = false;
+        val_pos = { line = 0; column = 0; filename = "synthetic" };
+      } in
+      let c_var_name = generate_c_var_name_from_ir_value synthetic_ir_value in
       (* Mark this variable as declared via IRVariableDecl to avoid double declaration *)
       Hashtbl.replace ctx.declared_via_ir var_name ();
       (match typ with
        | IRStr size ->
            (* String declaration with proper C array syntax *)
-           let string_decl = sprintf "char %s[%d]" sanitized_name size in
+           let string_decl = sprintf "char %s[%d]" c_var_name size in
            (match init_expr_opt with
             | Some init_expr ->
                 let init_str = generate_c_expression_from_ir ctx init_expr in
@@ -1913,16 +1937,16 @@ let rec generate_c_instruction_from_ir ctx instruction =
                 (match init_expr.expr_desc with
                  | IRValue (ir_val) when (match ir_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
                      (* Simple string literal - use safe initialization with length checking *)
-                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size sanitized_name init_str sanitized_name init_str size sanitized_name size
+                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name init_str c_var_name init_str size c_var_name size
                  | _ ->
                      (* Complex expression (function call, concatenation, etc.) - use safe strcpy with length checking *)
-                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size sanitized_name init_str sanitized_name init_str size sanitized_name size)
+                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name init_str c_var_name init_str size c_var_name size)
             | None ->
                 sprintf "%s;" string_decl)
        | IRArray (element_type, size, _) ->
            (* Array declaration with proper C syntax *)
            let element_type_str = c_type_from_ir_type element_type in
-           let array_decl = sprintf "%s %s[%d]" element_type_str sanitized_name size in
+           let array_decl = sprintf "%s %s[%d]" element_type_str c_var_name size in
            (match init_expr_opt with
             | Some init_expr ->
                 let init_str = generate_c_expression_from_ir ctx init_expr in
@@ -1931,7 +1955,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                 sprintf "%s;" array_decl)
        | _ ->
            (* Regular variable declaration *)
-           let decl_str = generate_c_declaration typ sanitized_name in
+           let decl_str = generate_c_declaration typ c_var_name in
            (match init_expr_opt with
             | Some init_expr ->
                 let init_str = generate_c_expression_from_ir ctx init_expr in
@@ -2196,8 +2220,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
       (* Ensure counter variable is declared *)
       (match counter.value_desc with
        | IRVariable name | IRTempVariable name ->
-           if not (Hashtbl.mem ctx.var_declarations name) && not (Hashtbl.mem ctx.declared_via_ir name) then
-             Hashtbl.add ctx.var_declarations name counter.val_type
+           if not (Hashtbl.mem ctx.var_declarations name) && not (Hashtbl.mem ctx.declared_via_ir name) then (
+             Hashtbl.add ctx.var_declarations name counter.val_type;
+             Hashtbl.add ctx.ir_var_values name counter
+           )
        | _ -> ());
       
       let counter_str = generate_c_value_from_ir ctx counter in
@@ -2526,12 +2552,67 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   let ctx = if ir_func.func_name = "main" then create_main_context ~global_variables () else 
     { (create_userspace_context ~global_variables ()) with function_name = ir_func.func_name } in
   
-  (* Collect and declare undeclared IRVariable names (e.g., named return variables) *)
+  (* Collect and declare undeclared IRVariable names using elegant IR-based approach *)
   let undeclared_vars = collect_undeclared_variables_in_function ir_func in
   List.iter (fun (var_name, var_type) ->
     if not (Hashtbl.mem ctx.var_declarations var_name) then
       Hashtbl.add ctx.var_declarations var_name var_type
   ) undeclared_vars;
+  
+  (* Also collect IR values for elegant variable naming *)
+  let collect_ir_values_from_function ir_func =
+    let collect_from_value ir_val =
+      match ir_val.value_desc with
+      | IRVariable name | IRTempVariable name ->
+          if not (Hashtbl.mem ctx.ir_var_values name) then
+            Hashtbl.add ctx.ir_var_values name ir_val
+      | _ -> ()
+    in
+    
+    let collect_from_expr ir_expr =
+      match ir_expr.expr_desc with
+      | IRValue ir_val -> collect_from_value ir_val
+      | IRBinOp (left, _, right) -> collect_from_value left; collect_from_value right
+      | IRUnOp (_, ir_val) -> collect_from_value ir_val
+      | IRCast (ir_val, _) -> collect_from_value ir_val
+      | IRFieldAccess (obj_val, _) -> collect_from_value obj_val
+      | IRStructLiteral (_, field_assignments) ->
+          List.iter (fun (_, field_val) -> collect_from_value field_val) field_assignments
+      | IRMatch (matched_val, arms) ->
+          collect_from_value matched_val;
+          List.iter (fun arm -> collect_from_value arm.ir_arm_value) arms
+    in
+    
+    let rec collect_from_instr ir_instr =
+      match ir_instr.instr_desc with
+      | IRAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
+      | IRConstAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
+      | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+          (match init_expr_opt with
+           | Some init_expr -> collect_from_expr init_expr
+           | None -> ())
+      | IRCall (_, args, ret_opt) ->
+          List.iter collect_from_value args;
+          (match ret_opt with Some ret_val -> collect_from_value ret_val | None -> ())
+      | IRReturn (Some ret_val) -> collect_from_value ret_val
+      | IRIf (cond_val, then_instrs, else_instrs_opt) ->
+          collect_from_value cond_val;
+          List.iter collect_from_instr then_instrs;
+          (match else_instrs_opt with
+           | Some else_instrs -> List.iter collect_from_instr else_instrs
+           | None -> ())
+      | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->
+          collect_from_value start_val; collect_from_value end_val; 
+          collect_from_value counter_val; collect_from_value ctx_val;
+          List.iter collect_from_instr body_instructions
+      | _ -> ()
+    in
+    
+    List.iter (fun block ->
+      List.iter collect_from_instr block.instructions
+    ) ir_func.basic_blocks
+  in
+  collect_ir_values_from_function ir_func;
   
   (* Function parameters are used directly, no need for local variable copies *)
   
@@ -2548,8 +2629,11 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   (* Generate variable declarations, filtering out impl block variables *)
   let var_decls = 
     let all_declarations = Hashtbl.fold (fun var_name ir_type acc ->
-      let sanitized_name = sanitize_var_name var_name in
-      let declaration = generate_c_declaration ir_type sanitized_name ^ ";" in
+      let c_var_name = match Hashtbl.find_opt ctx.ir_var_values var_name with
+        | Some ir_value -> generate_c_var_name_from_ir_value ir_value
+        | None -> sanitize_var_name var_name  (* Fallback for legacy cases *)
+      in
+      let declaration = generate_c_declaration ir_type c_var_name ^ ";" in
       (var_name, declaration) :: acc
     ) ctx.var_declarations [] in
     
