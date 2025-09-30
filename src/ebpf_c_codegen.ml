@@ -1809,491 +1809,147 @@ let generate_c_expression ctx ir_expr =
           (* Return the temporary variable *)
           temp_var
 
-(** Generate ALL declarations in original source order - complete implementation *)
-let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ?_symbol_table ~_btf_path _tail_call_analysis =
-  (* First, collect all global variables from source declarations to handle pinned globals properly *)
-  let all_global_vars = List.fold_left (fun acc source_decl ->
-    match source_decl.Ir.decl_desc with
-    | Ir.IRDeclGlobalVarDef global_var -> global_var :: acc
-    | _ -> acc
-  ) [] ir_multi_prog.Ir.source_declarations |> List.rev in
+let rec generate_c_function ctx ir_func =
+  (* Clear per-function state to avoid conflicts between functions *)
+  Hashtbl.clear ctx.declared_registers;
   
-  (* Generate global variables using the unified logic that handles pinned globals *)
-  if all_global_vars <> [] then (
-    generate_global_variables ctx all_global_vars
-  );
+  (* Determine current function's context type from first parameter or program type *)
+  ctx.current_function_context_type <- 
+    (match ir_func.func_program_type with
+             | Some (Ast.Probe probe_type) -> 
+            (match probe_type with
+             | Ast.Kprobe -> Some "kprobe"  (* Only kprobe uses pt_regs context *)
+             | Ast.Fprobe -> None)  (* Fprobe uses direct parameters *)
+     | _ ->
+         (* Fall back to parameter-based detection *)
+         (match ir_func.parameters with
+          | (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
+          | (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
+          | (_, IRStruct ("pt_regs", _)) :: _ -> Some "kprobe"
+          | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
+          | (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
+          | (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"  (* Handle pt_regs as kprobe context *)
+          | (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"  (* Handle tracepoint context *)
+          | _ -> None));
   
-  (* Process source declarations in their original order - handle ALL declaration types except global vars *)
-  List.iter (fun source_decl ->
-    match source_decl.Ir.decl_desc with
-    | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
-        (* Generate type alias definition with special handling for function pointers *)
-        (match ir_type with
-         | IRFunctionPointer (param_types, return_type) ->
-             (* Special syntax for function pointer typedefs *)
-             let return_type_str = ebpf_type_from_ir_type return_type in
-             let param_types_str = List.map ebpf_type_from_ir_type param_types in
-             let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-             emit_line ctx (sprintf "typedef %s (*%s)(%s);" return_type_str name params_str);
-         | IRArray (inner_type, size, _) ->
-             (* Special syntax for array typedefs: typedef element_type alias_name[size]; *)
-             let element_type_str = ebpf_type_from_ir_type inner_type in
-             emit_line ctx (sprintf "typedef %s %s[%d];" element_type_str name size);
-         | _ ->
-             (* Regular type alias *)
-             let c_type = ebpf_type_from_ir_type ir_type in
-             emit_line ctx (sprintf "typedef %s %s;" c_type name));
-        emit_blank_line ctx
-    
-    | Ir.IRDeclStructDef (name, fields, pos) ->
-        (* Filter out kernel-defined structs, but include struct_ops structs *)
-        let should_include_struct = match _symbol_table with
-          | Some st ->
-              (match Symbol_table.lookup_symbol st name with
-               | Some symbol ->
-                   (match symbol.Symbol_table.kind with
-                    | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
-                        should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations struct_pos
-                    | _ -> true)  (* Not a struct, include it *)
-               | None -> true)  (* Not found in symbol table, include it *)
-          | None -> 
-              (* Fallback: check the position from the declaration itself *)
-              should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations pos
-        in
-        if should_include_struct then (
-          (* Generate struct definition *)
-          emit_line ctx (sprintf "struct %s {" name);
-          increase_indent ctx;
-          List.iter (fun (field_name, field_type) ->
-            let field_declaration = match field_type with
-              | IRArray (inner_type, size, _) ->
-                  (* Special syntax for array fields: element_type field_name[size]; *)
-                  let element_type_str = ebpf_type_from_ir_type inner_type in
-                  sprintf "%s %s[%d];" element_type_str field_name size
-              | _ ->
-                  (* Regular field *)
-                  let c_type = ebpf_type_from_ir_type field_type in
-                  sprintf "%s %s;" c_type field_name
-            in
-            emit_line ctx field_declaration;
-          ) fields;
-          decrease_indent ctx;
-          emit_line ctx "};";
-          emit_blank_line ctx
-        )
-    
-    | Ir.IRDeclEnumDef (name, values, pos) ->
-        (* Filter out kernel-defined enums (same logic as original collect_enum_definitions) *)
-        let should_include_enum = match _symbol_table with
-          | Some st ->
-              (match Symbol_table.lookup_symbol st name with
-               | Some symbol ->
-                   (match symbol.Symbol_table.kind with
-                    | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
-                        not (is_kernel_defined_type enum_pos)
-                    | _ -> true)  (* Not an enum, include it *)
-               | None -> true)  (* Not found in symbol table, include it *)
-          | None -> 
-              (* Fallback: check the position from the declaration itself *)
-              not (is_kernel_defined_type pos)
-        in
-        if should_include_enum then (
-          (* Generate enum definition *)
-          emit_line ctx (sprintf "enum %s {" name);
-          increase_indent ctx;
-          let value_count = List.length values in
-          List.iteri (fun i (const_name, value) ->
-            let line = sprintf "%s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
-            emit_line ctx line
-          ) values;
-          decrease_indent ctx;
-          emit_line ctx "};";
-          emit_blank_line ctx
-        )
-    
-    | Ir.IRDeclMapDef map_def ->
-        (* Generate map definition *)
-        generate_map_definition ctx map_def
-    
-    | Ir.IRDeclConfigDef config_def ->
-        (* Generate config map definition *)
-        generate_config_map_definition ctx config_def
-    
-    | Ir.IRDeclGlobalVarDef _global_var ->
-        (* Skip individual global variable processing - already handled at the beginning *)
-        ()
-    
-    | Ir.IRDeclFunctionDef _func_def ->
-        (* Skip function generation here - functions will be handled by existing logic after this unified function *)
-        (* This avoids forward reference issues while still preserving order for other declaration types *)
-        ()
-    
-    | Ir.IRDeclStructOpsDef struct_ops_def ->
-        (* Generate struct_ops definition *)
-        emit_line ctx (sprintf "/* eBPF struct_ops declaration for %s */" struct_ops_def.ir_kernel_struct_name);
-        emit_line ctx (sprintf "/* struct %s_ops implementation would be auto-generated by libbpf */" struct_ops_def.ir_struct_ops_name);
-        emit_blank_line ctx
-    
-    | Ir.IRDeclStructOpsInstance struct_ops_instance ->
-        (* Generate struct_ops instance *)
-        emit_line ctx (sprintf "/* eBPF struct_ops instance: %s */" struct_ops_instance.ir_instance_name);
-        emit_blank_line ctx
-  ) ir_multi_prog.Ir.source_declarations
-
-(** Generate bounds checking *)
-
-let generate_bounds_check ctx ir_val min_bound max_bound =
-  let val_str = generate_c_value ctx ir_val in
-  emit_line ctx (sprintf "if (%s < %d || %s > %d) {" val_str min_bound val_str max_bound);
+  let return_type_str = 
+    (* Special handling for kprobe functions: always use int return type for eBPF compatibility *)
+    match ir_func.func_program_type with
+    | Some (Ast.Probe _) -> "__s32"  (* eBPF probe programs must return int *)
+    | _ ->
+        match ir_func.return_type with
+        | Some ret_type -> ebpf_type_from_ir_type ret_type
+        | None -> "void"
+  in
+  
+  let params_str = 
+    (* Special handling for kprobe functions *)
+    match ir_func.func_program_type with
+      | Some (Ast.Probe probe_type) ->
+        (match probe_type with
+          | Ast.Kprobe ->
+              (* Kprobe with offset uses struct pt_regs *ctx parameter *)
+              "struct pt_regs *ctx"
+          | Ast.Fprobe ->
+              (* Fprobe uses actual function parameters *)
+              String.concat ", " 
+                (List.map (fun (name, param_type) ->
+                  sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
+                ) ir_func.parameters))
+    | _ ->
+        (* Other program types: use parameters as-is *)
+        String.concat ", " 
+          (List.map (fun (name, param_type) ->
+             sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
+           ) ir_func.parameters)
+  in
+  
+  let section_attr = 
+    (* Check if this is a struct_ops function first *)
+    match ir_func.func_program_type with
+    | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
+    | _ ->
+        (* Generate section name using context-specific modules for all other cases *)
+        if ir_func.is_main then
+          let context_type = match ir_func.func_program_type, ir_func.parameters with
+            (* Use program type to determine context for attributed functions *)
+            | Some (Ast.Probe Ast.Fprobe), _ -> Some "fprobe"
+            | Some (Ast.Probe Ast.Kprobe), _ -> Some "kprobe"
+            | Some Ast.Tracepoint, _ -> Some "tracepoint"
+            (* Fall back to parameter-based detection for context functions *)
+            | _, (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
+            | _, (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
+            | _, (_, IRStruct ("pt_regs", _)) :: _ -> Some "kprobe"
+            | _, (_, IRStruct (struct_name, _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
+            | _, (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"
+            | _, (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc" (* Handle __sk_buff as TC context *)
+            | _, (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"
+            | _, (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
+            | _, [] -> None (* Parameterless function *)
+            | _, _ -> None (* Other context types *)
+          in
+          match context_type with
+          | Some ctx_type ->
+              (match Kernelscript_context.Context_codegen.generate_context_section_name ctx_type ir_func.func_target with
+               | Some section -> section
+               | None -> "SEC(\"prog\")")
+          | None -> "SEC(\"prog\")"
+        else ""
+  in
+  
+  emit_line ctx section_attr;
+  
+  (* Try to generate custom function signature through context codegen system *)
+  let context_type = match ir_func.func_program_type with
+    | Some (Ast.Probe Ast.Fprobe) -> Some "fprobe"
+    | Some (Ast.Probe Ast.Kprobe) -> Some "kprobe"
+    | Some Ast.Tracepoint -> Some "tracepoint"
+    | _ -> None
+  in
+  
+  let custom_signature = match context_type with
+    | Some ctx_type ->
+        let string_parameters = List.map (fun (name, ir_type) -> 
+          (name, ebpf_type_from_ir_type ir_type)) ir_func.parameters in
+        Kernelscript_context.Context_codegen.generate_context_function_signature 
+          ctx_type ir_func.func_name string_parameters return_type_str
+    | None -> None
+  in
+  
+  (match custom_signature with
+   | Some signature ->
+       emit_line ctx signature;
+       emit_line ctx "{";
+        | None -> 
+       (* Regular function signature for standard functions *)
+       emit_line ctx (sprintf "%s %s(%s) {" return_type_str ir_func.func_name params_str));
+  
   increase_indent ctx;
-  emit_line ctx "return XDP_DROP; /* Bounds check failed */";
+  
+  (* Mark function parameters as already declared to avoid redeclaration *)
+  List.iter (fun (param_name, _param_type) ->
+    let param_hash = Hashtbl.hash param_name in
+    Hashtbl.replace ctx.declared_registers param_hash ()
+  ) ir_func.parameters;
+  
+  (* Collect and declare all temporary variables at function level to avoid scoping issues *)
+  let temp_vars = collect_temp_variables_in_function ir_func in
+  List.iter (fun (var_name, var_type) ->
+    let var_hash = Hashtbl.hash var_name in
+    let declaration = generate_ebpf_c_declaration var_type var_name in
+    emit_line ctx (sprintf "%s;" declaration);
+    Hashtbl.replace ctx.declared_registers var_hash ()
+  ) temp_vars;
+  
+  (* Generate basic blocks - instructions now just do assignments *)
+  List.iter (generate_c_basic_block ctx) ir_func.basic_blocks;
+  
   decrease_indent ctx;
-  emit_line ctx "}"
+  emit_line ctx "}";
+  emit_blank_line ctx
 
-(** Generate map operations *)
-
-let generate_map_load ctx map_val key_val dest_val load_type =
-  let map_str = generate_c_value ctx map_val in
-  let dest_str = generate_c_value ctx dest_val in
-  
-  match load_type with
-  | DirectLoad ->
-      emit_line ctx (sprintf "%s = *%s;" dest_str map_str)
-  | MapLookup ->
-      (* Handle key - create temp variable for any value that would require address taking *)
-      let key_str = generate_c_value ctx key_val in
-      let needs_temp_var = match key_val.value_desc with
-        | IRLiteral _ -> true
-        | _ -> 
-            (* Check if the generated C value looks like a literal that can't have its address taken *)
-            let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
-            let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
-            is_numeric_literal || is_hex_literal
-      in
-      
-      let key_var = if needs_temp_var then
-        let temp_key = fresh_var ctx "key" in
-        let key_type = ebpf_type_from_ir_type key_val.val_type in
-        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-        temp_key
-      else
-        key_str
-      in
-      
-      (* Map lookup returns pointer directly - don't dereference it *)
-      (* Simple assignment - register already declared at function level *)
-      emit_line ctx (sprintf "%s = bpf_map_lookup_elem(%s, &%s);" dest_str map_str key_var)
-  | MapPeek ->
-      emit_line ctx (sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str)
-
-let generate_map_store ctx map_val key_val value_val store_type =
-  let map_str = generate_c_value ctx map_val in
-  
-  match store_type with
-  | DirectStore ->
-      let value_str = generate_c_value ctx value_val in
-      emit_line ctx (sprintf "*%s = %s;" map_str value_str)
-  | MapUpdate ->
-      (* Handle key - create temp variable for any value that would require address taking *)
-      let key_str = generate_c_value ctx key_val in
-      let needs_temp_var = match key_val.value_desc with
-        | IRLiteral _ -> true
-        | _ -> 
-            (* Check if the generated C value looks like a literal that can't have its address taken *)
-            let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
-            let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
-            is_numeric_literal || is_hex_literal
-      in
-      
-      let key_var = if needs_temp_var then
-        let temp_key = fresh_var ctx "key" in
-        let key_type = ebpf_type_from_ir_type key_val.val_type in
-        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-        temp_key
-      else
-        key_str
-      in
-      
-      (* Handle value - create temp variable for any value that would require address taking *)
-      let value_str = generate_c_value ctx value_val in
-      let needs_temp_var_value = match value_val.value_desc with
-        | IRLiteral _ -> true
-        | _ -> 
-            (* Check if the generated C value looks like a literal that can't have its address taken *)
-            let is_numeric_literal = try ignore (int_of_string value_str); true with _ -> false in
-            let is_hex_literal = String.contains value_str 'x' || String.contains value_str 'X' in
-            is_numeric_literal || is_hex_literal
-      in
-      
-      let value_var = if needs_temp_var_value then
-        let temp_value = fresh_var ctx "value" in
-        let value_type = ebpf_type_from_ir_type value_val.val_type in
-        emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
-        temp_value
-      else
-        value_str
-      in
-      
-      emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_var value_var)
-  | MapPush ->
-      let value_str = generate_c_value ctx value_val in
-      emit_line ctx (sprintf "bpf_ringbuf_submit(%s, 0);" value_str)
-
-
-let generate_map_delete ctx map_val key_val =
-  let map_str = generate_c_value ctx map_val in
-  
-  (* Handle key - create temp variable for any value that would require address taking *)
-  let key_str = generate_c_value ctx key_val in
-  let needs_temp_var = match key_val.value_desc with
-    | IRLiteral _ -> true
-    | _ -> 
-        (* Check if the generated C value looks like a literal that can't have its address taken *)
-        let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
-        let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
-        is_numeric_literal || is_hex_literal
-  in
-  
-  let key_var = if needs_temp_var then
-    let temp_key = fresh_var ctx "key" in
-    let key_type = ebpf_type_from_ir_type key_val.val_type in
-    emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
-    temp_key
-  else
-    key_str
-  in
-  
-  emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
-
-(* Ring buffer code generation *)
-let generate_ringbuf_operation ctx ringbuf_val op =
-  match op with
-  | RingbufReserve result_val ->
-      (* Generate bpf_ringbuf_reserve_dynptr call - modern dynptr API *)
-      (* Handle pinned ring buffers specially to avoid address-of-rvalue issues *)
-      let ringbuf_str = match ringbuf_val.value_desc with
-        | IRVariable name when List.mem name ctx.pinned_globals ->
-            (* For pinned ring buffers, create a temporary pointer variable *)
-            let temp_var = fresh_var ctx "pinned_ringbuf" in
-            emit_line ctx (sprintf "void *%s;" temp_var);
-            emit_line ctx (sprintf "{ struct __pinned_globals *__pg = get_pinned_globals();" );
-            emit_line ctx (sprintf "  %s = __pg ? __pg->%s : NULL; }" temp_var name);
-            temp_var
-        | _ ->
-            (* Regular ring buffer - use address-of *)
-            "&" ^ (generate_c_value ctx ringbuf_val)
-      in
-      let result_str = generate_c_value ctx result_val in
-      
-      (* Calculate proper size based on the result type *)
-      let size = match result_val.val_type with
-        | IRPointer (IRStruct (struct_name, _), _) ->
-            (* Use sizeof for struct types *)
-            sprintf "sizeof(struct %s)" struct_name
-        | IRPointer (elem_type, _) ->
-            (* Use sizeof for the pointed-to type *)
-            sprintf "sizeof(%s)" (ebpf_type_from_ir_type elem_type)
-        | other_type ->
-            (* This should never happen if type checker is working correctly *)
-            failwith (sprintf "generate_ringbuf_operation: Invalid result type for ringbuf reservation: %s. Expected pointer to struct." 
-                     (match other_type with
-                      | IRU32 -> "IRU32"
-                      | IRU64 -> "IRU64" 
-                      | IRStruct (name, _) -> "IRStruct " ^ name
-                      | IRVoid -> "IRVoid"
-                      | _ -> "unknown type"))
-      in
-      
-      (* Get consistent variable name for the result register *)
-      let result_var_name = match result_val.value_desc with
-        | IRTempVariable name -> name
-        | IRVariable name -> name
-        | _ -> "dynptr_data"
-      in
-      
-      (* Declare dynptr for the reservation - track it for later submit/discard *)
-      let dynptr_var = result_var_name ^ "_dynptr" in
-      emit_line ctx (sprintf "struct bpf_dynptr %s;" dynptr_var);
-      
-      (* The data pointer variable will be declared by the function's register collection phase *)
-      
-      emit_line ctx (sprintf "if (bpf_ringbuf_reserve_dynptr(%s, %s, 0, &%s) == 0) {" 
-                     ringbuf_str size dynptr_var);
-      
-      (* Get data pointer from dynptr *)
-      emit_line ctx (sprintf "    %s = bpf_dynptr_data(&%s, 0, %s);" 
-                     result_str dynptr_var size);
-      (* Track this pointer as dynptr-backed for field assignments *)
-      Hashtbl.replace ctx.dynptr_backed_pointers result_str dynptr_var;
-      emit_line ctx "} else {";
-      emit_line ctx (sprintf "    %s = NULL;" result_str);
-      emit_line ctx "}"
-  
-  | RingbufSubmit data_val ->
-      (* Generate bpf_ringbuf_submit_dynptr call *)
-      let data_str = generate_c_value ctx data_val in
-      (* Use the tracked dynptr variable for this data pointer *)
-      let dynptr_var = match Hashtbl.find_opt ctx.dynptr_backed_pointers data_str with
-        | Some tracked_dynptr -> tracked_dynptr
-        | None -> 
-            (* Fallback: construct dynptr name from data pointer name *)
-            let base_name = match data_val.value_desc with
-              | IRTempVariable name -> sprintf "ptr_%s" name
-              | IRVariable name -> name
-              | _ -> "dynptr_data"
-            in
-            base_name ^ "_dynptr"
-      in
-      emit_line ctx (Printf.sprintf "bpf_ringbuf_submit_dynptr(&%s, 0);" dynptr_var)
-  
-  | RingbufDiscard data_val ->
-      (* Generate bpf_ringbuf_discard_dynptr call *)
-      let data_str = generate_c_value ctx data_val in
-      (* Use the tracked dynptr variable for this data pointer *)
-      let dynptr_var = match Hashtbl.find_opt ctx.dynptr_backed_pointers data_str with
-        | Some tracked_dynptr -> tracked_dynptr
-        | None -> 
-            (* Fallback: construct dynptr name from data pointer name *)
-            let base_name = match data_val.value_desc with
-              | IRTempVariable name -> sprintf "ptr_%s" name
-              | IRVariable name -> name
-              | _ -> "dynptr_data"
-            in
-            base_name ^ "_dynptr"
-      in
-      emit_line ctx (Printf.sprintf "bpf_ringbuf_discard_dynptr(&%s, 0);" dynptr_var)
-  
-  | RingbufOnEvent _handler_name ->
-      (* on_event is userspace-only operation *)
-      failwith "Ring buffer on_event() operation is not supported in eBPF programs - it's userspace-only"
-
-(** Generate assignment instruction with optional const keyword *)
-let generate_assignment ctx dest_val expr is_const =
-  let assignment_prefix = if is_const then "const " else "" in
-  
-  (* Check if this is a pinned global variable assignment *)
-  (match dest_val.value_desc with
-   | IRVariable name when List.mem name ctx.pinned_globals ->
-       (* Special handling for pinned global variable assignment *)
-       let expr_str = generate_c_expression ctx expr in
-       emit_line ctx (sprintf "{ struct __pinned_globals *__pg = get_pinned_globals();");
-       emit_line ctx (sprintf "  if (__pg) {");
-       emit_line ctx (sprintf "    __pg->%s = %s;" name expr_str);
-       emit_line ctx (sprintf "    update_pinned_globals(__pg);");
-       emit_line ctx (sprintf "  }");
-       emit_line ctx (sprintf "}")
-   | IRTempVariable _ ->
-       (* Inlining optimization removed - always generate normal assignment *)
-       (
-         (* Generate normal assignment for complex expressions *)
-         let dest_str = generate_c_value ctx dest_val in
-         let expr_str = generate_c_expression ctx expr in
-         
-         (* Check if we're assigning a dynptr-backed pointer to another variable *)
-         (match expr.expr_desc with
-          | IRValue src_val ->
-              let src_str = generate_c_value ctx src_val in
-              (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
-               | Some dynptr_var ->
-                   (* Source is dynptr-backed, mark destination as dynptr-backed too *)
-                   Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
-               | None -> ())
-          | _ -> ());
-         
-         emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
-       )
-   | _ ->
-       (* Check for dynptr pointer assignment tracking before string assignment *)
-       (match expr.expr_desc with
-        | IRValue src_val ->
-            let dest_str = generate_c_value ctx dest_val in
-            let src_str = generate_c_value ctx src_val in
-            (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
-             | Some dynptr_var ->
-                 (* Source is dynptr-backed, mark destination as dynptr-backed too *)
-                 Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
-             | None -> ())
-        | _ -> ());
-       
-       (* Check if this is a string assignment *)
-       (match dest_val.val_type, expr.expr_desc with
-        | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
-            (* String to string assignment with compatible sizes - regenerate src with dest size *)
-            let dest_str = generate_c_value ctx dest_val in
-            let src_str = match src_val.value_desc with
-              | IRLiteral (StringLit s) ->
-                  (* Regenerate string literal with destination size *)
-                  let temp_var = fresh_var ctx "str_lit" in
-                  let len = String.length s in
-                  let max_content_len = dest_size in
-                  let actual_len = min len max_content_len in
-                  let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
-                  emit_line ctx (sprintf "str_%d_t %s = {" dest_size temp_var);
-                  emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
-                  emit_line ctx (sprintf "    .len = %d" actual_len);
-                  emit_line ctx "};";
-                  temp_var
-              | _ -> generate_c_value ctx src_val
-            in
-            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-        | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
-            (* String to string assignment - need to copy struct *)
-            let dest_str = generate_c_value ctx dest_val in
-            let src_str = generate_c_value ctx src_val in
-            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-        | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
-            (* String literal to string assignment - already handled above *)
-            let dest_str = generate_c_value ctx dest_val in
-            let src_str = generate_c_value ctx src_val in
-            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
-        | IRStr _, _ ->
-            (* Other string expressions (concatenation, etc.) *)
-            let dest_str = generate_c_value ctx dest_val in
-            let expr_str = generate_c_expression ctx expr in
-            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
-        | _ ->
-            (* Regular assignment - handle struct literals specially *)
-            let dest_str = generate_c_value ctx dest_val in
-            (match expr.expr_desc with
-             | IRStructLiteral (struct_name, field_assignments) ->
-                 (* For struct literal assignments, use compound literal syntax *)
-                 let field_strs = List.map (fun (field_name, field_val) ->
-                   let field_value_str = generate_c_value ctx field_val in
-                   sprintf ".%s = %s" field_name field_value_str
-                 ) field_assignments in
-                 let struct_type = sprintf "struct %s" struct_name in
-                 emit_line ctx (sprintf "%s%s = (%s){%s};" assignment_prefix dest_str struct_type (String.concat ", " field_strs))
-             | _ ->
-                 (* Other expressions *)
-                 let expr_str = generate_c_expression ctx expr in
-                 emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str))))
-
-(** Generate C code for truthy/falsy conversion *)
-let generate_truthy_conversion ctx ir_value =
-  match ir_value.val_type with
-  | IRBool -> 
-      (* Already boolean, use as-is *)
-      generate_c_value ctx ir_value
-  | IRU8 | IRU16 | IRU32 | IRU64 | IRI8 | IRI16 | IRI32 | IRI64 ->
-      (* Numbers: 0 is falsy, non-zero is truthy *)
-      sprintf "(%s != 0)" (generate_c_value ctx ir_value)
-  | IRChar ->
-      (* Characters: '\0' is falsy, others truthy *)
-      sprintf "(%s != '\\0')" (generate_c_value ctx ir_value)
-  | IRStr _ ->
-      (* Strings: empty is falsy, non-empty is truthy *)
-      sprintf "(%s.len > 0)" (generate_c_value ctx ir_value)
-  | IRPointer (_, _) ->
-      (* Pointers: null is falsy, non-null is truthy *)
-      sprintf "(%s != NULL)" (generate_c_value ctx ir_value)
-  | IREnum (_, _) ->
-      (* Enums: based on numeric value *)
-      sprintf "(%s != 0)" (generate_c_value ctx ir_value)
-  | _ ->
-      (* This should never be reached due to type checking *)
-      failwith ("Internal error: Type " ^ (string_of_ir_type ir_value.val_type) ^ " cannot be used in boolean context")
-
-let rec generate_c_instruction ctx ir_instr =
+(** Function generation with proper dependency ordering - elegant solution *)
+and generate_c_instruction ctx ir_instr =
   match ir_instr.instr_desc with
   | IRAssign (dest_val, expr) ->
       (* Regular assignment without const keyword - for variables only, not registers *)
@@ -3016,8 +2672,7 @@ let rec generate_c_instruction ctx ir_instr =
       emit_line ctx (sprintf "bpf_obj_drop(%s);" ptr_str)
 
 (** Generate C code for basic block *)
-
-let generate_c_basic_block ctx ir_block =
+and generate_c_basic_block ctx ir_block =
   (* Skip labels for "entry" since eBPF code generation uses structured control flow *)
   let should_emit_label = ir_block.label <> "entry" in
   
@@ -3058,145 +2713,570 @@ let generate_c_basic_block ctx ir_block =
   
   optimize_instructions ir_block.instructions
 
-(** Generate C function from IR function with type alias support *)
-let generate_c_function ctx ir_func =
-  (* Clear per-function state to avoid conflicts between functions *)
-  Hashtbl.clear ctx.declared_registers;
+(** Generate assignment instruction with optional const keyword *)
+and generate_assignment ctx dest_val expr is_const =
+  let assignment_prefix = if is_const then "const " else "" in
   
-  (* Determine current function's context type from first parameter or program type *)
-  ctx.current_function_context_type <- 
-    (match ir_func.func_program_type with
-             | Some (Ast.Probe probe_type) -> 
-            (match probe_type with
-             | Ast.Kprobe -> Some "kprobe"  (* Only kprobe uses pt_regs context *)
-             | Ast.Fprobe -> None)  (* Fprobe uses direct parameters *)
-     | _ ->
-         (* Fall back to parameter-based detection *)
-         (match ir_func.parameters with
-          | (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
-          | (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
-          | (_, IRStruct ("pt_regs", _)) :: _ -> Some "kprobe"
-          | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
-          | (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
-          | (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"  (* Handle pt_regs as kprobe context *)
-          | (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"  (* Handle tracepoint context *)
-          | _ -> None));
+  (* Check if this is a pinned global variable assignment *)
+  (match dest_val.value_desc with
+   | IRVariable name when List.mem name ctx.pinned_globals ->
+       (* Special handling for pinned global variable assignment *)
+       let expr_str = generate_c_expression ctx expr in
+       emit_line ctx (sprintf "{ struct __pinned_globals *__pg = get_pinned_globals();");
+       emit_line ctx (sprintf "  if (__pg) {");
+       emit_line ctx (sprintf "    __pg->%s = %s;" name expr_str);
+       emit_line ctx (sprintf "    update_pinned_globals(__pg);");
+       emit_line ctx (sprintf "  }");
+       emit_line ctx (sprintf "}")
+   | IRTempVariable _ ->
+       (* Inlining optimization removed - always generate normal assignment *)
+       (
+         (* Generate normal assignment for complex expressions *)
+         let dest_str = generate_c_value ctx dest_val in
+         let expr_str = generate_c_expression ctx expr in
+         
+         (* Check if we're assigning a dynptr-backed pointer to another variable *)
+         (match expr.expr_desc with
+          | IRValue src_val ->
+              let src_str = generate_c_value ctx src_val in
+              (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
+               | Some dynptr_var ->
+                   (* Source is dynptr-backed, mark destination as dynptr-backed too *)
+                   Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
+               | None -> ())
+          | _ -> ());
+         
+         emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+       )
+   | _ ->
+       (* Check for dynptr pointer assignment tracking before string assignment *)
+       (match expr.expr_desc with
+        | IRValue src_val ->
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = generate_c_value ctx src_val in
+            (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
+             | Some dynptr_var ->
+                 (* Source is dynptr-backed, mark destination as dynptr-backed too *)
+                 Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
+             | None -> ())
+        | _ -> ());
+       
+       (* Check if this is a string assignment *)
+       (match dest_val.val_type, expr.expr_desc with
+        | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
+            (* String to string assignment with compatible sizes *)
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = generate_c_value ctx src_val in
+            emit_line ctx (sprintf "%s = %s;" dest_str src_str)
+        | IRStr _, _ ->
+            (* Other string expressions (concatenation, etc.) *)
+            let dest_str = generate_c_value ctx dest_val in
+            let expr_str = generate_c_expression ctx expr in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+        | _ ->
+            (* Regular assignment *)
+            (match expr.expr_desc with
+             | IRValue src_val ->
+                 (* Simple value assignment *)
+                 let dest_str = generate_c_value ctx dest_val in
+                 let src_str = generate_c_value ctx src_val in
+                 emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+             | _ ->
+                 (* Other expressions *)
+                 let dest_str = generate_c_value ctx dest_val in
+                 let expr_str = generate_c_expression ctx expr in
+                 emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str))))
+
+(** Generate C code for truthy/falsy conversion *)
+and generate_truthy_conversion ctx ir_value =
+  match ir_value.val_type with
+  | IRBool -> 
+      (* Already boolean, use as-is *)
+      generate_c_value ctx ir_value
+  | IRU8 | IRU16 | IRU32 | IRU64 | IRI8 | IRI16 | IRI32 | IRI64 ->
+      (* Numbers: 0 is falsy, non-zero is truthy *)
+      sprintf "(%s != 0)" (generate_c_value ctx ir_value)
+  | IRChar ->
+      (* Characters: '\0' is falsy, others truthy *)
+      sprintf "(%s != '\\0')" (generate_c_value ctx ir_value)
+  | IRStr _ ->
+      (* Strings: empty is falsy, non-empty is truthy *)
+      sprintf "(%s.len > 0)" (generate_c_value ctx ir_value)
+  | IRPointer (_, _) ->
+      (* Pointers: null is falsy, non-null is truthy *)
+      sprintf "(%s != NULL)" (generate_c_value ctx ir_value)
+  | IREnum (_, _) ->
+      (* Enums: based on numeric value *)
+      sprintf "(%s != 0)" (generate_c_value ctx ir_value)
+  | _ ->
+      (* This should never be reached due to type checking *)
+      failwith ("Internal error: Type " ^ (string_of_ir_type ir_value.val_type) ^ " cannot be used in boolean context")
+
+(** Generate map load operation *)
+and generate_map_load ctx map_val key_val dest_val load_type =
+  let map_str = generate_c_value ctx map_val in
+  let dest_str = generate_c_value ctx dest_val in
   
-  let return_type_str = 
-    (* Special handling for kprobe functions: always use int return type for eBPF compatibility *)
-    match ir_func.func_program_type with
-    | Some (Ast.Probe _) -> "__s32"  (* eBPF probe programs must return int *)
-    | _ ->
-        match ir_func.return_type with
-        | Some ret_type -> ebpf_type_from_ir_type ret_type
-        | None -> "void"
+  match load_type with
+  | DirectLoad ->
+      emit_line ctx (sprintf "%s = *%s;" dest_str map_str)
+  | MapLookup ->
+      (* Handle key - create temp variable for any value that would require address taking *)
+      let key_str = generate_c_value ctx key_val in
+      let needs_temp_var = match key_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
+            let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
+            is_numeric_literal || is_hex_literal
+      in
+      
+      let key_var = if needs_temp_var then
+        let temp_key = fresh_var ctx "key" in
+        let key_type = ebpf_type_from_ir_type key_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+        temp_key
+      else
+        key_str
+      in
+      
+      (* Map lookup returns pointer directly - don't dereference it *)
+      (* Simple assignment - register already declared at function level *)
+      emit_line ctx (sprintf "%s = bpf_map_lookup_elem(%s, &%s);" dest_str map_str key_var)
+  | MapPeek ->
+      emit_line ctx (sprintf "%s = bpf_ringbuf_reserve(%s, sizeof(*%s), 0);" dest_str map_str dest_str)
+
+(** Generate map store operation *)
+and generate_map_store ctx map_val key_val value_val store_type =
+  let map_str = generate_c_value ctx map_val in
+  
+  match store_type with
+  | DirectStore ->
+      let value_str = generate_c_value ctx value_val in
+      emit_line ctx (sprintf "*%s = %s;" map_str value_str)
+  | MapUpdate ->
+      (* Handle key - create temp variable for any value that would require address taking *)
+      let key_str = generate_c_value ctx key_val in
+      let needs_temp_var = match key_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
+            let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
+            is_numeric_literal || is_hex_literal
+      in
+      
+      let key_var = if needs_temp_var then
+        let temp_key = fresh_var ctx "key" in
+        let key_type = ebpf_type_from_ir_type key_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+        temp_key
+      else
+        key_str
+      in
+      
+      (* Handle value - create temp variable for any value that would require address taking *)
+      let value_str = generate_c_value ctx value_val in
+      let value_needs_temp_var = match value_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string value_str); true with _ -> false in
+            let is_hex_literal = String.contains value_str 'x' || String.contains value_str 'X' in
+            is_numeric_literal || is_hex_literal
+      in
+      
+      let value_var = if value_needs_temp_var then
+        let temp_value = fresh_var ctx "value" in
+        let value_type = ebpf_type_from_ir_type value_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
+        temp_value
+      else
+        value_str
+      in
+      
+      emit_line ctx (sprintf "bpf_map_update_elem(%s, &%s, &%s, BPF_ANY);" map_str key_var value_var)
+  | MapPush ->
+      let value_str = generate_c_value ctx value_val in
+      let value_needs_temp_var = match value_val.value_desc with
+        | IRLiteral _ -> true
+        | _ -> 
+            (* Check if the generated C value looks like a literal that can't have its address taken *)
+            let is_numeric_literal = try ignore (int_of_string value_str); true with _ -> false in
+            let is_hex_literal = String.contains value_str 'x' || String.contains value_str 'X' in
+            is_numeric_literal || is_hex_literal
+      in
+      
+      let value_var = if value_needs_temp_var then
+        let temp_value = fresh_var ctx "value" in
+        let value_type = ebpf_type_from_ir_type value_val.val_type in
+        emit_line ctx (sprintf "%s %s = %s;" value_type temp_value value_str);
+        temp_value
+      else
+        value_str
+      in
+      
+      emit_line ctx (sprintf "bpf_map_push_elem(%s, &%s, BPF_EXIST);" map_str value_var)
+
+(** Generate map delete operation *)
+and generate_map_delete ctx map_val key_val =
+  let map_str = generate_c_value ctx map_val in
+  
+  (* Handle key - create temp variable for any value that would require address taking *)
+  let key_str = generate_c_value ctx key_val in
+  let needs_temp_var = match key_val.value_desc with
+    | IRLiteral _ -> true
+    | _ -> 
+        (* Check if the generated C value looks like a literal that can't have its address taken *)
+        let is_numeric_literal = try ignore (int_of_string key_str); true with _ -> false in
+        let is_hex_literal = String.contains key_str 'x' || String.contains key_str 'X' in
+        is_numeric_literal || is_hex_literal
   in
   
-  let params_str = 
-    (* Special handling for kprobe functions *)
-    match ir_func.func_program_type with
-      | Some (Ast.Probe probe_type) ->
-        (match probe_type with
-          | Ast.Kprobe ->
-              (* Kprobe with offset uses struct pt_regs *ctx parameter *)
-              "struct pt_regs *ctx"
-          | Ast.Fprobe ->
-              (* Fprobe uses actual function parameters *)
-              String.concat ", " 
-                (List.map (fun (name, param_type) ->
-                  sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
-                ) ir_func.parameters))
-    | _ ->
-        (* Other program types: use parameters as-is *)
-        String.concat ", " 
-          (List.map (fun (name, param_type) ->
-             sprintf "%s %s" (ebpf_type_from_ir_type param_type) name
-           ) ir_func.parameters)
+  let key_var = if needs_temp_var then
+    let temp_key = fresh_var ctx "key" in
+    let key_type = ebpf_type_from_ir_type key_val.val_type in
+    emit_line ctx (sprintf "%s %s = %s;" key_type temp_key key_str);
+    temp_key
+  else
+    key_str
   in
   
-  let section_attr = 
-    (* Check if this is a struct_ops function first *)
-    match ir_func.func_program_type with
-    | Some Ast.StructOps -> sprintf "SEC(\"struct_ops/%s\")" ir_func.func_name  (* struct_ops functions use their name in the section *)
-    | _ ->
-        (* Generate section name using context-specific modules for all other cases *)
-        if ir_func.is_main then
-          let context_type = match ir_func.func_program_type, ir_func.parameters with
-            (* Use program type to determine context for attributed functions *)
-            | Some (Ast.Probe Ast.Fprobe), _ -> Some "fprobe"
-            | Some (Ast.Probe Ast.Kprobe), _ -> Some "kprobe"
-            | Some Ast.Tracepoint, _ -> Some "tracepoint"
-            (* Fall back to parameter-based detection for context functions *)
-            | _, (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
-            | _, (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
-            | _, (_, IRStruct ("pt_regs", _)) :: _ -> Some "kprobe"
-            | _, (_, IRStruct (struct_name, _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
-            | _, (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"
-            | _, (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc" (* Handle __sk_buff as TC context *)
-            | _, (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"
-            | _, (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
-            | _, [] -> None (* Parameterless function *)
-            | _, _ -> None (* Other context types *)
-          in
-          match context_type with
-          | Some ctx_type ->
-              (match Kernelscript_context.Context_codegen.generate_context_section_name ctx_type ir_func.func_target with
-               | Some section -> section
-               | None -> "SEC(\"prog\")")
-          | None -> "SEC(\"prog\")"
-        else ""
-  in
+  emit_line ctx (sprintf "bpf_map_delete_elem(%s, &%s);" map_str key_var)
+
+(** Generate ring buffer operation *)
+and generate_ringbuf_operation ctx ringbuf_val op =
+  match op with
+  | RingbufReserve result_val ->
+      (* Generate bpf_ringbuf_reserve_dynptr call - modern dynptr API *)
+      (* Handle pinned ring buffers specially to avoid address-of-rvalue issues *)
+      let ringbuf_str = match ringbuf_val.value_desc with
+        | IRVariable name when List.mem name ctx.pinned_globals ->
+            (* For pinned ring buffers, create a temporary pointer variable *)
+            let temp_var = fresh_var ctx "pinned_ringbuf" in
+            emit_line ctx (sprintf "struct __pinned_globals *__pg = get_pinned_globals();");
+            emit_line ctx (sprintf "void *%s = __pg ? &__pg->%s : NULL;" temp_var name);
+            temp_var
+        | _ ->
+            (* Regular ring buffer - use address-of operator *)
+            let base_str = generate_c_value ctx ringbuf_val in
+            sprintf "&%s" base_str
+      in
+      
+      let result_str = generate_c_value ctx result_val in
+      
+      (* Extract variable name from result_val for dynptr naming *)
+      let result_var_name = match result_val.value_desc with
+        | IRVariable name -> name
+        | IRTempVariable name -> name
+        | _ -> "ringbuf_data"
+      in
+      
+      (* Calculate size based on the result type *)
+      let size = match result_val.val_type with
+        | IRPointer (inner_type, _) -> 
+            sprintf "sizeof(%s)" (ebpf_type_from_ir_type inner_type)
+        | _ -> 
+            sprintf "sizeof(*%s)" result_str
+      in
+      
+      (* Declare dynptr variable *)
+      let dynptr_var = result_var_name ^ "_dynptr" in
+      emit_line ctx (sprintf "struct bpf_dynptr %s;" dynptr_var);
+      
+      (* The data pointer variable will be declared by the function's register collection phase *)
+      
+      emit_line ctx (sprintf "if (bpf_ringbuf_reserve_dynptr(%s, %s, 0, &%s) == 0) {" 
+                     ringbuf_str size dynptr_var);
+      
+      (* Get data pointer from dynptr *)
+      emit_line ctx (sprintf "    %s = bpf_dynptr_data(&%s, 0, %s);" 
+                     result_str dynptr_var size);
+      
+      emit_line ctx (sprintf "} else {");
+      emit_line ctx (sprintf "    %s = NULL;" result_str);
+      emit_line ctx (sprintf "}");
+      
+      (* Track this pointer as dynptr-backed *)
+      Hashtbl.replace ctx.dynptr_backed_pointers result_str dynptr_var
+      
+  | RingbufSubmit data_ptr ->
+      let data_str = generate_c_value ctx data_ptr in
+      emit_line ctx (sprintf "if (%s) bpf_ringbuf_submit_dynptr(&%s_dynptr, 0);" data_str data_str)
+  | RingbufDiscard data_ptr ->
+      let data_str = generate_c_value ctx data_ptr in
+      emit_line ctx (sprintf "if (%s) bpf_ringbuf_discard_dynptr(&%s_dynptr, 0);" data_str data_str)
+  | RingbufOnEvent _handler_name ->
+      (* Ring buffer on_event() is userspace-only *)
+      failwith "Ring buffer on_event() operation is not supported in eBPF programs - it's userspace-only"
+
+(** Generate ALL declarations in original source order - complete implementation *)
+let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ?_symbol_table ~_btf_path _tail_call_analysis =
+  (* First, collect all global variables from source declarations to handle pinned globals properly *)
+  let all_global_vars = List.fold_left (fun acc source_decl ->
+    match source_decl.Ir.decl_desc with
+    | Ir.IRDeclGlobalVarDef global_var -> global_var :: acc
+    | _ -> acc
+  ) [] ir_multi_prog.Ir.source_declarations |> List.rev in
   
-  emit_line ctx section_attr;
+  (* Generate global variables using the unified logic that handles pinned globals *)
+  if all_global_vars <> [] then (
+    generate_global_variables ctx all_global_vars
+  );
   
-  (* Try to generate custom function signature through context codegen system *)
-  let context_type = match ir_func.func_program_type with
-    | Some (Ast.Probe Ast.Fprobe) -> Some "fprobe"
-    | Some (Ast.Probe Ast.Kprobe) -> Some "kprobe"
-    | Some Ast.Tracepoint -> Some "tracepoint"
-    | _ -> None
-  in
-  
-  let custom_signature = match context_type with
-    | Some ctx_type ->
-        let string_parameters = List.map (fun (name, ir_type) -> 
-          (name, ebpf_type_from_ir_type ir_type)) ir_func.parameters in
-        Kernelscript_context.Context_codegen.generate_context_function_signature 
-          ctx_type ir_func.func_name string_parameters return_type_str
-    | None -> None
-  in
-  
-  (match custom_signature with
-   | Some signature ->
-       emit_line ctx signature;
-       emit_line ctx "{";
+  (* Process source declarations in their original order - handle ALL declaration types except global vars *)
+  List.iter (fun source_decl ->
+    match source_decl.Ir.decl_desc with
+    | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
+        (* Generate type alias definition with special handling for function pointers *)
+        (match ir_type with
+         | IRFunctionPointer (param_types, return_type) ->
+             (* Special syntax for function pointer typedefs *)
+             let return_type_str = ebpf_type_from_ir_type return_type in
+             let param_types_str = List.map ebpf_type_from_ir_type param_types in
+             let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
+             emit_line ctx (sprintf "typedef %s (*%s)(%s);" return_type_str name params_str);
+         | IRArray (inner_type, size, _) ->
+             (* Special syntax for array typedefs: typedef element_type alias_name[size]; *)
+             let element_type_str = ebpf_type_from_ir_type inner_type in
+             emit_line ctx (sprintf "typedef %s %s[%d];" element_type_str name size);
+         | _ ->
+             (* Regular type alias *)
+             let c_type = ebpf_type_from_ir_type ir_type in
+             emit_line ctx (sprintf "typedef %s %s;" c_type name));
+        emit_blank_line ctx
+    
+    | Ir.IRDeclStructDef (name, fields, pos) ->
+        (* Filter out kernel-defined structs, but include struct_ops structs *)
+        let should_include_struct = match _symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
+                        should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations struct_pos
+                    | _ -> true)  (* Not a struct, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
    | None ->
-       (* Regular function signature for standard functions *)
-       emit_line ctx (sprintf "%s %s(%s) {" return_type_str ir_func.func_name params_str));
-  
+              (* Fallback: check the position from the declaration itself *)
+              should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations pos
+        in
+        if should_include_struct then (
+          (* Generate struct definition *)
+          emit_line ctx (sprintf "struct %s {" name);
+          increase_indent ctx;
+          List.iter (fun (field_name, field_type) ->
+            let field_declaration = match field_type with
+              | IRArray (inner_type, size, _) ->
+                  (* Special syntax for array fields: element_type field_name[size]; *)
+                  let element_type_str = ebpf_type_from_ir_type inner_type in
+                  sprintf "%s %s[%d];" element_type_str field_name size
+              | _ ->
+                  (* Regular field *)
+                  let c_type = ebpf_type_from_ir_type field_type in
+                  sprintf "%s %s;" c_type field_name
+            in
+            emit_line ctx field_declaration;
+          ) fields;
+          decrease_indent ctx;
+          emit_line ctx "};";
+          emit_blank_line ctx
+        )
+    
+    | Ir.IRDeclEnumDef (name, values, pos) ->
+        (* Filter out kernel-defined enums (same logic as original collect_enum_definitions) *)
+        let should_include_enum = match _symbol_table with
+          | Some st ->
+              (match Symbol_table.lookup_symbol st name with
+               | Some symbol ->
+                   (match symbol.Symbol_table.kind with
+                    | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
+                        not (is_kernel_defined_type enum_pos)
+                    | _ -> true)  (* Not an enum, include it *)
+               | None -> true)  (* Not found in symbol table, include it *)
+          | None -> 
+              (* Fallback: check the position from the declaration itself *)
+              not (is_kernel_defined_type pos)
+        in
+        if should_include_enum then (
+          (* Generate enum definition *)
+          emit_line ctx (sprintf "enum %s {" name);
   increase_indent ctx;
-  
-  (* Mark function parameters as already declared to avoid redeclaration *)
-  List.iter (fun (param_name, _param_type) ->
-    let param_hash = Hashtbl.hash param_name in
-    Hashtbl.replace ctx.declared_registers param_hash ()
-  ) ir_func.parameters;
-  
-  (* Collect and declare all temporary variables at function level to avoid scoping issues *)
-  let temp_vars = collect_temp_variables_in_function ir_func in
-  List.iter (fun (var_name, var_type) ->
-    let var_hash = Hashtbl.hash var_name in
-    let declaration = generate_ebpf_c_declaration var_type var_name in
-    emit_line ctx (sprintf "%s;" declaration);
-    Hashtbl.replace ctx.declared_registers var_hash ()
-  ) temp_vars;
-  
-  (* Generate basic blocks - instructions now just do assignments *)
-  List.iter (generate_c_basic_block ctx) ir_func.basic_blocks;
-  
-  decrease_indent ctx;
-  emit_line ctx "}";
+          let value_count = List.length values in
+          List.iteri (fun i (const_name, value) ->
+            let line = sprintf "%s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
+            emit_line ctx line
+          ) values;
+          decrease_indent ctx;
+          emit_line ctx "};";
+          emit_blank_line ctx
+        )
+    
+    | Ir.IRDeclMapDef map_def ->
+        (* Generate map definition *)
+        generate_map_definition ctx map_def
+    
+    | Ir.IRDeclConfigDef config_def ->
+        (* Generate config map definition *)
+        generate_config_map_definition ctx config_def
+    
+    | Ir.IRDeclGlobalVarDef _global_var ->
+        (* Skip individual global variable processing - already handled at the beginning *)
+        ()
+    
+    | Ir.IRDeclFunctionDef func_def ->
+        (* Generate function in its proper source order position *)
+        generate_c_function ctx func_def
+    
+    | Ir.IRDeclStructOpsDef struct_ops_def ->
+        (* Generate struct_ops definition *)
+        emit_line ctx (sprintf "/* eBPF struct_ops declaration for %s */" struct_ops_def.ir_kernel_struct_name);
+        emit_line ctx (sprintf "/* struct %s_ops implementation would be auto-generated by libbpf */" struct_ops_def.ir_struct_ops_name);
   emit_blank_line ctx
+    
+    | Ir.IRDeclStructOpsInstance struct_ops_instance ->
+        (* Generate struct_ops instance *)
+        emit_line ctx (sprintf "/* eBPF struct_ops instance: %s */" struct_ops_instance.ir_instance_name);
+        emit_blank_line ctx
+  ) ir_multi_prog.Ir.source_declarations
+
+(** Generate bounds checking *)
+
+let generate_bounds_check ctx ir_val min_bound max_bound =
+  let val_str = generate_c_value ctx ir_val in
+  emit_line ctx (sprintf "if (%s < %d || %s > %d) {" val_str min_bound val_str max_bound);
+  increase_indent ctx;
+  emit_line ctx "return XDP_DROP; /* Bounds check failed */";
+  decrease_indent ctx;
+  emit_line ctx "}"
+
+(** Generate assignment instruction with optional const keyword *)
+let generate_assignment ctx dest_val expr is_const =
+  let assignment_prefix = if is_const then "const " else "" in
+  
+  (* Check if this is a pinned global variable assignment *)
+  (match dest_val.value_desc with
+   | IRVariable name when List.mem name ctx.pinned_globals ->
+       (* Special handling for pinned global variable assignment *)
+       let expr_str = generate_c_expression ctx expr in
+       emit_line ctx (sprintf "{ struct __pinned_globals *__pg = get_pinned_globals();");
+       emit_line ctx (sprintf "  if (__pg) {");
+       emit_line ctx (sprintf "    __pg->%s = %s;" name expr_str);
+       emit_line ctx (sprintf "    update_pinned_globals(__pg);");
+       emit_line ctx (sprintf "  }");
+       emit_line ctx (sprintf "}")
+   | IRTempVariable _ ->
+       (* Inlining optimization removed - always generate normal assignment *)
+       (
+         (* Generate normal assignment for complex expressions *)
+         let dest_str = generate_c_value ctx dest_val in
+         let expr_str = generate_c_expression ctx expr in
+         
+         (* Check if we're assigning a dynptr-backed pointer to another variable *)
+         (match expr.expr_desc with
+          | IRValue src_val ->
+              let src_str = generate_c_value ctx src_val in
+              (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
+               | Some dynptr_var ->
+                   (* Source is dynptr-backed, mark destination as dynptr-backed too *)
+                   Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
+               | None -> ())
+          | _ -> ());
+         
+         emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+       )
+   | _ ->
+       (* Check for dynptr pointer assignment tracking before string assignment *)
+       (match expr.expr_desc with
+        | IRValue src_val ->
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = generate_c_value ctx src_val in
+            (match Hashtbl.find_opt ctx.dynptr_backed_pointers src_str with
+             | Some dynptr_var ->
+                 (* Source is dynptr-backed, mark destination as dynptr-backed too *)
+                 Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
+             | None -> ())
+        | _ -> ());
+       
+       (* Check if this is a string assignment *)
+       (match dest_val.val_type, expr.expr_desc with
+        | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
+            (* String to string assignment with compatible sizes - regenerate src with dest size *)
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = match src_val.value_desc with
+              | IRLiteral (StringLit s) ->
+                  (* Regenerate string literal with destination size *)
+                  let temp_var = fresh_var ctx "str_lit" in
+                  let len = String.length s in
+                  let max_content_len = dest_size in
+                  let actual_len = min len max_content_len in
+                  let truncated_s = if actual_len < len then String.sub s 0 actual_len else s in
+                  emit_line ctx (sprintf "str_%d_t %s = {" dest_size temp_var);
+                  emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
+                  emit_line ctx (sprintf "    .len = %d" actual_len);
+                  emit_line ctx "};";
+                  temp_var
+              | _ -> generate_c_value ctx src_val
+            in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+        | IRStr _, IRValue src_val when (match src_val.val_type with IRStr _ -> true | _ -> false) ->
+            (* String to string assignment - need to copy struct *)
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = generate_c_value ctx src_val in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+        | IRStr _size, IRValue src_val when (match src_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
+            (* String literal to string assignment - already handled above *)
+            let dest_str = generate_c_value ctx dest_val in
+            let src_str = generate_c_value ctx src_val in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
+        | IRStr _, _ ->
+            (* Other string expressions (concatenation, etc.) *)
+            let dest_str = generate_c_value ctx dest_val in
+            let expr_str = generate_c_expression ctx expr in
+            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+        | _ ->
+            (* Regular assignment - handle struct literals specially *)
+            let dest_str = generate_c_value ctx dest_val in
+            (match expr.expr_desc with
+             | IRStructLiteral (struct_name, field_assignments) ->
+                 (* For struct literal assignments, use compound literal syntax *)
+                 let field_strs = List.map (fun (field_name, field_val) ->
+                   let field_value_str = generate_c_value ctx field_val in
+                   sprintf ".%s = %s" field_name field_value_str
+                 ) field_assignments in
+                 let struct_type = sprintf "struct %s" struct_name in
+                 emit_line ctx (sprintf "%s%s = (%s){%s};" assignment_prefix dest_str struct_type (String.concat ", " field_strs))
+             | _ ->
+                 (* Other expressions *)
+                 let expr_str = generate_c_expression ctx expr in
+                 emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str))))
+
+(** Generate C code for truthy/falsy conversion *)
+let generate_truthy_conversion ctx ir_value =
+  match ir_value.val_type with
+  | IRBool -> 
+      (* Already boolean, use as-is *)
+      generate_c_value ctx ir_value
+  | IRU8 | IRU16 | IRU32 | IRU64 | IRI8 | IRI16 | IRI32 | IRI64 ->
+      (* Numbers: 0 is falsy, non-zero is truthy *)
+      sprintf "(%s != 0)" (generate_c_value ctx ir_value)
+  | IRChar ->
+      (* Characters: '\0' is falsy, others truthy *)
+      sprintf "(%s != '\\0')" (generate_c_value ctx ir_value)
+  | IRStr _ ->
+      (* Strings: empty is falsy, non-empty is truthy *)
+      sprintf "(%s.len > 0)" (generate_c_value ctx ir_value)
+  | IRPointer (_, _) ->
+      (* Pointers: null is falsy, non-null is truthy *)
+      sprintf "(%s != NULL)" (generate_c_value ctx ir_value)
+  | IREnum (_, _) ->
+      (* Enums: based on numeric value *)
+      sprintf "(%s != 0)" (generate_c_value ctx ir_value)
+  | _ ->
+      (* This should never be reached due to type checking *)
+      failwith ("Internal error: Type " ^ (string_of_ir_type ir_value.val_type) ^ " cannot be used in boolean context")
+
 
 (** Generate ProgArray map for tail calls *)
 let generate_prog_array_map ctx prog_array_size =
@@ -3291,7 +3371,16 @@ let compile_multi_to_c_with_tail_calls
     if ir_multi_prog.global_configs <> [] then (
       List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
       emit_blank_line ctx
-    )
+    );
+    
+    (* Generate functions in fallback mode - preserve kernel functions first, then program entry functions *)
+    List.iter (fun ir_func ->
+      generate_c_function ctx ir_func
+    ) ir_multi_prog.kernel_functions;
+    
+    List.iter (fun ir_prog ->
+      generate_c_function ctx ir_prog.entry_function
+    ) ir_multi_prog.programs
   );
   
   (* Create or use provided tail call analysis result *)
@@ -3307,16 +3396,6 @@ let compile_multi_to_c_with_tail_calls
   
   (* Generate prog_array map for tail calls if needed (before functions that use it) *)
   generate_prog_array_map ctx final_tail_call_analysis.prog_array_size;
-  
-  (* Generate kernel functions first to preserve source order *)
-  List.iter (fun ir_func ->
-    generate_c_function ctx ir_func
-  ) ir_multi_prog.kernel_functions;
-  
-  (* Generate program entry functions after kernel functions *)
-  List.iter (fun ir_prog ->
-    generate_c_function ctx ir_prog.entry_function
-  ) ir_multi_prog.programs;
 
   (* Generate struct_ops definitions and instances after functions are defined *)
   generate_struct_ops ctx ir_multi_prog;

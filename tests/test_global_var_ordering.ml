@@ -46,10 +46,17 @@ let test_global_var_ordering () =
     decl_pos = test_pos 
   } in
   
+  (* Create source declaration for the function *)
+  let func_decl = {
+    decl_desc = IRDeclFunctionDef main_func;
+    decl_order = 2;
+    decl_pos = test_pos
+  } in
+  
   (* Create multi-program structure with proper source declarations *)
   let multi_ir = make_ir_multi_program "test" [ir_prog] [] [] 
     ~global_variables:[global_var1; global_var2] 
-    ~source_declarations:[global_var_decl1; global_var_decl2] 
+    ~source_declarations:[global_var_decl1; global_var_decl2; func_decl] 
     test_pos in
   
   let c_code = generate_c_multi_program multi_ir in

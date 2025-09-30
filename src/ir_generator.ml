@@ -2948,14 +2948,9 @@ let lower_multi_program ast symbol_table source_name =
          | Ast.ConfigDecl config_decl ->
              let ir_config_def = lower_config_declaration symbol_table config_decl in
              add_source_declaration (IRDeclConfigDef ir_config_def) config_decl.config_pos
-         | Ast.GlobalFunction func_def ->
-             let ir_func = 
-               if func_def.func_scope = Ast.Kernel then
-                 lower_function ctx "global" ~program_type:None ~func_target:None func_def
-               else
-                 lower_userspace_function ctx func_def
-             in
-             add_source_declaration (IRDeclFunctionDef ir_func) func_def.func_pos
+         | Ast.GlobalFunction _ ->
+             (* Global functions are handled as kernel shared functions or userspace functions *)
+             ()
          | Ast.StructDecl struct_def ->
              (* Include ALL structs - let the compiler eliminate unused ones *)
              let ir_fields = List.map (fun (field_name, field_type) ->
@@ -3175,6 +3170,19 @@ let lower_multi_program ast symbol_table source_name =
   copy_maps_to_context ctx kernel_ctx;
   let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None ~func_target:None) all_kernel_shared_functions in
   
+  (* Add kernel shared functions (including @helper functions) to source declarations *)
+  (* Only add if not already present as a global function *)
+  List.iter (fun ir_func ->
+    let func_name = ir_func.func_name in
+    let already_exists = List.exists (fun decl ->
+      match decl.decl_desc with
+      | IRDeclFunctionDef existing_func -> existing_func.func_name = func_name
+      | _ -> false
+    ) !source_declarations in
+    if not already_exists then
+      add_source_declaration (IRDeclFunctionDef ir_func) ir_func.func_pos
+  ) ir_kernel_functions;
+  
   (* Lower each program *)
   let ir_programs = List.map (fun prog_def ->
     (* Create a fresh context for each program *)
@@ -3184,6 +3192,21 @@ let lower_multi_program ast symbol_table source_name =
     lower_single_program prog_ctx prog_def all_global_maps all_kernel_shared_functions
   ) all_prog_defs in
   
+  (* Add entry functions from attributed programs to source declarations *)
+  (* Only add functions that have non-empty bodies (exclude test programs) or are struct_ops *)
+  List.iter2 (fun prog_def ir_program ->
+    let should_add = 
+      prog_def.prog_type = Ast.StructOps ||
+      List.exists (function
+        | Ast.AttributedFunction attr_func -> 
+            attr_func.attr_function.func_name = prog_def.prog_name &&
+            List.length attr_func.attr_function.func_body > 0
+        | _ -> false
+      ) ast in
+    if should_add then
+      add_source_declaration (IRDeclFunctionDef ir_program.entry_function) ir_program.entry_function.func_pos
+  ) all_prog_defs ir_programs;
+
   (* Convert AST userspace functions to IR userspace program *)
   let userspace_program = 
     if List.length userspace_functions = 0 then
