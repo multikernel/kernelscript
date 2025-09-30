@@ -2862,7 +2862,17 @@ let should_exclude_struct_from_ebpf ast struct_name =
     | Ast.GlobalFunction func_def -> 
         (* Regular userspace functions *)
         check_function_usage func_def false
-
+    | Ast.MapDecl map_decl ->
+        (* Check if struct is used in map key or value types *)
+        if check_type_usage map_decl.key_type || check_type_usage map_decl.value_type then
+          is_used_in_ebpf := true
+    | Ast.GlobalVarDecl var_decl ->
+        (* Check if global variable with map type uses the struct *)
+        (match var_decl.global_var_type with
+         | Some (Ast.Map (key_type, value_type, _, _)) ->
+             if check_type_usage key_type || check_type_usage value_type then
+               is_used_in_ebpf := true
+         | _ -> ())
     | _ -> ()
   ) ast;
   
