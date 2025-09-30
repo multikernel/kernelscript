@@ -837,8 +837,8 @@ let test_selective_struct_inclusion_in_ebpf () =
   (* Generate eBPF C code *)
   let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
   
-  (* Check that userspace-only structs are NOT included in eBPF code *)
-  check bool "Args struct should NOT be in eBPF code (userspace-only)" false
+  (* Check that all structs are included in eBPF code *)
+  check bool "Args struct should be in eBPF code (all structs included)" true
     (contains_substr c_code "struct Args");
   
   (* Check that struct_ops-referenced structs ARE included in eBPF code *)
@@ -969,11 +969,11 @@ let test_mixed_struct_types_inclusion () =
   (* Generate eBPF C code *)
   let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
   
-  (* Test selective inclusion logic *)
-  check bool "RegularStruct should NOT be in eBPF (not used by eBPF programs)" false
+  (* Test that all structs are included (elegant approach) *)
+  check bool "RegularStruct should be in eBPF (all structs included)" true
     (contains_substr c_code "struct RegularStruct");
     
-  check bool "CliArgs should NOT be in eBPF (userspace-only)" false
+  check bool "CliArgs should be in eBPF (all structs included)" true
     (contains_substr c_code "struct CliArgs");
     
   check bool "PacketInfo should be in eBPF (used by eBPF program)" true
@@ -986,7 +986,7 @@ let test_mixed_struct_types_inclusion () =
   check bool "String literals from struct_ops are embedded correctly" true
     (contains_substr c_code "custom_cc");
     
-  check bool "No string types should be generated (literals are embedded)" false
+  check bool "String types are generated for struct fields (all structs included)" true
     (contains_substr c_code "str_256_t")
 
 (** Test sched_ext_ops parsing and type checking *)
