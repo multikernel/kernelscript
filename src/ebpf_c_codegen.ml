@@ -3022,7 +3022,12 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
   
   (* Generate global variables using the unified logic that handles pinned globals *)
   if all_global_vars <> [] then (
-    generate_global_variables ctx all_global_vars
+    (* Filter out global variables that are actually maps to avoid redefinition *)
+    let map_names = List.map (fun map_def -> map_def.map_name) ir_multi_prog.global_maps in
+    let non_map_global_variables = List.filter (fun global_var -> 
+      not (List.mem global_var.global_var_name map_names)
+    ) all_global_vars in
+    generate_global_variables ctx non_map_global_variables
   );
   
   (* Process source declarations in their original order - handle ALL declaration types except global vars *)
@@ -3364,8 +3369,12 @@ let compile_multi_to_c_with_tail_calls
       emit_blank_line ctx
     );
     
-    (* Generate global variables *)
-    generate_global_variables ctx ir_multi_prog.global_variables;
+    (* Generate global variables (excluding those that are maps) *)
+    let map_names = List.map (fun map_def -> map_def.map_name) ir_multi_prog.global_maps in
+    let non_map_global_variables = List.filter (fun global_var -> 
+      not (List.mem global_var.global_var_name map_names)
+    ) ir_multi_prog.global_variables in
+    generate_global_variables ctx non_map_global_variables;
     
     (* Generate config maps *)
     if ir_multi_prog.global_configs <> [] then (

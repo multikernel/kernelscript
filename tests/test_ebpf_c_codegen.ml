@@ -1142,6 +1142,54 @@ let test_ebpf_function_generation_bug_fix () =
   
   ()
 
+(** Test that global variables that are maps don't get redefined *)
+let test_global_map_redefinition_fix () =
+  (* Create a global variable that is a map type *)
+  let global_var = make_ir_global_variable "counter_map" IRU32 None test_pos () in
+  
+  (* Create the corresponding map definition *)
+  let map_def = make_ir_map_def "counter_map" IRU32 IRU32 IRHash 10
+    ~ast_key_type:U32 ~ast_value_type:U32 ~ast_map_type:Hash test_pos in
+  
+  (* Create a simple XDP program that uses the map *)
+  let return_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
+  let return_instr = make_ir_instruction (IRReturn (Some return_val)) test_pos in
+  let main_block = make_ir_basic_block "entry" [return_instr] 0 in
+  let main_func = make_ir_function "packet_filter" [("ctx", IRPointer (IRStruct ("xdp_md", []), make_bounds_info ()))] (Some (IREnum ("xdp_action", []))) [main_block] ~is_main:true test_pos in
+  main_func.func_program_type <- Some Kernelscript.Ast.Xdp;
+  
+  let ir_prog = make_ir_program "packet_filter" Xdp main_func test_pos in
+  
+  (* Create multi-program structure with both global variable and map *)
+  let multi_ir = make_ir_multi_program "test" [ir_prog] [] [map_def] ~global_variables:[global_var] test_pos in
+  
+  (* Generate C code *)
+  let (ebpf_c_code, _) = compile_multi_to_c_with_tail_calls multi_ir in
+  
+  (* Verify that the map is defined only once as a struct, not as a global variable *)
+  check bool "eBPF code contains map struct definition" true (contains_substr ebpf_c_code "} counter_map SEC(\".maps\");");
+  
+  (* Count occurrences of counter_map declarations - should only be the struct definition *)
+  let global_var_pattern = Str.regexp "__u32 counter_map;" in
+  let has_global_var_decl = try
+    let _ = Str.search_forward global_var_pattern ebpf_c_code 0 in
+    true
+  with Not_found -> false in
+  
+  (* The fix should ensure no global variable declaration exists *)
+  check bool "eBPF code does not contain duplicate global variable declaration" false has_global_var_decl;
+  
+  (* Verify the map struct definition exists *)
+  let map_struct_pattern = Str.regexp "struct {[^}]*} counter_map SEC" in
+  let has_map_struct = try
+    let _ = Str.search_forward map_struct_pattern ebpf_c_code 0 in
+    true
+  with Not_found -> false in
+  
+  check bool "eBPF code contains proper map struct definition" true has_map_struct;
+  
+  ()
+
 (** Test suite definition *)
 let suite =
   [
@@ -1185,6 +1233,8 @@ let suite =
     ("Variable function call declaration", `Quick, test_variable_function_call_declaration);
     (* Integration test to catch missing eBPF function generation bug *)
     ("eBPF function generation bug fix", `Quick, test_ebpf_function_generation_bug_fix);
+    (* Test to prevent global variable map redefinition regression *)
+    ("Global map redefinition fix", `Quick, test_global_map_redefinition_fix);
   ]
 
 (** Run all tests *)
