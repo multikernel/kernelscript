@@ -1827,26 +1827,58 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
              emit_line ctx (sprintf "typedef %s %s;" c_type name));
         emit_blank_line ctx
     
-    | Ir.IRDeclStructDef (name, fields, _pos) ->
-        (* Generate struct definition - filtering is now done at IR generation level *)
-        emit_line ctx (sprintf "struct %s {" name);
-        increase_indent ctx;
-        List.iter (fun (field_name, field_type) ->
-          let field_declaration = match field_type with
-            | IRArray (inner_type, size, _) ->
-                (* Special syntax for array fields: element_type field_name[size]; *)
-                let element_type_str = ebpf_type_from_ir_type inner_type in
-                sprintf "%s %s[%d];" element_type_str field_name size
-            | _ ->
-                (* Regular field *)
-                let c_type = ebpf_type_from_ir_type field_type in
-                sprintf "%s %s;" c_type field_name
-          in
-          emit_line ctx field_declaration;
-        ) fields;
-        decrease_indent ctx;
-        emit_line ctx "};";
-        emit_blank_line ctx
+    | Ir.IRDeclStructDef (name, fields, pos) ->
+        (* Filter out kernel-defined structs, but include struct_ops structs *)
+        let is_struct_ops_struct = 
+          List.exists (fun struct_ops_decl -> 
+            struct_ops_decl.ir_kernel_struct_name = name
+          ) ir_multi_prog.struct_ops_declarations
+        in
+        
+        let should_include_struct = 
+          if is_struct_ops_struct then
+            (* Always include struct_ops structs, even if they come from kernel headers *)
+            true
+          else
+            (* Apply normal filtering for non-struct_ops structs *)
+            match _symbol_table with
+            | Some st ->
+                (match Symbol_table.lookup_symbol st name with
+                 | Some symbol ->
+                     (match symbol.Symbol_table.kind with
+                      | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
+                          let is_builtin = struct_pos.filename = "<builtin>" in
+                          let is_btf_struct = Filename.check_suffix struct_pos.filename ".kh" in
+                          not is_builtin && not is_btf_struct
+                      | _ -> true)  (* Not a struct, include it *)
+                 | None -> true)  (* Not found in symbol table, include it *)
+            | None -> 
+                (* Fallback: check the position from the declaration itself *)
+                let is_builtin = pos.filename = "<builtin>" in
+                let is_btf_struct = Filename.check_suffix pos.filename ".kh" in
+                not is_builtin && not is_btf_struct
+        in
+        if should_include_struct then (
+          (* Generate struct definition *)
+          emit_line ctx (sprintf "struct %s {" name);
+          increase_indent ctx;
+          List.iter (fun (field_name, field_type) ->
+            let field_declaration = match field_type with
+              | IRArray (inner_type, size, _) ->
+                  (* Special syntax for array fields: element_type field_name[size]; *)
+                  let element_type_str = ebpf_type_from_ir_type inner_type in
+                  sprintf "%s %s[%d];" element_type_str field_name size
+              | _ ->
+                  (* Regular field *)
+                  let c_type = ebpf_type_from_ir_type field_type in
+                  sprintf "%s %s;" c_type field_name
+            in
+            emit_line ctx field_declaration;
+          ) fields;
+          decrease_indent ctx;
+          emit_line ctx "};";
+          emit_blank_line ctx
+        )
     
     | Ir.IRDeclEnumDef (name, values, pos) ->
         (* Filter out kernel-defined enums (same logic as original collect_enum_definitions) *)
