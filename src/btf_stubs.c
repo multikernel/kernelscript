@@ -261,14 +261,20 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
         /* Handle enum64 types - extract enum values */
         const struct btf_enum64 *enums = btf_enum64(t);
         for (int i = 0; i < vlen; i++) {
-            const char *enum_name = btf__name_by_offset(btf, enums[i].name_off);
+            /* Access enum64 fields as __u32 array to avoid struct definition dependency */
+            const __u32 *enum_data = (const __u32 *)&enums[i];
+            __u32 name_off = enum_data[0];
+            __u32 val_lo32 = enum_data[1];
+            __u32 val_hi32 = enum_data[2];
+
+            const char *enum_name = btf__name_by_offset(btf, name_off);
             if (!enum_name) enum_name = "";
             
             member_tuple = caml_alloc_tuple(2);
             Store_field(member_tuple, 0, caml_copy_string(enum_name));
             
             /* For enum64, combine hi32 and lo32 to get the full 64-bit value */
-            uint64_t full_value = ((uint64_t)enums[i].val_hi32 << 32) | enums[i].val_lo32;
+            uint64_t full_value = ((uint64_t)val_hi32 << 32) | val_lo32;
             
             /* Convert to string to preserve full precision */
             char value_str[32];
