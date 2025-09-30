@@ -90,6 +90,15 @@ let detect_memory_region_enhanced ?(memory_info_map=None) ir_val =
       (* Fallback to heuristic detection *)
       detect_memory_region_type ir_val
 
+(** Callback dependency information for ordered emission *)
+type callback_dependency = {
+  name: string;
+  start_val: Ir.ir_value;
+  end_val: Ir.ir_value;
+  counter_val: Ir.ir_value;
+  body_instructions: Ir.ir_instruction list;
+}
+
 (** C code generation context *)
 type c_context = {
   (* Generated C code lines *)
@@ -108,6 +117,8 @@ type c_context = {
   mutable next_label_id: int;
   (* Pending callbacks to be emitted *)
   mutable pending_callbacks: string list;
+  (* Pre-collected callback dependencies for ordered emission *)
+  mutable callback_dependencies: callback_dependency list;
   (* Current error variable for try/catch blocks *)
   mutable current_error_var: string option;
   (* Variable name to original type alias mapping *)
@@ -138,6 +149,7 @@ let create_c_context () = {
   map_definitions = [];
   next_label_id = 0;
   pending_callbacks = [];
+  callback_dependencies = [];
   current_error_var = None;
   variable_type_aliases = [];
   pinned_globals = [];
@@ -2349,196 +2361,24 @@ and generate_c_instruction ctx ir_instr =
   | IRComment comment ->
       emit_line ctx (sprintf "/* %s */" comment)
 
-  | IRBpfLoop (start_val, end_val, counter_val, _ctx_val, body_instructions) ->
+  | IRBpfLoop (start_val, end_val, counter_val, _ctx_val, _body_instructions) ->
       let start_str = generate_c_value ctx start_val in
       let end_str = generate_c_value ctx end_val in
       
-      (* Generate unique callback function name *)
-      let callback_name = sprintf "loop_callback_%d" ctx.next_label_id in
-      ctx.next_label_id <- ctx.next_label_id + 1;
-      
-      (* Create a separate context for the callback function *)
-      let callback_ctx = create_c_context () in
-      callback_ctx.indent_level <- 1; (* Start with one level of indentation *)
-
-      (* Generate callback function signature *)
-      emit_line callback_ctx (sprintf "static long %s(__u32 index, void *ctx_ptr) {" callback_name);
-      increase_indent callback_ctx;
-      
-      (* Extract the variable name from counter_val for proper declaration in callback *)
-      let counter_var_name = match counter_val.value_desc with
-        | IRTempVariable name -> sprintf "tmp_%s" name
-        | IRVariable name -> name
-        | _ -> "loop_counter"
+      (* Find the corresponding pre-collected callback name *)
+      let callback_name = 
+        try
+          let callback_dep = List.find (fun dep ->
+            (* Match by comparing the IR structure *)
+            dep.start_val == start_val && dep.end_val == end_val && dep.counter_val == counter_val
+          ) ctx.callback_dependencies in
+          callback_dep.name
+        with Not_found ->
+          (* Fallback - should not happen with proper dependency collection *)
+          sprintf "loop_callback_%d" ctx.next_label_id
       in
-      
-      (* Collect all temporary variables used in the callback body *)
-      let callback_variables = ref [] in
-      let collect_callback_registers ir_instr =
-        let collect_in_value ir_val =
-          match ir_val.value_desc with
-          | IRTempVariable name -> 
-              if not (List.mem_assoc name !callback_variables) then
-                callback_variables := (name, ir_val.val_type) :: !callback_variables
-          | _ -> ()
-        in
-        let collect_in_expr ir_expr =
-          match ir_expr.expr_desc with
-          | IRValue ir_val -> collect_in_value ir_val
-          | IRBinOp (left, _, right) -> collect_in_value left; collect_in_value right
-          | IRUnOp (_, ir_val) -> collect_in_value ir_val
-          | IRCast (ir_val, _) -> collect_in_value ir_val
-          | IRFieldAccess (obj_val, _) -> collect_in_value obj_val
-          | IRStructLiteral (_, field_assignments) ->
-              List.iter (fun (_, field_val) -> collect_in_value field_val) field_assignments
-          | IRMatch (matched_val, arms) ->
-              (* Collect from matched expression and all arms *)
-              collect_in_value matched_val;
-              List.iter (fun arm -> collect_in_value arm.ir_arm_value) arms
-        in
-        let rec collect_in_instr ir_instr =
-          match ir_instr.instr_desc with
-          | IRAssign (dest_val, expr) -> collect_in_value dest_val; collect_in_expr expr
-          | IRMapLoad (dest_val, map_val, key_val, _) ->
-              collect_in_value dest_val; collect_in_value map_val; collect_in_value key_val
-          | IRMapStore (map_val, key_val, value_val, _) ->
-              collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
-          | IRMapDelete (map_val, key_val) ->
-              collect_in_value map_val; collect_in_value key_val
-          | IRConfigFieldUpdate (map_val, key_val, _, value_val) ->
-              collect_in_value map_val; collect_in_value key_val; collect_in_value value_val
-          | IRStructFieldAssignment (obj_val, _, value_val) ->
-              collect_in_value obj_val; collect_in_value value_val
-          | IRConfigAccess (_, _, result_val) ->
-              collect_in_value result_val
-          | IRContextAccess (result_val, _, _) ->
-              collect_in_value result_val
-          | IRBoundsCheck (value_val, _, _) ->
-              collect_in_value value_val
-          | IRCondJump (cond_val, _, _) ->
-              collect_in_value cond_val
-          | IRIf (cond_val, then_body, else_body) ->
-              collect_in_value cond_val;
-              List.iter collect_in_instr then_body;
-              (match else_body with
-               | Some else_instrs -> List.iter collect_in_instr else_instrs
-               | None -> ())
-          | IRIfElseChain (conditions_and_bodies, final_else) ->
-              List.iter (fun (cond_val, then_body) ->
-                collect_in_value cond_val;
-                List.iter collect_in_instr then_body
-              ) conditions_and_bodies;
-              (match final_else with
-               | Some else_instrs -> List.iter collect_in_instr else_instrs
-               | None -> ())
-          | IRMatchReturn (matched_val, arms) ->
-              collect_in_value matched_val;
-              List.iter (fun arm ->
-                (match arm.match_pattern with
-                 | IRConstantPattern const_val -> collect_in_value const_val
-                 | IRDefaultPattern -> ());
-                (match arm.return_action with
-                 | IRReturnValue ret_val -> collect_in_value ret_val
-                 | IRReturnCall (_, args) -> List.iter collect_in_value args
-                 | IRReturnTailCall (_, args, _) -> List.iter collect_in_value args)
-              ) arms
-          | IRReturn ret_opt -> Option.iter collect_in_value ret_opt
-          | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
-              collect_in_value cond_val;
-              Option.iter collect_in_value ret_if_true;
-              Option.iter collect_in_value ret_if_false
-          | IRTry (try_instructions, _catch_clauses) ->
-              List.iter collect_in_instr try_instructions
-          | IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions) ->
-              collect_in_value start_val; collect_in_value end_val; 
-              collect_in_value counter_val; collect_in_value ctx_val;
-              List.iter collect_in_instr body_instructions
-          | IRStructOpsRegister (instance_val, struct_ops_val) ->
-              collect_in_value instance_val; collect_in_value struct_ops_val
-          | IRDefer defer_instructions ->
-              List.iter collect_in_instr defer_instructions
-          | IRConstAssign (dest_val, const_expr) ->
-              collect_in_value dest_val; collect_in_expr const_expr
 
-          | IRCall (_, args, result_val_opt) ->
-              List.iter collect_in_value args;
-              Option.iter collect_in_value result_val_opt
-          | IRTailCall (_, args, _) ->
-              List.iter collect_in_value args
-          | IRObjectNew (dest_val, _) ->
-              collect_in_value dest_val
-          | IRObjectNewWithFlag (dest_val, _, flag_val) ->
-              collect_in_value dest_val; collect_in_value flag_val
-          | IRObjectDelete ptr_val ->
-              collect_in_value ptr_val
-          | IRRingbufOp (ringbuf_val, _) ->
-              collect_in_value ringbuf_val
-          | IRVariableDecl (_, _, init_expr_opt) ->
-              (* New unified variable declaration *)
-              (match init_expr_opt with
-               | Some init_expr -> collect_in_expr init_expr
-               | None -> ())
-          | IRJump _ | IRComment _ | IRBreak | IRContinue | IRThrow _ -> ()
-        in
-        collect_in_instr ir_instr
-      in
-      
-      (* Collect registers from all body instructions *)
-      List.iter collect_callback_registers body_instructions;
-
-      (* Declare the loop counter variable in callback scope *)
-      let counter_type = ebpf_type_from_ir_type counter_val.val_type in
-      emit_line callback_ctx (sprintf "%s %s = index;" counter_type counter_var_name);
-      
-      (* Counter variable naming is handled directly in the new architecture *)
-      
-      (* Centralized variable declaration for callback: collect all variables and declare them upfront *)
-      let callback_variables_sorted = List.sort (fun (n1, _) (n2, _) -> compare n1 n2) !callback_variables in
-      let declared_vars = ref [counter_var_name] in (* Include counter to avoid redefinition *)
-      List.iter (fun (var_name, var_type) ->
-        (* Skip already declared variables *)
-        if not (List.mem var_name !declared_vars) then (
-          let declaration = generate_ebpf_c_declaration var_type var_name in
-          emit_line callback_ctx (sprintf "%s;" declaration);
-          declared_vars := var_name :: !declared_vars;
-          (* Mark variable as declared in the callback context *)
-          let var_hash = Hashtbl.hash var_name in
-          Hashtbl.replace callback_ctx.declared_registers var_hash ()
-        )
-      ) callback_variables_sorted;
-      
-      emit_blank_line callback_ctx;
-      
-      (* Generate C code for each IR instruction in the loop body *)
-      let has_early_return = ref false in
-      List.iter (fun ir_instr ->
-        if not !has_early_return then
-          match ir_instr.instr_desc with
-          | IRBreak -> 
-              emit_line callback_ctx "return 1; /* Break loop */";
-              has_early_return := true
-          | IRContinue -> 
-              emit_line callback_ctx "return 0; /* Continue loop */";
-              has_early_return := true
-          | _ ->
-              (* Generate C code for regular IR instructions *)
-              generate_c_instruction callback_ctx ir_instr
-      ) body_instructions;
-      
-      (* Add default return if no early return was encountered *)
-      if not !has_early_return then
-        emit_line callback_ctx "return 0; /* Continue loop */";
-      
-      decrease_indent callback_ctx;
-      emit_line callback_ctx "}";
-      emit_blank_line callback_ctx;
-      
-      (* Store forward declaration and callback for top-level emission *)
-      let forward_decl = sprintf "static long %s(__u32 index, void *ctx_ptr);" callback_name in
-      let callback_lines = callback_ctx.output_lines in
-      ctx.pending_callbacks <- forward_decl :: "" :: callback_lines @ [""] @ ctx.pending_callbacks;
-      
-      (* Generate the actual bpf_loop() call *)
+      (* Generate the bpf_loop() call - callback function already generated in Phase 2 *)
       emit_line ctx (sprintf "/* bpf_loop() call for unbounded loop */");
       emit_line ctx (sprintf "{");
       increase_indent ctx;
@@ -2567,27 +2407,26 @@ and generate_c_instruction ctx ir_instr =
       emit_line ctx "continue;"
 
   | IRCondReturn (cond_val, ret_if_true, ret_if_false) ->
-      (* Generate conditional return for bpf_loop() callbacks *)
-      let cond_c = generate_c_value ctx cond_val in
-      emit_line ctx (sprintf "if (%s) {" cond_c);
+      let cond_str = generate_c_value ctx cond_val in
+      emit_line ctx (sprintf "if (%s) {" cond_str);
       increase_indent ctx;
       (match ret_if_true with
        | Some ret_val -> 
-           let ret_c = generate_c_value ctx ret_val in
-           emit_line ctx (sprintf "return %s; /* Break/Continue loop */" ret_c)
+           let ret_str = generate_c_value ctx ret_val in
+           emit_line ctx (sprintf "return %s;" ret_str)
        | None -> 
-           emit_line ctx "/* No action for true branch */");
+           emit_line ctx "/* No return - continue execution */");
       decrease_indent ctx;
+      emit_line ctx "} else {";
+      increase_indent ctx;
       (match ret_if_false with
        | Some ret_val ->
-           emit_line ctx "} else {";
-           increase_indent ctx;
-           let ret_c = generate_c_value ctx ret_val in
-           emit_line ctx (sprintf "return %s; /* Break/Continue loop */" ret_c);
-           decrease_indent ctx;
-           emit_line ctx "}"
+           let ret_str = generate_c_value ctx ret_val in
+           emit_line ctx (sprintf "return %s;" ret_str)
        | None ->
-           emit_line ctx "}")
+           emit_line ctx "/* No return - continue execution */");
+      decrease_indent ctx;
+      emit_line ctx "}"
 
   | IRTry (try_instructions, _catch_clauses) ->
       (* For eBPF, generate structured try/catch with error status variable and if() checks *)
@@ -3011,6 +2850,80 @@ and generate_ringbuf_operation ctx ringbuf_val op =
       (* Ring buffer on_event() is userspace-only *)
       failwith "Ring buffer on_event() operation is not supported in eBPF programs - it's userspace-only"
 
+(** Phase 2: Generate callback function C code *)
+let generate_callback_function _ctx callback_dep =
+  let callback_ctx = create_c_context () in
+  callback_ctx.indent_level <- 0;
+  
+  (* Generate callback function signature *)
+  emit_line callback_ctx (sprintf "static long %s(__u32 index, void *ctx_ptr) {" callback_dep.name);
+  increase_indent callback_ctx;
+  
+  (* Extract counter variable name *)
+  let counter_var_name = match callback_dep.counter_val.Ir.value_desc with
+    | Ir.IRTempVariable name -> sprintf "tmp_%s" name
+    | Ir.IRVariable name -> name
+    | _ -> "loop_counter"
+  in
+  
+  (* Declare loop counter *)
+  let counter_type = ebpf_type_from_ir_type callback_dep.counter_val.Ir.val_type in
+  emit_line callback_ctx (sprintf "%s %s = index;" counter_type counter_var_name);
+  
+  (* Collect and declare variables used in callback *)
+  let callback_variables = ref [] in
+  let collect_vars_from_instr instr =
+    match instr.Ir.instr_desc with
+    | Ir.IRAssign (dest_val, _) ->
+        (match dest_val.Ir.value_desc with
+         | Ir.IRTempVariable name -> 
+             let var_name = sprintf "tmp_%s" name in
+             let var_type = dest_val.Ir.val_type in
+             if not (List.mem_assoc var_name !callback_variables) then
+               callback_variables := (var_name, var_type) :: !callback_variables
+         | _ -> ())
+    | Ir.IRVariableDecl (var_name, var_type, _) ->
+        let full_var_name = sprintf "tmp_%s" var_name in
+        if not (List.mem_assoc full_var_name !callback_variables) then
+          callback_variables := (full_var_name, var_type) :: !callback_variables
+    | _ -> ()
+  in
+  List.iter collect_vars_from_instr callback_dep.body_instructions;
+  
+  (* Declare variables *)
+  List.iter (fun (var_name, var_type) ->
+    if var_name <> counter_var_name then
+      let declaration = generate_ebpf_c_declaration var_type var_name in
+      emit_line callback_ctx (sprintf "%s;" declaration)
+  ) (List.rev !callback_variables);
+  
+  emit_blank_line callback_ctx;
+  
+  (* Generate body instructions *)
+  let has_early_return = ref false in
+  List.iter (fun ir_instr ->
+    if not !has_early_return then
+      match ir_instr.Ir.instr_desc with
+      | Ir.IRBreak -> 
+          emit_line callback_ctx "return 1; /* Break loop */";
+          has_early_return := true
+      | Ir.IRContinue -> 
+          emit_line callback_ctx "return 0; /* Continue loop */";
+          has_early_return := true
+      | _ ->
+          generate_c_instruction callback_ctx ir_instr
+  ) callback_dep.body_instructions;
+  
+  (* Add default return *)
+  if not !has_early_return then
+    emit_line callback_ctx "return 0; /* Continue loop */";
+  
+  decrease_indent callback_ctx;
+  emit_line callback_ctx "}";
+  
+  (* Return the generated lines *)
+  callback_ctx.output_lines
+
 (** Generate ALL declarations in original source order - complete implementation *)
 let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ?_symbol_table ~_btf_path _tail_call_analysis =
   (* First, collect all global variables from source declarations to handle pinned globals properly *)
@@ -3030,8 +2943,30 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
     generate_global_variables ctx non_map_global_variables
   );
   
+  (* Track whether we've emitted callbacks yet *)
+  let callbacks_emitted = ref false in
+  
+  (* Helper function to emit callbacks if needed *)
+  let emit_callbacks_if_needed () =
+    if not !callbacks_emitted && ctx.callback_dependencies <> [] then (
+      callbacks_emitted := true;
+      emit_blank_line ctx;
+      emit_line ctx "/* Loop callback functions */";
+      List.iter (fun callback_dep ->
+        let callback_lines = generate_callback_function ctx callback_dep in
+        List.iter (emit_line ctx) callback_lines;
+        emit_blank_line ctx
+      ) ctx.callback_dependencies;
+    )
+  in
+  
   (* Process source declarations in their original order - handle ALL declaration types except global vars *)
   List.iter (fun source_decl ->
+    (* Emit callbacks before the first function declaration *)
+    (match source_decl.Ir.decl_desc with
+     | Ir.IRDeclFunctionDef _ -> emit_callbacks_if_needed ()
+     | _ -> ());
+    
     match source_decl.Ir.decl_desc with
     | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
         (* Generate type alias definition with special handling for function pointers *)
@@ -3144,7 +3079,10 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
         (* Generate struct_ops instance *)
         emit_line ctx (sprintf "/* eBPF struct_ops instance: %s */" struct_ops_instance.ir_instance_name);
         emit_blank_line ctx
-  ) ir_multi_prog.Ir.source_declarations
+  ) ir_multi_prog.Ir.source_declarations;
+  
+  (* Emit callbacks at the end if no functions were found (fallback) *)
+  emit_callbacks_if_needed ()
 
 (** Generate bounds checking *)
 
@@ -3298,12 +3236,53 @@ let generate_prog_array_map ctx prog_array_size =
     emit_blank_line ctx
   )
 
+(** Phase 1: Collect all callback dependencies from IR for ordered emission *)
+let collect_callback_dependencies ir_multi_prog =
+  let callbacks = ref [] in
+  let callback_counter = ref 0 in
+  
+  let rec collect_from_instruction instr =
+    match instr.Ir.instr_desc with
+    | Ir.IRBpfLoop (start_val, end_val, counter_val, _ctx_val, body_instructions) ->
+        (* Generate unique callback name *)
+        let callback_name = sprintf "loop_callback_%d" !callback_counter in
+        incr callback_counter;
+        
+        let callback_info = {
+          name = callback_name;
+          start_val = start_val;
+          end_val = end_val;
+          counter_val = counter_val;
+          body_instructions = body_instructions;
+        } in
+        callbacks := callback_info :: !callbacks;
+        
+        (* Recursively collect from body instructions *)
+        List.iter collect_from_instruction body_instructions
+    | _ -> ()
+  in
+  
+  let collect_from_function ir_func =
+    List.iter (fun block ->
+      List.iter collect_from_instruction block.Ir.instructions
+    ) ir_func.Ir.basic_blocks
+  in
+  
+  (* Collect from all functions *)
+  List.iter collect_from_function ir_multi_prog.Ir.kernel_functions;
+  List.iter (fun prog -> collect_from_function prog.Ir.entry_function) ir_multi_prog.Ir.programs;
+  
+  List.rev !callbacks
+
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls 
     ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None)
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
+  
+  (* Phase 1: Collect callback dependencies *)
+  ctx.callback_dependencies <- collect_callback_dependencies ir_multi_prog;
   
   (* Initialize modular context code generators *)
   initialize_context_generators ();
@@ -3363,7 +3342,8 @@ let compile_multi_to_c_with_tail_calls
   (* Generate declarations in source order when available, otherwise use IR structure *)
   if ir_multi_prog.source_declarations <> [] then (
     (* Use source declarations for proper ordering (from elegant 3-phase IR generation) *)
-    generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path (Some final_tail_call_analysis)
+    generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path (Some final_tail_call_analysis);
+    
   ) else (
     (* Fallback for direct IR creation (tests, etc.) *)
     (* Generate type aliases *)
@@ -3431,7 +3411,7 @@ let generate_c_multi_program ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kf
   c_code
 
 (** Generate complete C program from IR *)
-let generate_c_program ir_prog =
+let generate_c_program (ir_prog : Ir.ir_program) =
   (* Convert single program to multi-program and use the main compilation function *)
   let temp_multi_prog = {
     source_name = ir_prog.name;

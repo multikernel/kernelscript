@@ -694,7 +694,7 @@ let sanitize_var_name var_name =
   let is_temp_var = 
     String.contains var_name '_' && (
       (String.length var_name > 0 && String.get var_name 0 >= '0' && String.get var_name 0 <= '9') ||
-      (try ignore (Str.search_forward (Str.regexp "temp\\|key\\|value\\|match") var_name 0); true with Not_found -> false)
+      (try ignore (Str.search_forward (Str.regexp "temp\\|key\\|value\\|match\\|__binop\\|__map\\|__func\\|tmp_") var_name 0); true with Not_found -> false)
     ) in
   if is_temp_var then
     (* This looks like a generated temporary variable, don't add prefix *)
@@ -2548,7 +2548,8 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   (* Generate variable declarations, filtering out impl block variables *)
   let var_decls = 
     let all_declarations = Hashtbl.fold (fun var_name ir_type acc ->
-      let declaration = generate_c_declaration ir_type var_name ^ ";" in
+      let sanitized_name = sanitize_var_name var_name in
+      let declaration = generate_c_declaration ir_type sanitized_name ^ ";" in
       (var_name, declaration) :: acc
     ) ctx.var_declarations [] in
     
