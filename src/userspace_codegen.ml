@@ -1242,6 +1242,9 @@ let generate_declarations_in_source_order_userspace ?symbol_table ir_multi_prog 
                   (* Special syntax for array fields: element_type field_name[size]; *)
                   let element_type_str = c_type_from_ir_type inner_type in
                   sprintf "    %s %s[%d];" element_type_str field_name size
+              | IRStr size ->
+                  (* Special syntax for string fields: char field_name[size]; *)
+                  sprintf "    char %s[%d];" field_name size
               | _ ->
                   (* Regular field *)
                   let c_type = c_type_from_ir_type field_type in
