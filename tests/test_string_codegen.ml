@@ -162,8 +162,8 @@ fn main() -> i32 {
       (* Should generate strcmp for equality with variable assignment *)
       check bool "equality uses strcmp" true (contains_pattern result "strcmp.*var_.*var_.*==.*0");
       check bool "has variable comparison" true (contains_pattern result "strcmp.*var_.*var_");
-      check bool "assigns comparison result" true (contains_pattern result "var_.*=.*(strcmp");
-      check bool "uses comparison variable in if" true (contains_pattern result "if.*(var_");
+      check bool "assigns comparison result" true (contains_pattern result "__binop_.*=.*(strcmp");
+      check bool "uses comparison variable in if" true (contains_pattern result "if.*(__binop_");
       
       (* Should have proper string assignments *)
       check bool "has Alice assignment" true (contains_pattern result "strcpy.*var_.*\"Alice\"");
@@ -362,9 +362,9 @@ fn main() -> i32 {
     check bool "has string literal comparison" true (contains_pattern result "strcmp.*var_.*\"Alice\"");
     check bool "has variable comparison" true (contains_pattern result "strcmp.*var_.*var_");
     
-    (* Should be stored in variables then used in conditionals *)
-    check bool "assigns comparison result" true (contains_pattern result "var_.*=.*strcmp");
-    check bool "uses comparison variable in if" true (contains_pattern result "if.*var_");
+    (* Should be stored in temp variables then used in conditionals *)
+    check bool "assigns comparison result" true (contains_pattern result "__binop_.*=.*strcmp");
+    check bool "uses comparison variable in if" true (contains_pattern result "if.*__binop_");
   with
   | exn -> fail ("String literal and mixed comparisons test failed: " ^ Printexc.to_string exn)
 

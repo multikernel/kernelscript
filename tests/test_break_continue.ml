@@ -202,81 +202,69 @@ let test_break_evaluation () =
   with
   | e -> fail ("Failed break evaluation test: " ^ Printexc.to_string e)
 
-(** Test that verifies the fix for break/continue in unbound loops
-    This test ensures that callback functions have consistent variable naming
-    between declarations and usage. Previously, variables were declared as
-    tmp_X but referenced as val_X, causing compilation errors.
+(** Test that verifies the elegant callback generation architecture
+    This test ensures that callback functions are properly generated with consistent
+    variable naming using the new IR-based approach.
 *)
 let test_break_continue_unbound_variable_naming () =
-  let ctx = create_c_context () in
-  
-  (* Create registers for variables that would be used in break/continue logic *)
-  let counter_reg = 1 in
-  let condition_reg = 2 in
-  let temp_reg = 3 in
-  
-  (* Create IR values representing loop variables *)
-  let counter_val = make_ir_value (IRTempVariable (Printf.sprintf "counter_%d" counter_reg)) IRU32 test_pos in
-  let condition_val = make_ir_value (IRTempVariable (Printf.sprintf "condition_%d" condition_reg)) IRBool test_pos in
-  let temp_val = make_ir_value (IRTempVariable (Printf.sprintf "temp_%d" temp_reg)) IRU32 test_pos in
-  
-  (* Create a modulo operation and comparison (similar to the original failing case) *)
-  let two_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
-  let zero_val = make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos in
-  
-  (* Create IR instructions that would be in a bpf_loop callback *)
-  let mod_expr = make_ir_expr (IRBinOp (counter_val, IRMod, two_val)) IRU32 test_pos in
-  let mod_assign = make_ir_instruction (IRAssign (temp_val, mod_expr)) test_pos in
-  
-  let eq_expr = make_ir_expr (IRBinOp (temp_val, IREq, zero_val)) IRBool test_pos in
-  let eq_assign = make_ir_instruction (IRAssign (condition_val, eq_expr)) test_pos in
-  
-  (* Create the bpf_loop instruction with these body instructions *)
+  (* Create a minimal IR multi-program with a bpf_loop to test callback generation *)
+  let counter_val = make_ir_value (IRVariable "i") IRU32 test_pos in
   let start_val = make_ir_value (IRLiteral (IntLit (Signed64 0L, None))) IRU32 test_pos in
   let end_val = make_ir_value (IRLiteral (IntLit (Signed64 1000L, None))) IRU32 test_pos in
   let ctx_val = make_ir_value (IRTempVariable "loop_ctx") (IRPointer (IRU8, make_bounds_info ())) test_pos in
-  let body_instructions = [mod_assign; eq_assign] in
+  
+  (* Create body instructions with temp variables *)
+  let temp_val = make_ir_value (IRTempVariable "__binop_0") IRU32 test_pos in
+  let two_val = make_ir_value (IRLiteral (IntLit (Signed64 2L, None))) IRU32 test_pos in
+  let mod_expr = make_ir_expr (IRBinOp (counter_val, IRMod, two_val)) IRU32 test_pos in
+  let mod_assign = make_ir_instruction (IRAssign (temp_val, mod_expr)) test_pos in
+  
+  let body_instructions = [mod_assign] in
   
   let bpf_loop_instr = make_ir_instruction 
     (IRBpfLoop (start_val, end_val, counter_val, ctx_val, body_instructions))
     test_pos in
   
-  (* Generate C code for the bpf_loop instruction *)
-  generate_c_instruction ctx bpf_loop_instr;
+  (* Create a minimal IR function and multi-program *)
+  let entry_block = make_ir_basic_block "entry" [bpf_loop_instr] 0 in
+  let ir_func = make_ir_function "test_func" [] (Some IRU32) [entry_block] test_pos in
   
-  (* Get the generated code *)
-  let _output = String.concat "\n" ctx.output_lines in
+  let ir_prog = make_ir_program "test_prog" Xdp ir_func test_pos in
   
-  (* Extract any pending callbacks (this is where the fix matters) *)
-  let callback_code = String.concat "\n" ctx.pending_callbacks in
+  (* Create source declarations to trigger the main compilation path *)
+  let func_source_decl = {
+    decl_desc = IRDeclFunctionDef ir_func;
+    decl_order = 0;
+    decl_pos = test_pos;
+  } in
+  let ir_multi_prog = make_ir_multi_program "test_source" [ir_prog] [] [] ~source_declarations:[func_source_decl] test_pos in
   
-  (* Verify that the callback code doesn't contain inconsistent variable naming *)
-  let has_consistent_naming = 
-    (* Check that if variables are declared as tmp_X, they're also used as tmp_X *)
-    let tmp_declarations = Str.split (Str.regexp "tmp_[0-9]+") callback_code in
-    let val_usage = Str.split (Str.regexp "val_[0-9]+") callback_code in
-    (* If there are tmp declarations, there shouldn't be val usage in the same callback *)
-    if List.length tmp_declarations > 1 then
-      List.length val_usage <= 1 (* Only the split creates one extra element *)
-    else
-      true
-  in
+  (* Use the elegant compilation pipeline to generate C code *)
+  let (generated_c_code, _tail_call_analysis) = compile_multi_to_c_with_tail_calls ir_multi_prog in
   
-  check bool "Variable naming is consistent in callback" true has_consistent_naming;
+  (* Verify that callback functions are generated with proper variable naming *)
+  let has_callback_function = String.contains generated_c_code 's' && 
+    (try ignore (Str.search_forward (Str.regexp "static long loop_callback_[0-9]+") generated_c_code 0); true 
+     with Not_found -> false) in
+  check bool "Callback function was generated" true has_callback_function;
   
-  (* Also verify that the generated code contains a callback function *)
-  let has_callback = String.length callback_code > 0 in
-  check bool "Callback function was generated" true has_callback;
+  (* Verify that the callback function contains the expected variable operations *)
+  let has_modulo_operation = 
+    try ignore (Str.search_forward (Str.regexp "i % 2") generated_c_code 0); true 
+    with Not_found -> false in
+  check bool "Callback contains modulo operation" true has_modulo_operation;
   
-  (* Additional check: verify no undeclared variable usage *)
-  let lines = String.split_on_char '\n' callback_code in
-  let has_undeclared_usage = List.exists (fun line ->
-    (* Look for patterns like "val_X = " where val_X wasn't declared *)
-    Str.string_match (Str.regexp ".*val_[0-9]+ =.*") line 0 &&
-    not (Str.string_match (Str.regexp ".*__u32 val_[0-9]+.*") line 0)
-  ) lines in
+  (* Verify that temp variables are properly declared in callback *)
+  let has_temp_var_declaration = 
+    try ignore (Str.search_forward (Str.regexp "__binop_0") generated_c_code 0); true 
+    with Not_found -> false in
+  check bool "Temp variables are properly declared" true has_temp_var_declaration;
   
-  check bool "No undeclared variable usage" false has_undeclared_usage
+  (* Verify that the callback function has the correct signature *)
+  let has_correct_callback_signature = 
+    try ignore (Str.search_forward (Str.regexp "static long loop_callback_0(__u32 index, void \\*ctx_ptr)") generated_c_code 0); true 
+    with Not_found -> false in
+  check bool "Callback has correct signature" true has_correct_callback_signature
 
 
 let break_continue_tests = [

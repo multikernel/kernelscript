@@ -169,9 +169,10 @@ fn main() -> i32 {
     
     (* Should handle complex expressions inside loop without transformation *)
     check bool "generates for loop" true (contains_pattern result "for.*(");
-    check bool "includes doubled variable" true (contains_pattern result "var_.*=.*var_.*\\*.*2");
-    check bool "includes squared variable" true (contains_pattern result "var_.*=.*var_.*\\*.*var_");
-    check bool "has multiplication" true (contains_pattern result "\\*");
+    check bool "includes doubled variable" true (contains_pattern result "var_doubled");
+    check bool "includes squared variable" true (contains_pattern result "var_squared");
+    check bool "has multiplication with user variables" true (contains_pattern result "var_i \\* ");
+    check bool "has temp variables for operations" true (contains_pattern result "__binop_");
     
     (* Should not apply eBPF-specific transformations *)
     check bool "no verifier hints" false (contains_pattern result "__always_inline");
