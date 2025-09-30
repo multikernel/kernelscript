@@ -3346,10 +3346,24 @@ let compile_multi_to_c_with_tail_calls
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_prog;
   
+  (* Create or use provided tail call analysis result *)
+  let final_tail_call_analysis = match tail_call_analysis with
+    | Some analysis -> analysis
+    | None -> {
+        Tail_call_analyzer.dependencies = [];
+        prog_array_size = 0;
+        index_mapping = Hashtbl.create 0;
+        errors = [];
+      }
+  in
+  
+  (* Generate prog_array map for tail calls if needed (before functions that use it) *)
+  generate_prog_array_map ctx final_tail_call_analysis.prog_array_size;
+  
   (* Generate declarations in source order when available, otherwise use IR structure *)
   if ir_multi_prog.source_declarations <> [] then (
     (* Use source declarations for proper ordering (from elegant 3-phase IR generation) *)
-    generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path tail_call_analysis
+    generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path (Some final_tail_call_analysis)
   ) else (
     (* Fallback for direct IR creation (tests, etc.) *)
     (* Generate type aliases *)
@@ -3392,20 +3406,6 @@ let compile_multi_to_c_with_tail_calls
     ) ir_multi_prog.programs
   );
   
-  (* Create or use provided tail call analysis result *)
-  let final_tail_call_analysis = match tail_call_analysis with
-    | Some analysis -> analysis
-    | None -> {
-        Tail_call_analyzer.dependencies = [];
-        prog_array_size = 0;
-        index_mapping = Hashtbl.create 0;
-        errors = [];
-      }
-  in
-  
-  (* Generate prog_array map for tail calls if needed (before functions that use it) *)
-  generate_prog_array_map ctx final_tail_call_analysis.prog_array_size;
-
   (* Generate struct_ops definitions and instances after functions are defined *)
   generate_struct_ops ctx ir_multi_prog;
   
