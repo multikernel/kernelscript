@@ -657,6 +657,9 @@ type userspace_context = {
   mutable current_function: ir_function option;
   (* Ring buffer event handler registrations *)
   ring_buffer_handlers: (string, string) Hashtbl.t; (* map_name -> handler_function_name *)
+  function_parameters: (string, unit) Hashtbl.t; (* param_name -> unit *)
+  (* Pre-computed variable naming decisions *)
+  needs_var_prefix: (string, unit) Hashtbl.t; (* var_name -> unit *)
 }
 
 let create_context_base ?(global_variables = []) ~function_name ~is_main () = {
@@ -672,6 +675,8 @@ let create_context_base ?(global_variables = []) ~function_name ~is_main () = {
   inlinable_registers = Hashtbl.create 32;
   current_function = None;
   ring_buffer_handlers = Hashtbl.create 16;
+  function_parameters = Hashtbl.create 16;
+  needs_var_prefix = Hashtbl.create 32;
 }
 
 let create_userspace_context ?(global_variables = []) () = 
@@ -691,19 +696,21 @@ let c_reserved_keywords = [
   "stdin"; "stdout"; "stderr"; "errno"; "NULL"
 ]
 
-(** Generate appropriate C variable name based on variable origin *)
-let generate_c_var_name_from_ir_value ir_value =
+let generate_c_var_name ctx ir_value =
   match ir_value.value_desc with
   | IRVariable name ->
-      (* User-defined variables get var_ prefix for consistency *)
-      let base_name = if List.mem name c_reserved_keywords then name ^ "_var" else name in
-      "var_" ^ base_name
+      if Hashtbl.mem ctx.needs_var_prefix name then
+        let base_name = if List.mem name c_reserved_keywords then name ^ "_var" else name in
+        "var_" ^ base_name
+      else
+        (* Function parameters and globals use original names *)
+        if List.mem name c_reserved_keywords then name ^ "_var" else name
   | IRTempVariable name ->
       (* Compiler-generated temporaries use their names directly *)
       if List.mem name c_reserved_keywords then name ^ "_var" else name
   | _ ->
       (* For other value types, this function shouldn't be called *)
-      failwith "generate_c_var_name_from_ir_value called on non-variable IR value"
+      failwith "generate_c_var_name called on non-variable IR value"
 
 let sanitize_var_name var_name =
   (* This is a fallback for cases where we only have the name string *)
@@ -1459,10 +1466,10 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
                sprintf "obj->%s->%s" section name)
       else
         (* Use elegant IR-based variable naming *)
-        generate_c_var_name_from_ir_value ir_value
+        generate_c_var_name ctx ir_value
   | IRTempVariable _name -> 
       (* Use elegant IR-based variable naming *)
-      generate_c_var_name_from_ir_value ir_value
+      generate_c_var_name ctx ir_value
 
   | IRMapRef map_name -> sprintf "%s_fd" map_name
   | IREnumConstant (_enum_name, constant_name, _value) ->
@@ -1923,7 +1930,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
         bounds_checked = false;
         val_pos = { line = 0; column = 0; filename = "synthetic" };
       } in
-      let c_var_name = generate_c_var_name_from_ir_value synthetic_ir_value in
+      let c_var_name = generate_c_var_name ctx synthetic_ir_value in
       (* Mark this variable as declared via IRVariableDecl to avoid double declaration *)
       Hashtbl.replace ctx.declared_via_ir var_name ();
       (match typ with
@@ -2552,12 +2559,51 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   let ctx = if ir_func.func_name = "main" then create_main_context ~global_variables () else 
     { (create_userspace_context ~global_variables ()) with function_name = ir_func.func_name } in
   
+  (* Set the current function in the context for parameter resolution *)
+  ctx.current_function <- Some ir_func;
+  
+  (* Elegant parameter tracking - following eBPF pattern *)
+  (* Pre-compute function parameters for O(1) lookup *)
+  List.iter (fun (param_name, _param_type) ->
+    Hashtbl.add ctx.function_parameters param_name ()
+  ) ir_func.parameters;
+  
   (* Collect and declare undeclared IRVariable names using elegant IR-based approach *)
   let undeclared_vars = collect_undeclared_variables_in_function ir_func in
   List.iter (fun (var_name, var_type) ->
     if not (Hashtbl.mem ctx.var_declarations var_name) then
       Hashtbl.add ctx.var_declarations var_name var_type
   ) undeclared_vars;
+  
+  (* Pre-compute which variables need var_ prefix - elegant setup phase *)
+  List.iter (fun (var_name, _var_type) ->
+    (* Variables that are NOT function parameters need var_ prefix *)
+    if not (Hashtbl.mem ctx.function_parameters var_name) then
+      Hashtbl.add ctx.needs_var_prefix var_name ()
+  ) undeclared_vars;
+  
+  (* Also collect variables declared via IRVariableDecl instructions *)
+  let rec collect_declared_vars ir_instr =
+    match ir_instr.instr_desc with
+    | IRVariableDecl (var_name, _, _) ->
+        (* Variables declared via IRVariableDecl that are NOT function parameters need var_ prefix *)
+        if not (Hashtbl.mem ctx.function_parameters var_name) then
+          Hashtbl.add ctx.needs_var_prefix var_name ()
+    | IRBpfLoop (_, _, _, _, body_instructions) ->
+        (* Recursively collect from for loop body instructions *)
+        List.iter collect_declared_vars body_instructions
+    | IRIf (_, then_instrs, else_instrs_opt) ->
+        (* Recursively collect from if statement bodies *)
+        List.iter collect_declared_vars then_instrs;
+        (match else_instrs_opt with
+         | Some else_instrs -> List.iter collect_declared_vars else_instrs
+         | None -> ())
+    | _ -> ()
+  in
+  
+  List.iter (fun block ->
+    List.iter collect_declared_vars block.instructions
+  ) ir_func.basic_blocks;
   
   (* Also collect IR values for elegant variable naming *)
   let collect_ir_values_from_function ir_func =
@@ -2630,7 +2676,7 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   let var_decls = 
     let all_declarations = Hashtbl.fold (fun var_name ir_type acc ->
       let c_var_name = match Hashtbl.find_opt ctx.ir_var_values var_name with
-        | Some ir_value -> generate_c_var_name_from_ir_value ir_value
+        | Some ir_value -> generate_c_var_name ctx ir_value
         | None -> sanitize_var_name var_name  (* Fallback for legacy cases *)
       in
       let declaration = generate_c_declaration ir_type c_var_name ^ ";" in
