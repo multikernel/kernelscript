@@ -258,11 +258,11 @@ value btf_type_get_members_stub(value btf_handle, value type_id) {
             Store_field(result, i, member_tuple);
         }
     } else if (kind == BTF_KIND_ENUM64) {
-        /* Handle enum64 types - extract enum values */
-        const struct btf_enum64 *enums = btf_enum64(t);
+        /* Access enum64 fields as __u32 array to avoid struct definition dependency */
+        const __u32 *enums = (const __u32 *)(t + 1);
         for (int i = 0; i < vlen; i++) {
-            /* Access enum64 fields as __u32 array to avoid struct definition dependency */
-            const __u32 *enum_data = (const __u32 *)&enums[i];
+            /* Each enum64 entry is 3 __u32 values: name_off, val_lo32, val_hi32 */
+            const __u32 *enum_data = &enums[i * 3];
             __u32 name_off = enum_data[0];
             __u32 val_lo32 = enum_data[1];
             __u32 val_hi32 = enum_data[2];
