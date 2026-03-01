@@ -27,13 +27,6 @@ type ir_position = position
 (** Multi-program IR - complete compilation unit with multiple eBPF programs *)
 type ir_multi_program = {
   source_name: string; (* Base name of source file *)
-  programs: ir_program list; (* List of eBPF programs *)
-  kernel_functions: ir_function list; (* Kernel functions shared across all programs *)
-  global_maps: ir_map_def list; (* Maps shared across programs *)
-  global_configs: ir_global_config list; (* Named configuration blocks *)
-  global_variables: ir_global_variable list; (* Global variables shared across programs *)
-  struct_ops_declarations: ir_struct_ops_declaration list; (* Struct_ops type declarations *)
-  struct_ops_instances: ir_struct_ops_instance list; (* Struct_ops instances *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
   ring_buffer_registry: ir_ring_buffer_registry; (* Centralized ring buffer tracking *)
   source_declarations: ir_source_declaration list; (* All declarations in original source order *)
@@ -403,6 +396,7 @@ and ir_declaration_desc =
   | IRDeclConfigDef of ir_global_config
   | IRDeclGlobalVarDef of ir_global_variable
   | IRDeclFunctionDef of ir_function
+  | IRDeclProgramDef of ir_program
   | IRDeclStructOpsDef of ir_struct_ops_declaration
   | IRDeclStructOpsInstance of ir_struct_ops_instance
 
@@ -533,42 +527,23 @@ let make_ir_global_var_def_decl global_var order =
 let make_ir_function_def_decl function_def order =
   make_ir_source_declaration (IRDeclFunctionDef function_def) order function_def.func_pos
 
+let make_ir_program_def_decl program order =
+  make_ir_source_declaration (IRDeclProgramDef program) order program.ir_pos
+
 let make_ir_struct_ops_def_decl struct_ops_def order =
   make_ir_source_declaration (IRDeclStructOpsDef struct_ops_def) order struct_ops_def.ir_struct_ops_pos
 
 let make_ir_struct_ops_instance_decl struct_ops_instance order =
   make_ir_source_declaration (IRDeclStructOpsInstance struct_ops_instance) order struct_ops_instance.ir_instance_pos
 
-let make_ir_multi_program source_name programs kernel_functions global_maps
-                          ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = [])
+let make_ir_multi_program source_name ?(source_declarations = [])
                           ?userspace_program ?(ring_buffer_registry = create_empty_ring_buffer_registry ())
-                          ?(source_declarations = []) pos =
-  (* When source_declarations is empty, synthesize from typed lists to preserve
-     the invariant that source_declarations is the single source of truth *)
-  let effective_source_declarations =
-    if source_declarations <> [] then source_declarations
-    else
-      let order = ref 0 in
-      let next_order () = let o = !order in incr order; o in
-      let map_decls = List.map (fun m -> make_ir_map_def_decl m (next_order ())) global_maps in
-      let var_decls = List.map (fun v -> make_ir_global_var_def_decl v (next_order ())) global_variables in
-      let config_decls = List.map (fun c -> make_ir_config_def_decl c (next_order ())) global_configs in
-      let func_decls = List.map (fun f -> make_ir_function_def_decl f (next_order ())) kernel_functions in
-      let prog_decls = List.map (fun p -> make_ir_function_def_decl p.entry_function (next_order ())) programs in
-      map_decls @ var_decls @ config_decls @ func_decls @ prog_decls
-  in
+                          pos =
   {
     source_name;
-    programs;
-    kernel_functions;
-    global_maps;
-    global_configs;
-    global_variables;
-    struct_ops_declarations;
-    struct_ops_instances;
     userspace_program;
     ring_buffer_registry;
-    source_declarations = effective_source_declarations;
+    source_declarations;
     multi_pos = pos;
   }
 
@@ -647,19 +622,14 @@ let make_ir_global_variable name var_type init pos ?(is_local=false) ?(is_pinned
 let get_programs ir_multi_prog =
   List.filter_map (fun decl ->
     match decl.decl_desc with
-    | IRDeclFunctionDef func ->
-        (* Find matching program by entry function name *)
-        List.find_opt (fun prog -> prog.entry_function.func_name = func.func_name) ir_multi_prog.programs
+    | IRDeclProgramDef prog -> Some prog
     | _ -> None
   ) ir_multi_prog.source_declarations
 
 let get_kernel_functions ir_multi_prog =
   List.filter_map (fun decl ->
     match decl.decl_desc with
-    | IRDeclFunctionDef func ->
-        if List.exists (fun f -> f.func_name = func.func_name) ir_multi_prog.kernel_functions then
-          Some func
-        else None
+    | IRDeclFunctionDef func -> Some func
     | _ -> None
   ) ir_multi_prog.source_declarations
 
@@ -1106,9 +1076,9 @@ let string_of_ir_program prog =
     prog.name (string_of_program_type prog.program_type) entry_function_str
 
 let string_of_ir_multi_program multi_prog =
-  let programs_str = String.concat "\n\n" 
-    (List.map string_of_ir_program multi_prog.programs) in
-  Printf.sprintf "source %s {\n%s\n}" 
+  let programs_str = String.concat "\n\n"
+    (List.map string_of_ir_program (get_programs multi_prog)) in
+  Printf.sprintf "source %s {\n%s\n}"
     multi_prog.source_name programs_str
 
  

@@ -229,17 +229,17 @@ let test_struct_ops_ir_generation () =
   let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
   
   (* Check that struct_ops are collected in IR *)
-  check bool "IR contains struct_ops declarations" true (List.length ir.struct_ops_declarations > 0);
-  
+  check bool "IR contains struct_ops declarations" true (List.length (Ir.get_struct_ops_declarations ir) > 0);
+
   (* Check the struct_ops declaration details *)
-  (match ir.struct_ops_declarations with
+  (match (Ir.get_struct_ops_declarations ir) with
    | [declaration] ->
        check string "Struct ops name" "MyTcpCong" declaration.ir_struct_ops_name;
        check string "Kernel struct name" "tcp_congestion_ops" declaration.ir_kernel_struct_name
    | _ -> fail "Expected exactly one struct_ops declaration in IR");
    
   (* With impl blocks, the functions become individual eBPF programs *)
-  check bool "IR contains impl block programs" true (List.length ir.programs >= 2); (* init and release functions *)
+  check bool "IR contains impl block programs" true (List.length (Ir.get_programs ir) >= 2); (* init and release functions *)
   ()
 
 (** Test eBPF C code generation with struct_ops *)
@@ -336,7 +336,7 @@ let test_userspace_struct_ops_codegen () =
   (* Generate userspace C code *)
   let userspace_code = match ir.userspace_program with
     | Some userspace_prog -> 
-        Userspace_codegen.generate_complete_userspace_program_from_ir userspace_prog ir.global_maps ir "test"
+        Userspace_codegen.generate_complete_userspace_program_from_ir userspace_prog (Ir.get_global_maps ir) ir "test"
     | None -> ""
   in
   
@@ -1059,12 +1059,12 @@ let test_sched_ext_ops_ir_generation () =
   let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
   
   (* Check that struct_ops are collected in IR *)
-  check bool "IR contains sched_ext_ops declarations" true (List.length ir.struct_ops_declarations > 0);
-  
+  check bool "IR contains sched_ext_ops declarations" true (List.length (Ir.get_struct_ops_declarations ir) > 0);
+
   (* Check the struct_ops declaration details - find our sched_ext_ops declaration *)
-  let sched_ext_declarations = List.filter (fun decl -> 
+  let sched_ext_declarations = List.filter (fun decl ->
     decl.Ir.ir_struct_ops_name = "fifo_scheduler" && decl.Ir.ir_kernel_struct_name = "sched_ext_ops"
-  ) ir.struct_ops_declarations in
+  ) (Ir.get_struct_ops_declarations ir) in
   (match sched_ext_declarations with
    | [declaration] ->
        check string "Struct ops name" "fifo_scheduler" declaration.Ir.ir_struct_ops_name;

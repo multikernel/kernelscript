@@ -434,22 +434,22 @@ module RingBufferAnalysis = struct
   (** Main analysis function - populates the ring buffer registry *)
   let analyze_and_populate_registry (ir_multi_prog : ir_multi_program) : ir_multi_program =
     (* Collect declarations from global variables *)
-    let ring_buffer_declarations = analyze_ring_buffer_declarations ir_multi_prog.global_variables in
-    
+    let ring_buffer_declarations = analyze_ring_buffer_declarations (get_global_variables ir_multi_prog) in
+
     (* Collect all functions (eBPF and userspace) *)
-    let all_functions = 
-      (List.map (fun prog -> prog.entry_function) ir_multi_prog.programs) @
-      ir_multi_prog.kernel_functions @
+    let all_functions =
+      (List.map (fun prog -> prog.entry_function) (get_programs ir_multi_prog)) @
+      (get_kernel_functions ir_multi_prog) @
       (match ir_multi_prog.userspace_program with
        | Some userspace -> userspace.userspace_functions
        | None -> [])
     in
-    
+
     (* Collect event handler registrations *)
     let event_handler_registrations = collect_ring_buffer_operations all_functions in
-    
+
     (* Analyze usage patterns *)
-    let usage_summary = analyze_usage_patterns ir_multi_prog.programs ir_multi_prog.userspace_program ring_buffer_declarations in
+    let usage_summary = analyze_usage_patterns (get_programs ir_multi_prog) ir_multi_prog.userspace_program ring_buffer_declarations in
     
     (* Build the complete registry *)
     let registry = {

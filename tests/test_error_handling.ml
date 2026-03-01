@@ -183,8 +183,8 @@ let test_try_catch_ir_generation () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
-    
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
+
     (* Just verify that IR generation succeeds *)
     check bool "IR generation succeeds" true (ir_prog.name = "test_prog");
     check bool "Main function exists" true (ir_prog.entry_function.func_name = "test_prog")
@@ -200,8 +200,8 @@ let test_throw_ir_generation () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in  
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
-    
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
+
     (* Just verify that IR generation succeeds *)
     check bool "IR generation succeeds" true (ir_prog.name = "test_prog");
     check bool "Main function exists" true (ir_prog.entry_function.func_name = "test_prog")
@@ -217,8 +217,8 @@ let test_defer_ir_generation () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
-    
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
+
     (* Just verify that IR generation succeeds *)
     check bool "IR generation succeeds" true (ir_prog.name = "test_prog");
     check bool "Main function exists" true (ir_prog.entry_function.func_name = "test_prog")
@@ -240,9 +240,9 @@ let test_ebpf_try_catch_codegen () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0);
     check bool "Contains function definition" true (contains_substr c_code "test_prog")
@@ -258,9 +258,9 @@ let test_ebpf_throw_codegen () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0);
     check bool "Contains function definition" true (contains_substr c_code "test_prog")
@@ -276,9 +276,9 @@ let test_ebpf_defer_codegen () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0);
     check bool "Contains function definition" true (contains_substr c_code "test_prog")
@@ -300,9 +300,9 @@ let test_multiple_catch_clauses_codegen () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0);
     check bool "Contains function definition" true (contains_substr c_code "test_prog")
@@ -320,9 +320,9 @@ let test_uncaught_throw_detection () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0)
   with
@@ -345,9 +345,9 @@ let test_nested_try_catch_error () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0)
   with
@@ -369,9 +369,9 @@ let test_defer_resource_cleanup () =
     let ast = parse_string program_text in
     let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
     let ir_multi_prog = generate_ir ast symbol_table "test" in
-    let ir_prog = List.hd ir_multi_prog.programs in
+    let ir_prog = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_program ir_prog in
-    
+
     (* Verify basic C code generation succeeds *)
     check bool "C code generation succeeds" true (String.length c_code > 0)
   with

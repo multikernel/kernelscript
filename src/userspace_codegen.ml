@@ -1189,7 +1189,11 @@ let generate_declarations_in_source_order_userspace ir_multi_prog =
     | Ir.IRDeclFunctionDef _func_def ->
         (* Skip functions in userspace - they're handled separately *)
         ()
-    
+
+    | Ir.IRDeclProgramDef _program ->
+        (* Skip programs in userspace - they're handled separately *)
+        ()
+
     | Ir.IRDeclStructOpsDef _struct_ops_def ->
         (* Skip struct_ops in userspace - they're handled separately *)
         ()
@@ -2551,7 +2555,7 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
             (* Check if this variable corresponds to a struct_ops declaration *)
             not (List.exists (fun struct_ops_decl ->
               struct_ops_decl.ir_struct_ops_name = var_name
-            ) multi_prog.struct_ops_declarations)
+            ) (Ir.get_struct_ops_declarations multi_prog))
           ) all_declarations
       | None -> all_declarations
     in
@@ -2678,7 +2682,7 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
 
 (** Generate struct_ops registration code *)
 let generate_struct_ops_registration_code ir_multi_program =
-  if ir_multi_program.struct_ops_instances = [] then
+  if (Ir.get_struct_ops_instances ir_multi_program) = [] then
     ""
   else
     let registration_code = List.map (fun struct_ops_inst ->
@@ -2690,21 +2694,21 @@ let generate_struct_ops_registration_code ir_multi_program =
     }
     printf("✅ Registered struct_ops instance: %s\n");|} 
         instance_name instance_name instance_name instance_name
-    ) ir_multi_program.struct_ops_instances in
+    ) (Ir.get_struct_ops_instances ir_multi_program) in
     
     "\n    /* Register eBPF struct_ops instances */\n" ^ 
     (String.concat "\n" registration_code) ^ "\n"
 
 (** Generate struct_ops attachment functions for userspace *)
 let generate_struct_ops_attach_functions ir_multi_program =
-  if ir_multi_program.struct_ops_instances = [] then
+  if (Ir.get_struct_ops_instances ir_multi_program) = [] then
     ""
   else
     let attach_functions = List.map (fun struct_ops_inst ->
       let instance_name = struct_ops_inst.ir_instance_name in
       sprintf "int attach_struct_ops_%s(void) { return 0; }\nint detach_struct_ops_%s(void) { return 0; }" 
         instance_name instance_name
-    ) ir_multi_program.struct_ops_instances in
+    ) (Ir.get_struct_ops_instances ir_multi_program) in
     String.concat "\n" attach_functions
 
 (** Generate command line argument parsing for struct parameter *)
@@ -3411,10 +3415,10 @@ print(f"KernelScript Python wrapper initialized with {len(_maps)} maps")
 |} base_name map_metadata (String.concat "\n\n" struct_definitions) map_exports
 
 (** Generate complete userspace program from IR *)
-let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(_type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
+let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) (userspace_prog : ir_userspace_program) (global_maps : ir_map_def list) (ir_multi_prog : ir_multi_program) source_filename =
   (* Collect function usage information from all functions first to determine if we need BPF headers *)
   let all_usage = List.fold_left (fun acc_usage func ->
-    let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
+    let func_usage = collect_function_usage_from_ir_function ~global_variables:(Ir.get_global_variables ir_multi_prog) func in
     {
       uses_load = acc_usage.uses_load || func_usage.uses_load;
       uses_attach = acc_usage.uses_attach || func_usage.uses_attach;
@@ -3476,7 +3480,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(_t
   
   (* Generate skeleton header include for standard libbpf skeleton *)
   let base_name = Filename.remove_extension (Filename.basename source_filename) in
-  let needs_skeleton_header = ir_multi_prog.global_variables <> [] || uses_bpf_functions || ir_multi_prog.struct_ops_instances <> [] in
+  let needs_skeleton_header = Ir.get_global_variables ir_multi_prog <> [] || uses_bpf_functions || Ir.get_struct_ops_instances ir_multi_prog <> [] in
   let skeleton_include = if needs_skeleton_header then
     sprintf "#include \"%s.skel.h\"\n" base_name
   else "" in
@@ -3515,7 +3519,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(_t
   let unified_declarations = generate_declarations_in_source_order_userspace ir_multi_prog in
 
   (* Generate eBPF object instance - also needed for struct_ops *)
-  let needs_skeleton = ir_multi_prog.global_variables <> [] || uses_bpf_functions || ir_multi_prog.struct_ops_instances <> [] in
+  let needs_skeleton = Ir.get_global_variables ir_multi_prog <> [] || uses_bpf_functions || Ir.get_struct_ops_instances ir_multi_prog <> [] in
   let skeleton_code = if needs_skeleton then
     sprintf "/* eBPF skeleton instance */\nstruct %s_ebpf *obj = NULL;\n" base_name
   else "" in
@@ -3528,7 +3532,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(_t
   (* Generate pinned globals support *)
   let project_name = Filename.remove_extension (Filename.basename source_filename) in
   let (pinned_globals_struct, pinned_globals_fd, pinned_globals_setup) = 
-    generate_pinned_globals_support project_name ir_multi_prog.global_variables in
+    generate_pinned_globals_support project_name (Ir.get_global_variables ir_multi_prog) in
   
   (* Generate config map setup code - load from eBPF object and initialize with defaults *)
   let generate_config_setup_code ?(obj_var="obj->obj") config_declarations =
@@ -3561,7 +3565,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(_t
 
   (* Generate functions with setup code available *)
   let functions = String.concat "\n\n" 
-    (List.map (generate_c_function_from_ir ~global_variables:ir_multi_prog.global_variables ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog) ~resolved_imports ~all_setup_code) userspace_prog.userspace_functions) in
+    (List.map (generate_c_function_from_ir ~global_variables:(Ir.get_global_variables ir_multi_prog) ~base_name ~config_declarations ~ir_multi_prog:(Some ir_multi_prog) ~resolved_imports ~all_setup_code) userspace_prog.userspace_functions) in
   
   (* Generate config struct definitions using actual config declarations *)
   let config_structs = List.map generate_config_struct_from_decl config_declarations in
@@ -3667,7 +3671,7 @@ void cleanup_bpf_maps(void) {
   
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
-    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies ir_multi_prog.global_variables in
+    let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies (Ir.get_global_variables ir_multi_prog) in
     
     (* Global attachment storage (generated only when attach/detach are used) *)
     let attachment_storage = if all_usage.uses_attach || all_usage.uses_detach then
@@ -4195,10 +4199,10 @@ static void handle_signal(int sig) {
 |} includes string_typedefs unified_declarations string_helpers daemon_globals "" structs_with_pinned skeleton_code all_fd_declarations map_operation_functions ringbuf_handlers ringbuf_dispatch_functions auto_bpf_init_code getopt_parsing_code bpf_helper_functions struct_ops_attach_functions functions
 
 (** Generate userspace C code from IR multi-program *)
-let generate_userspace_code_from_ir ?(config_declarations = []) ?(type_aliases = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
+let generate_userspace_code_from_ir ?(config_declarations = []) ?(tail_call_analysis = {Tail_call_analyzer.dependencies = []; prog_array_size = 0; index_mapping = Hashtbl.create 16; errors = []}) ?(kfunc_dependencies = {kfunc_definitions = []; private_functions = []; program_dependencies = []; module_name = ""}) ?(resolved_imports = []) (ir_multi_prog : ir_multi_program) ?(output_dir = ".") source_filename =
   let content = match ir_multi_prog.userspace_program with
     | Some userspace_prog ->
-        generate_complete_userspace_program_from_ir ~config_declarations ~_type_aliases:type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports userspace_prog ir_multi_prog.global_maps ir_multi_prog source_filename
+        generate_complete_userspace_program_from_ir ~config_declarations ~tail_call_analysis ~kfunc_dependencies ~resolved_imports userspace_prog (Ir.get_global_maps ir_multi_prog) ir_multi_prog source_filename
     | None -> 
         sprintf {|#include <stdio.h>
 
@@ -4225,13 +4229,13 @@ int main(void) {
   (match ir_multi_prog.userspace_program with
    | Some userspace_prog ->
        let usage = List.fold_left (fun acc_usage func ->
-         let func_usage = collect_function_usage_from_ir_function ~global_variables:ir_multi_prog.global_variables func in
+         let func_usage = collect_function_usage_from_ir_function ~global_variables:(Ir.get_global_variables ir_multi_prog) func in
          {acc_usage with uses_exec = acc_usage.uses_exec || func_usage.uses_exec}
        ) (create_function_usage ()) userspace_prog.userspace_functions in
        
        if usage.uses_exec then (
          (* For exec(), include ALL global maps, not just pinned ones *)
-         let exec_maps = ir_multi_prog.global_maps in
+         let exec_maps = Ir.get_global_maps ir_multi_prog in
          let python_wrapper_content = generate_python_wrapper base_name exec_maps ir_multi_prog in
          let python_filename = sprintf "%s.py" base_name in
          let python_filepath = Filename.concat output_dir python_filename in

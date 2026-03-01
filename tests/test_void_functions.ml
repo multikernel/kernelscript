@@ -56,7 +56,7 @@ fn main() -> i32 {
     (* Verify the void function is in the multi-program IR *)
     let has_log_func = List.exists (fun func ->
       func.Kernelscript.Ir.func_name = "log_message"
-    ) multi_ir.kernel_functions in
+    ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
     check bool "void function with naked return should be accepted" true has_log_func
   with
   | exn -> fail ("Void function with naked return should be accepted, but got: " ^ Printexc.to_string exn)
@@ -118,7 +118,7 @@ fn main() -> i32 {
     (* Verify the void function is in the multi-program IR *)
     let has_setup_func = List.exists (fun func ->
       func.Kernelscript.Ir.func_name = "setup_logging"
-    ) multi_ir.kernel_functions in
+    ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
     check bool "void function without return should be accepted" true has_setup_func
   with
   | exn -> fail ("Void function without return should be accepted, but got: " ^ Printexc.to_string exn)
@@ -154,7 +154,7 @@ fn main() -> i32 {
     (* Verify the void function is in the multi-program IR *)
     let has_conditional_func = List.exists (fun func ->
       func.Kernelscript.Ir.func_name = "conditional_log"
-    ) multi_ir.kernel_functions in
+    ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
     check bool "void function with conditional returns should be accepted" true has_conditional_func
   with
   | exn -> fail ("Void function with conditional returns should be accepted, but got: " ^ Printexc.to_string exn)
@@ -307,7 +307,7 @@ fn main() -> i32 {
     (* Verify the program compiles successfully *)
     let has_xdp_prog = List.exists (fun prog ->
       prog.Kernelscript.Ir.name = "test_prog"
-    ) multi_ir.programs in
+    ) (Kernelscript.Ir.get_programs multi_ir) in
     check bool "extern void kfunc should be accepted" true has_xdp_prog
   with
   | exn -> fail ("Extern void kfunc should be accepted, but got: " ^ Printexc.to_string exn)
@@ -347,7 +347,7 @@ fn main() -> i32 {
     (* Verify the void function is in the multi-program IR *)
     let has_complex_func = List.exists (fun func ->
       func.Kernelscript.Ir.func_name = "complex_void_func"
-    ) multi_ir.kernel_functions in
+    ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
     check bool "void function with complex control flow should be accepted" true has_complex_func
   with
   | exn -> fail ("Void function with complex control flow should be accepted, but got: " ^ Printexc.to_string exn)

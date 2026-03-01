@@ -102,7 +102,7 @@ let validate_cross_program_constraints _programs multi_prog_analysis =
 (** Resource planning for multi-program systems *)
 let plan_system_resources programs ir_multi_prog =
   let total_programs = List.length programs in
-  let total_maps = List.length ir_multi_prog.Ir.global_maps in
+  let total_maps = List.length (Ir.get_global_maps ir_multi_prog) in
   let estimated_instructions = total_programs * 1000 in
   let estimated_stack = total_programs * 512 in
   let estimated_memory = total_maps * 1024 * 1024 in
@@ -155,40 +155,51 @@ let generate_optimized_ir (annotated_ast: declaration list)
     ) else if validation.is_main then (
       Printf.printf "  ✅ Entry function '%s' signature validated\n" validation.func_name
     )
-  ) baseline_ir.programs;
-  
+  ) (Ir.get_programs baseline_ir);
+
   (* Step 2: Analyze optimization opportunities *)
   Printf.printf "Step 2: Analyzing optimization opportunities...\n";
   let optimization_strategies = generate_optimization_strategies multi_prog_analysis in
-  
+
   Printf.printf "Found %d optimization strategies:\n" (List.length optimization_strategies);
   List.iteri (fun i strategy ->
     Printf.printf "  %d. %s\n" (i+1) (match strategy with
-      | MapTypeOptimization (map, from_t, to_t) -> 
+      | MapTypeOptimization (map, from_t, to_t) ->
           Printf.sprintf "Map type optimization: %s (%s → %s)" map from_t to_t
-      | CrossProgramBatching progs -> 
+      | CrossProgramBatching progs ->
           Printf.sprintf "Cross-program batching: [%s]" (String.concat ", " progs)
-      | ResourceReduction strategy_type -> 
+      | ResourceReduction strategy_type ->
           Printf.sprintf "Resource reduction: %s" strategy_type)
   ) optimization_strategies;
-  
+
   (* Step 3: Apply optimizations *)
   Printf.printf "\nStep 3: Applying optimizations...\n";
-  let optimized_programs = apply_optimization_strategies optimization_strategies baseline_ir.programs in
-  
+  let optimized_programs = apply_optimization_strategies optimization_strategies (Ir.get_programs baseline_ir) in
+
   (* Step 4: Cross-program validation *)
   Printf.printf "Step 4: Cross-program validation...\n";
   validate_cross_program_constraints optimized_programs multi_prog_analysis;
-  
+
   (* Step 5: Resource planning *)
   Printf.printf "Step 5: Resource planning and validation...\n";
   let resource_plan = plan_system_resources optimized_programs baseline_ir in
   print_resource_plan resource_plan;
-  
+
   Printf.printf "\n✅ Advanced Multi-Program IR Optimization completed successfully!\n\n";
-  
-  (* Return enhanced IR *)
-  { baseline_ir with programs = optimized_programs }
+
+  (* Return enhanced IR - update programs in source_declarations *)
+  let optimized_prog_map = List.fold_left (fun acc prog ->
+    Hashtbl.replace acc prog.Ir.name prog; acc
+  ) (Hashtbl.create 16) optimized_programs in
+  let updated_source_declarations = List.map (fun decl ->
+    match decl.Ir.decl_desc with
+    | Ir.IRDeclProgramDef prog ->
+        (match Hashtbl.find_opt optimized_prog_map prog.Ir.name with
+         | Some optimized_prog -> { decl with decl_desc = Ir.IRDeclProgramDef optimized_prog }
+         | None -> decl)
+    | _ -> decl
+  ) baseline_ir.source_declarations in
+  { baseline_ir with source_declarations = updated_source_declarations }
 
 (** Cross-program dependency analysis *)
 let analyze_cross_program_dependencies (analysis: multi_program_analysis) : (string * string) list =

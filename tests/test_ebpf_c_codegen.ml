@@ -227,7 +227,11 @@ let test_complete_program () =
   let ir_prog = make_ir_program "test_xdp" Xdp main_func test_pos in
   
   (* Create multi-program structure with global maps *)
-  let multi_ir = make_ir_multi_program "test_xdp" [ir_prog] [] [map_def] test_pos in
+  let source_declarations = [
+    make_ir_map_def_decl map_def 0;
+    make_ir_program_def_decl ir_prog 1;
+  ] in
+  let multi_ir = make_ir_multi_program "test_xdp" ~source_declarations test_pos in
   
   let (c_code, _) = compile_multi_to_c multi_ir in
   
@@ -462,15 +466,7 @@ let test_no_empty_struct_generation () =
   ] in
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
-    programs = [];
-    kernel_functions = [];
-    global_maps = [];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = None;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations;
     multi_pos = dummy_pos;
@@ -478,12 +474,12 @@ let test_no_empty_struct_generation () =
 
   (* Generate C code *)
   let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
-  
+
   (* Core fix verification: No empty structs should be generated for type aliases *)
   check bool "no empty Counter struct" false (contains_substr c_code "struct Counter {");
   check bool "no empty IpAddress struct" false (contains_substr c_code "struct IpAddress {");
   check bool "no empty struct definitions" false (contains_substr c_code "struct Counter {};");
-  
+
   (* Type aliases should be generated as typedefs *)
   check bool "Counter typedef generated" true (contains_substr c_code "typedef __u64 Counter");
   check bool "IpAddress typedef generated" true (contains_substr c_code "typedef __u32 IpAddress");
@@ -521,18 +517,11 @@ let test_type_alias_struct_ordering () =
 
   let source_declarations = [
     Kernelscript.Ir.make_ir_type_alias_decl "Counter" Kernelscript.Ir.IRU64 0 dummy_pos;
-    Kernelscript.Ir.make_ir_function_def_decl entry_func 1;
+    Kernelscript.Ir.make_ir_program_def_decl ir_program 1;
   ] in
 
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
-    programs = [ir_program];
-    kernel_functions = [];
-    global_maps = [];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = None;
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations;
@@ -650,20 +639,12 @@ let test_kernel_struct_filtering () =
   
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
-    programs = [];
-    kernel_functions = [];
-    global_maps = [];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = None;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [user_struct_decl; kernel_struct_decl; builtin_struct_decl];
     multi_pos = user_pos;
   } in
-  
+
   (* Generate C code using the unified function *)
   let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
   
@@ -772,18 +753,11 @@ let test_complete_type_alias_fix_integration () =
     Kernelscript.Ir.make_ir_type_alias_decl "IpAddress" Kernelscript.Ir.IRU32 0 dummy_pos;
     Kernelscript.Ir.make_ir_type_alias_decl "Counter" Kernelscript.Ir.IRU64 1 dummy_pos;
     Kernelscript.Ir.make_ir_type_alias_decl "PacketSize" Kernelscript.Ir.IRU16 2 dummy_pos;
-    Kernelscript.Ir.make_ir_function_def_decl entry_func 3;
+    Kernelscript.Ir.make_ir_program_def_decl ir_program 3;
   ] in
 
   let multi_ir = {
     Kernelscript.Ir.source_name = "packet_analyzer";
-    programs = [ir_program];
-    kernel_functions = [];
-    global_maps = [];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = None;
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations;
@@ -839,15 +813,7 @@ let test_string_size_collection_from_userspace_structs () =
   
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
-    programs = [];
-    kernel_functions = [];
-    global_maps = [];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = Some userspace_program;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -891,18 +857,11 @@ let test_declaration_ordering_fix () =
   
   let source_declarations = [
     Kernelscript.Ir.make_ir_map_def_decl map_def 0;
-    Kernelscript.Ir.make_ir_function_def_decl main_func 1;
+    Kernelscript.Ir.make_ir_program_def_decl ir_program 1;
   ] in
 
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
-    programs = [ir_program];
-    kernel_functions = [];
-    global_maps = [map_def];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = None;
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations;
@@ -948,18 +907,11 @@ let test_bpf_printk_string_literal_fix () =
   } in
   
   let source_declarations = [
-    Kernelscript.Ir.make_ir_function_def_decl main_func 0;
+    Kernelscript.Ir.make_ir_program_def_decl ir_program 0;
   ] in
 
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
-    programs = [ir_program];
-    kernel_functions = [];
-    global_maps = [];
-    global_variables = [];
-    global_configs = [];
-    struct_ops_declarations = [];
-    struct_ops_instances = [];
     userspace_program = None;
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations;
@@ -1007,18 +959,11 @@ let test_string_escaping_in_bpf_printk () =
     } in
     
     let source_declarations = [
-      Kernelscript.Ir.make_ir_function_def_decl main_func 0;
+      Kernelscript.Ir.make_ir_program_def_decl ir_program 0;
     ] in
 
     let multi_ir = {
       Kernelscript.Ir.source_name = "test";
-      programs = [ir_program];
-      kernel_functions = [];
-      global_maps = [];
-      global_variables = [];
-      global_configs = [];
-      struct_ops_declarations = [];
-      struct_ops_instances = [];
       userspace_program = None;
       ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
       source_declarations;
@@ -1117,7 +1062,10 @@ let test_ebpf_function_generation_bug_fix () =
   let ir_prog = make_ir_program "simple_filter" Xdp main_func test_pos in
   
   (* Create multi-program structure *)
-  let multi_ir = make_ir_multi_program "test" [ir_prog] [] [] test_pos in
+  let source_declarations = [
+    make_ir_program_def_decl ir_prog 0;
+  ] in
+  let multi_ir = make_ir_multi_program "test" ~source_declarations test_pos in
   
   (* CRITICAL: Use the complete compilation pipeline that was buggy *)
   let (ebpf_c_code, _) = compile_multi_to_c_with_tail_calls multi_ir in
@@ -1163,7 +1111,12 @@ let test_global_map_redefinition_fix () =
   let ir_prog = make_ir_program "packet_filter" Xdp main_func test_pos in
   
   (* Create multi-program structure with both global variable and map *)
-  let multi_ir = make_ir_multi_program "test" [ir_prog] [] [map_def] ~global_variables:[global_var] test_pos in
+  let source_declarations = [
+    make_ir_global_var_def_decl global_var 0;
+    make_ir_map_def_decl map_def 1;
+    make_ir_program_def_decl ir_prog 2;
+  ] in
+  let multi_ir = make_ir_multi_program "test" ~source_declarations test_pos in
   
   (* Generate C code *)
   let (ebpf_c_code, _) = compile_multi_to_c_with_tail_calls multi_ir in

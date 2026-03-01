@@ -884,44 +884,9 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
   (* Phase 6: Advanced multi-target code generation *)
     current_phase := "Code Generation";
     Printf.printf "Phase 6: %s\n" !current_phase;
-    let _resource_plan = Multi_program_ir_optimizer.plan_system_resources ir_with_ring_buffer_analysis.programs ir_with_ring_buffer_analysis in
+    let _resource_plan = Multi_program_ir_optimizer.plan_system_resources (Ir.get_programs ir_with_ring_buffer_analysis) ir_with_ring_buffer_analysis in
     let _optimization_strategies = Multi_program_ir_optimizer.generate_optimization_strategies multi_prog_analysis in
-    
-    (* Extract type aliases from original AST *)
-    let type_aliases = List.filter_map (function
-      | Ast.TypeDef (Ast.TypeAlias (name, underlying_type, _)) -> Some (name, underlying_type)
-      | _ -> None
-    ) ast in
-    
-    (* Extract variable declarations with their original declared types *)
-    let extract_variable_declarations ast_nodes =
-      List.fold_left (fun acc node ->
-        match node with
-        | Ast.AttributedFunction attr_func ->
-            List.fold_left (fun acc2 stmt ->
-              match stmt.Ast.stmt_desc with
-              | Ast.Declaration (var_name, Some declared_type, _) ->
-                  (match declared_type with
-                   | Ast.UserType alias_name -> 
-                       (var_name, alias_name) :: acc2
-                   | _ -> acc2)
-              | _ -> acc2
-            ) acc attr_func.attr_function.Ast.func_body
-        | Ast.GlobalFunction func ->
-            List.fold_left (fun acc2 stmt ->
-              match stmt.Ast.stmt_desc with
-              | Ast.Declaration (var_name, Some declared_type, _) ->
-                  (match declared_type with
-                   | Ast.UserType alias_name -> 
-                       (var_name, alias_name) :: acc2
-                   | _ -> acc2)
-              | _ -> acc2
-            ) acc func.Ast.func_body
-        | _ -> acc
-      ) [] ast_nodes
-    in
-    let variable_type_aliases = extract_variable_declarations ast in
-    
+
     (* Extract kfunc declarations from AST for eBPF C generation *)
     let kfunc_declarations = List.filter_map (function
       | Ast.AttributedFunction attr_func ->
@@ -930,30 +895,31 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
            | _ -> None)
       | _ -> None
     ) annotated_ast in
-    
+
     (* Perform tail call analysis on AST *)
     let tail_call_analysis = Tail_call_analyzer.analyze_tail_calls annotated_ast in
-    
-    (* Update IR functions with correct tail call indices *)
-    let updated_optimized_ir = 
-      let updated_programs = List.map (fun prog ->
-        let updated_entry_function = Tail_call_analyzer.update_ir_function_tail_call_indices prog.Ir.entry_function tail_call_analysis in
-        { prog with entry_function = updated_entry_function }
-      ) ir_with_ring_buffer_analysis.programs in
-      
-      let updated_kernel_functions = List.map (fun func ->
-        Tail_call_analyzer.update_ir_function_tail_call_indices func tail_call_analysis
-      ) ir_with_ring_buffer_analysis.kernel_functions in
-      
-      { ir_with_ring_buffer_analysis with programs = updated_programs; kernel_functions = updated_kernel_functions }
+
+    (* Update IR functions with correct tail call indices in source_declarations *)
+    let updated_optimized_ir =
+      let updated_source_declarations = List.map (fun decl ->
+        match decl.Ir.decl_desc with
+        | Ir.IRDeclFunctionDef func ->
+            let updated = Tail_call_analyzer.update_ir_function_tail_call_indices func tail_call_analysis in
+            { decl with decl_desc = Ir.IRDeclFunctionDef updated }
+        | Ir.IRDeclProgramDef prog ->
+            let updated_func = Tail_call_analyzer.update_ir_function_tail_call_indices prog.entry_function tail_call_analysis in
+            { decl with decl_desc = Ir.IRDeclProgramDef { prog with entry_function = updated_func } }
+        | _ -> decl
+      ) ir_with_ring_buffer_analysis.source_declarations in
+      { ir_with_ring_buffer_analysis with source_declarations = updated_source_declarations }
     in
-    
+
     (* Generate eBPF C code (with updated IR and kfunc declarations) *)
     let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis
-      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~tail_call_analysis:(Some tail_call_analysis) ~btf_path:btf_vmlinux_path updated_optimized_ir in
-      
+      ~kfunc_declarations ~tail_call_analysis:(Some tail_call_analysis) ~btf_path:btf_vmlinux_path updated_optimized_ir in
+
     (* Analyze kfunc dependencies for automatic kernel module loading *)
-    let ir_functions = List.map (fun prog -> prog.Ir.entry_function) ir_with_ring_buffer_analysis.programs in
+    let ir_functions = List.map (fun prog -> prog.Ir.entry_function) (Ir.get_programs ir_with_ring_buffer_analysis) in
     let kfunc_dependencies = Userspace_codegen.analyze_kfunc_dependencies base_name annotated_ast ir_functions in
     
     (* Generate kernel module for kfuncs if any exist *)
@@ -961,7 +927,7 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
     Userspace_codegen.generate_userspace_code_from_ir
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports updated_optimized_ir ~output_dir:actual_output_dir input_file;
+      ~config_declarations ~tail_call_analysis ~kfunc_dependencies ~resolved_imports updated_optimized_ir ~output_dir:actual_output_dir input_file;
     
     (* Output directory already created earlier *)
     

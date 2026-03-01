@@ -91,11 +91,11 @@ let test_program_lowering () =
   let ast = make_test_ast () in
   let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
   let ir_multi_prog = generate_ir ast symbol_table "test" in
-  let ir_prog = List.hd ir_multi_prog.programs in (* Get first program *)
+  let ir_prog = List.hd (get_programs ir_multi_prog) in (* Get first program *)
 
   (* Verify program structure *)
   check (module Program_type) "program type" Xdp ir_prog.program_type;
-  check int "global maps count" 1 (List.length ir_multi_prog.global_maps);
+  check int "global maps count" 1 (List.length (get_global_maps ir_multi_prog));
   (* Attributed functions don't have local maps *)
   check bool "main function flag" true ir_prog.entry_function.is_main
 

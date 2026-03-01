@@ -239,8 +239,8 @@ fn sys_read_handler(fd: u32, buf: *u8, count: size_t) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
-  check int "Should generate one program" 1 (List.length ir_multi_prog.programs);
-  let program = List.hd ir_multi_prog.programs in
+  check int "Should generate one program" 1 (List.length (Kernelscript.Ir.get_programs ir_multi_prog));
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   check string "Program name" "sys_read_handler" program.name;
   check bool "Program type should be Kprobe" true 
     (match program.program_type with Probe _ -> true | _ -> false)
@@ -254,8 +254,8 @@ fn tcp_sendmsg_handler(sk: *sock, msg: *msghdr, size: size_t) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe_complex" in
-  check int "Should generate one program" 1 (List.length ir_multi_prog.programs);
-  let program = List.hd ir_multi_prog.programs in
+  check int "Should generate one program" 1 (List.length (Kernelscript.Ir.get_programs ir_multi_prog));
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   check string "Program name" "tcp_sendmsg_handler" program.name;
   check bool "Program type should be Kprobe" true 
     (match program.program_type with Probe _ -> true | _ -> false)
@@ -269,9 +269,9 @@ fn vfs_write_handler(file: *file, buf: *u8, count: size_t, pos: *i64) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_probe" in
-  let program = List.hd ir_multi_prog.programs in
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   let main_func = program.entry_function in
-  
+
   (* Test that the function has the correct properties *)
   check bool "Function should be marked as main" true main_func.is_main;
   check string "Function name should match" "vfs_write_handler" main_func.func_name
@@ -573,7 +573,7 @@ fn sys_write_handler(ctx: *pt_regs) -> i32 {
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_multiple" in
   let c_code = generate_c_multi_program ir_multi_prog in
   
-  check int "Should generate two programs" 2 (List.length ir_multi_prog.programs);
+  check int "Should generate two programs" 2 (List.length (Kernelscript.Ir.get_programs ir_multi_prog));
   check bool "Contains both function names" true
     (try ignore (Str.search_forward (Str.regexp_string "sys_read_handler") c_code 0);
          ignore (Str.search_forward (Str.regexp_string "sys_write_handler") c_code 0); true 

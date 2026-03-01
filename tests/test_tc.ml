@@ -222,8 +222,8 @@ fn ingress_filter(ctx: *__sk_buff) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_tc_ingress" in
-  check int "Should generate one program" 1 (List.length ir_multi_prog.programs);
-  let program = List.hd ir_multi_prog.programs in
+  check int "Should generate one program" 1 (List.length (Kernelscript.Ir.get_programs ir_multi_prog));
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   check string "Program name" "ingress_filter" program.name;
   check bool "Program type should be Tc" true 
     (match program.program_type with Tc -> true | _ -> false)
@@ -237,8 +237,8 @@ fn egress_shaper(ctx: *__sk_buff) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_tc_egress" in
-  check int "Should generate one program" 1 (List.length ir_multi_prog.programs);
-  let program = List.hd ir_multi_prog.programs in
+  check int "Should generate one program" 1 (List.length (Kernelscript.Ir.get_programs ir_multi_prog));
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   check string "Program name" "egress_shaper" program.name;
   check bool "Program type should be Tc" true 
     (match program.program_type with Tc -> true | _ -> false)
@@ -252,9 +252,9 @@ fn packet_filter(ctx: *__sk_buff) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_tc" in
-  let program = List.hd ir_multi_prog.programs in
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   let main_func = program.entry_function in
-  
+
   (* Test that the function has the correct properties *)
   check bool "Function should be marked as main" true main_func.is_main;
   check string "Function name should match" "packet_filter" main_func.func_name
@@ -269,9 +269,9 @@ fn traffic_monitor(ctx: *__sk_buff) -> i32 {
   let typed_ast = type_check_ast ast in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table typed_ast in
   let ir_multi_prog = generate_ir typed_ast symbol_table "test_tc" in
-  let program = List.hd ir_multi_prog.programs in
+  let program = List.hd (Kernelscript.Ir.get_programs ir_multi_prog) in
   let main_func = program.entry_function in
-  
+
   (* Test that the target is properly propagated through IR generation *)
   check (option string) "Function should have correct target" (Some "ingress") main_func.func_target
 
@@ -626,7 +626,7 @@ fn packet_dropper(ctx: *xdp_md) -> xdp_action {
        true
      with Not_found -> 
        false);
-  check int "Should generate two programs" 2 (List.length ir_multi_prog.programs)
+  check int "Should generate two programs" 2 (List.length (Kernelscript.Ir.get_programs ir_multi_prog))
 
 (** Test Suite Configuration *)
 let parsing_tests = [

@@ -313,9 +313,9 @@ let test_match_conditional_control_flow () =
   let multi_prog = Ir_generator.generate_ir typed_ast symbol_table "test" in
   
   (* Verify proper conditional structure was generated *)
-  check int "number of programs" 1 (List.length multi_prog.programs);
-  
-  let prog = List.hd multi_prog.programs in
+  check int "number of programs" 1 (List.length (get_programs multi_prog));
+
+  let prog = List.hd (get_programs multi_prog) in
   let entry_function = prog.entry_function in
   let blocks = entry_function.basic_blocks in
   
@@ -369,7 +369,7 @@ let test_match_no_premature_execution () =
   let multi_prog = Ir_generator.generate_ir typed_ast symbol_table "test" in
   
   (* Verify that expensive operations are not executed unconditionally *)
-  let prog = List.hd multi_prog.programs in
+  let prog = List.hd (get_programs multi_prog) in
   let entry_function = prog.entry_function in
   let all_instructions = List.flatten (List.map (fun block -> block.instructions) entry_function.basic_blocks) in
   
@@ -445,10 +445,10 @@ let test_nested_match_structures () =
   let multi_prog = Ir_generator.generate_ir typed_ast symbol_table "test" in
   
   (* Verify nested match structures generate nested conditional branches *)
-  let prog = List.hd multi_prog.programs in
+  let prog = List.hd (get_programs multi_prog) in
   let entry_function = prog.entry_function in
   let blocks = entry_function.basic_blocks in
-  
+
   (* Test nested match structures - the key behavior is that nested matches work correctly *)
   (* Based on the generated C code, the nested match should generate proper control flow *)
   let has_conditional_structure = List.exists (fun block ->

@@ -104,6 +104,7 @@ let get_declaration_name = function
   | IRDeclConfigDef config_def -> config_def.config_name
   | IRDeclGlobalVarDef global_var -> global_var.global_var_name
   | IRDeclFunctionDef func_def -> func_def.func_name
+  | IRDeclProgramDef program -> program.entry_function.func_name
   | IRDeclStructOpsDef struct_ops -> struct_ops.ir_struct_ops_name
   | IRDeclStructOpsInstance instance -> instance.ir_instance_name
 
@@ -121,9 +122,9 @@ let test_type_alias_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["FirstAlias"; "SecondAlias"; "ThirdAlias"] in
+  let expected_names = ["FirstAlias"; "SecondAlias"; "ThirdAlias"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Type alias order preserved" expected_names actual_names
 
 (** Test struct definition order preservation *)
@@ -140,9 +141,9 @@ let test_struct_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["FirstStruct"; "SecondStruct"; "ThirdStruct"] in
+  let expected_names = ["FirstStruct"; "SecondStruct"; "ThirdStruct"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Struct definition order preserved" expected_names actual_names
 
 (** Test enum definition order preservation *)
@@ -159,9 +160,9 @@ let test_enum_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["FirstEnum"; "SecondEnum"; "ThirdEnum"] in
+  let expected_names = ["FirstEnum"; "SecondEnum"; "ThirdEnum"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Enum definition order preserved" expected_names actual_names
 
 (** Test map declaration order preservation *)
@@ -178,9 +179,9 @@ let test_map_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["first_map"; "second_map"; "third_map"] in
+  let expected_names = ["first_map"; "second_map"; "third_map"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Map declaration order preserved" expected_names actual_names
 
 (** Test config declaration order preservation *)
@@ -197,9 +198,9 @@ let test_config_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["first_config"; "second_config"; "third_config"] in
+  let expected_names = ["first_config"; "second_config"; "third_config"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Config declaration order preserved" expected_names actual_names
 
 (** Test global variable declaration order preservation *)
@@ -216,9 +217,9 @@ let test_global_var_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["first_global"; "second_global"; "third_global"] in
+  let expected_names = ["first_global"; "second_global"; "third_global"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Global variable declaration order preserved" expected_names actual_names
 
 (** Test function declaration order preservation *)
@@ -236,9 +237,9 @@ let test_function_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["first_func"; "second_func"; "third_func"] in
+  let expected_names = ["first_func"; "second_func"; "third_func"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Function declaration order preserved" expected_names actual_names
 
 (** Test mixed declaration types order preservation *)
@@ -260,9 +261,9 @@ let test_mixed_order () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_names = ["MyAlias"; "MyStruct"; "my_map"; "MyEnum"; "my_config"; "my_global"; "my_func"] in
+  let expected_names = ["MyAlias"; "MyStruct"; "my_map"; "MyEnum"; "my_config"; "my_global"; "my_func"; "test_prog"] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Mixed declaration types order preserved" expected_names actual_names
 
 (** Test complex dependency order preservation *)
@@ -293,11 +294,11 @@ let test_complex_dependencies () =
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
   let expected_names = [
-    "BaseType"; "BaseStruct"; "DerivedType"; "DerivedStruct"; 
-    "base_map"; "derived_map"; "process_base"; "process_derived"
+    "BaseType"; "BaseStruct"; "DerivedType"; "DerivedStruct";
+    "base_map"; "derived_map"; "process_base"; "process_derived"; "test_prog"
   ] in
   let actual_names = List.map (fun (_, decl_desc) -> get_declaration_name decl_desc) ordered_decls in
-  
+
   check (list string) "Complex dependency order preserved" expected_names actual_names
 
 (** Test that declaration order indices are sequential *)
@@ -314,7 +315,7 @@ let test_sequential_order_indices () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  let expected_indices = [0; 1; 2] in
+  let expected_indices = [0; 1; 2; 3] in
   let actual_indices = List.map (fun (order, _) -> order) ordered_decls in
   
   check (list int) "Declaration order indices are sequential" expected_indices actual_indices
@@ -341,10 +342,13 @@ let test_single_declaration () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  check int "Single declaration has order 0" 1 (List.length ordered_decls);
+  check int "Single alias plus program" 2 (List.length ordered_decls);
   let (order, decl_desc) = List.hd ordered_decls in
-  check int "Single declaration order is 0" 0 order;
-  check string "Single declaration name is correct" "SingleAlias" (get_declaration_name decl_desc)
+  check int "First declaration order is 0" 0 order;
+  check string "First declaration name is correct" "SingleAlias" (get_declaration_name decl_desc);
+  let (order2, decl_desc2) = List.nth ordered_decls 1 in
+  check int "Second declaration order is 1" 1 order2;
+  check string "Second declaration name is correct" "test_prog" (get_declaration_name decl_desc2)
 
 (** Test that userspace-only structs are not included in source declarations *)
 let test_userspace_only_structs_excluded () =
@@ -360,9 +364,11 @@ let test_userspace_only_structs_excluded () =
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   let ordered_decls = extract_declaration_orders ir_multi_prog in
   
-  check int "Regular struct is included in source declarations" 1 (List.length ordered_decls);
+  check int "Regular struct plus program in source declarations" 2 (List.length ordered_decls);
   let (_, decl_desc) = List.hd ordered_decls in
-  check string "Regular struct name is correct" "RegularStruct" (get_declaration_name decl_desc)
+  check string "Regular struct name is correct" "RegularStruct" (get_declaration_name decl_desc);
+  let (_, decl_desc2) = List.nth ordered_decls 1 in
+  check string "Program name is correct" "test_prog" (get_declaration_name decl_desc2)
 
 (** Test suite *)
 let () =

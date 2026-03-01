@@ -233,11 +233,11 @@ let test_break_continue_unbound_variable_naming () =
   
   (* Create source declarations to trigger the main compilation path *)
   let func_source_decl = {
-    decl_desc = IRDeclFunctionDef ir_func;
+    decl_desc = IRDeclProgramDef ir_prog;
     decl_order = 0;
     decl_pos = test_pos;
   } in
-  let ir_multi_prog = make_ir_multi_program "test_source" [ir_prog] [] [] ~source_declarations:[func_source_decl] test_pos in
+  let ir_multi_prog = make_ir_multi_program "test_source" ~source_declarations:[func_source_decl] test_pos in
   
   (* Use the elegant compilation pipeline to generate C code *)
   let (generated_c_code, _tail_call_analysis) = compile_multi_to_c_with_tail_calls ir_multi_prog in

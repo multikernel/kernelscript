@@ -336,7 +336,7 @@ let compile_to_ebpf_c ast =
       | _ -> None
     ) ast
   in
-  compile_to_c (List.hd ir_result.programs)
+  compile_to_c (List.hd (Kernelscript.Ir.get_programs ir_result))
 
 (** Test config struct generation *)
 let test_config_struct_generation () =
@@ -412,7 +412,7 @@ let compile_to_userspace_c ast =
       ) ast
     in
     (* Convert AST to IR for the new IR-based codegen *)
-    let ir_multi_prog = Kernelscript.Ir.make_ir_multi_program "test" [] [] [] dummy_pos in
+    let ir_multi_prog = Kernelscript.Ir.make_ir_multi_program "test" dummy_pos in
     let _output_file = generate_userspace_code_from_ir ir_multi_prog ~output_dir:temp_dir "test" in
     let generated_file = Filename.concat temp_dir "test.c" in
     
@@ -600,9 +600,9 @@ fn main() -> i32 {
     
     (* Step 2: Generate IR and verify config declarations are converted to IR format *)
     let ir = generate_ir annotated_ast symbol_table "test_config_ast_ir" in
-    check int "IR multi-program has config declarations" 1 (List.length ir.global_configs);
-    
-    let ir_config = List.hd ir.global_configs in
+    check int "IR multi-program has config declarations" 1 (List.length (Kernelscript.Ir.get_global_configs ir));
+
+    let ir_config = List.hd (Kernelscript.Ir.get_global_configs ir) in
     check string "config name in IR" "network" ir_config.config_name;
     check int "config fields in IR" 3 (List.length ir_config.config_fields);
     

@@ -152,5 +152,5 @@ let analyze_ir_program_simple (prog : ir_program) : simple_function_analysis =
 (** Analyze multi-program structure to get all functions *)
 let analyze_ir_multi_program (multi_prog : ir_multi_program) : simple_function_analysis =
   (* Get the first program as the main program to analyze *)
-  let main_program = List.hd multi_prog.programs in
-  analyze_ir_program_with_kernel_functions main_program multi_prog.kernel_functions 
+  let main_program = List.hd (get_programs multi_prog) in
+  analyze_ir_program_with_kernel_functions main_program (get_kernel_functions multi_prog)

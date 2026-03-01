@@ -370,8 +370,8 @@ fn main() -> i32 { return 0 }
   let ast = parse_string program in
   let ir = generate_ir ast in
   let has_functions = 
-    (List.length ir.programs > 0) || 
-    (List.length ir.kernel_functions > 0) ||
+    (List.length (Ir.get_programs ir) > 0) || 
+    (List.length (Ir.get_kernel_functions ir) > 0) ||
     (match ir.userspace_program with Some prog -> List.length prog.userspace_functions > 0 | None -> false)
   in
   check bool "IR generation should work for ringbuf operations" true has_functions
@@ -394,8 +394,8 @@ fn main() -> i32 { return 0 }
 |} in
   let ast = parse_string program in
   let ir_multi = generate_ir ast in
-  if List.length ir_multi.programs > 0 then (
-    let ir_prog = List.hd ir_multi.programs in
+  if List.length (Ir.get_programs ir_multi) > 0 then (
+    let ir_prog = List.hd (Ir.get_programs ir_multi) in
     let c_code = generate_ebpf_c ir_prog in
     check bool "eBPF C code should contain bpf_ringbuf_reserve_dynptr" true 
       (contains_substr c_code "bpf_ringbuf_reserve_dynptr");
@@ -429,7 +429,7 @@ fn main() -> i32 { return 0 }
 |} in
   let ast = parse_string program in
   let ir_multi = generate_ir ast in
-  if List.length ir_multi.programs > 0 then (
+  if List.length (Ir.get_programs ir_multi) > 0 then (
     (* Use the multi-program generation like the real compiler *)
     let c_code = Ebpf_c_codegen.generate_c_multi_program ir_multi in
     (* Test that pinned ring buffer uses temporary variable approach *)
@@ -471,8 +471,8 @@ fn main() -> i32 {
   let typed_ast = type_check_ast ast in
   let ir = generate_ir ast in
   let has_functions = 
-    (List.length ir.programs > 0) || 
-    (List.length ir.kernel_functions > 0) ||
+    (List.length (Ir.get_programs ir) > 0) || 
+    (List.length (Ir.get_kernel_functions ir) > 0) ||
     (match ir.userspace_program with Some prog -> List.length prog.userspace_functions > 0 | None -> false)
   in
   check bool "Full pipeline should work for ringbuf programs" true 
@@ -518,8 +518,8 @@ fn main() -> i32 {
   let typed_ast = type_check_ast ast in
   let ir = generate_ir ast in
   let has_functions = 
-    (List.length ir.programs > 0) || 
-    (List.length ir.kernel_functions > 0) ||
+    (List.length (Ir.get_programs ir) > 0) || 
+    (List.length (Ir.get_kernel_functions ir) > 0) ||
     (match ir.userspace_program with Some prog -> List.length prog.userspace_functions > 0 | None -> false)
   in
   check bool "Multiple ringbufs with different types should work" true 
@@ -584,8 +584,8 @@ fn main() -> i32 { return 0 }
   let typed_ast = type_check_ast ast in
   let ir = generate_ir ast in
   let has_functions = 
-    (List.length ir.programs > 0) || 
-    (List.length ir.kernel_functions > 0) ||
+    (List.length (Ir.get_programs ir) > 0) || 
+    (List.length (Ir.get_kernel_functions ir) > 0) ||
     (match ir.userspace_program with Some prog -> List.length prog.userspace_functions > 0 | None -> false)
   in
   check bool "Error handling in ringbuf operations should work" true 
@@ -623,8 +623,8 @@ fn main() -> i32 { return 0 }
   let typed_ast = type_check_ast ast in
   let ir = generate_ir ast in
   let has_functions = 
-    (List.length ir.programs > 0) || 
-    (List.length ir.kernel_functions > 0) ||
+    (List.length (Ir.get_programs ir) > 0) || 
+    (List.length (Ir.get_kernel_functions ir) > 0) ||
     (match ir.userspace_program with Some prog -> List.length prog.userspace_functions > 0 | None -> false)
   in
   check bool "Complex ringbuf operations should work" true 

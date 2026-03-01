@@ -151,8 +151,8 @@ fn test_func(ctx: *xdp_md) -> u32 {
   let ir_multi_prog = Ir_generator.generate_ir ctx symbol_table "test_ir_generation" in
   
   (* Find the pinned global variable in IR *)
-  let pinned_global = List.find (fun gv -> gv.Ir.global_var_name = "shared_state") ir_multi_prog.Ir.global_variables in
-  let regular_global = List.find (fun gv -> gv.Ir.global_var_name = "regular_var") ir_multi_prog.Ir.global_variables in
+  let pinned_global = List.find (fun gv -> gv.Ir.global_var_name = "shared_state") (Ir.get_global_variables ir_multi_prog) in
+  let regular_global = List.find (fun gv -> gv.Ir.global_var_name = "regular_var") (Ir.get_global_variables ir_multi_prog) in
   
   check bool "Pinned global should be marked as pinned" true pinned_global.Ir.is_pinned;
   check bool "Pinned global should not be local" false pinned_global.Ir.is_local;

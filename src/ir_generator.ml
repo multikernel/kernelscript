@@ -3011,6 +3011,90 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> { line = 1; column = 1; filename = source_name }
   in
   
+  (* Lower struct_ops declarations to IR and build lookup tables *)
+  let struct_ops_decl_table = Hashtbl.create 8 in
+  List.iter (fun struct_def ->
+    let kernel_struct_name = extract_struct_ops_kernel_name struct_def.struct_attributes in
+    let ir_methods = List.map (fun (field_name, field_type) ->
+      let ir_field_type = match field_type with
+        | Ast.Function (param_types, return_type) ->
+            let ir_param_types = List.map ast_type_to_ir_type param_types in
+            let ir_return_type = ast_type_to_ir_type return_type in
+            IRFunctionPointer (ir_param_types, ir_return_type)
+        | _ -> ast_type_to_ir_type_with_context symbol_table field_type
+      in
+      make_ir_struct_ops_method
+        field_name
+        ir_field_type
+        struct_def.Ast.struct_pos
+    ) struct_def.Ast.struct_fields in
+    let ir_decl = make_ir_struct_ops_declaration
+      struct_def.Ast.struct_name
+      kernel_struct_name
+      ir_methods
+      struct_def.Ast.struct_pos in
+    Hashtbl.replace struct_ops_decl_table struct_def.Ast.struct_name ir_decl
+  ) struct_ops_declarations;
+
+  (* Lower impl blocks to struct_ops declarations and instances, build lookup tables *)
+  let impl_block_decl_table = Hashtbl.create 8 in
+  let impl_block_instance_table = Hashtbl.create 8 in
+  List.iter (fun impl_block ->
+    let kernel_struct_name = extract_struct_ops_kernel_name impl_block.impl_attributes in
+
+    (* Build struct_ops declaration from impl block *)
+    let ir_methods = List.filter_map (fun item ->
+      match item with
+      | Ast.ImplFunction func ->
+          let ir_param_types = List.map (fun (_, param_type) -> ast_type_to_ir_type param_type) func.func_params in
+          let ir_return_type = match Ast.get_return_type func.func_return_type with
+            | Some ret_type -> ast_type_to_ir_type ret_type
+            | None -> IRVoid
+          in
+          let method_type = IRFunctionPointer (ir_param_types, ir_return_type) in
+          Some (make_ir_struct_ops_method
+            func.func_name
+            method_type
+            func.func_pos)
+      | Ast.ImplStaticField (_, _) -> None
+    ) impl_block.impl_items in
+    let ir_decl = make_ir_struct_ops_declaration
+      impl_block.impl_name
+      kernel_struct_name
+      ir_methods
+      impl_block.impl_pos in
+    Hashtbl.replace impl_block_decl_table impl_block.impl_name ir_decl;
+
+    (* Build struct_ops instance from impl block *)
+    let ir_instance_fields = List.filter_map (fun item ->
+      match item with
+      | Ast.ImplFunction func ->
+          let func_val = make_ir_value (IRFunctionRef func.func_name) IRVoid func.func_pos in
+          Some (func.func_name, func_val)
+      | Ast.ImplStaticField (field_name, field_expr) ->
+          let field_val = match field_expr.expr_desc with
+            | Ast.Literal literal ->
+                (match literal with
+                | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) field_expr.expr_pos
+                | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) field_expr.expr_pos
+                | Ast.IntLit (value, _) ->
+                    let ir_type = if Ast.IntegerValue.compare_with_zero value < 0 then IRI32 else IRU32 in
+                    make_ir_value (IRLiteral (IntLit (value, None))) ir_type field_expr.expr_pos
+                | Ast.BoolLit b -> make_ir_value (IRLiteral (BoolLit b)) IRBool field_expr.expr_pos
+                | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar field_expr.expr_pos
+                | _ -> failwith ("Unsupported literal type in static field: " ^ (Ast.string_of_literal literal)))
+            | _ -> failwith "Static fields must be literals"
+          in
+          Some (field_name, field_val)
+    ) impl_block.impl_items in
+    let ir_instance = make_ir_struct_ops_instance
+      impl_block.impl_name
+      kernel_struct_name
+      ir_instance_fields
+      impl_block.impl_pos in
+    Hashtbl.replace impl_block_instance_table impl_block.impl_name ir_instance
+  ) impl_block_declarations;
+
   (* Process declarations in original order using our categorized list *)
   List.rev ordered_declarations |> List.iter (fun (original_decl, processed) ->
     let pos = get_decl_pos original_decl in
@@ -3057,18 +3141,18 @@ let lower_multi_program ast symbol_table source_name =
              let ir_fields = List.map (fun (field_name, field_type) ->
                (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
              ) struct_def.struct_fields in
-             add_source_declaration (IRDeclStructDef (struct_def.struct_name, ir_fields, struct_def.struct_pos)) struct_def.struct_pos
+             add_source_declaration (IRDeclStructDef (struct_def.struct_name, ir_fields, struct_def.struct_pos)) struct_def.struct_pos;
+             (* Also emit struct_ops declaration if this struct has @struct_ops attribute *)
+             (match Hashtbl.find_opt struct_ops_decl_table struct_def.struct_name with
+              | Some ir_struct_ops_decl ->
+                  add_source_declaration (IRDeclStructOpsDef ir_struct_ops_decl) struct_def.struct_pos
+              | None -> ())
          | Ast.AttributedFunction attr_func ->
              (* Insert program entry functions at source position *)
              let func_name = attr_func.attr_function.func_name in
              (match Hashtbl.find_opt program_table func_name with
-              | Some (prog_def, ir_program) ->
-                  let should_add =
-                    prog_def.prog_type = Ast.StructOps ||
-                    List.length attr_func.attr_function.func_body > 0
-                  in
-                  if should_add then
-                    add_source_declaration (IRDeclFunctionDef ir_program.entry_function) ir_program.entry_function.func_pos
+              | Some (_prog_def, ir_program) ->
+                  add_source_declaration (IRDeclProgramDef ir_program) ir_program.ir_pos
               | None ->
                   (* Could be a @helper function *)
                   (match Hashtbl.find_opt kernel_func_table func_name with
@@ -3076,13 +3160,22 @@ let lower_multi_program ast symbol_table source_name =
                        add_source_declaration (IRDeclFunctionDef ir_func) ir_func.func_pos
                    | None -> ()))
          | Ast.ImplBlock impl_block ->
+             (* Insert struct_ops declaration and instance for impl blocks *)
+             (match Hashtbl.find_opt impl_block_decl_table impl_block.impl_name with
+              | Some ir_struct_ops_decl ->
+                  add_source_declaration (IRDeclStructOpsDef ir_struct_ops_decl) impl_block.impl_pos
+              | None -> ());
+             (match Hashtbl.find_opt impl_block_instance_table impl_block.impl_name with
+              | Some ir_struct_ops_instance ->
+                  add_source_declaration (IRDeclStructOpsInstance ir_struct_ops_instance) impl_block.impl_pos
+              | None -> ());
              (* Insert impl block functions at source position *)
              List.iter (fun item ->
                match item with
                | Ast.ImplFunction func ->
                    (match Hashtbl.find_opt program_table func.func_name with
                     | Some (_prog_def, ir_program) ->
-                        add_source_declaration (IRDeclFunctionDef ir_program.entry_function) ir_program.entry_function.func_pos
+                        add_source_declaration (IRDeclProgramDef ir_program) ir_program.ir_pos
                     | None -> ())
                | Ast.ImplStaticField _ -> ()
              ) impl_block.impl_items
@@ -3148,106 +3241,11 @@ let lower_multi_program ast symbol_table source_name =
     | _ -> None
   ) ast in
   
-  (* Note: struct_ops instances are now just regular variable declarations with struct literals *)
-  
-  (* Lower struct_ops declarations to IR *)
-  let ir_struct_ops_declarations = List.map (fun struct_def ->
-    (* Extract kernel struct name from @struct_ops attribute *)
-    let kernel_struct_name = extract_struct_ops_kernel_name struct_def.struct_attributes in
-    
-    let ir_methods = List.map (fun (field_name, field_type) ->
-      let ir_field_type = match field_type with
-        | Ast.Function (param_types, return_type) ->
-            (* Convert function types to function pointers *)
-            let ir_param_types = List.map ast_type_to_ir_type param_types in
-            let ir_return_type = ast_type_to_ir_type return_type in
-            IRFunctionPointer (ir_param_types, ir_return_type)
-        | _ -> ast_type_to_ir_type_with_context symbol_table field_type
-      in
-      make_ir_struct_ops_method 
-        field_name
-        ir_field_type
-        struct_def.Ast.struct_pos
-    ) struct_def.Ast.struct_fields in
-    make_ir_struct_ops_declaration
-      struct_def.Ast.struct_name
-      kernel_struct_name
-      ir_methods
-      struct_def.Ast.struct_pos
-  ) struct_ops_declarations in
-  
-  (* Lower impl blocks to struct_ops declarations *)
-  let ir_impl_block_declarations = List.map (fun impl_block ->
-    (* Extract kernel struct name from @struct_ops attribute *)
-    let kernel_struct_name = extract_struct_ops_kernel_name impl_block.impl_attributes in
-    
-    (* Convert impl block functions to struct_ops methods *)
-    let ir_methods = List.filter_map (fun item ->
-      match item with
-      | Ast.ImplFunction func ->
-          (* Create method from function signature *)
-          let ir_param_types = List.map (fun (_, param_type) -> ast_type_to_ir_type param_type) func.func_params in
-          let ir_return_type = match Ast.get_return_type func.func_return_type with
-            | Some ret_type -> ast_type_to_ir_type ret_type
-            | None -> IRVoid
-          in
-          let method_type = IRFunctionPointer (ir_param_types, ir_return_type) in
-          Some (make_ir_struct_ops_method 
-            func.func_name
-            method_type
-            func.func_pos)
-      | Ast.ImplStaticField (_, _) -> None  (* Static fields are not methods *)
-    ) impl_block.impl_items in
-    
-    make_ir_struct_ops_declaration
-      impl_block.impl_name
-      kernel_struct_name
-      ir_methods
-      impl_block.impl_pos
-  ) impl_block_declarations in
-  
-  (* Lower struct_ops instances to IR - create from impl blocks *)
-  let ir_struct_ops_instances = List.map (fun impl_block ->
-    (* Extract kernel struct name from @struct_ops attribute *)
-    let kernel_struct_name = extract_struct_ops_kernel_name impl_block.impl_attributes in
-    
-    (* Convert impl block items to struct_ops instance fields *)
-    let ir_instance_fields = List.filter_map (fun item ->
-      match item with
-      | Ast.ImplFunction func ->
-          (* Function reference - create IRFunctionRef *)
-          let func_val = make_ir_value (IRFunctionRef func.func_name) IRVoid func.func_pos in
-          Some (func.func_name, func_val)
-      | Ast.ImplStaticField (field_name, field_expr) ->
-          (* Static field - convert expression to IR value *)
-          let field_val = match field_expr.expr_desc with
-            | Ast.Literal literal ->
-                (match literal with
-                | Ast.StringLit s -> make_ir_value (IRLiteral (StringLit s)) (IRStr (String.length s + 1)) field_expr.expr_pos
-                | Ast.NullLit -> make_ir_value (IRLiteral NullLit) (IRPointer (IRU8, make_bounds_info ~nullable:true ())) field_expr.expr_pos
-                | Ast.IntLit (value, _) -> 
-                    let ir_type = if Ast.IntegerValue.compare_with_zero value < 0 then IRI32 else IRU32 in
-                    make_ir_value (IRLiteral (IntLit (value, None))) ir_type field_expr.expr_pos
-                | Ast.BoolLit b -> make_ir_value (IRLiteral (BoolLit b)) IRBool field_expr.expr_pos
-                | Ast.CharLit c -> make_ir_value (IRLiteral (CharLit c)) IRChar field_expr.expr_pos
-                | _ -> failwith ("Unsupported literal type in static field: " ^ (Ast.string_of_literal literal)))
-            | _ -> failwith "Static fields must be literals"
-          in
-          Some (field_name, field_val)
-    ) impl_block.impl_items in
-    
-    make_ir_struct_ops_instance
-      impl_block.impl_name
-      kernel_struct_name
-      ir_instance_fields
-      impl_block.impl_pos
-  ) impl_block_declarations in
-  
   (* Use the unified literal conversion function *)
   let ast_literal_to_ir_value = lower_literal in
   
   (* Convert config declarations to IR *)
-  let ir_global_configs = List.map (fun config_decl ->
+  let _ir_global_configs = List.map (fun config_decl ->
     let ir_fields = List.map (fun field ->
       let ir_type = match field.Ast.field_type with
         | Ast.U8 -> IRU8
@@ -3289,14 +3287,10 @@ let lower_multi_program ast symbol_table source_name =
     | first :: _ -> first.prog_pos
   in
 
-  (* Combine both traditional struct_ops declarations and impl block declarations *)
-  let combined_struct_ops_declarations = ir_struct_ops_declarations @ ir_impl_block_declarations in
-
-  make_ir_multi_program source_name ir_programs ir_kernel_functions all_global_maps
-    ~global_configs:ir_global_configs ~global_variables:all_global_vars
-    ~struct_ops_declarations:combined_struct_ops_declarations
-    ~struct_ops_instances:ir_struct_ops_instances ?userspace_program:userspace_program
-    ~source_declarations:(List.rev !source_declarations) multi_pos
+  make_ir_multi_program source_name
+    ~source_declarations:(List.rev !source_declarations)
+    ?userspace_program:userspace_program
+    multi_pos
 
 (** Main entry point for IR generation *)
 let generate_ir ?(use_type_annotations=false) ast symbol_table source_name =

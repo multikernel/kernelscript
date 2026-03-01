@@ -453,7 +453,7 @@ fn main() -> i32 {
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "simple_ir" in
-    let ir = List.hd ir_multi.programs in
+    let ir = List.hd (get_programs ir_multi) in
     check bool "IR generation successful" true (ir.name <> "");
     check bool "IR has main function" true ir.entry_function.is_main;
   with
@@ -476,7 +476,7 @@ fn main() -> i32 {
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "basic" in
-    let ir = List.hd ir_multi.programs in
+    let ir = List.hd (get_programs ir_multi) in
     (* Perform comprehensive analysis on the generated IR *)
     let analysis_result = comprehensive_analysis ir.entry_function in
     check bool "IR generation successful" true (ir.name <> "");
@@ -508,7 +508,7 @@ fn main() -> i32 {
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "control_flow" in
-    let ir = List.hd ir_multi.programs in
+    let ir = List.hd (get_programs ir_multi) in
     let cfg = CFG.build_cfg ir.entry_function in
     check bool "control flow graph built" true (List.length cfg.blocks > 0);
     check bool "has edges" true (List.length cfg.edges > 0);
@@ -970,7 +970,7 @@ fn main() -> i32 {
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir_multi = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "cfg_test" in
-    let ir = List.hd ir_multi.programs in
+    let ir = List.hd (get_programs ir_multi) in
     check bool "IR generation successful" true (ir.name <> "");
     check bool "IR has main function" true ir.entry_function.is_main;
   with

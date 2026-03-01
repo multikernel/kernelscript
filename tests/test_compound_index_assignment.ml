@@ -332,7 +332,7 @@ var test_map : hash<u32, u32>(1024)
     let ir_multi_program = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
     
     (* Check that IR was generated without errors *)
-    check bool "IR generation successful" true (List.length ir_multi_program.programs > 0);
+    check bool "IR generation successful" true (List.length (get_programs ir_multi_program) > 0);
     print_endline "✓ IR generation test passed"
   with
   | e -> failwith ("IR generation failed: " ^ Printexc.to_string e)
@@ -354,7 +354,7 @@ var test_map : hash<u32, u32>(1024)
     let ir_multi_program = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
     
     (* Find the program and its instructions *)
-    let program = List.hd ir_multi_program.programs in
+    let program = List.hd (get_programs ir_multi_program) in
     let basic_block = List.hd program.entry_function.basic_blocks in
     let instructions = basic_block.instructions in
     
@@ -406,7 +406,7 @@ var packet_counts : hash<u32, u64>(1024)
     let ir_multi_program = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "rate_limiter" in
     
     (* Check that compilation was successful *)
-    check bool "end-to-end compilation successful" true (List.length ir_multi_program.programs > 0);
+    check bool "end-to-end compilation successful" true (List.length (get_programs ir_multi_program) > 0);
     print_endline "✓ End-to-end compilation test passed"
   with
   | e -> failwith ("End-to-end compilation failed: " ^ Printexc.to_string e)

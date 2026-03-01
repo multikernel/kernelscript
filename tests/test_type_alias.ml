@@ -143,7 +143,7 @@ fn main() -> i32 {
   let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
   
   (* Test IR generation - check that Counter is IRTypeAlias not IRStruct *)
-  let cpu_counters_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "cpu_counters") ir.global_maps in
+  let cpu_counters_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "cpu_counters") (Kernelscript.Ir.get_global_maps ir) in
   let value_type = cpu_counters_map.map_value_type in
   (match value_type with
    | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) -> 
@@ -152,7 +152,7 @@ fn main() -> i32 {
        fail "Counter should be IRTypeAlias(Counter, IRU64)");
   
   (* Test that IpAddress is also a type alias *)
-  let ip_stats_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "ip_stats") ir.global_maps in
+  let ip_stats_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "ip_stats") (Kernelscript.Ir.get_global_maps ir) in
   let key_type = ip_stats_map.map_key_type in
   (match key_type with
    | Kernelscript.Ir.IRTypeAlias ("IpAddress", Kernelscript.Ir.IRU32) -> 
@@ -182,15 +182,8 @@ fn main() -> i32 {
    | _ -> 
        fail "PacketStats should be IRStruct");
        
-  (* Extract type aliases from AST for code generation *)
-  let type_aliases = List.fold_left (fun acc decl ->
-    match decl with
-    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> (name, typ) :: acc
-    | _ -> acc
-  ) [] ast in
-  
   (* Test eBPF C code generation *)
-  let ebpf_c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases ir in
+  let ebpf_c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
   
   (* Check that type aliases generate typedef statements in eBPF code *)
   check bool "eBPF typedef Counter generated" true (contains_substr ebpf_c_code "typedef __u64 Counter;");
@@ -213,15 +206,15 @@ fn main() -> i32 {
   (* Test userspace C code generation (this would have caught the bug!) *)
   let userspace_c_code = match ir.userspace_program with
     | Some userspace_prog -> 
-        Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir 
-          ~_type_aliases:type_aliases userspace_prog ir.global_maps ir "test.ks"
-    | None -> 
+        Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir
+          userspace_prog (Kernelscript.Ir.get_global_maps ir) ir "test.ks"
+    | None ->
         failwith "No userspace program generated" in
-  
+
   (* Check that userspace code generates correct typedef statements *)
-  check bool "Userspace typedef Counter generated" true 
+  check bool "Userspace typedef Counter generated" true
     (contains_substr userspace_c_code "typedef uint64_t Counter;");
-  check bool "Userspace typedef IpAddress generated" true 
+  check bool "Userspace typedef IpAddress generated" true
     (contains_substr userspace_c_code "typedef uint32_t IpAddress;");
   
   (* Check that struct definitions use type alias names correctly (NOT "struct Counter") *)
@@ -266,7 +259,7 @@ var user_groups : hash<GroupId, u64>(100)
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     
     (* Test that nested type aliases are handled properly *)
-    let user_groups_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "user_groups") ir.global_maps in
+    let user_groups_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "user_groups") (Kernelscript.Ir.get_global_maps ir) in
     let key_type = user_groups_map.map_key_type in
     (match key_type with
      | Kernelscript.Ir.IRTypeAlias ("GroupId", _) -> 
@@ -332,13 +325,6 @@ fn main() -> i32 {
   let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
   let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
   
-  (* Extract type aliases from AST *)
-  let type_aliases = List.fold_left (fun acc decl ->
-    match decl with
-    | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> (name, typ) :: acc
-    | _ -> acc
-  ) [] ast in
-
   (* Verify struct fields have type aliases in IR (not structs) *)
   (match ir.userspace_program with
    | Some userspace_prog ->
@@ -367,8 +353,8 @@ fn main() -> i32 {
   (* Test userspace C code generation - this is where the bug was! *)
   let userspace_c_code = match ir.userspace_program with
     | Some userspace_prog -> 
-        Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir 
-          ~_type_aliases:type_aliases userspace_prog ir.global_maps ir "test.ks"
+        Kernelscript.Userspace_codegen.generate_complete_userspace_program_from_ir
+          userspace_prog (Kernelscript.Ir.get_global_maps ir) ir "test.ks"
     | None -> 
         failwith "No userspace program generated" in
   

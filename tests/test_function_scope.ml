@@ -64,7 +64,7 @@ fn calculate_hash(seed: u32) -> u32 {
   (* Verify the kernel function is in the multi-program IR *)
   let has_kernel_func = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "calculate_hash"
-  ) multi_ir.kernel_functions in
+  ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
   check bool "program has kernel function" true has_kernel_func
 
 (** Test 3: Kernel functions shared across multiple programs *)
@@ -125,10 +125,10 @@ fn get_counter(index: u32) -> u64 {
   (* Verify both kernel functions are in the multi-program IR *)
   let has_increment = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "increment_counter"
-  ) multi_ir.kernel_functions in
+  ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
   let has_get = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "get_counter"
-  ) multi_ir.kernel_functions in
+  ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
   check bool "multi-program has increment_counter" true has_increment;
   check bool "multi-program has get_counter" true has_get
 
@@ -317,10 +317,10 @@ fn advanced_validation(size: u32, protocol: u16) -> bool {
   (* Verify both kernel functions are in the multi-program IR *)
   let has_basic = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "basic_validation"
-  ) multi_ir.kernel_functions in
+  ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
   let has_advanced = List.exists (fun func ->
     func.Kernelscript.Ir.func_name = "advanced_validation"
-  ) multi_ir.kernel_functions in
+  ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
   
   check bool "multi-program has basic_validation" true has_basic;
   check bool "multi-program has advanced_validation" true has_advanced
@@ -463,14 +463,14 @@ fn safe_increment(index: u32) -> bool {
   check (list string) "userspace functions" ["setup_monitoring"; "main"] userspace_functions;
   
   (* Verify IR generation *)
-  check int "number of programs in IR" 2 (List.length multi_ir.programs);
+  check int "number of programs in IR" 2 (List.length (Kernelscript.Ir.get_programs multi_ir));
   check bool "userspace program exists" true (Option.is_some multi_ir.userspace_program);
   
   (* Verify all kernel functions are in the multi-program IR *)
   List.iter (fun expected_func ->
     let has_func = List.exists (fun func ->
       func.Kernelscript.Ir.func_name = expected_func
-    ) multi_ir.kernel_functions in
+    ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
     check bool (Printf.sprintf "multi-program has kernel function %s" expected_func) true has_func
   ) expected_kernel_funcs
 

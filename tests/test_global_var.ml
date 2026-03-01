@@ -280,18 +280,18 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
     
     (* Verify global variables are in IR *)
-    check int "global variables count in IR" 3 (List.length ir.global_variables);
+    check int "global variables count in IR" 3 (List.length (Kernelscript.Ir.get_global_variables ir));
     
     (* Check specific global variables exist *)
     let has_global_counter = List.exists (fun (gvar : Kernelscript.Ir.ir_global_variable) ->
       gvar.global_var_name = "global_counter" &&
       gvar.global_var_type = Kernelscript.Ir.IRU32
-    ) ir.global_variables in
+    ) (Kernelscript.Ir.get_global_variables ir) in
     
     let has_global_flag = List.exists (fun (gvar : Kernelscript.Ir.ir_global_variable) ->
       gvar.global_var_name = "global_flag" &&
       gvar.global_var_type = Kernelscript.Ir.IRBool
-    ) ir.global_variables in
+    ) (Kernelscript.Ir.get_global_variables ir) in
     
     check bool "global_counter in IR" true has_global_counter;
     check bool "global_flag in IR" true has_global_flag
@@ -402,7 +402,7 @@ fn main() -> i32 {
     let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
     
     (* Verify all global variables are processed *)
-    check int "complex scenario global variable count" 9 (List.length ir.global_variables);
+    check int "complex scenario global variable count" 9 (List.length (Kernelscript.Ir.get_global_variables ir));
     
     (* Check that both eBPF and userspace functions can access globals *)
     check bool "complex scenario parsing" true true
@@ -662,13 +662,13 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
     
     (* Check that global variables are present in IR *)
-    check int "global variables count in IR" 2 (List.length ir.global_variables);
+    check int "global variables count in IR" 2 (List.length (Kernelscript.Ir.get_global_variables ir));
     
     (* Check the is_local flag is correctly propagated *)
     let check_ir_local var_name expected_local =
       let found = List.find_opt (fun (gvar : Kernelscript.Ir.ir_global_variable) ->
         gvar.global_var_name = var_name
-      ) ir.global_variables in
+      ) (Kernelscript.Ir.get_global_variables ir) in
       match found with
       | Some gvar -> 
           check bool (var_name ^ " is_local in IR") expected_local gvar.is_local
@@ -898,7 +898,7 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let ir = Kernelscript.Ir_generator.generate_ir enhanced_ast symbol_table "test" in
     
     (* Verify all negative global variables are processed *)
-    check int "negative numbers global variable count" 4 (List.length ir.global_variables);
+    check int "negative numbers global variable count" 4 (List.length (Kernelscript.Ir.get_global_variables ir));
     
     (* Check specific variable types and values *)
     (match lookup_symbol symbol_table "negative_int" with

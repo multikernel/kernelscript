@@ -99,6 +99,6 @@ let analyze_memory_usage_patterns _eval_ctx ir_multi_program =
         analysis_results := (var_name, Printf.sprintf "High access count (%d) - consider dynptr optimization" count) :: !analysis_results
     ) var_access_counts;
     
-  ) ir_multi_program.programs;
+  ) (Ir.get_programs ir_multi_program);
   
   !analysis_results

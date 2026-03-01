@@ -320,11 +320,12 @@ let test_pointer_ir_generation () =
     check bool "IR generation succeeds for pointer operations" true true;
     
     (* Check that the IR has some basic structure - at least one program and one basic block *)
-    let has_programs = List.length ir.programs > 0 in
-    let has_instructions = has_programs && 
+    let programs = get_programs ir in
+    let has_programs = List.length programs > 0 in
+    let has_instructions = has_programs &&
       List.exists (fun prog ->
         List.length prog.entry_function.basic_blocks > 0
-      ) ir.programs in
+      ) programs in
     check bool "IR contains programs and instructions" true has_instructions
   with
   | exn -> fail ("IR generation failed: " ^ Printexc.to_string exn)

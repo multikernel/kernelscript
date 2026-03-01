@@ -291,7 +291,7 @@ fn main() -> i32 {
     let ir_multi_prog = generate_ir annotated_ast symbol_table "test_ir" in
     
     (* Extract the main function from IR *)
-    let test_program = List.find (fun prog -> prog.name = "test_ir") ir_multi_prog.programs in
+    let test_program = List.find (fun prog -> prog.name = "test_ir") (get_programs ir_multi_prog) in
     let main_func = test_program.entry_function in
     
     (* Look for IRStructLiteral in the instructions *)

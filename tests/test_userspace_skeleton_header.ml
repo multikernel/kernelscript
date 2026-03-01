@@ -35,10 +35,10 @@ let test_skeleton_header_inclusion () =
   let userspace_prog = make_ir_userspace_program
     [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
-  let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~userspace_program:userspace_prog test_pos in
-  
+  let ir_multi_prog = make_ir_multi_program "test" ~userspace_program:userspace_prog test_pos in
+
   let generated_code = generate_complete_userspace_program_from_ir userspace_prog [] ir_multi_prog "test.ks" in
-  
+
   check bool "Should include skeleton header when load() is used" true (contains_substr generated_code "test.skel.h");
   check bool "Should declare skeleton instance when load() is used" true (contains_substr generated_code "struct test_ebpf *obj")
 
@@ -52,10 +52,10 @@ let test_skeleton_header_inclusion_attach () =
   let userspace_prog = make_ir_userspace_program
     [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
-  let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~userspace_program:userspace_prog test_pos in
-  
+  let ir_multi_prog = make_ir_multi_program "test" ~userspace_program:userspace_prog test_pos in
+
   let generated_code = generate_complete_userspace_program_from_ir userspace_prog [] ir_multi_prog "test.ks" in
-  
+
   check bool "Should include skeleton header when attach() is used" true (contains_substr generated_code "test.skel.h");
   check bool "Should declare skeleton instance when attach() is used" true (contains_substr generated_code "struct test_ebpf *obj")
 
@@ -69,10 +69,10 @@ let test_skeleton_header_not_included_without_bpf_functions () =
   let userspace_prog = make_ir_userspace_program
     [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
-  let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~userspace_program:userspace_prog test_pos in
-  
+  let ir_multi_prog = make_ir_multi_program "test" ~userspace_program:userspace_prog test_pos in
+
   let generated_code = generate_complete_userspace_program_from_ir userspace_prog [] ir_multi_prog "test.ks" in
-  
+
   check bool "Should not include skeleton header when no BPF functions are used" false (contains_substr generated_code "test.skel.h");
   check bool "Should not declare skeleton instance when no BPF functions are used" false (contains_substr generated_code "struct test_ebpf *obj")
 
@@ -95,7 +95,8 @@ let test_skeleton_header_included_with_global_variables () =
   let userspace_prog = make_ir_userspace_program
     [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
-  let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~global_variables:[global_var] ~userspace_program:userspace_prog test_pos in
+  let source_declarations = [make_ir_global_var_def_decl global_var 0] in
+  let ir_multi_prog = make_ir_multi_program "test" ~source_declarations ~userspace_program:userspace_prog test_pos in
   
   let generated_code = generate_complete_userspace_program_from_ir userspace_prog [] ir_multi_prog "test.ks" in
   

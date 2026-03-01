@@ -579,13 +579,7 @@ struct PacketStats {
     let ir = generate_ir annotated_ast symbol_table "test" in
     
     (* Test C code generation to ensure struct Counter doesn't appear *)
-    let type_aliases = List.fold_left (fun acc decl ->
-      match decl with
-      | Kernelscript.Ast.TypeDef (Kernelscript.Ast.TypeAlias (name, typ, _)) -> (name, typ) :: acc
-      | _ -> acc
-    ) [] ast in
-    
-    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases ir in
+    let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
          (* Verify that type aliases generate typedef statements *)
      check bool "typedef Counter generated" true (contains_substr c_code "typedef __u64 Counter");
