@@ -35,7 +35,6 @@ type ir_multi_program = {
   struct_ops_declarations: ir_struct_ops_declaration list; (* Struct_ops type declarations *)
   struct_ops_instances: ir_struct_ops_instance list; (* Struct_ops instances *)
   userspace_program: ir_userspace_program option; (* IR-based userspace program *)
-  userspace_bindings: ir_userspace_binding list; (* Generated bindings *)
   ring_buffer_registry: ir_ring_buffer_registry; (* Centralized ring buffer tracking *)
   source_declarations: ir_source_declaration list; (* All declarations in original source order *)
   multi_pos: ir_position;
@@ -53,7 +52,6 @@ and ir_program = {
 and ir_userspace_program = {
   userspace_functions: ir_function list; (* All userspace functions including main *)
   userspace_structs: ir_struct_def list; (* Userspace struct definitions *)
-  userspace_configs: ir_userspace_config list; (* Userspace configuration *)
   coordinator_logic: ir_coordinator_logic; (* BPF management and coordination logic *)
   userspace_pos: ir_position;
 }
@@ -72,42 +70,6 @@ and ir_config_management = {
   runtime_config_sync: ir_instruction list; (* Sync configs between userspace/kernel *)
 }
 
-and ir_map_management = {
-  setup_operations: ir_instruction list; (* Map initialization instructions *)
-  access_patterns: (string * ir_map_access_pattern) list; (* Map access optimizations *)
-  cleanup_operations: ir_instruction list; (* Map cleanup instructions *)
-}
-
-and ir_map_access_pattern = 
-  | ReadHeavy of int (* Expected reads per second *)
-  | WriteHeavy of int (* Expected writes per second *)
-  | Mixed of int * int (* Reads, writes per second *)
-
-and ir_program_lifecycle = {
-  loading_sequence: ir_instruction list; (* BPF program loading logic *)
-  attachment_logic: ir_instruction list; (* Program attachment logic *)
-  detachment_logic: ir_instruction list; (* Program detachment logic *)
-  error_handling: ir_instruction list; (* Error handling for lifecycle operations *)
-}
-
-and ir_event_processing = {
-  event_loop: ir_instruction list; (* Main event processing loop *)
-  ring_buffer_handling: ir_instruction list; (* Ring buffer event processing *)
-  perf_event_handling: ir_instruction list; (* Perf event processing *)
-  polling_strategy: ir_polling_strategy; (* Event polling configuration *)
-}
-
-and ir_polling_strategy =
-  | Blocking (* Block waiting for events *)
-  | NonBlocking of int (* Non-blocking with timeout in ms *)
-  | Adaptive of int * int (* Adaptive polling: min_timeout, max_timeout *)
-
-and ir_signal_handling = {
-  setup_handlers: ir_instruction list; (* Signal handler setup *)
-  cleanup_handlers: ir_instruction list; (* Signal cleanup logic *)
-  graceful_shutdown: ir_instruction list; (* Graceful shutdown sequence *)
-}
-
 (** Userspace struct definition in IR *)
 and ir_struct_def = {
   struct_name: string;
@@ -115,16 +77,6 @@ and ir_struct_def = {
   struct_alignment: int; (* Memory alignment requirements *)
   struct_size: int; (* Total struct size in bytes *)
   struct_pos: ir_position;
-}
-
-(** Userspace configuration in IR *)
-and ir_userspace_config = 
-  | IRCustomConfig of string * ir_config_item list
-
-and ir_config_item = {
-  config_key: string;
-  config_value: ir_value; (* Use IR values instead of AST literals *)
-  config_type: ir_type; (* Explicit type information *)
 }
 
 (** Enhanced type system for IR with bounds and safety information *)
@@ -411,37 +363,6 @@ and ir_function = {
 
 and visibility = Public | Private
 
-(** Userspace binding generation information *)
-and ir_userspace_binding = {
-  language: binding_language;
-  map_wrappers: ir_map_wrapper list;
-  event_handlers: ir_event_handler list;
-  config_structs: ir_config_struct list;
-}
-
-and binding_language = C | Rust | Go | Python
-
-and ir_map_wrapper = {
-  wrapper_map_name: string;
-  operations: map_operation list;
-  safety_checks: bool;
-}
-
-and map_operation = OpLookup | OpUpdate | OpDelete | OpIterate
-
-and ir_event_handler = {
-  event_type: string;
-  callback_signature: string;
-}
-
-and ir_config_struct = {
-  config_struct_name: string;
-  fields: (string * ir_type) list;
-  serialization: serialization_type;
-}
-
-and serialization_type = Json | Binary | Custom of string
-
 (** Global named configuration block *)
 and ir_global_config = {
   config_name: string; (* e.g., "network", "security" *)
@@ -584,9 +505,9 @@ let create_empty_ring_buffer_registry () = {
   };
 }
 
-let make_ir_multi_program source_name programs kernel_functions global_maps 
-                          ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = []) 
-                          ?userspace_program ?(userspace_bindings = []) ?(ring_buffer_registry = create_empty_ring_buffer_registry ()) 
+let make_ir_multi_program source_name programs kernel_functions global_maps
+                          ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = [])
+                          ?userspace_program ?(ring_buffer_registry = create_empty_ring_buffer_registry ())
                           ?(source_declarations = []) pos = {
   source_name;
   programs;
@@ -597,16 +518,14 @@ let make_ir_multi_program source_name programs kernel_functions global_maps
   struct_ops_declarations;
   struct_ops_instances;
   userspace_program;
-  userspace_bindings;
   ring_buffer_registry;
   source_declarations;
   multi_pos = pos;
 }
 
-let make_ir_userspace_program functions structs configs coordinator_logic pos = {
+let make_ir_userspace_program functions structs coordinator_logic pos = {
   userspace_functions = functions;
   userspace_structs = structs;
-  userspace_configs = configs;
   coordinator_logic;
   userspace_pos = pos;
 }
@@ -617,12 +536,6 @@ let make_ir_struct_def name fields alignment size pos = {
   struct_alignment = alignment;
   struct_size = size;
   struct_pos = pos;
-}
-
-let make_ir_config_item key value config_type = {
-  config_key = key;
-  config_value = value;
-  config_type;
 }
 
 let make_ir_coordinator_logic setup_logic event_processing cleanup_logic config_management = {

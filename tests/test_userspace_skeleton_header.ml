@@ -33,7 +33,7 @@ let test_skeleton_header_inclusion () =
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
   let userspace_prog = make_ir_userspace_program
-    [main_func] [] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
+    [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
   let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~userspace_program:userspace_prog test_pos in
   
@@ -50,7 +50,7 @@ let test_skeleton_header_inclusion_attach () =
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
   let userspace_prog = make_ir_userspace_program
-    [main_func] [] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
+    [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
   let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~userspace_program:userspace_prog test_pos in
   
@@ -67,7 +67,7 @@ let test_skeleton_header_not_included_without_bpf_functions () =
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
   let userspace_prog = make_ir_userspace_program
-    [main_func] [] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
+    [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
   let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~userspace_program:userspace_prog test_pos in
   
@@ -93,7 +93,7 @@ let test_skeleton_header_included_with_global_variables () =
   let main_func = make_ir_function "main" [] (Some IRI32) [entry_block] test_pos in
   
   let userspace_prog = make_ir_userspace_program
-    [main_func] [] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
+    [main_func] [] (make_ir_coordinator_logic [] [] [] (make_ir_config_management [] [] [])) test_pos in
   
   let ir_multi_prog = make_ir_multi_program "test" [] [] [] ~global_variables:[global_var] ~userspace_program:userspace_prog test_pos in
   

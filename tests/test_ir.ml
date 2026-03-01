@@ -200,22 +200,6 @@ let test_stack_usage_tracking () =
   let all_blocks_have_positive_usage = List.for_all (fun (bb : ir_basic_block) -> bb.stack_usage >= 0) ir_func.basic_blocks in
   check bool "positive stack usage in all blocks" true all_blocks_have_positive_usage
 
-let test_userspace_binding_generation () =
-  let ast = make_test_ast () in
-  let symbol_table = Kernelscript.Symbol_table.create_symbol_table () in
-  
-  let ir_multi_prog = generate_ir ast symbol_table "test" in
-  let c_bindings = List.find_opt (fun b -> b.language = C) ir_multi_prog.userspace_bindings in
-  
-  match c_bindings with
-  | Some bindings ->
-      check bool "map wrappers present" true (List.length bindings.map_wrappers > 0);
-      let first_wrapper = List.hd bindings.map_wrappers in
-      let has_lookup = List.exists (fun op -> op = OpLookup) first_wrapper.operations in
-      check bool "lookup operation present" true has_lookup
-  | None ->
-      fail "No C bindings found"
-
 let test_variable_function_call_initialization () =
   (* Test for the bug where function calls in variable initializers 
      return to wrong registers, causing uninitialized variable usage *)
@@ -358,7 +342,6 @@ let ir_tests = [
   "map_operation_lowering", `Quick, test_map_operation_lowering;
   "bounds_check_insertion", `Quick, test_bounds_check_insertion;
   "stack_usage_tracking", `Quick, test_stack_usage_tracking;
-  "userspace_binding_generation", `Quick, test_userspace_binding_generation;
   "variable_function_call_initialization", `Quick, test_variable_function_call_initialization;
   "register_builtin_ir_generation", `Quick, test_register_builtin_ir_generation;
 ]

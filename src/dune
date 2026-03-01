@@ -1,7 +1,7 @@
 (library
  (name kernelscript)
- (modules ast parser lexer parse type_checker symbol_table maps map_assignment 
-          map_operations ir ir_generator ir_analysis loop_analysis ir_function_system
+ (modules ast parser lexer parse type_checker symbol_table maps map_assignment
+          map_operations ir ir_generator ir_analysis loop_analysis ir_function_system codegen_common
           multi_program_analyzer multi_program_ir_optimizer ebpf_c_codegen
           userspace_codegen evaluator safety_checker stdlib test_codegen
 tail_call_analyzer kernel_module_codegen dynptr_bridge

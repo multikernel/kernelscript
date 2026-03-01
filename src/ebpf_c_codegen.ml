@@ -230,26 +230,10 @@ let fresh_var ctx prefix =
   sprintf "%s_%d" prefix ctx.var_counter
 
 (** Helper to check if a position indicates a kernel-defined type *)
-let is_kernel_defined_type pos =
-  let is_builtin = pos.Ast.filename = "<builtin>" in
-  let is_btf_type = Filename.check_suffix pos.Ast.filename ".kh" in
-  is_builtin || is_btf_type
+let is_kernel_defined_type = Codegen_common.is_kernel_defined_pos
 
-(** Helper to check if a struct should be included, excluding truct_ops *)
-let should_include_struct_with_struct_ops struct_name struct_ops_declarations pos =
-  (* Check if this is a struct_ops struct (always include these) *)
-  let is_struct_ops_struct = 
-    List.exists (fun struct_ops_decl -> 
-      struct_ops_decl.ir_kernel_struct_name = struct_name
-    ) struct_ops_declarations
-  in
-  
-  if is_struct_ops_struct then
-    (* Always include struct_ops structs, even if they come from kernel headers *)
-    true
-  else
-    (* Apply normal filtering for non-struct_ops structs *)
-    not (is_kernel_defined_type pos)
+(** Helper to check if a struct should be included, excluding struct_ops *)
+let should_include_struct_with_struct_ops = Codegen_common.should_include_struct
 
 let fresh_label ctx prefix =
   ctx.label_counter <- ctx.label_counter + 1;
@@ -285,51 +269,10 @@ let escape_c_string s =
 
 (** Type conversion from IR types to C types *)
 
-let rec ebpf_type_from_ir_type = function
-  | IRU8 -> "__u8"
-  | IRU16 -> "__u16" 
-  | IRU32 -> "__u32"
-  | IRU64 -> "__u64"
-  | IRI8 -> "__s8"
-  | IRI16 -> "__s16"
-  | IRI32 -> "__s32"
-  | IRI64 -> "__s64"
-  | IRF32 -> "__u32" (* Fixed point representation in kernel *)
-  | IRF64 -> "__u64" (* Fixed point representation in kernel *)
-  | IRVoid -> "void"
-  | IRBool -> "__u8"
-  | IRChar -> "char"
-  | IRStr size -> sprintf "str_%d_t" size
-  | IRPointer (inner_type, _) -> sprintf "%s*" (ebpf_type_from_ir_type inner_type)
-  | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ebpf_type_from_ir_type inner_type) size
-  | IRStruct (name, _) -> sprintf "struct %s" name
-  | IREnum (name, _) -> sprintf "enum %s" name
-
-  | IRResult (ok_type, _err_type) -> ebpf_type_from_ir_type ok_type (* simplified to ok type *)
-  | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
-  | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRFunctionPointer (param_types, return_type) ->
-      let return_type_str = ebpf_type_from_ir_type return_type in
-      let param_types_str = List.map ebpf_type_from_ir_type param_types in
-      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str
-  | IRRingbuf (_value_type, _size) ->
-      (* Ring buffer objects are represented as void pointers in eBPF C *)
-      "void*"  (* Function pointer type *)
+let ebpf_type_from_ir_type = Codegen_common.ir_type_to_c Codegen_common.EbpfKernel
 
 (** Generate proper C declaration for eBPF, handling function pointers correctly *)
-let generate_ebpf_c_declaration ir_type var_name =
-  match ir_type with
-  | IRFunctionPointer (param_types, return_type) ->
-      let return_type_str = ebpf_type_from_ir_type return_type in
-      let param_types_str = List.map ebpf_type_from_ir_type param_types in
-      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*%s)(%s)" return_type_str var_name params_str
-  | IRStr size -> sprintf "str_%d_t %s" size var_name
-  | IRArray (element_type, size, _) ->
-      let element_type_str = ebpf_type_from_ir_type element_type in
-      sprintf "%s %s[%d]" element_type_str var_name size
-  | _ -> sprintf "%s %s" (ebpf_type_from_ir_type ir_type) var_name
+let generate_ebpf_c_declaration = Codegen_common.c_declaration Codegen_common.EbpfKernel
 
 (** Map type conversion *)
 
@@ -2969,22 +2912,7 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
     
     match source_decl.Ir.decl_desc with
     | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
-        (* Generate type alias definition with special handling for function pointers *)
-        (match ir_type with
-         | IRFunctionPointer (param_types, return_type) ->
-             (* Special syntax for function pointer typedefs *)
-             let return_type_str = ebpf_type_from_ir_type return_type in
-             let param_types_str = List.map ebpf_type_from_ir_type param_types in
-             let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-             emit_line ctx (sprintf "typedef %s (*%s)(%s);" return_type_str name params_str);
-         | IRArray (inner_type, size, _) ->
-             (* Special syntax for array typedefs: typedef element_type alias_name[size]; *)
-             let element_type_str = ebpf_type_from_ir_type inner_type in
-             emit_line ctx (sprintf "typedef %s %s[%d];" element_type_str name size);
-         | _ ->
-             (* Regular type alias *)
-             let c_type = ebpf_type_from_ir_type ir_type in
-             emit_line ctx (sprintf "typedef %s %s;" c_type name));
+        emit_line ctx (Codegen_common.generate_typedef Codegen_common.EbpfKernel name ir_type);
         emit_blank_line ctx
     
     | Ir.IRDeclStructDef (name, fields, pos) ->
@@ -3003,24 +2931,8 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
               should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations pos
         in
         if should_include_struct then (
-          (* Generate struct definition *)
-          emit_line ctx (sprintf "struct %s {" name);
-          increase_indent ctx;
-          List.iter (fun (field_name, field_type) ->
-            let field_declaration = match field_type with
-              | IRArray (inner_type, size, _) ->
-                  (* Special syntax for array fields: element_type field_name[size]; *)
-                  let element_type_str = ebpf_type_from_ir_type inner_type in
-                  sprintf "%s %s[%d];" element_type_str field_name size
-              | _ ->
-                  (* Regular field *)
-                  let c_type = ebpf_type_from_ir_type field_type in
-                  sprintf "%s %s;" c_type field_name
-            in
-            emit_line ctx field_declaration;
-          ) fields;
-          decrease_indent ctx;
-          emit_line ctx "};";
+          let struct_str = Codegen_common.generate_struct_def Codegen_common.EbpfKernel name fields in
+          String.split_on_char '\n' struct_str |> List.iter (emit_line ctx);
           emit_blank_line ctx
         )
     
@@ -3040,16 +2952,8 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
               not (is_kernel_defined_type pos)
         in
         if should_include_enum then (
-          (* Generate enum definition *)
-          emit_line ctx (sprintf "enum %s {" name);
-  increase_indent ctx;
-          let value_count = List.length values in
-          List.iteri (fun i (const_name, value) ->
-            let line = sprintf "%s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
-            emit_line ctx line
-          ) values;
-          decrease_indent ctx;
-          emit_line ctx "};";
+          let enum_str = Codegen_common.generate_enum_def name values in
+          String.split_on_char '\n' enum_str |> List.iter (emit_line ctx);
           emit_blank_line ctx
         )
     
@@ -3423,7 +3327,6 @@ let generate_c_program (ir_prog : Ir.ir_program) =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
     ring_buffer_registry = Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = ir_prog.ir_pos;

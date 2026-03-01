@@ -359,11 +359,11 @@ let test_basic_global_functions () =
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     match ir with
-    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; userspace_configs = configs; _ }; _ } ->
+    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; _ }; _ } ->
       check bool "global functions block exists" true true;
       check bool "main function exists" (List.exists (fun f -> f.Ir.func_name = "main") functions) true;
       check bool "structs list accessible" (List.length structs >= 0) true;
-      check bool "configs list accessible" (List.length configs >= 0) true;
+
     | _ -> check bool "global functions block not found" false true
   in
   try
@@ -391,11 +391,11 @@ let test_global_function_codegen () =
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     match ir with
-    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; userspace_configs = configs; _ }; _ } ->
+    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; _ }; _ } ->
       check bool "global functions block exists" true true;
       check bool "main function exists" (List.exists (fun f -> f.Ir.func_name = "main") functions) true;
       check bool "structs list accessible" (List.length structs >= 0) true;
-      check bool "configs list accessible" (List.length configs >= 0) true;
+
     | _ -> check bool "global functions block not found" false true
   in
   try

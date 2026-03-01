@@ -32,51 +32,21 @@ type python_function_call = {
 
 (** Convert AST types to C types *)
 let ast_type_to_c_type = function
-  | Ast.U8 -> "uint8_t" 
-  | Ast.U16 -> "uint16_t" 
-  | Ast.U32 -> "uint32_t" 
+  | Ast.U8 -> "uint8_t"
+  | Ast.U16 -> "uint16_t"
+  | Ast.U32 -> "uint32_t"
   | Ast.U64 -> "uint64_t"
-  | Ast.I8 -> "int8_t" 
-  | Ast.I16 -> "int16_t" 
-  | Ast.I32 -> "int32_t" 
+  | Ast.I8 -> "int8_t"
+  | Ast.I16 -> "int16_t"
+  | Ast.I32 -> "int32_t"
   | Ast.I64 -> "int64_t"
-  | Ast.Bool -> "bool" 
-  | Ast.Char -> "char" 
+  | Ast.Bool -> "bool"
+  | Ast.Char -> "char"
   | Ast.Void -> "void"
   | _ -> "int" (* fallback for complex types *)
 
 (** Convert IR types to C types *)
-let rec c_type_from_ir_type = function
-  | IRU8 -> "uint8_t"
-  | IRU16 -> "uint16_t"
-  | IRU32 -> "uint32_t"
-  | IRU64 -> "uint64_t"
-  | IRI8 -> "int8_t"
-  | IRI16 -> "int16_t"
-  | IRI32 -> "int32_t"
-  | IRI64 -> "int64_t"
-  | IRF32 -> "float"
-  | IRF64 -> "double"
-  | IRVoid -> "void"
-  | IRBool -> "bool"
-  | IRChar -> "char"
-  | IRStr _ -> "char" (* Base type for userspace string - size handled in declaration *)
-  | IRPointer (inner_type, _) -> sprintf "%s*" (c_type_from_ir_type inner_type)
-  | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (c_type_from_ir_type inner_type) size
-  | IRStruct (name, _) -> sprintf "struct %s" name
-  | IREnum (name, _) -> sprintf "enum %s" name
-  | IRResult (ok_type, _err_type) -> c_type_from_ir_type ok_type (* simplified to ok type *)
-  | IRTypeAlias (name, _) -> name (* Use the alias name directly *)
-  | IRStructOps (name, _) -> sprintf "struct %s_ops" name (* struct_ops as function pointer structs *)
-  | IRFunctionPointer (param_types, return_type) -> 
-      (* For function pointers, we need special handling - this is used for type aliases *)
-      let return_type_str = c_type_from_ir_type return_type in
-      let param_types_str = List.map c_type_from_ir_type param_types in
-      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*)" return_type_str ^ sprintf "(%s)" params_str  (* Function pointer type *)
-  | IRRingbuf (_value_type, _size) ->
-      (* Ring buffer objects are represented as ring_buffer pointers in userspace *)
-      "struct ring_buffer*"
+let c_type_from_ir_type = Codegen_common.ir_type_to_c Codegen_common.UserspaceStd
 
 (** Collect Python function calls from IR programs *)
 let collect_python_function_calls ir_programs resolved_imports =
@@ -1212,25 +1182,8 @@ let generate_declarations_in_source_order_userspace ?symbol_table ir_multi_prog 
   List.iter (fun source_decl ->
     match source_decl.Ir.decl_desc with
     | Ir.IRDeclTypeAlias (name, ir_type, _pos) ->
-        (* Generate type alias definition with special handling for function pointers *)
-        let typedef_str = match ir_type with
-         | IRFunctionPointer (param_types, return_type) ->
-             (* Special syntax for function pointer typedefs *)
-             let return_type_str = c_type_from_ir_type return_type in
-             let param_types_str = List.map c_type_from_ir_type param_types in
-             let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-             sprintf "typedef %s (*%s)(%s);" return_type_str name params_str
-         | IRArray (inner_type, size, _) ->
-             (* Special syntax for array typedefs: typedef element_type alias_name[size]; *)
-             let element_type_str = c_type_from_ir_type inner_type in
-             sprintf "typedef %s %s[%d];" element_type_str name size
-         | _ ->
-             (* Regular type alias *)
-             let c_type = c_type_from_ir_type ir_type in
-             sprintf "typedef %s %s;" c_type name
-        in
-        declarations := typedef_str :: !declarations
-    
+        declarations := (Codegen_common.generate_typedef Codegen_common.UserspaceStd name ir_type) :: !declarations
+
     | Ir.IRDeclStructDef (name, fields, pos) ->
         (* Filter out kernel-defined structs *)
         let should_include_struct = match symbol_table with
@@ -1239,39 +1192,15 @@ let generate_declarations_in_source_order_userspace ?symbol_table ir_multi_prog 
                | Some symbol ->
                    (match symbol.Symbol_table.kind with
                     | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
-                        let is_builtin = struct_pos.filename = "<builtin>" in
-                        let is_btf_struct = Filename.check_suffix struct_pos.filename ".kh" in
-                        not is_builtin && not is_btf_struct
+                        not (Codegen_common.is_kernel_defined_pos struct_pos)
                     | _ -> true)  (* Not a struct, include it *)
                | None -> true)  (* Not found in symbol table, include it *)
-          | None -> 
-              (* Fallback: check the position from the declaration itself *)
-              let is_builtin = pos.filename = "<builtin>" in
-              let is_btf_struct = Filename.check_suffix pos.filename ".kh" in
-              not is_builtin && not is_btf_struct
+          | None ->
+              not (Codegen_common.is_kernel_defined_pos pos)
         in
-        if should_include_struct then (
-          (* Generate struct definition *)
-          let field_lines = List.map (fun (field_name, field_type) ->
-            let field_declaration = match field_type with
-              | IRArray (inner_type, size, _) ->
-                  (* Special syntax for array fields: element_type field_name[size]; *)
-                  let element_type_str = c_type_from_ir_type inner_type in
-                  sprintf "    %s %s[%d];" element_type_str field_name size
-              | IRStr size ->
-                  (* Special syntax for string fields: char field_name[size]; *)
-                  sprintf "    char %s[%d];" field_name size
-              | _ ->
-                  (* Regular field *)
-                  let c_type = c_type_from_ir_type field_type in
-                  sprintf "    %s %s;" c_type field_name
-            in
-            field_declaration
-          ) fields in
-          let struct_def = sprintf "struct %s {\n%s\n};" name (String.concat "\n" field_lines) in
-          declarations := struct_def :: !declarations
-        )
-    
+        if should_include_struct then
+          declarations := (Codegen_common.generate_struct_def Codegen_common.UserspaceStd name fields) :: !declarations
+
     | Ir.IRDeclEnumDef (name, values, pos) ->
         (* Filter out kernel-defined enums *)
         let should_include_enum = match symbol_table with
@@ -1280,27 +1209,14 @@ let generate_declarations_in_source_order_userspace ?symbol_table ir_multi_prog 
                | Some symbol ->
                    (match symbol.Symbol_table.kind with
                     | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
-                        let is_builtin = enum_pos.filename = "<builtin>" in
-                        let is_btf_enum = Filename.check_suffix enum_pos.filename ".kh" in
-                        not is_builtin && not is_btf_enum
+                        not (Codegen_common.is_kernel_defined_pos enum_pos)
                     | _ -> true)  (* Not an enum, include it *)
                | None -> true)  (* Not found in symbol table, include it *)
-          | None -> 
-              (* Fallback: check the position from the declaration itself *)
-              let is_builtin = pos.filename = "<builtin>" in
-              let is_btf_enum = Filename.check_suffix pos.filename ".kh" in
-              not is_builtin && not is_btf_enum
+          | None ->
+              not (Codegen_common.is_kernel_defined_pos pos)
         in
-        if should_include_enum then (
-          (* Generate enum definition *)
-          let value_count = List.length values in
-          let enum_lines = List.mapi (fun i (const_name, value) ->
-            let line = sprintf "    %s = %s%s" const_name (Ast.IntegerValue.to_string value) (if i = value_count - 1 then "" else ",") in
-            line
-          ) values in
-          let enum_def = sprintf "enum %s {\n%s\n};" name (String.concat "\n" enum_lines) in
-          declarations := enum_def :: !declarations
-        )
+        if should_include_enum then
+          declarations := (Codegen_common.generate_enum_def name values) :: !declarations
     
     | Ir.IRDeclMapDef _map_def ->
         (* Skip maps in userspace - they're handled separately *)
@@ -1387,18 +1303,7 @@ let get_register_var_name ctx reg_id ir_type =
       var_name
 
 (** Generate proper C declaration for any IR type with variable name *)
-let generate_c_declaration ir_type var_name =
-  match ir_type with
-  | IRFunctionPointer (param_types, return_type) ->
-      let return_type_str = c_type_from_ir_type return_type in
-      let param_types_str = List.map c_type_from_ir_type param_types in
-      let params_str = if param_types_str = [] then "void" else String.concat ", " param_types_str in
-      sprintf "%s (*%s)(%s)" return_type_str var_name params_str
-  | IRStr size -> sprintf "char %s[%d]" var_name size
-  | IRArray (element_type, size, _) ->
-      let element_type_str = c_type_from_ir_type element_type in
-      sprintf "%s %s[%d]" element_type_str var_name size
-  | _ -> sprintf "%s %s" (c_type_from_ir_type ir_type) var_name
+let generate_c_declaration = Codegen_common.c_declaration Codegen_common.UserspaceStd
 
 (** Generate C value from IR value *)
 let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =

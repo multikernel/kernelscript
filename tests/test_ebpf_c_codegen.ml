@@ -472,7 +472,7 @@ let test_no_empty_struct_generation () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -532,7 +532,7 @@ let test_type_alias_struct_ordering () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -660,7 +660,7 @@ let test_kernel_struct_filtering () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [user_struct_decl; kernel_struct_decl; builtin_struct_decl];
     multi_pos = user_pos;
@@ -785,7 +785,7 @@ let test_complete_type_alias_fix_integration () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -831,7 +831,6 @@ let test_string_size_collection_from_userspace_structs () =
   let userspace_program = {
     Kernelscript.Ir.userspace_structs = [userspace_struct];
     userspace_functions = [];
-    userspace_configs = [];
     coordinator_logic = {
       setup_logic = [];
       event_processing = [];
@@ -855,7 +854,7 @@ let test_string_size_collection_from_userspace_structs () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = Some userspace_program;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -907,7 +906,7 @@ let test_declaration_ordering_fix () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -961,7 +960,7 @@ let test_bpf_printk_string_literal_fix () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-    userspace_bindings = [];
+
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
     source_declarations = [];
     multi_pos = dummy_pos;
@@ -1017,7 +1016,7 @@ let test_string_escaping_in_bpf_printk () =
       struct_ops_declarations = [];
       struct_ops_instances = [];
       userspace_program = None;
-      userspace_bindings = [];
+  
       ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
       source_declarations = [];
       multi_pos = dummy_pos;

@@ -25,7 +25,6 @@
 
 open Ast
 open Ir
-open Maps
 open Loop_analysis
 
 (** Context for IR generation *)
@@ -2625,86 +2624,6 @@ and generate_coordinator_logic _ctx _ir_functions =
   make_ir_coordinator_logic setup_logic event_processing cleanup_logic config_management
   
 
-let convert_config_declarations_to_ir config_declarations =
-  List.map (fun config_decl ->
-    let ir_fields = List.map (fun field ->
-      let ir_type = config_field_type_to_ir_type field.Ast.field_type in
-      (field.Ast.field_name, ir_type)
-    ) config_decl.Ast.config_fields in
-    {
-      config_struct_name = config_decl.Ast.config_name;
-      fields = ir_fields;
-      serialization = Json;
-    }
-  ) config_declarations
-
-let generate_userspace_bindings_from_functions _prog_def userspace_functions maps config_declarations =
-  (* Generate bindings based on userspace functions *)
-  if List.length userspace_functions = 0 then (
-    (* Default bindings when no userspace functions are specified *)
-    let map_wrappers = List.map (fun map_def ->
-      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in
-      {
-        wrapper_map_name = map_def.map_name;
-        operations;
-        safety_checks = true;
-      }
-    ) maps in
-    
-    let config_structs = convert_config_declarations_to_ir config_declarations in
-    
-    [{
-      language = C;
-      map_wrappers;
-      event_handlers = [];
-      config_structs;
-    }]
-  ) else (
-    (* Generate bindings based on userspace functions *)
-    let map_wrappers = List.map (fun map_def ->
-      let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in
-      {
-        wrapper_map_name = map_def.map_name;
-        operations;
-        safety_checks = true;
-      }
-    ) maps in
-    
-    let config_structs = convert_config_declarations_to_ir config_declarations in
-    
-    let target_languages = [C] in
-    
-    List.map (fun language ->
-      {
-        language;
-        map_wrappers;
-        event_handlers = [];
-        config_structs;
-      }
-    ) target_languages
-  )
-
-(** Generate userspace bindings for multiple programs *)
-let generate_userspace_bindings_from_multi_programs _prog_defs _userspace_functions maps config_declarations =
-  (* Generate bindings for all programs with userspace functions *)
-  let map_wrappers = List.map (fun map_def ->
-    let operations = [OpLookup; OpUpdate; OpDelete; OpIterate] in
-    {
-      wrapper_map_name = map_def.map_name;
-      operations;
-      safety_checks = true;
-    }
-  ) maps in
-  
-  let config_structs = convert_config_declarations_to_ir config_declarations in
-  
-  [{
-    language = C;
-    map_wrappers;
-    event_handlers = [];
-    config_structs;
-  }]
-
 (** Lower a single program from AST to IR *)
 let lower_single_program ctx prog_def _global_ir_maps _kernel_shared_functions =
   (* Include program-scoped maps *)
@@ -3096,44 +3015,6 @@ let lower_multi_program ast symbol_table source_name =
   (* Use maps from Phase 1 - no need to reprocess global maps *)
   let all_global_maps = all_maps in
   
-  (* Convert ir_map_def list to map_flag_info list for userspace bindings *)
-  let ir_map_def_to_map_flag_info (ir_map : ir_map_def) : Maps.map_flag_info =
-    (* Find assignments to this specific map *)
-    let all_map_assignments = Map_assignment.extract_map_assignments_from_ast ast in
-    let map_assignments = List.filter (fun assignment -> 
-      assignment.Map_assignment.map_name = ir_map.map_name
-    ) all_map_assignments in
-    
-    (* Extract initial values from assignments with literal keys and values *)
-    let initial_values = List.filter_map (fun assignment ->
-      match assignment.Map_assignment.key_expr.expr_desc, assignment.Map_assignment.value_expr.expr_desc with
-      | Literal key_lit, Literal value_lit ->
-          let key_str = match key_lit with
-            | IntLit (i, _) -> Ast.IntegerValue.to_string i
-            | StringLit s -> "\"" ^ s ^ "\""
-            | _ -> "0"
-          in
-          let value_str = match value_lit with
-            | IntLit (i, _) -> Ast.IntegerValue.to_string i
-            | StringLit s -> "\"" ^ s ^ "\""
-            | BoolLit b -> if b then "1" else "0"
-            | _ -> "0"
-          in
-          Some (key_str ^ ":" ^ value_str)
-      | _ -> None
-    ) map_assignments in
-    
-    {
-      Maps.map_name = ir_map.map_name;
-      has_initial_values = List.length initial_values > 0;
-      initial_values;
-      key_type = string_of_ir_type ir_map.map_key_type;
-      value_type = string_of_ir_type ir_map.map_value_type;
-    }
-  in
-  
-  let map_flag_infos = List.map ir_map_def_to_map_flag_info all_global_maps in
-  
   (* Separate global functions by scope and extract @helper attributed functions as kernel shared functions *)
   let all_global_functions = List.filter_map (function
     | Ast.GlobalFunction func -> Some func
@@ -3257,7 +3138,7 @@ let lower_multi_program ast symbol_table source_name =
       (* Copy maps from main context to userspace context *)
       copy_maps_to_context ctx userspace_ctx;
       let ir_functions = List.map (fun func -> lower_userspace_function userspace_ctx func) userspace_functions in
-      Some (make_ir_userspace_program ir_functions ir_userspace_structs [] (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
+      Some (make_ir_userspace_program ir_functions ir_userspace_structs (generate_coordinator_logic userspace_ctx ir_functions) (match userspace_functions with [] -> { line = 1; column = 1; filename = source_name } | h::_ -> h.func_pos))
   in
   
   (* Extract config declarations from AST *)
@@ -3401,23 +3282,20 @@ let lower_multi_program ast symbol_table source_name =
       config_decl.Ast.config_pos
   ) config_declarations in
   
-  (* Generate userspace bindings *)
-  let userspace_bindings = generate_userspace_bindings_from_multi_programs all_prog_defs userspace_functions map_flag_infos config_declarations in
-
   (* Create multi-program IR *)
   let multi_pos = match all_prog_defs with
     | [] -> { line = 1; column = 1; filename = source_name }
     | first :: _ -> first.prog_pos
   in
-  
+
   (* Combine both traditional struct_ops declarations and impl block declarations *)
   let combined_struct_ops_declarations = ir_struct_ops_declarations @ ir_impl_block_declarations in
-  
-  make_ir_multi_program source_name ir_programs ir_kernel_functions all_global_maps 
+
+  make_ir_multi_program source_name ir_programs ir_kernel_functions all_global_maps
     ~global_configs:ir_global_configs ~global_variables:all_global_vars
     ~struct_ops_declarations:combined_struct_ops_declarations
-    ~struct_ops_instances:ir_struct_ops_instances ?userspace_program:userspace_program 
-    ~userspace_bindings:userspace_bindings ~source_declarations:(List.rev !source_declarations) multi_pos
+    ~struct_ops_instances:ir_struct_ops_instances ?userspace_program:userspace_program
+    ~source_declarations:(List.rev !source_declarations) multi_pos
 
 (** Main entry point for IR generation *)
 let generate_ir ?(use_type_annotations=false) ast symbol_table source_name =
