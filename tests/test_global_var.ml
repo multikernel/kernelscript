@@ -870,9 +870,6 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     check_c_code_contains "__hidden __attribute__((aligned(8))) __u32 local_counter = 200;" "local variable with __hidden";
     check_c_code_contains "__hidden __attribute__((aligned(8))) __u64 local_secret = 0xdeadbeef;" "local variable with hex literal (preserved format)";
     
-    (* Verify that the comment indicating global variables section exists *)
-    check_c_code_contains "/* Global variables */" "global variables section comment";
-    
     (* Verify boolean values use 0/1 not true/false *)
     if string_contains_substring c_code "false" || string_contains_substring c_code "true" then
       fail "C code should not contain 'true' or 'false' literals - should use 0/1";

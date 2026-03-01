@@ -27,6 +27,8 @@ open Ast
 open Ir
 open Loop_analysis
 
+module StringSet = Set.Make(String)
+
 (** Context for IR generation *)
 type ir_context = {
   (* Next available temporary variable ID *)
@@ -2808,7 +2810,181 @@ let lower_multi_program ast symbol_table source_name =
   
   (* Analyze assignment patterns for optimization early *)
   let _optimization_info = analyze_assignment_patterns ctx ast in
-  
+
+  (* Pre-lower functions and programs so they can be inserted in source order *)
+
+  (* Extract impl blocks as struct_ops declarations *)
+  let impl_block_declarations = List.filter_map (function
+    | Ast.ImplBlock impl_block ->
+        let has_struct_ops_attr = List.exists (function
+          | Ast.AttributeWithArg ("struct_ops", _) -> true
+          | _ -> false
+        ) impl_block.impl_attributes in
+        if has_struct_ops_attr then Some impl_block else None
+    | _ -> None
+  ) ast in
+
+  (* Find all program declarations by converting from attributed functions *)
+  let prog_defs = List.filter_map (function
+    | Ast.AttributedFunction attr_func ->
+        (match attr_func.attr_list with
+         | SimpleAttribute prog_type_str :: _ ->
+             (match prog_type_str with
+              | "kfunc" -> None
+              | "private" -> None
+              | "helper" -> None
+              | "test" -> None
+              | _ ->
+                  let prog_type = match prog_type_str with
+                    | "xdp" -> Ast.Xdp
+                    | "tc" -> Ast.Tc
+                    | "tracepoint" -> Ast.Tracepoint
+                    | _ -> failwith ("Unknown program type: " ^ prog_type_str)
+                  in
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = prog_type;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_target = None;
+                    prog_pos = attr_func.attr_pos;
+                  })
+                  | AttributeWithArg (attr_name, target_func) :: _ ->
+             (match attr_name with
+              | "tc" ->
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = Ast.Tc;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_target = Some target_func;
+                    prog_pos = attr_func.attr_pos;
+                  }
+              | "probe" ->
+                  let probe_kind = if String.contains target_func '+' then Ast.Kprobe else Ast.Fprobe in
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = Ast.Probe probe_kind;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_target = Some target_func;
+                    prog_pos = attr_func.attr_pos;
+                  }
+              | "tracepoint" ->
+                  Some {
+                    Ast.prog_name = attr_func.attr_function.func_name;
+                    prog_type = Ast.Tracepoint;
+                    prog_functions = [attr_func.attr_function];
+                    prog_maps = [];
+                    prog_structs = [];
+                    prog_target = Some target_func;
+                    prog_pos = attr_func.attr_pos;
+                  }
+              | _ -> None)
+         | _ -> None)
+    | _ -> None
+  ) ast in
+
+  (* Add impl block functions as program definitions *)
+  let impl_block_prog_defs = List.map (fun impl_block ->
+    List.filter_map (fun item ->
+      match item with
+      | Ast.ImplFunction func ->
+          Some {
+            Ast.prog_name = func.func_name;
+            prog_type = Ast.StructOps;
+            prog_functions = [func];
+            prog_maps = [];
+            prog_structs = [];
+            prog_target = None;
+            prog_pos = func.func_pos;
+          }
+      | Ast.ImplStaticField (_, _) -> None
+    ) impl_block.impl_items
+  ) impl_block_declarations |> List.concat in
+
+  let all_prog_defs = prog_defs @ impl_block_prog_defs in
+
+  let struct_ops_declarations = List.filter_map (function
+    | Ast.StructDecl struct_def ->
+        let has_struct_ops_attr = List.exists (function
+          | Ast.AttributeWithArg ("struct_ops", _) -> true
+          | _ -> false
+        ) struct_def.struct_attributes in
+        if has_struct_ops_attr then Some struct_def else None
+    | _ -> None
+  ) ast in
+
+  if all_prog_defs = [] && struct_ops_declarations = [] && impl_block_declarations = [] then
+    failwith "No program declarations or struct_ops found";
+
+  if all_prog_defs <> [] then
+    validate_multiple_programs all_prog_defs;
+
+  (* Also add all program-scoped maps to main context for userspace processing *)
+  List.iter (fun prog_def ->
+    let program_scoped_maps = prog_def.prog_maps in
+    let ir_program_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) program_scoped_maps in
+    add_maps_to_context ctx ir_program_maps
+  ) all_prog_defs;
+
+  let all_global_maps = all_maps in
+
+  (* Separate global functions by scope *)
+  let all_global_functions = List.filter_map (function
+    | Ast.GlobalFunction func -> Some func
+    | _ -> None
+  ) ast in
+
+  let helper_functions = List.filter_map (function
+    | Ast.AttributedFunction attr_func ->
+        let is_helper = List.exists (function
+          | Ast.SimpleAttribute "helper" -> true
+          | _ -> false
+        ) attr_func.attr_list in
+        if is_helper then Some attr_func.attr_function else None
+    | _ -> None
+  ) ast in
+
+  let (kernel_shared_functions, userspace_functions) = List.partition (fun func ->
+    func.Ast.func_scope = Ast.Kernel
+  ) all_global_functions in
+
+  let all_kernel_shared_functions = kernel_shared_functions @ helper_functions in
+
+  let helper_function_names = List.map (fun func -> func.Ast.func_name) helper_functions in
+
+  (* Lower kernel functions *)
+  let kernel_ctx = create_context ~global_variables:all_global_vars ~helper_functions:helper_function_names symbol_table in
+  copy_maps_to_context ctx kernel_ctx;
+  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None ~func_target:None) all_kernel_shared_functions in
+
+  (* Lower each program *)
+  let ir_programs = List.map (fun prog_def ->
+    let prog_ctx = create_context ~global_variables:all_global_vars ~helper_functions:helper_function_names symbol_table in
+    copy_maps_to_context ctx prog_ctx;
+    lower_single_program prog_ctx prog_def all_global_maps all_kernel_shared_functions
+  ) all_prog_defs in
+
+  (* Build lookup tables for source-order insertion *)
+  let kernel_func_table = Hashtbl.create 16 in
+  List.iter (fun ir_func ->
+    Hashtbl.replace kernel_func_table ir_func.func_name ir_func
+  ) ir_kernel_functions;
+
+  let program_table = Hashtbl.create 16 in
+  List.iter2 (fun prog_def ir_program ->
+    Hashtbl.replace program_table prog_def.Ast.prog_name (prog_def, ir_program)
+  ) all_prog_defs ir_programs;
+
+  (* Build set of kernel shared function names for lookup *)
+  let kernel_func_names = List.fold_left (fun acc func ->
+    StringSet.add func.Ast.func_name acc
+  ) StringSet.empty all_kernel_shared_functions in
+
   (* Phase 3: Process declarations in original order *)
   let source_declarations = ref [] in
   let declaration_order = ref 0 in
@@ -2867,227 +3043,52 @@ let lower_multi_program ast symbol_table source_name =
          | Ast.ConfigDecl config_decl ->
              let ir_config_def = lower_config_declaration symbol_table config_decl in
              add_source_declaration (IRDeclConfigDef ir_config_def) config_decl.config_pos
-         | Ast.GlobalFunction _ ->
-             (* Global functions are handled as kernel shared functions or userspace functions *)
-             ()
+         | Ast.GlobalFunction func ->
+             (* Insert kernel shared functions at source position *)
+             if StringSet.mem func.func_name kernel_func_names then (
+               match Hashtbl.find_opt kernel_func_table func.func_name with
+               | Some ir_func ->
+                   add_source_declaration (IRDeclFunctionDef ir_func) func.func_pos
+               | None -> ()
+             )
+             (* Userspace functions are skipped - they're handled by userspace program generation *)
          | Ast.StructDecl struct_def ->
              (* Include ALL structs - let the compiler eliminate unused ones *)
              let ir_fields = List.map (fun (field_name, field_type) ->
                (field_name, ast_type_to_ir_type_with_context symbol_table field_type)
              ) struct_def.struct_fields in
              add_source_declaration (IRDeclStructDef (struct_def.struct_name, ir_fields, struct_def.struct_pos)) struct_def.struct_pos
-         | Ast.AttributedFunction _ | Ast.ImplBlock _ -> 
-             (* These are handled elsewhere *)
-             ()
+         | Ast.AttributedFunction attr_func ->
+             (* Insert program entry functions at source position *)
+             let func_name = attr_func.attr_function.func_name in
+             (match Hashtbl.find_opt program_table func_name with
+              | Some (prog_def, ir_program) ->
+                  let should_add =
+                    prog_def.prog_type = Ast.StructOps ||
+                    List.length attr_func.attr_function.func_body > 0
+                  in
+                  if should_add then
+                    add_source_declaration (IRDeclFunctionDef ir_program.entry_function) ir_program.entry_function.func_pos
+              | None ->
+                  (* Could be a @helper function *)
+                  (match Hashtbl.find_opt kernel_func_table func_name with
+                   | Some ir_func ->
+                       add_source_declaration (IRDeclFunctionDef ir_func) ir_func.func_pos
+                   | None -> ()))
+         | Ast.ImplBlock impl_block ->
+             (* Insert impl block functions at source position *)
+             List.iter (fun item ->
+               match item with
+               | Ast.ImplFunction func ->
+                   (match Hashtbl.find_opt program_table func.func_name with
+                    | Some (_prog_def, ir_program) ->
+                        add_source_declaration (IRDeclFunctionDef ir_program.entry_function) ir_program.entry_function.func_pos
+                    | None -> ())
+               | Ast.ImplStaticField _ -> ()
+             ) impl_block.impl_items
          | _ -> () )
   );
   
-  (* Extract impl blocks as struct_ops declarations *)
-  let impl_block_declarations = List.filter_map (function
-    | Ast.ImplBlock impl_block ->
-        (* Check if this impl block has @struct_ops attribute *)
-        let has_struct_ops_attr = List.exists (function
-          | Ast.AttributeWithArg ("struct_ops", _) -> true
-          | _ -> false
-        ) impl_block.impl_attributes in
-        if has_struct_ops_attr then Some impl_block else None
-    | _ -> None
-  ) ast in
-  
-  (* Find all program declarations by converting from attributed functions *)
-  let prog_defs = List.filter_map (function
-    | Ast.AttributedFunction attr_func ->
-        (* Convert attributed function to program_def for compatibility *)
-        (match attr_func.attr_list with
-         | SimpleAttribute prog_type_str :: _ ->
-             (match prog_type_str with
-              | "kfunc" -> None  (* Skip kfunc functions - they're not eBPF programs *)
-              | "private" -> None  (* Skip private functions - they're not eBPF programs *)
-              | "helper" -> None  (* Skip helper functions - they're shared eBPF functions, not individual programs *)
-              | "test" -> None  (* Skip test functions - they're userspace test functions, not eBPF programs *)
-              | _ ->
-                  let prog_type = match prog_type_str with
-                    | "xdp" -> Ast.Xdp
-                    | "tc" -> Ast.Tc  
-
-                    | "tracepoint" -> Ast.Tracepoint
-                    | _ -> failwith ("Unknown program type: " ^ prog_type_str)
-                  in
-                  Some {
-                    Ast.prog_name = attr_func.attr_function.func_name;
-                    prog_type = prog_type;
-                    prog_functions = [attr_func.attr_function];
-                    prog_maps = [];
-                    prog_structs = [];
-                    prog_target = None;
-                    prog_pos = attr_func.attr_pos;
-                  })
-                  | AttributeWithArg (attr_name, target_func) :: _ ->
-             (* Handle attributes with arguments like @tc("ingress"), @probe("sys_read") *)
-             (match attr_name with
-              | "tc" ->
-                  Some {
-                    Ast.prog_name = attr_func.attr_function.func_name;
-                    prog_type = Ast.Tc;
-                    prog_functions = [attr_func.attr_function];
-                    prog_maps = [];
-                    prog_structs = [];
-                    prog_target = Some target_func;
-                    prog_pos = attr_func.attr_pos;
-                  }
-              | "probe" ->
-                  (* Determine probe type based on whether target contains offset *)
-                  let probe_kind = if String.contains target_func '+' then Ast.Kprobe else Ast.Fprobe in
-                  Some {
-                    Ast.prog_name = attr_func.attr_function.func_name;
-                    prog_type = Ast.Probe probe_kind;
-                    prog_functions = [attr_func.attr_function];
-                    prog_maps = [];
-                    prog_structs = [];
-                    prog_target = Some target_func;
-                    prog_pos = attr_func.attr_pos;
-                  }
-              | "tracepoint" ->
-                  Some {
-                    Ast.prog_name = attr_func.attr_function.func_name;
-                    prog_type = Ast.Tracepoint;
-                    prog_functions = [attr_func.attr_function];
-                    prog_maps = [];
-                    prog_structs = [];
-                    prog_target = Some target_func;
-                    prog_pos = attr_func.attr_pos;
-                  }
-              | _ -> None)
-         | _ -> None)
-    | _ -> None
-  ) ast in
-  
-  (* Add impl block functions as program definitions *)
-  let impl_block_prog_defs = List.map (fun impl_block ->
-    List.filter_map (fun item ->
-      match item with
-      | Ast.ImplFunction func ->
-          (* Create a program definition for each impl block function *)
-          (* These will be eBPF programs with SEC("struct_ops/function_name") *)
-          Some {
-            Ast.prog_name = func.func_name;
-            prog_type = Ast.StructOps;  (* Use the struct_ops program type *)
-            prog_functions = [func];
-            prog_maps = [];
-            prog_structs = [];
-            prog_target = None; (* struct_ops don't have targets *)
-            prog_pos = func.func_pos;
-          }
-      | Ast.ImplStaticField (_, _) -> None  (* Static fields are not programs *)
-    ) impl_block.impl_items
-  ) impl_block_declarations |> List.concat in
-  
-  (* Combine regular program definitions with impl block program definitions *)
-  let all_prog_defs = prog_defs @ impl_block_prog_defs in
-  
-  (* Allow compilation if we have either traditional eBPF programs OR struct_ops declarations *)
-  (* Extract struct_ops declarations early to check for valid compilation targets *)
-  let struct_ops_declarations = List.filter_map (function
-    | Ast.StructDecl struct_def ->
-        (* Check if this struct has @struct_ops attribute *)
-        let has_struct_ops_attr = List.exists (function
-          | Ast.AttributeWithArg ("struct_ops", _) -> true
-          | _ -> false
-        ) struct_def.struct_attributes in
-        if has_struct_ops_attr then Some struct_def else None
-    | _ -> None
-  ) ast in
-  
-  if all_prog_defs = [] && struct_ops_declarations = [] && impl_block_declarations = [] then
-    failwith "No program declarations or struct_ops found";
-  
-  (* Only validate multiple programs if we have any traditional eBPF programs *)
-  if all_prog_defs <> [] then
-    validate_multiple_programs all_prog_defs;
-  
-  (* Also add all program-scoped maps to main context for userspace processing *)
-  List.iter (fun prog_def ->
-    let program_scoped_maps = prog_def.prog_maps in
-    let ir_program_maps = List.map (fun map_decl -> lower_map_declaration ctx.symbol_table map_decl) program_scoped_maps in
-    add_maps_to_context ctx ir_program_maps
-  ) all_prog_defs;
-  
-  (* Use maps from Phase 1 - no need to reprocess global maps *)
-  let all_global_maps = all_maps in
-  
-  (* Separate global functions by scope and extract @helper attributed functions as kernel shared functions *)
-  let all_global_functions = List.filter_map (function
-    | Ast.GlobalFunction func -> Some func
-    | _ -> None
-  ) ast in
-  
-  (* Extract @helper attributed functions and treat them as kernel shared functions *)
-  let helper_functions = List.filter_map (function
-    | Ast.AttributedFunction attr_func ->
-        let is_helper = List.exists (function
-          | Ast.SimpleAttribute "helper" -> true
-          | _ -> false
-        ) attr_func.attr_list in
-        if is_helper then
-          Some attr_func.attr_function
-        else
-          None
-    | _ -> None
-  ) ast in
-  
-  let (kernel_shared_functions, userspace_functions) = List.partition (fun func ->
-    func.Ast.func_scope = Ast.Kernel
-  ) all_global_functions in
-  
-  (* Combine regular kernel functions with helper functions *)
-  let all_kernel_shared_functions = kernel_shared_functions @ helper_functions in
-  
-  (* Extract helper function names for context *)
-  let helper_function_names = List.map (fun func -> func.Ast.func_name) helper_functions in
-  
-  (* Lower kernel functions once - they are shared across all programs *)
-  let kernel_ctx = create_context ~global_variables:all_global_vars ~helper_functions:helper_function_names symbol_table in
-  (* Copy maps from main context to kernel context *)
-  copy_maps_to_context ctx kernel_ctx;
-  let ir_kernel_functions = List.map (lower_function kernel_ctx "kernel" ~program_type:None ~func_target:None) all_kernel_shared_functions in
-  
-  (* Add kernel shared functions (including @helper functions) to source declarations *)
-  (* Only add if not already present as a global function *)
-  List.iter (fun ir_func ->
-    let func_name = ir_func.func_name in
-    let already_exists = List.exists (fun decl ->
-      match decl.decl_desc with
-      | IRDeclFunctionDef existing_func -> existing_func.func_name = func_name
-      | _ -> false
-    ) !source_declarations in
-    if not already_exists then
-      add_source_declaration (IRDeclFunctionDef ir_func) ir_func.func_pos
-  ) ir_kernel_functions;
-  
-  (* Lower each program *)
-  let ir_programs = List.map (fun prog_def ->
-    (* Create a fresh context for each program *)
-    let prog_ctx = create_context ~global_variables:all_global_vars ~helper_functions:helper_function_names symbol_table in
-    (* Copy maps from main context to program context *)
-    copy_maps_to_context ctx prog_ctx;
-    lower_single_program prog_ctx prog_def all_global_maps all_kernel_shared_functions
-  ) all_prog_defs in
-  
-  (* Add entry functions from attributed programs to source declarations *)
-  (* Only add functions that have non-empty bodies (exclude test programs) or are struct_ops *)
-  List.iter2 (fun prog_def ir_program ->
-    let should_add = 
-      prog_def.prog_type = Ast.StructOps ||
-      List.exists (function
-        | Ast.AttributedFunction attr_func -> 
-            attr_func.attr_function.func_name = prog_def.prog_name &&
-            List.length attr_func.attr_function.func_body > 0
-        | _ -> false
-      ) ast in
-    if should_add then
-      add_source_declaration (IRDeclFunctionDef ir_program.entry_function) ir_program.entry_function.func_pos
-  ) all_prog_defs ir_programs;
-
   (* Convert AST userspace functions to IR userspace program *)
   let userspace_program = 
     if List.length userspace_functions = 0 then

@@ -453,15 +453,13 @@ let test_string_assignment_vs_literal () =
 (** Test that empty structs are not generated for type aliases *)
 let test_no_empty_struct_generation () =
   (* Test the core bug fix: collect_struct_definitions_from_multi_program should filter empty structs *)
-  
-  (* Create IR with type aliases that would previously generate empty structs *)
-  let type_aliases = [
-    ("Counter", Kernelscript.Ast.U64);
-    ("IpAddress", Kernelscript.Ast.U32);
-  ] in
-  
+
   (* Create a minimal mock multi-program IR for testing *)
   let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  let source_declarations = [
+    Kernelscript.Ir.make_ir_type_alias_decl "Counter" Kernelscript.Ir.IRU64 0 dummy_pos;
+    Kernelscript.Ir.make_ir_type_alias_decl "IpAddress" Kernelscript.Ir.IRU32 1 dummy_pos;
+  ] in
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
     programs = [];
@@ -474,12 +472,12 @@ let test_no_empty_struct_generation () =
     userspace_program = None;
 
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
-    source_declarations = [];
+    source_declarations;
     multi_pos = dummy_pos;
   } in
-  
+
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases multi_ir in
+  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
   
   (* Core fix verification: No empty structs should be generated for type aliases *)
   check bool "no empty Counter struct" false (contains_substr c_code "struct Counter {");
@@ -494,34 +492,38 @@ let test_no_empty_struct_generation () =
 (** Test that type aliases are generated before structs in C output *)
 let test_type_alias_struct_ordering () =
   (* Test the core bug fix: generate_declarations_in_source_order preserves correct ordering *)
-  
-  let type_aliases = [("Counter", Kernelscript.Ast.U64)] in
-  
+
   (* Create a minimal mock multi-program IR with a struct that uses the type alias *)
   let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  let entry_func = {
+    Kernelscript.Ir.func_name = "test";
+    parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
+    return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
+    basic_blocks = [];
+    total_stack_usage = 0;
+    max_loop_depth = 0;
+    calls_helper_functions = [];
+    visibility = Kernelscript.Ir.Public;
+    is_main = true;
+    func_pos = dummy_pos;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
+    func_target = None;
+  } in
   let ir_program = {
     Kernelscript.Ir.name = "test";
     program_type = Kernelscript.Ast.Xdp;
-    entry_function = {
-           func_name = "test";
-     parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
-     return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
-      basic_blocks = [];
-      total_stack_usage = 0;
-      max_loop_depth = 0;
-      calls_helper_functions = [];
-      visibility = Kernelscript.Ir.Public;
-      is_main = true;
-      func_pos = dummy_pos;
-      tail_call_targets = [];
-      tail_call_index_map = Hashtbl.create 16;
-      is_tail_callable = false;
-             func_program_type = None;
-       func_target = None;
-    };
+    entry_function = entry_func;
     ir_pos = dummy_pos;
   } in
-  
+
+  let source_declarations = [
+    Kernelscript.Ir.make_ir_type_alias_decl "Counter" Kernelscript.Ir.IRU64 0 dummy_pos;
+    Kernelscript.Ir.make_ir_function_def_decl entry_func 1;
+  ] in
+
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
     programs = [ir_program];
@@ -532,21 +534,17 @@ let test_type_alias_struct_ordering () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
-    source_declarations = [];
+    source_declarations;
     multi_pos = dummy_pos;
   } in
-  
+
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases multi_ir in
-  
-  (* Core fix verification: Type alias section header is generated correctly *)
-  check bool "has type alias section header" true (contains_substr c_code "/* Type alias definitions */");
-  
+  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
+
   (* Core fix verification: Type aliases are generated correctly *)
   check bool "Counter typedef" true (contains_substr c_code "typedef __u64 Counter");
-  
+
   (* Note: Struct section may not exist if no structs are defined (correct behavior) *)
   (* The bug fix ensures proper ordering when structs ARE present, which is tested elsewhere *)
   ()
@@ -743,38 +741,40 @@ let test_hex_literal_addressing_fix () =
 (** Integration test: Verify complete fix works in generated C code *)
 let test_complete_type_alias_fix_integration () =
   (* Integration test verifying all three main bug fixes work together *)
-  
-  let type_aliases = [
-    ("IpAddress", Kernelscript.Ast.U32);
-    ("Counter", Kernelscript.Ast.U64);
-    ("PacketSize", Kernelscript.Ast.U16);
-  ] in
-  
+
   (* Create a minimal mock multi-program IR for integration testing *)
   let dummy_pos = { Kernelscript.Ast.line = 1; column = 1; filename = "test" } in
+  let entry_func = {
+    Kernelscript.Ir.func_name = "packet_analyzer";
+    parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
+    return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
+    basic_blocks = [];
+    total_stack_usage = 0;
+    max_loop_depth = 0;
+    calls_helper_functions = [];
+    visibility = Kernelscript.Ir.Public;
+    is_main = true;
+    func_pos = dummy_pos;
+    tail_call_targets = [];
+    tail_call_index_map = Hashtbl.create 16;
+    is_tail_callable = false;
+    func_program_type = None;
+    func_target = None;
+  } in
   let ir_program = {
     Kernelscript.Ir.name = "packet_analyzer";
     program_type = Kernelscript.Ast.Xdp;
-    entry_function = {
-      func_name = "packet_analyzer";
-      parameters = [("ctx", Kernelscript.Ir.IRStruct("xdp_md", []))];
-      return_type = Some (Kernelscript.Ir.IRStruct("xdp_action", []));
-      basic_blocks = [];
-      total_stack_usage = 0;
-      max_loop_depth = 0;
-      calls_helper_functions = [];
-      visibility = Kernelscript.Ir.Public;
-      is_main = true;
-      func_pos = dummy_pos;
-      tail_call_targets = [];
-      tail_call_index_map = Hashtbl.create 16;
-      is_tail_callable = false;
-             func_program_type = None;
-       func_target = None;
-    };
+    entry_function = entry_func;
     ir_pos = dummy_pos;
   } in
-  
+
+  let source_declarations = [
+    Kernelscript.Ir.make_ir_type_alias_decl "IpAddress" Kernelscript.Ir.IRU32 0 dummy_pos;
+    Kernelscript.Ir.make_ir_type_alias_decl "Counter" Kernelscript.Ir.IRU64 1 dummy_pos;
+    Kernelscript.Ir.make_ir_type_alias_decl "PacketSize" Kernelscript.Ir.IRU16 2 dummy_pos;
+    Kernelscript.Ir.make_ir_function_def_decl entry_func 3;
+  ] in
+
   let multi_ir = {
     Kernelscript.Ir.source_name = "packet_analyzer";
     programs = [ir_program];
@@ -785,26 +785,19 @@ let test_complete_type_alias_fix_integration () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
-    source_declarations = [];
+    source_declarations;
     multi_pos = dummy_pos;
   } in
-  
+
   (* Generate C code *)
-  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ~type_aliases multi_ir in
-  
+  let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program multi_ir in
+
   (* Verify no empty structs are generated for type aliases *)
   check bool "no empty Counter struct" false (contains_substr c_code "struct Counter {");
   check bool "no empty IpAddress struct" false (contains_substr c_code "struct IpAddress {");
   check bool "no empty PacketSize struct" false (contains_substr c_code "struct PacketSize {");
-  
-  (* Verify type alias definitions are properly generated *)
-  check bool "has type alias section header" true (contains_substr c_code "/* Type alias definitions */");
-  
-  (* Verified in dedicated test (test_struct_fields_use_alias_names) *)
-  (* Note: This integration test focuses on verifying the type alias generation without requiring structs *)
-  
+
   (* Verify all type aliases are properly generated *)
   check bool "IpAddress typedef" true (contains_substr c_code "typedef __u32 IpAddress");
   check bool "Counter typedef" true (contains_substr c_code "typedef __u64 Counter");
@@ -896,6 +889,11 @@ let test_declaration_ordering_fix () =
     ir_pos = dummy_pos;
   } in
   
+  let source_declarations = [
+    Kernelscript.Ir.make_ir_map_def_decl map_def 0;
+    Kernelscript.Ir.make_ir_function_def_decl main_func 1;
+  ] in
+
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
     programs = [ir_program];
@@ -906,24 +904,23 @@ let test_declaration_ordering_fix () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
-    source_declarations = [];
+    source_declarations;
     multi_pos = dummy_pos;
   } in
-  
+
   (* Generate C code *)
   let c_code = generate_c_multi_program multi_ir in
-  
+
   (* Find positions of map definition and function definition *)
-  let map_pos = try 
+  let map_pos = try
     Str.search_forward (Str.regexp "BPF_MAP_TYPE_HASH") c_code 0
   with Not_found -> -1 in
-  
-  let func_pos = try 
-    Str.search_forward (Str.regexp "SEC(\"xdp\")") c_code 0 
+
+  let func_pos = try
+    Str.search_forward (Str.regexp "SEC(\"xdp\")") c_code 0
   with Not_found -> -1 in
-  
+
   (* Verify map is defined before function *)
   check bool "map found in generated code" true (map_pos >= 0);
   check bool "function found in generated code" true (func_pos >= 0);
@@ -950,6 +947,10 @@ let test_bpf_printk_string_literal_fix () =
     ir_pos = dummy_pos;
   } in
   
+  let source_declarations = [
+    Kernelscript.Ir.make_ir_function_def_decl main_func 0;
+  ] in
+
   let multi_ir = {
     Kernelscript.Ir.source_name = "test";
     programs = [ir_program];
@@ -960,18 +961,17 @@ let test_bpf_printk_string_literal_fix () =
     struct_ops_declarations = [];
     struct_ops_instances = [];
     userspace_program = None;
-
     ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
-    source_declarations = [];
+    source_declarations;
     multi_pos = dummy_pos;
   } in
-  
+
   (* Generate C code *)
   let c_code = generate_c_multi_program multi_ir in
-  
+
   (* Verify that bpf_printk is called with string literal directly, not with .data *)
   check bool "bpf_printk called with string literal" true (contains_substr c_code "bpf_printk(\"test message\")");
-  
+
   (* Verify that .data is NOT used in bpf_printk call (this was the bug) *)
   check bool "bpf_printk does not use .data" false (contains_substr c_code "bpf_printk(str_lit_");
   check bool "bpf_printk does not use struct field" false (contains_substr c_code ".data)");
@@ -1006,6 +1006,10 @@ let test_string_escaping_in_bpf_printk () =
       ir_pos = dummy_pos;
     } in
     
+    let source_declarations = [
+      Kernelscript.Ir.make_ir_function_def_decl main_func 0;
+    ] in
+
     let multi_ir = {
       Kernelscript.Ir.source_name = "test";
       programs = [ir_program];
@@ -1016,9 +1020,8 @@ let test_string_escaping_in_bpf_printk () =
       struct_ops_declarations = [];
       struct_ops_instances = [];
       userspace_program = None;
-  
       ring_buffer_registry = Kernelscript.Ir.create_empty_ring_buffer_registry ();
-      source_declarations = [];
+      source_declarations;
       multi_pos = dummy_pos;
     } in
     

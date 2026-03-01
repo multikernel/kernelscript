@@ -326,7 +326,8 @@ let test_empty_ast () =
   
   let ir_multi_prog = lower_multi_program ast symbol_table "test" in
   
-  check int "Empty AST produces empty source declarations" 0 (List.length ir_multi_prog.source_declarations)
+  (* The program itself produces a function declaration in source_declarations *)
+  check int "Program-only AST produces one source declaration (the entry function)" 1 (List.length ir_multi_prog.source_declarations)
 
 (** Test single declaration produces correct order *)
 let test_single_declaration () =

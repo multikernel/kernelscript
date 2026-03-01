@@ -949,8 +949,8 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     in
     
     (* Generate eBPF C code (with updated IR and kfunc declarations) *)
-    let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis 
-      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~symbol_table ~tail_call_analysis:(Some tail_call_analysis) ~btf_path:btf_vmlinux_path updated_optimized_ir in
+    let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis
+      ~type_aliases ~variable_type_aliases ~kfunc_declarations ~tail_call_analysis:(Some tail_call_analysis) ~btf_path:btf_vmlinux_path updated_optimized_ir in
       
     (* Analyze kfunc dependencies for automatic kernel module loading *)
     let ir_functions = List.map (fun prog -> prog.Ir.entry_function) ir_with_ring_buffer_analysis.programs in
@@ -960,8 +960,8 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     let kernel_module_code = Kernel_module_codegen.generate_kernel_module_from_ast base_name annotated_ast in
     
     (* Generate userspace coordinator directly to output directory with tail call analysis *)
-    Userspace_codegen.generate_userspace_code_from_ir 
-      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports ~symbol_table updated_optimized_ir ~output_dir:actual_output_dir input_file;
+    Userspace_codegen.generate_userspace_code_from_ir
+      ~config_declarations ~type_aliases ~tail_call_analysis ~kfunc_dependencies ~resolved_imports updated_optimized_ir ~output_dir:actual_output_dir input_file;
     
     (* Output directory already created earlier *)
     

@@ -29,6 +29,8 @@
 open Ir
 open Printf
 
+module StringSet = Set.Make(String)
+
 (** Memory region types for dynptr API selection *)
 type memory_region_type =
   | PacketData        (* XDP/TC packet data - use bpf_dynptr_from_xdp/skb *)
@@ -460,42 +462,39 @@ let collect_string_sizes_from_multi_program ir_multi_prog =
   program_sizes @ kernel_func_sizes
 
 (** Collect enum definitions from IR types *)
-let collect_enum_definitions ?symbol_table ir_multi_prog =
+let collect_enum_definitions ir_multi_prog =
   let enum_map = Hashtbl.create 16 in
-  
+
+  (* Build a set of kernel-defined enum names from source_declarations *)
+  let kernel_defined_enums = List.fold_left (fun acc decl ->
+    match decl.Ir.decl_desc with
+    | Ir.IRDeclEnumDef (name, _, pos) when is_kernel_defined_type pos ->
+        StringSet.add name acc
+    | _ -> acc
+  ) StringSet.empty ir_multi_prog.Ir.source_declarations in
+
   let rec collect_from_type = function
     | IREnum (name, values) -> Hashtbl.replace enum_map name values
     | IRPointer (inner_type, _) -> collect_from_type inner_type
     | IRArray (inner_type, _, _) -> collect_from_type inner_type
-  
-    | IRResult (ok_type, err_type) -> 
+
+    | IRResult (ok_type, err_type) ->
         collect_from_type ok_type; collect_from_type err_type
     | _ -> ()
   in
-  
+
   let collect_from_map_def map_def =
     collect_from_type map_def.map_key_type;
     collect_from_type map_def.map_value_type
   in
-  
+
   let collect_from_value ir_val =
     collect_from_type ir_val.val_type;
     (* Also collect from enum constants *)
     (match ir_val.value_desc with
      | IREnumConstant (enum_name, constant_name, value) ->
-         (* Filter out both builtin and BTF-extracted enums *)
-         let should_include_enum = match symbol_table with
-           | Some st ->
-               (match Symbol_table.lookup_symbol st enum_name with
-                | Some symbol ->
-                    (match symbol.Symbol_table.kind with
-                     | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
-                         not (is_kernel_defined_type enum_pos)
-                     | _ -> true)  (* Not an enum, include it *)
-                | None -> true)  (* Not found in symbol table, include it *)
-           | None -> true  (* No symbol table, include it *)
-         in
-         if should_include_enum then (
+         (* Filter out kernel-defined enums using the set built from source_declarations *)
+         if not (StringSet.mem enum_name kernel_defined_enums) then (
            let current_values = try Hashtbl.find enum_map enum_name with Not_found -> [] in
            let updated_values = (constant_name, value) :: (List.filter (fun (name, _) -> name <> constant_name) current_values) in
            Hashtbl.replace enum_map enum_name updated_values
@@ -560,24 +559,6 @@ let collect_enum_definitions ?symbol_table ir_multi_prog =
     collect_from_function ir_prog.entry_function;
   ) ir_multi_prog.programs;
   
-  (* Also collect enum definitions from symbol table *)
-  (match symbol_table with
-  | Some st ->
-      let global_symbols = Symbol_table.get_global_symbols st in
-      List.iter (fun symbol ->
-        match symbol.Symbol_table.kind with
-        | Symbol_table.TypeDef (Ast.EnumDef (enum_name, enum_values, enum_pos)) ->
-            (* Only include user-defined enums - filter out both builtins and BTF-extracted enums *)
-            if not (is_kernel_defined_type enum_pos) then (
-              let processed_values = List.map (fun (const_name, opt_value) ->
-                (const_name, Option.value ~default:(Ast.Signed64 0L) opt_value)
-              ) enum_values in
-              Hashtbl.replace enum_map enum_name processed_values
-            )
-        | _ -> ()
-      ) global_symbols
-  | None -> ()); (* No symbol table provided *)
-  
   enum_map
 
 (** Generate enum definition *)
@@ -594,8 +575,8 @@ let generate_enum_definition ctx enum_name enum_values =
   emit_blank_line ctx
 
 (** Generate enum definitions *)
-let generate_enum_definitions ?symbol_table ctx ir_multi_prog =
-  let enum_map = collect_enum_definitions ?symbol_table ir_multi_prog in
+let generate_enum_definitions ctx ir_multi_prog =
+  let enum_map = collect_enum_definitions ir_multi_prog in
   
   if Hashtbl.length enum_map > 0 then (
     let all_enums = Hashtbl.fold (fun enum_name enum_values acc ->
@@ -981,122 +962,102 @@ let generate_map_definition ctx map_def =
   emit_line ctx (sprintf "} %s SEC(\".maps\");" map_def.map_name);
   emit_blank_line ctx
 
-(** Generate global variable definitions for eBPF *)
+(** Generate a single regular (non-pinned, non-ringbuf) global variable *)
+let generate_single_global_variable ctx global_var =
+  let c_type = ebpf_type_from_ir_type global_var.global_var_type in
+  let var_name = global_var.global_var_name in
+  let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
+  (match global_var.global_var_init with
+   | Some init_val ->
+       let init_str = match init_val.value_desc with
+         | IRLiteral (Ast.IntLit (i, original_opt)) ->
+             (match original_opt with
+              | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
+              | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
+              | _ -> Ast.IntegerValue.to_string i)
+         | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
+         | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" (escape_c_string s)
+         | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
+         | IRLiteral (Ast.NullLit) -> "NULL"
+         | _ -> "0"
+       in
+       if global_var.is_local then
+         emit_line ctx (sprintf "%s%s %s = %s;" local_attr c_type var_name init_str)
+       else
+         emit_line ctx (sprintf "%s %s = %s;" c_type var_name init_str)
+   | None ->
+       if global_var.is_local then
+         emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
+       else
+         emit_line ctx (sprintf "%s %s;" c_type var_name));
+  emit_blank_line ctx
+
+(** Generate a single ring buffer global variable as a map *)
+let generate_ringbuf_global_variable ctx global_var =
+  match global_var.global_var_type with
+  | IRRingbuf (_, size) ->
+      emit_line ctx (sprintf "/* Ring buffer for %s */" global_var.global_var_name);
+      emit_line ctx "struct {";
+      emit_line ctx "    __uint(type, BPF_MAP_TYPE_RINGBUF);";
+      emit_line ctx (sprintf "    __uint(max_entries, %d);" size);
+      emit_line ctx (sprintf "} %s SEC(\".maps\");" global_var.global_var_name);
+      emit_blank_line ctx
+  | _ -> ()
+
+(** Generate the pinned globals group (struct + map + helpers) *)
+let generate_pinned_globals_group ctx pinned_vars =
+  ctx.pinned_globals <- List.map (fun gv -> gv.global_var_name) pinned_vars;
+  emit_line ctx "/* Pinned global variables struct */";
+  emit_line ctx "struct __pinned_globals {";
+  List.iter (fun global_var ->
+    let c_type = ebpf_type_from_ir_type global_var.global_var_type in
+    emit_line ctx (sprintf "    %s %s;" c_type global_var.global_var_name)
+  ) pinned_vars;
+  emit_line ctx "};";
+  emit_blank_line ctx;
+  emit_line ctx "/* Pinned globals map - single entry array */";
+  emit_line ctx "struct {";
+  emit_line ctx "    __uint(type, BPF_MAP_TYPE_ARRAY);";
+  emit_line ctx "    __type(key, __u32);";
+  emit_line ctx "    __type(value, struct __pinned_globals);";
+  emit_line ctx "    __uint(max_entries, 1);";
+  emit_line ctx "    __uint(map_flags, BPF_F_NO_PREALLOC);";
+  emit_line ctx "} __pinned_globals SEC(\".maps\");";
+  emit_blank_line ctx;
+  emit_line ctx "/* Pinned globals access helpers */";
+  emit_line ctx "static __always_inline struct __pinned_globals *get_pinned_globals(void) {";
+  emit_line ctx "    __u32 key = 0;";
+  emit_line ctx "    return bpf_map_lookup_elem(&__pinned_globals, &key);";
+  emit_line ctx "}";
+  emit_blank_line ctx;
+  emit_line ctx "static __always_inline void update_pinned_globals(struct __pinned_globals *globals) {";
+  emit_line ctx "    __u32 key = 0;";
+  emit_line ctx "    bpf_map_update_elem(&__pinned_globals, &key, globals, BPF_ANY);";
+  emit_line ctx "}";
+  emit_blank_line ctx
+
+(** Generate global variable definitions for eBPF (grouped emission, used by fallback path) *)
 let generate_global_variables ctx global_variables =
   if global_variables <> [] then (
     emit_line ctx "/* Global variables */";
-    
-    (* Generate __hidden attribute definition for local variables *)
     let has_local_vars = List.exists (fun gv -> gv.is_local) global_variables in
     if has_local_vars then (
       emit_line ctx "#define __hidden __attribute__((visibility(\"hidden\")))";
       emit_blank_line ctx
     );
-    
-    (* Separate pinned and non-pinned variables *)
     let pinned_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
-    let regular_vars = List.filter (fun gv -> not gv.is_pinned) global_variables in
-    
-    (* Separate ring buffer variables from ALL global variables (both pinned and regular) *)
-    let (all_ringbuf_vars, _) = List.partition (fun global_var ->
+    if pinned_vars <> [] then
+      generate_pinned_globals_group ctx pinned_vars;
+    List.iter (fun global_var ->
       match global_var.global_var_type with
-      | IRRingbuf (_, _) -> true
-      | _ -> false
+      | IRRingbuf _ -> generate_ringbuf_global_variable ctx global_var
+      | _ -> ()
+    ) global_variables;
+    let non_pinned_non_ringbuf = List.filter (fun gv ->
+      not gv.is_pinned &&
+      (match gv.global_var_type with IRRingbuf _ -> false | _ -> true)
     ) global_variables in
-    
-    (* Separate regular (non-ringbuf) variables from regular_vars for later processing *)
-    let (_, non_ringbuf_vars) = List.partition (fun global_var ->
-      match global_var.global_var_type with
-      | IRRingbuf (_, _) -> true
-      | _ -> false
-    ) regular_vars in
-    
-    (* Generate pinned globals struct if there are any pinned variables *)
-    if pinned_vars <> [] then (
-      (* Track pinned globals in the context *)
-      ctx.pinned_globals <- List.map (fun gv -> gv.global_var_name) pinned_vars;
-      
-      emit_line ctx "/* Pinned global variables struct */";
-      emit_line ctx "struct __pinned_globals {";
-      List.iter (fun global_var ->
-        let c_type = ebpf_type_from_ir_type global_var.global_var_type in
-        emit_line ctx (sprintf "    %s %s;" c_type global_var.global_var_name)
-      ) pinned_vars;
-      emit_line ctx "};";
-      emit_blank_line ctx;
-      
-      (* Generate the pinned globals map *)
-      emit_line ctx "/* Pinned globals map - single entry array */";
-      emit_line ctx "struct {";
-      emit_line ctx "    __uint(type, BPF_MAP_TYPE_ARRAY);";
-      emit_line ctx "    __type(key, __u32);";
-      emit_line ctx "    __type(value, struct __pinned_globals);";
-      emit_line ctx "    __uint(max_entries, 1);";
-      emit_line ctx "    __uint(map_flags, BPF_F_NO_PREALLOC);";
-      emit_line ctx "} __pinned_globals SEC(\".maps\");";
-      emit_blank_line ctx;
-      
-      (* Generate access helpers for pinned variables *)
-      emit_line ctx "/* Pinned globals access helpers */";
-      emit_line ctx "static __always_inline struct __pinned_globals *get_pinned_globals(void) {";
-      emit_line ctx "    __u32 key = 0;";
-      emit_line ctx "    return bpf_map_lookup_elem(&__pinned_globals, &key);";
-      emit_line ctx "}";
-      emit_blank_line ctx;
-      
-      emit_line ctx "static __always_inline void update_pinned_globals(struct __pinned_globals *globals) {";
-      emit_line ctx "    __u32 key = 0;";
-      emit_line ctx "    bpf_map_update_elem(&__pinned_globals, &key, globals, BPF_ANY);";
-      emit_line ctx "}";
-      emit_blank_line ctx
-    );
-    
-    (* Generate ring buffer maps for ALL ring buffers (both pinned and regular) *)
-    List.iter (fun global_var ->
-      match global_var.global_var_type with
-      | IRRingbuf (_, size) ->
-          emit_line ctx (sprintf "/* Ring buffer for %s */" global_var.global_var_name);
-          emit_line ctx "struct {";
-          emit_line ctx "    __uint(type, BPF_MAP_TYPE_RINGBUF);";
-          emit_line ctx (sprintf "    __uint(max_entries, %d);" size);
-          emit_line ctx (sprintf "} %s SEC(\".maps\");" global_var.global_var_name);
-          emit_blank_line ctx
-      | _ -> () (* Should not happen due to filtering above *)
-    ) all_ringbuf_vars;
-    
-    (* Generate regular (non-pinned, non-ringbuf) global variables *)
-    List.iter (fun global_var ->
-      let c_type = ebpf_type_from_ir_type global_var.global_var_type in
-      let var_name = global_var.global_var_name in
-      let local_attr = if global_var.is_local then "__hidden __attribute__((aligned(8))) " else "" in
-      
-      (* Generate variable declaration with initialization if present *)
-      (match global_var.global_var_init with
-       | Some init_val ->
-           let init_str = match init_val.value_desc with
-             | IRLiteral (Ast.IntLit (i, original_opt)) -> 
-                 (* Use original format if available, otherwise use decimal *)
-                 (match original_opt with
-                  | Some orig when String.contains orig 'x' || String.contains orig 'X' -> orig
-                  | Some orig when String.contains orig 'b' || String.contains orig 'B' -> orig
-                  | _ -> Ast.IntegerValue.to_string i)
-             | IRLiteral (Ast.BoolLit b) -> if b then "1" else "0"
-             | IRLiteral (Ast.StringLit s) -> sprintf "\"%s\"" (escape_c_string s)
-             | IRLiteral (Ast.CharLit c) -> sprintf "'%c'" c
-             | IRLiteral (Ast.NullLit) -> "NULL"
-             | _ -> "0" (* fallback *)
-           in
-           if global_var.is_local then
-             emit_line ctx (sprintf "%s%s %s = %s;" local_attr c_type var_name init_str)
-           else
-             emit_line ctx (sprintf "%s %s = %s;" c_type var_name init_str)
-       | None ->
-           if global_var.is_local then
-             emit_line ctx (sprintf "%s%s %s;" local_attr c_type var_name)
-           else
-             emit_line ctx (sprintf "%s %s;" c_type var_name))
-    ) non_ringbuf_vars;
-    emit_blank_line ctx
+    List.iter (generate_single_global_variable ctx) non_pinned_non_ringbuf
   )
 
 (** Generate struct_ops definitions and instances for eBPF *)
@@ -2868,25 +2829,21 @@ let generate_callback_function _ctx callback_dep =
   callback_ctx.output_lines
 
 (** Generate ALL declarations in original source order - complete implementation *)
-let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ?_symbol_table ~_btf_path _tail_call_analysis =
-  (* First, collect all global variables from source declarations to handle pinned globals properly *)
-  let all_global_vars = List.fold_left (fun acc source_decl ->
+let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliases ~_btf_path _tail_call_analysis =
+  (* Pre-compute map names for filtering and pinned vars for grouped emission *)
+  let map_names = List.map (fun map_def -> map_def.map_name) ir_multi_prog.global_maps in
+
+  (* Collect pinned global variables - these must be grouped into a struct *)
+  let pinned_vars = List.fold_left (fun acc source_decl ->
     match source_decl.Ir.decl_desc with
-    | Ir.IRDeclGlobalVarDef global_var -> global_var :: acc
+    | Ir.IRDeclGlobalVarDef gv when gv.is_pinned && not (List.mem gv.global_var_name map_names) ->
+        gv :: acc
     | _ -> acc
   ) [] ir_multi_prog.Ir.source_declarations |> List.rev in
-  
-  (* Generate global variables using the unified logic that handles pinned globals *)
-  if all_global_vars <> [] then (
-    (* Filter out global variables that are actually maps to avoid redefinition *)
-    let map_names = List.map (fun map_def -> map_def.map_name) ir_multi_prog.global_maps in
-    let non_map_global_variables = List.filter (fun global_var -> 
-      not (List.mem global_var.global_var_name map_names)
-    ) all_global_vars in
-    generate_global_variables ctx non_map_global_variables
-  );
-  
-  (* Track whether we've emitted callbacks yet *)
+
+  (* Track one-time emissions *)
+  let hidden_macro_emitted = ref false in
+  let pinned_group_emitted = ref false in
   let callbacks_emitted = ref false in
   
   (* Helper function to emit callbacks if needed *)
@@ -2917,18 +2874,8 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
     
     | Ir.IRDeclStructDef (name, fields, pos) ->
         (* Filter out kernel-defined structs, but include struct_ops structs *)
-        let should_include_struct = match _symbol_table with
-          | Some st ->
-              (match Symbol_table.lookup_symbol st name with
-               | Some symbol ->
-                   (match symbol.Symbol_table.kind with
-                    | Symbol_table.TypeDef (Ast.StructDef (_, _, struct_pos)) ->
-                        should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations struct_pos
-                    | _ -> true)  (* Not a struct, include it *)
-               | None -> true)  (* Not found in symbol table, include it *)
-   | None ->
-              (* Fallback: check the position from the declaration itself *)
-              should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations pos
+        let should_include_struct =
+          should_include_struct_with_struct_ops name ir_multi_prog.struct_ops_declarations pos
         in
         if should_include_struct then (
           let struct_str = Codegen_common.generate_struct_def Codegen_common.EbpfKernel name fields in
@@ -2937,20 +2884,8 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
         )
     
     | Ir.IRDeclEnumDef (name, values, pos) ->
-        (* Filter out kernel-defined enums (same logic as original collect_enum_definitions) *)
-        let should_include_enum = match _symbol_table with
-          | Some st ->
-              (match Symbol_table.lookup_symbol st name with
-               | Some symbol ->
-                   (match symbol.Symbol_table.kind with
-                    | Symbol_table.TypeDef (Ast.EnumDef (_, _, enum_pos)) ->
-                        not (is_kernel_defined_type enum_pos)
-                    | _ -> true)  (* Not an enum, include it *)
-               | None -> true)  (* Not found in symbol table, include it *)
-          | None -> 
-              (* Fallback: check the position from the declaration itself *)
-              not (is_kernel_defined_type pos)
-        in
+        (* Filter out kernel-defined enums *)
+        let should_include_enum = not (is_kernel_defined_type pos) in
         if should_include_enum then (
           let enum_str = Codegen_common.generate_enum_def name values in
           String.split_on_char '\n' enum_str |> List.iter (emit_line ctx);
@@ -2965,9 +2900,28 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog _type_aliase
         (* Generate config map definition *)
         generate_config_map_definition ctx config_def
     
-    | Ir.IRDeclGlobalVarDef _global_var ->
-        (* Skip individual global variable processing - already handled at the beginning *)
-        ()
+    | Ir.IRDeclGlobalVarDef global_var ->
+        (* Skip variables that shadow map definitions *)
+        if not (List.mem global_var.global_var_name map_names) then (
+          (* Emit __hidden macro once before the first local variable *)
+          if global_var.is_local && not !hidden_macro_emitted then (
+            hidden_macro_emitted := true;
+            emit_line ctx "#define __hidden __attribute__((visibility(\"hidden\")))";
+            emit_blank_line ctx
+          );
+          if global_var.is_pinned then (
+            (* Emit the entire pinned globals group at the first pinned variable's position *)
+            if not !pinned_group_emitted then (
+              pinned_group_emitted := true;
+              generate_pinned_globals_group ctx pinned_vars
+            )
+            (* Subsequent pinned vars are already included in the group *)
+          ) else (
+            match global_var.global_var_type with
+            | IRRingbuf _ -> generate_ringbuf_global_variable ctx global_var
+            | _ -> generate_single_global_variable ctx global_var
+          )
+        )
     
     | Ir.IRDeclFunctionDef func_def ->
         (* Generate function in its proper source order position *)
@@ -3179,8 +3133,8 @@ let collect_callback_dependencies ir_multi_prog =
   List.rev !callbacks
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
-let compile_multi_to_c_with_tail_calls 
-    ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None)
+let compile_multi_to_c_with_tail_calls
+    ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?(tail_call_analysis=None) ?(btf_path=None)
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -3243,52 +3197,8 @@ let compile_multi_to_c_with_tail_calls
   (* Generate prog_array map for tail calls if needed (before functions that use it) *)
   generate_prog_array_map ctx final_tail_call_analysis.prog_array_size;
   
-  (* Generate declarations in source order when available, otherwise use IR structure *)
-  if ir_multi_prog.source_declarations <> [] then (
-    (* Use source declarations for proper ordering (from elegant 3-phase IR generation) *)
-    generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ?_symbol_table:symbol_table ~_btf_path:btf_path (Some final_tail_call_analysis);
-    
-  ) else (
-    (* Fallback for direct IR creation (tests, etc.) *)
-    (* Generate type aliases *)
-    if type_aliases <> [] then (
-      emit_line ctx "/* Type alias definitions */";
-      List.iter (fun (alias_name, bpf_type) ->
-        let c_type = ast_type_to_c_type bpf_type in
-        emit_line ctx (sprintf "typedef %s %s;" c_type alias_name);
-      ) type_aliases;
-      emit_blank_line ctx
-    );
-    
-    (* Generate global maps *)
-    if ir_multi_prog.global_maps <> [] then (
-      emit_line ctx "/* Global maps */";
-      List.iter (generate_map_definition ctx) ir_multi_prog.global_maps;
-      emit_blank_line ctx
-    );
-    
-    (* Generate global variables (excluding those that are maps) *)
-    let map_names = List.map (fun map_def -> map_def.map_name) ir_multi_prog.global_maps in
-    let non_map_global_variables = List.filter (fun global_var -> 
-      not (List.mem global_var.global_var_name map_names)
-    ) ir_multi_prog.global_variables in
-    generate_global_variables ctx non_map_global_variables;
-    
-    (* Generate config maps *)
-    if ir_multi_prog.global_configs <> [] then (
-      List.iter (generate_config_map_definition ctx) ir_multi_prog.global_configs;
-      emit_blank_line ctx
-    );
-    
-    (* Generate functions in fallback mode - preserve kernel functions first, then program entry functions *)
-    List.iter (fun ir_func ->
-      generate_c_function ctx ir_func
-    ) ir_multi_prog.kernel_functions;
-    
-    List.iter (fun ir_prog ->
-      generate_c_function ctx ir_prog.entry_function
-    ) ir_multi_prog.programs
-  );
+  (* Generate declarations in source order *)
+  generate_declarations_in_source_order_unified ctx ir_multi_prog type_aliases ~_btf_path:btf_path (Some final_tail_call_analysis);
   
   (* Generate struct_ops definitions and instances after functions are defined *)
   generate_struct_ops ctx ir_multi_prog;
@@ -3302,21 +3212,24 @@ let compile_multi_to_c_with_tail_calls
   (final_output, final_tail_call_analysis)
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
-let compile_multi_to_c ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
-  compile_multi_to_c_with_tail_calls 
-    ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~tail_call_analysis ~btf_path ir_multi_program
+let compile_multi_to_c ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
+  compile_multi_to_c_with_tail_calls
+    ~type_aliases ~variable_type_aliases ~kfunc_declarations ~tail_call_analysis ~btf_path ir_multi_program
 
 (** Alias for backward compatibility with existing code *)
 let compile_multi_to_c_with_analysis = compile_multi_to_c
 
 (** Generate complete C program from multiple IR programs - main interface *)
-let generate_c_multi_program ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?symbol_table ?(btf_path=None) ir_multi_prog =
-  let (c_code, _) = compile_multi_to_c ~type_aliases ~variable_type_aliases ~kfunc_declarations ?symbol_table ~btf_path ir_multi_prog in
+let generate_c_multi_program ?(type_aliases=[]) ?(variable_type_aliases=[]) ?(kfunc_declarations=[]) ?(btf_path=None) ir_multi_prog =
+  let (c_code, _) = compile_multi_to_c ~type_aliases ~variable_type_aliases ~kfunc_declarations ~btf_path ir_multi_prog in
   c_code
 
 (** Generate complete C program from IR *)
 let generate_c_program (ir_prog : Ir.ir_program) =
   (* Convert single program to multi-program and use the main compilation function *)
+  let source_declarations = [
+    Ir.make_ir_function_def_decl ir_prog.entry_function 0
+  ] in
   let temp_multi_prog = {
     source_name = ir_prog.name;
     programs = [ir_prog];
@@ -3328,7 +3241,7 @@ let generate_c_program (ir_prog : Ir.ir_program) =
     struct_ops_instances = [];
     userspace_program = None;
     ring_buffer_registry = Ir.create_empty_ring_buffer_registry ();
-    source_declarations = [];
+    source_declarations;
     multi_pos = ir_prog.ir_pos;
   } in
   generate_c_multi_program temp_multi_prog

@@ -505,23 +505,72 @@ let create_empty_ring_buffer_registry () = {
   };
 }
 
+(** Helper functions for creating source declarations *)
+let make_ir_source_declaration desc order pos = {
+  decl_desc = desc;
+  decl_order = order;
+  decl_pos = pos;
+}
+
+let make_ir_type_alias_decl name underlying_type order pos =
+  make_ir_source_declaration (IRDeclTypeAlias (name, underlying_type, pos)) order pos
+
+let make_ir_struct_def_decl name fields order pos =
+  make_ir_source_declaration (IRDeclStructDef (name, fields, pos)) order pos
+
+let make_ir_enum_def_decl name values order pos =
+  make_ir_source_declaration (IRDeclEnumDef (name, values, pos)) order pos
+
+let make_ir_map_def_decl map_def order =
+  make_ir_source_declaration (IRDeclMapDef map_def) order map_def.map_pos
+
+let make_ir_config_def_decl config_def order =
+  make_ir_source_declaration (IRDeclConfigDef config_def) order config_def.config_pos
+
+let make_ir_global_var_def_decl global_var order =
+  make_ir_source_declaration (IRDeclGlobalVarDef global_var) order global_var.global_var_pos
+
+let make_ir_function_def_decl function_def order =
+  make_ir_source_declaration (IRDeclFunctionDef function_def) order function_def.func_pos
+
+let make_ir_struct_ops_def_decl struct_ops_def order =
+  make_ir_source_declaration (IRDeclStructOpsDef struct_ops_def) order struct_ops_def.ir_struct_ops_pos
+
+let make_ir_struct_ops_instance_decl struct_ops_instance order =
+  make_ir_source_declaration (IRDeclStructOpsInstance struct_ops_instance) order struct_ops_instance.ir_instance_pos
+
 let make_ir_multi_program source_name programs kernel_functions global_maps
                           ?(global_configs = []) ?(global_variables = []) ?(struct_ops_declarations = []) ?(struct_ops_instances = [])
                           ?userspace_program ?(ring_buffer_registry = create_empty_ring_buffer_registry ())
-                          ?(source_declarations = []) pos = {
-  source_name;
-  programs;
-  kernel_functions;
-  global_maps;
-  global_configs;
-  global_variables;
-  struct_ops_declarations;
-  struct_ops_instances;
-  userspace_program;
-  ring_buffer_registry;
-  source_declarations;
-  multi_pos = pos;
-}
+                          ?(source_declarations = []) pos =
+  (* When source_declarations is empty, synthesize from typed lists to preserve
+     the invariant that source_declarations is the single source of truth *)
+  let effective_source_declarations =
+    if source_declarations <> [] then source_declarations
+    else
+      let order = ref 0 in
+      let next_order () = let o = !order in incr order; o in
+      let map_decls = List.map (fun m -> make_ir_map_def_decl m (next_order ())) global_maps in
+      let var_decls = List.map (fun v -> make_ir_global_var_def_decl v (next_order ())) global_variables in
+      let config_decls = List.map (fun c -> make_ir_config_def_decl c (next_order ())) global_configs in
+      let func_decls = List.map (fun f -> make_ir_function_def_decl f (next_order ())) kernel_functions in
+      let prog_decls = List.map (fun p -> make_ir_function_def_decl p.entry_function (next_order ())) programs in
+      map_decls @ var_decls @ config_decls @ func_decls @ prog_decls
+  in
+  {
+    source_name;
+    programs;
+    kernel_functions;
+    global_maps;
+    global_configs;
+    global_variables;
+    struct_ops_declarations;
+    struct_ops_instances;
+    userspace_program;
+    ring_buffer_registry;
+    source_declarations = effective_source_declarations;
+    multi_pos = pos;
+  }
 
 let make_ir_userspace_program functions structs coordinator_logic pos = {
   userspace_functions = functions;
@@ -594,39 +643,60 @@ let make_ir_global_variable name var_type init pos ?(is_local=false) ?(is_pinned
   is_pinned;
 }
 
-(** Helper functions for creating source declarations *)
-let make_ir_source_declaration desc order pos = {
-  decl_desc = desc;
-  decl_order = order;
-  decl_pos = pos;
-}
+(** Extraction helpers: extract typed lists from source_declarations *)
+let get_programs ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclFunctionDef func ->
+        (* Find matching program by entry function name *)
+        List.find_opt (fun prog -> prog.entry_function.func_name = func.func_name) ir_multi_prog.programs
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
-let make_ir_type_alias_decl name underlying_type order pos =
-  make_ir_source_declaration (IRDeclTypeAlias (name, underlying_type, pos)) order pos
+let get_kernel_functions ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclFunctionDef func ->
+        if List.exists (fun f -> f.func_name = func.func_name) ir_multi_prog.kernel_functions then
+          Some func
+        else None
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
-let make_ir_struct_def_decl name fields order pos =
-  make_ir_source_declaration (IRDeclStructDef (name, fields, pos)) order pos
+let get_global_maps ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclMapDef map_def -> Some map_def
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
-let make_ir_enum_def_decl name values order pos =
-  make_ir_source_declaration (IRDeclEnumDef (name, values, pos)) order pos
+let get_global_variables ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclGlobalVarDef global_var -> Some global_var
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
-let make_ir_map_def_decl map_def order =
-  make_ir_source_declaration (IRDeclMapDef map_def) order map_def.map_pos
+let get_global_configs ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclConfigDef config_def -> Some config_def
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
-let make_ir_config_def_decl config_def order =
-  make_ir_source_declaration (IRDeclConfigDef config_def) order config_def.config_pos
+let get_struct_ops_declarations ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclStructOpsDef struct_ops_def -> Some struct_ops_def
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
-let make_ir_global_var_def_decl global_var order =
-  make_ir_source_declaration (IRDeclGlobalVarDef global_var) order global_var.global_var_pos
-
-let make_ir_function_def_decl function_def order =
-  make_ir_source_declaration (IRDeclFunctionDef function_def) order function_def.func_pos
-
-let make_ir_struct_ops_def_decl struct_ops_def order =
-  make_ir_source_declaration (IRDeclStructOpsDef struct_ops_def) order struct_ops_def.ir_struct_ops_pos
-
-let make_ir_struct_ops_instance_decl struct_ops_instance order =
-  make_ir_source_declaration (IRDeclStructOpsInstance struct_ops_instance) order struct_ops_instance.ir_instance_pos
+let get_struct_ops_instances ir_multi_prog =
+  List.filter_map (fun decl ->
+    match decl.decl_desc with
+    | IRDeclStructOpsInstance struct_ops_instance -> Some struct_ops_instance
+    | _ -> None
+  ) ir_multi_prog.source_declarations
 
 (** Utility functions for match expressions *)
 let make_ir_match_arm pattern value pos = {
