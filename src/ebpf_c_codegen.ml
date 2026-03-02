@@ -2735,10 +2735,18 @@ and generate_ringbuf_operation ctx ringbuf_val op =
       
   | RingbufSubmit data_ptr ->
       let data_str = generate_c_value ctx data_ptr in
-      emit_line ctx (sprintf "if (%s) bpf_ringbuf_submit_dynptr(&%s_dynptr, 0);" data_str data_str)
+      let dynptr_var = match Hashtbl.find_opt ctx.dynptr_backed_pointers data_str with
+        | Some dv -> dv
+        | None -> data_str ^ "_dynptr"
+      in
+      emit_line ctx (sprintf "if (%s) bpf_ringbuf_submit_dynptr(&%s, 0);" data_str dynptr_var)
   | RingbufDiscard data_ptr ->
       let data_str = generate_c_value ctx data_ptr in
-      emit_line ctx (sprintf "if (%s) bpf_ringbuf_discard_dynptr(&%s_dynptr, 0);" data_str data_str)
+      let dynptr_var = match Hashtbl.find_opt ctx.dynptr_backed_pointers data_str with
+        | Some dv -> dv
+        | None -> data_str ^ "_dynptr"
+      in
+      emit_line ctx (sprintf "if (%s) bpf_ringbuf_discard_dynptr(&%s, 0);" data_str dynptr_var)
   | RingbufOnEvent _handler_name ->
       (* Ring buffer on_event() is userspace-only *)
       failwith "Ring buffer on_event() operation is not supported in eBPF programs - it's userspace-only"
