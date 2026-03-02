@@ -231,7 +231,7 @@ and ir_call_target =
 and ir_instr_desc =
   | IRAssign of ir_value * ir_expr (* Assignment to variables *)
   | IRConstAssign of ir_value * ir_expr (* Dedicated const assignment instruction *)
-  | IRVariableDecl of string * ir_type * ir_expr option (* Unified variable declaration - var_name, type, optional_initializer *)
+  | IRVariableDecl of ir_value * ir_type * ir_expr option (* Unified variable declaration - dest_value, type, optional_initializer *)
   | IRCall of ir_call_target * ir_value list * ir_value option
   | IRTailCall of string * ir_value list * int  (* function_name, args, prog_array_index *)
   | IRMapLoad of ir_value * ir_value * ir_value * map_load_type
@@ -908,12 +908,12 @@ let rec string_of_ir_instruction instr =
       Printf.sprintf "%s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
   | IRConstAssign (dest, expr) ->
       Printf.sprintf "const %s = %s" (string_of_ir_value dest) (string_of_ir_expr expr)
-  | IRVariableDecl (var_name, typ, init_opt) ->
+  | IRVariableDecl (dest_val, typ, init_opt) ->
       let init_str = match init_opt with
         | None -> ""
         | Some init_expr -> Printf.sprintf " = %s" (string_of_ir_expr init_expr)
       in
-      Printf.sprintf "var %s: %s%s" var_name (string_of_ir_type typ) init_str
+      Printf.sprintf "var %s: %s%s" (string_of_ir_value dest_val) (string_of_ir_type typ) init_str
   | IRCall (target, args, ret_opt) ->
       let args_str = String.concat ", " (List.map string_of_ir_value args) in
       let ret_str = match ret_opt with

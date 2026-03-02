@@ -809,7 +809,7 @@ let rec collect_string_concat_sizes_from_ir_instruction ir_instr =
   | IRAssign (_dest, expr) -> 
       (* Only collect from expressions that involve concatenation *)
       collect_string_concat_sizes_from_ir_expr expr
-  | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+  | IRVariableDecl (_dest_val, _typ, init_expr_opt) ->
       (match init_expr_opt with
        | Some init_expr -> collect_string_concat_sizes_from_ir_expr init_expr
        | None -> [])
@@ -919,7 +919,7 @@ let collect_enum_definitions_from_userspace userspace_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
-    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+    | IRVariableDecl (_dest_val, _typ, init_expr_opt) ->
         (match init_expr_opt with
          | Some init_expr -> collect_from_expr init_expr
          | None -> ())
@@ -1779,25 +1779,12 @@ let rec generate_c_instruction_from_ir ctx instruction =
       (* Const assignment with const keyword *)
       generate_variable_assignment ctx dest src true
 
-  | IRVariableDecl (var_name, typ, init_expr_opt) ->
-      (* New unified variable declaration using elegant IR-based approach *)
-      (* Create a synthetic IR value to determine the correct variable type *)
-      (* Determine if this is a user variable or compiler-generated temporary *)
-      let is_temp_var = 
-        String.contains var_name '_' && (
-          (String.length var_name > 0 && String.get var_name 0 >= '0' && String.get var_name 0 <= '9') ||
-          (try ignore (Str.search_forward (Str.regexp "__binop\\|__map\\|__func\\|tmp_") var_name 0); true with Not_found -> false)
-        ) in
-      let synthetic_ir_value = {
-        value_desc = if is_temp_var then IRTempVariable var_name else IRVariable var_name;
-        val_type = typ;
-        stack_offset = None;
-        bounds_checked = false;
-        val_pos = { line = 0; column = 0; filename = "synthetic" };
-      } in
-      let c_var_name = generate_c_var_name ctx synthetic_ir_value in
+  | IRVariableDecl (dest_val, typ, init_expr_opt) ->
+      (* Variable declaration - the ir_value carries IRVariable vs IRTempVariable directly *)
+      let c_var_name = generate_c_var_name ctx dest_val in
+      let raw_name = (match dest_val.value_desc with IRVariable n | IRTempVariable n -> n | _ -> "unknown") in
       (* Mark this variable as declared via IRVariableDecl to avoid double declaration *)
-      Hashtbl.replace ctx.declared_via_ir var_name ();
+      Hashtbl.replace ctx.declared_via_ir raw_name ();
       (match typ with
        | IRStr size ->
            (* String declaration with proper C array syntax *)
@@ -2274,14 +2261,17 @@ let collect_undeclared_variables_in_function ir_func =
   let undeclared_vars = ref [] in
   let declared_via_ir = ref [] in
   
-  (* First pass: collect variables declared via IRVariableDecl *)
+  (* First pass: collect variable names declared via IRVariableDecl *)
   let collect_declared_vars ir_instr =
     match ir_instr.instr_desc with
-    | IRVariableDecl (var_name, _, _) ->
-        declared_via_ir := var_name :: !declared_via_ir
+    | IRVariableDecl (dest_val, _, _) ->
+        (match dest_val.value_desc with
+         | IRVariable name | IRTempVariable name ->
+             declared_via_ir := name :: !declared_via_ir
+         | _ -> ())
     | _ -> ()
   in
-  
+
   let collect_declared_from_instrs instrs =
     List.iter collect_declared_vars instrs
   in
@@ -2320,7 +2310,7 @@ let collect_undeclared_variables_in_function ir_func =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
     | IRConstAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
-    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+    | IRVariableDecl (_dest_val, _typ, init_expr_opt) ->
         (match init_expr_opt with
          | Some init_expr -> collect_from_expr init_expr
          | None -> ())
@@ -2450,10 +2440,13 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
   (* Also collect variables declared via IRVariableDecl instructions *)
   let rec collect_declared_vars ir_instr =
     match ir_instr.instr_desc with
-    | IRVariableDecl (var_name, _, _) ->
-        (* Variables declared via IRVariableDecl that are NOT function parameters need var_ prefix *)
-        if not (Hashtbl.mem ctx.function_parameters var_name) then
-          Hashtbl.add ctx.needs_var_prefix var_name ()
+    | IRVariableDecl (dest_val, _, _) ->
+        (* Only user variables (IRVariable) need var_ prefix, not compiler temps (IRTempVariable) *)
+        (match dest_val.value_desc with
+         | IRVariable var_name ->
+             if not (Hashtbl.mem ctx.function_parameters var_name) then
+               Hashtbl.add ctx.needs_var_prefix var_name ()
+         | _ -> ())
     | IRBpfLoop (_, _, _, _, body_instructions) ->
         (* Recursively collect from for loop body instructions *)
         List.iter collect_declared_vars body_instructions
@@ -2498,7 +2491,7 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
       match ir_instr.instr_desc with
       | IRAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
       | IRConstAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
-      | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+      | IRVariableDecl (_dest_val, _typ, init_expr_opt) ->
           (match init_expr_opt with
            | Some init_expr -> collect_from_expr init_expr
            | None -> ())

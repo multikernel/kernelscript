@@ -234,7 +234,7 @@ fn main() -> i32 {
     (* Find variable declarations and function calls *)
     let declarations = List.filter_map (fun instr ->
       match instr.instr_desc with
-      | IRVariableDecl (var_name, _, _) -> Some (make_ir_value (IRVariable var_name) IRU32 (make_position 0 0 "test.ks"))
+      | IRVariableDecl (dest_val, _, _) -> Some dest_val
       | _ -> None
     ) all_instructions in
     

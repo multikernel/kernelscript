@@ -324,7 +324,7 @@ let rec collect_string_sizes_from_instr ir_instr =
   | IRConstAssign (dest_val, expr) -> 
       (collect_string_sizes_from_value dest_val) @ (collect_string_sizes_from_expr expr)
 
-  | IRVariableDecl (_var_name, typ, init_expr_opt) ->
+  | IRVariableDecl (_dest_val, typ, init_expr_opt) ->
       (* New unified variable declaration - collect from both variable type and initializer *)
       let var_type_sizes = collect_string_sizes_from_type typ in
       let init_sizes = match init_expr_opt with
@@ -512,7 +512,7 @@ let collect_enum_definitions ir_multi_prog =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> 
         collect_from_value dest_val; collect_from_expr expr
-    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+    | IRVariableDecl (_dest_val, _typ, init_expr_opt) ->
         (* New unified variable declaration *)
         (match init_expr_opt with
          | Some init_expr -> collect_from_expr init_expr
@@ -1099,11 +1099,14 @@ let collect_temp_variables_in_function ir_func =
   let temp_vars = ref [] in
   let declared_via_ir = ref [] in
   
-  (* First pass: collect variables declared via IRVariableDecl *)
+  (* First pass: collect variable names declared via IRVariableDecl *)
   let collect_declared_vars ir_instr =
     match ir_instr.instr_desc with
-    | IRVariableDecl (var_name, _, _) ->
-        declared_via_ir := var_name :: !declared_via_ir
+    | IRVariableDecl (dest_val, _, _) ->
+        (match dest_val.value_desc with
+         | IRVariable name | IRTempVariable name ->
+             declared_via_ir := name :: !declared_via_ir
+         | _ -> ())
     | _ -> ()
   in
   
@@ -1150,7 +1153,7 @@ let collect_temp_variables_in_function ir_func =
     match ir_instr.instr_desc with
     | IRAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
     | IRConstAssign (dest_val, expr) -> collect_from_value dest_val; collect_from_expr expr
-    | IRVariableDecl (_var_name, _typ, init_expr_opt) ->
+    | IRVariableDecl (_dest_val, _typ, init_expr_opt) ->
         (match init_expr_opt with
          | Some init_expr -> collect_from_expr init_expr
          | None -> ())
@@ -1862,8 +1865,9 @@ and generate_c_instruction ctx ir_instr =
   | IRConstAssign (dest_val, expr) ->
       (* Const assignment with const keyword *)
       generate_assignment ctx dest_val expr true
-  | IRVariableDecl (var_name, typ, init_expr_opt) ->
+  | IRVariableDecl (dest_val, typ, init_expr_opt) ->
       (* New unified variable declaration - handles both user variables and temporary variables *)
+      let var_name = (match dest_val.value_desc with IRVariable n | IRTempVariable n -> n | _ -> "unknown") in
       (* Check if variable is already declared (e.g., in callback functions) *)
       let var_hash = Hashtbl.hash var_name in
       if Hashtbl.mem ctx.declared_registers var_hash then
@@ -2419,13 +2423,13 @@ and generate_c_basic_block ctx ir_block =
     match instrs with
     | call_instr :: decl_instr :: rest ->
         (match call_instr.instr_desc, decl_instr.instr_desc with
-         | IRCall (target, args, Some ret_val), IRVariableDecl (decl_var_name, typ, None) 
-           when (match ret_val.value_desc with 
-                 | IRTempVariable ret_name -> ret_name = decl_var_name
-                 | IRVariable ret_name -> ret_name = decl_var_name
+         | IRCall (target, args, Some ret_val), IRVariableDecl (decl_dest_val, typ, None)
+           when (match ret_val.value_desc, decl_dest_val.value_desc with
+                 | (IRTempVariable ret_name, (IRTempVariable decl_name | IRVariable decl_name))
+                 | (IRVariable ret_name, (IRTempVariable decl_name | IRVariable decl_name)) -> ret_name = decl_name
                  | _ -> false) ->
              (* Combine function call with variable declaration *)
-             let var_name = decl_var_name in
+             let var_name = (match decl_dest_val.value_desc with IRVariable n | IRTempVariable n -> n | _ -> "unknown") in
              let type_str = ebpf_type_from_ir_type typ in
              let call_str = match target with
                | DirectCall name ->
@@ -2783,7 +2787,8 @@ let generate_callback_function _ctx callback_dep =
              if not (List.mem_assoc var_name !callback_variables) then
                callback_variables := (var_name, var_type) :: !callback_variables
          | _ -> ())
-    | Ir.IRVariableDecl (var_name, var_type, _) ->
+    | Ir.IRVariableDecl (dest_val, var_type, _) ->
+        let var_name = (match dest_val.Ir.value_desc with Ir.IRVariable n | Ir.IRTempVariable n -> n | _ -> "unknown") in
         let full_var_name = sprintf "tmp_%s" var_name in
         if not (List.mem_assoc full_var_name !callback_variables) then
           callback_variables := (full_var_name, var_type) :: !callback_variables

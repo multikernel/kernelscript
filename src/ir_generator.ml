@@ -129,10 +129,15 @@ let emit_instruction ctx instr =
   ctx.current_block <- instr :: ctx.current_block;
   ctx.stack_usage <- ctx.stack_usage + instr.instr_stack_usage
 
-(** Emit variable declaration - new unified approach *)
-let emit_variable_decl ctx var_name ir_type init_expr_opt pos =
-  let instr = make_ir_instruction (IRVariableDecl (var_name, ir_type, init_expr_opt)) pos in
+(** Emit variable declaration - takes an ir_value to preserve IRVariable vs IRTempVariable *)
+let emit_variable_decl_val ctx dest_val ir_type init_expr_opt pos =
+  let instr = make_ir_instruction (IRVariableDecl (dest_val, ir_type, init_expr_opt)) pos in
   emit_instruction ctx instr
+
+(** Emit variable declaration for a user-level variable by name *)
+let emit_variable_decl ctx var_name ir_type init_expr_opt pos =
+  let dest_val = make_ir_value (IRVariable var_name) ir_type pos in
+  emit_variable_decl_val ctx dest_val ir_type init_expr_opt pos
 
 (** Expand ring buffer operations to IR instructions *)
 let expand_ringbuf_operation ctx ringbuf_name operation arg_vals pos =
@@ -749,7 +754,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                 (* For strings, generate direct indexing: str.data[index] *)
                 let index_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) element_type expr.expr_pos in
                 (* For strings, we need to emit a variable declaration and assignment *)
-                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") element_type (Some index_expr) expr.expr_pos
+                emit_variable_decl_val ctx result_val element_type (Some index_expr) expr.expr_pos
             | _ ->
                 (* For arrays, generate pointer arithmetic and load *)
                 let ptr_val = allocate_temp_variable ctx "array_ptr" 
@@ -758,11 +763,11 @@ let rec lower_expression ctx (expr : Ast.expr) =
                 (* ptr = &array[index] *)
                 let ptr_expr = make_ir_expr (IRBinOp (array_val, IRAdd, index_val)) 
                   ptr_val.val_type expr.expr_pos in
-                emit_variable_decl ctx (match ptr_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") ptr_val.val_type (Some ptr_expr) expr.expr_pos;
+                emit_variable_decl_val ctx ptr_val ptr_val.val_type (Some ptr_expr) expr.expr_pos;
                 
                 (* result = *ptr *)
                 let load_expr = make_ir_expr (IRValue ptr_val) element_type expr.expr_pos in
-                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") element_type (Some load_expr) expr.expr_pos);
+                emit_variable_decl_val ctx result_val element_type (Some load_expr) expr.expr_pos);
            
            result_val)
            
@@ -790,7 +795,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
             | None ->
                 (* Handle regular struct field access *)
                 let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
+                emit_variable_decl_val ctx result_val result_type (Some field_expr) expr.expr_pos;
                 result_val)
        | IRRingbuf (_, _) ->
            (* Handle ring buffer field access - convert to method calls *)
@@ -810,7 +815,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
            (* For userspace code, allow field access on other types (assuming it will be handled by C compilation) *)
            if ctx.is_userspace then
              let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-             emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
+             emit_variable_decl_val ctx result_val result_type (Some field_expr) expr.expr_pos;
              result_val
            else
              failwith ("Field access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
@@ -839,13 +844,13 @@ let rec lower_expression ctx (expr : Ast.expr) =
             | None ->
                 (* Regular struct pointer - use field access *)
                 let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-                emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
+                emit_variable_decl_val ctx result_val result_type (Some field_expr) expr.expr_pos;
                 result_val)
        | _ ->
            (* For userspace code, allow arrow access on other types *)
            if ctx.is_userspace then
              let field_expr = make_ir_expr (IRFieldAccess (obj_val, field)) result_type expr.expr_pos in
-             emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some field_expr) expr.expr_pos;
+             emit_variable_decl_val ctx result_val result_type (Some field_expr) expr.expr_pos;
              result_val
            else
              failwith ("Arrow access on type " ^ (string_of_ir_type obj_val.val_type) ^ " not supported in eBPF context"))
@@ -872,7 +877,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       let result_val = allocate_temp_variable ctx "binop" result_type expr.expr_pos in
       
       let bin_expr = make_ir_expr (IRBinOp (left_val, ir_op, right_val)) result_type expr.expr_pos in
-      emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some bin_expr) expr.expr_pos;
+      emit_variable_decl_val ctx result_val result_type (Some bin_expr) expr.expr_pos;
       result_val
       
   | Ast.UnaryOp (op, operand_expr) ->
@@ -902,7 +907,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Handle all unary operations uniformly to avoid register reference issues *)
       let un_expr = make_ir_expr (IRUnOp (ir_op, operand_val)) result_type expr.expr_pos in
-      emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some un_expr) expr.expr_pos;
+      emit_variable_decl_val ctx result_val result_type (Some un_expr) expr.expr_pos;
        result_val
       
   | Ast.StructLiteral (struct_name, field_assignments) ->
@@ -920,7 +925,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       (* Generate struct literal instruction *)
       let struct_expr = make_ir_expr (IRStructLiteral (struct_name, lowered_field_assignments)) result_type expr.expr_pos in
-      emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_type (Some struct_expr) expr.expr_pos;
+      emit_variable_decl_val ctx result_val result_type (Some struct_expr) expr.expr_pos;
       result_val
 
   | Ast.Match (matched_expr, arms) ->
@@ -944,7 +949,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                     let const_val = lower_literal lit arm.arm_pos in
                     let eq_val = allocate_temp_variable ctx "match_eq" IRBool arm.arm_pos in
                     let eq_expr = make_ir_expr (IRBinOp (matched_val, IREq, const_val)) IRBool arm.arm_pos in
-                    emit_variable_decl ctx (match eq_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRBool (Some eq_expr) arm.arm_pos;
+                    emit_variable_decl_val ctx eq_val IRBool (Some eq_expr) arm.arm_pos;
                     eq_val
                 | DefaultPattern ->
                     (* Default pattern always matches - create a true condition *)
@@ -962,7 +967,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
                     (* Create equality comparison *)
                     let eq_val = allocate_temp_variable ctx "match_enum_eq" IRBool arm.arm_pos in
                     let eq_expr = make_ir_expr (IRBinOp (matched_val, IREq, enum_val)) IRBool arm.arm_pos in
-                    emit_variable_decl ctx (match eq_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRBool (Some eq_expr) arm.arm_pos;
+                    emit_variable_decl_val ctx eq_val IRBool (Some eq_expr) arm.arm_pos;
                     eq_val
               in
               
@@ -974,13 +979,13 @@ let rec lower_expression ctx (expr : Ast.expr) =
               (match arm.arm_body with
                | SingleExpr expr ->
                    let expr_val = lower_expression ctx expr in
-                   emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") expr_val.val_type (Some (make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos)) arm.arm_pos
+                   emit_variable_decl_val ctx result_val expr_val.val_type (Some (make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos)) arm.arm_pos
                | Block stmts ->
                    (* Process block statements - they will be executed conditionally *)
                    List.iter (lower_statement ctx) stmts;
                    (* If no explicit assignment to result, use default value *)
                    let default_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 arm.arm_pos in
-                   emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") IRU32 (Some (make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos);
+                   emit_variable_decl_val ctx result_val IRU32 (Some (make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos);
               
               then_instructions := List.rev ctx.current_block;
               ctx.current_block <- old_block;
@@ -1039,7 +1044,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
         let result_val = allocate_temp_variable ctx "match_result" result_type expr.expr_pos in
         
         let match_expr = make_ir_expr (IRMatch (matched_val, ir_arms)) result_type expr.expr_pos in
-        emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") result_val.val_type (Some match_expr) expr.expr_pos;
+        emit_variable_decl_val ctx result_val result_val.val_type (Some match_expr) expr.expr_pos;
         
         result_val
 
@@ -1263,8 +1268,9 @@ and declare_variable ctx name target_type init_value_opt pos =
         in
         make_ir_expr (IRValue default_value) target_type pos
   in
-  let instr = make_ir_instruction 
-    (IRVariableDecl (name, target_type, Some init_expr)) 
+  let dest_val = make_ir_value (IRVariable name) target_type pos in
+  let instr = make_ir_instruction
+    (IRVariableDecl (dest_val, target_type, Some init_expr))
     ~stack_usage:size
     pos in
   emit_instruction ctx instr
@@ -1424,12 +1430,12 @@ and lower_statement ctx stmt =
            (* Then, perform the operation - current_val is pointer, so dereference for operation *)
            let ir_op = lower_binary_op op in
            let deref_current_val = allocate_temp_variable ctx "map_deref" map_def.map_value_type stmt.stmt_pos in
-           emit_variable_decl ctx (match deref_current_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") map_def.map_value_type (Some (make_ir_expr (IRUnOp (IRDeref, current_val)) map_def.map_value_type stmt.stmt_pos)) stmt.stmt_pos;
+           emit_variable_decl_val ctx deref_current_val map_def.map_value_type (Some (make_ir_expr (IRUnOp (IRDeref, current_val)) map_def.map_value_type stmt.stmt_pos)) stmt.stmt_pos;
            let bin_expr = make_ir_expr (IRBinOp (deref_current_val, ir_op, value_val)) map_def.map_value_type stmt.stmt_pos in
            
            (* Create a temporary variable for the result *)
            let result_val = allocate_temp_variable ctx "map_result" map_def.map_value_type stmt.stmt_pos in
-           emit_variable_decl ctx (match result_val.value_desc with IRTempVariable name -> name | _ -> failwith "Expected temp variable") map_def.map_value_type (Some bin_expr) stmt.stmt_pos;
+           emit_variable_decl_val ctx result_val map_def.map_value_type (Some bin_expr) stmt.stmt_pos;
            
            (* Finally, store the result back *)
            let store_instr = make_ir_instruction (IRMapStore (map_val, key_val, result_val, MapUpdate)) stmt.stmt_pos in

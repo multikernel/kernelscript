@@ -1029,7 +1029,8 @@ let test_variable_function_call_declaration () =
   
   (* Create a variable declaration for the same register with no initialization *)
   let var_name = Printf.sprintf "result_%d" result_reg in
-  let decl_instr = make_ir_instruction (IRVariableDecl (var_name, IRU32, None)) test_pos in
+  let dest_val = make_ir_value (IRTempVariable var_name) IRU32 test_pos in
+  let decl_instr = make_ir_instruction (IRVariableDecl (dest_val, IRU32, None)) test_pos in
   
   (* Test the optimization that combines these into a single declaration *)
   let ir_block = make_ir_basic_block "test" [call_instr; decl_instr] 0 in

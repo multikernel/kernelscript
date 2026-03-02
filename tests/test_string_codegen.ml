@@ -196,10 +196,10 @@ fn main() -> i32 {
     (* Should generate direct array access *)
     check bool "has array indexing syntax" true (contains_pattern result "var_.*\\[0\\]");
     check bool "second index access" true (contains_pattern result "var_.*\\[1\\]");
-    check bool "char assignment" true (contains_pattern result "var_.*=.*var_.*\\[[0-9]+\\]");
-    
+    check bool "char assignment" true (contains_pattern result "var_first = __array_access");
+
     (* Should not have complex bounds checking for simple indexing *)
-    check bool "direct array access" true (contains_pattern result "var_.*=.*var_.*\\[.*\\]");
+    check bool "direct array access" true (contains_pattern result "__array_access.*= var_.*\\[.*\\]");
   with
   | exn -> fail ("String indexing test failed: " ^ Printexc.to_string exn)
 
