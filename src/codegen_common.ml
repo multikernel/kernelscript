@@ -81,17 +81,9 @@ let is_kernel_defined_pos pos =
   let is_btf_type = Filename.check_suffix pos.Ast.filename ".kh" in
   is_builtin || is_btf_type
 
-(** Check if struct should be included (not kernel-defined, unless struct_ops) *)
-let should_include_struct struct_name struct_ops_declarations pos =
-  let is_struct_ops_struct =
-    List.exists (fun struct_ops_decl ->
-      struct_ops_decl.ir_kernel_struct_name = struct_name
-    ) struct_ops_declarations
-  in
-  if is_struct_ops_struct then
-    true
-  else
-    not (is_kernel_defined_pos pos)
+(** Check if struct should be included (not kernel-defined) *)
+let should_include_struct _struct_name _struct_ops_declarations pos =
+  not (is_kernel_defined_pos pos)
 
 (** Generate typedef string *)
 let generate_typedef target name ir_type =

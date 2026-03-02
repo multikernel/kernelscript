@@ -285,16 +285,8 @@ let test_ebpf_struct_ops_codegen () =
   check bool "Contains struct_ops sections" true
     (try ignore (Str.search_forward (Str.regexp "SEC(\"struct_ops") c_code 0); true with Not_found -> false);
   
-  (* Check that struct_ops-referenced struct definitions are included in eBPF code *)
-  check bool "Contains tcp_congestion_ops struct definition" true
-    (try ignore (Str.search_forward (Str.regexp "struct tcp_congestion_ops") c_code 0); true with Not_found -> false);
-  
-  (* Check that the struct has expected fields/methods *)
-  check bool "tcp_congestion_ops contains ssthresh field" true
-    (contains_substr c_code "ssthresh");
-  check bool "tcp_congestion_ops contains cong_avoid field" true
-    (contains_substr c_code "cong_avoid");
-  
+  (* Kernel struct definitions from .kh headers should NOT be emitted (vmlinux.h provides them) *)
+
   (* Check that struct_ops instance is properly generated *)
   check bool "Contains struct_ops instance definition" true
     (try ignore (Str.search_forward (Str.regexp "SEC(\"\\.struct_ops\")") c_code 0); true with Not_found -> false);
