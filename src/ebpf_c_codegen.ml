@@ -1644,7 +1644,10 @@ let generate_c_expression ctx ir_expr =
         let matched_str = generate_c_value ctx matched_val in
         
         (* Check if we can inline this match expression - be more conservative *)
-        let can_inline = List.length arms <= 2 && 
+        (* Never inline string matches - ternary requires identical types *)
+        let is_string_match = match ir_expr.expr_type with IRStr _ -> true | _ -> false in
+        let can_inline = not is_string_match &&
+                        List.length arms <= 2 &&
                         List.for_all (fun arm ->
                           match arm.ir_arm_value.value_desc with
                           | IRLiteral _ | IREnumConstant _ -> true
@@ -1697,20 +1700,27 @@ let generate_c_expression ctx ir_expr =
           emit_pending_string_literals ctx;
           
           (* Generate if-else chain *)
+          let needs_memcpy = match ir_expr.expr_type with IRStr _ -> true | _ -> false in
           let generate_match_arm is_first (arm, arm_val_str) =
+            let emit_assignment () =
+              if needs_memcpy then
+                emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" temp_var arm_val_str arm_val_str)
+              else
+                emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str)
+            in
             match arm.ir_arm_pattern with
             | IRConstantPattern const_val ->
                 let const_str = generate_c_value ctx const_val in
                 let keyword = if is_first then "if" else "else if" in
                 emit_line ctx (sprintf "%s (%s == %s) {" keyword matched_str const_str);
                 increase_indent ctx;
-                emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+                emit_assignment ();
                 decrease_indent ctx;
                 emit_line ctx "}"
             | IRDefaultPattern ->
                 emit_line ctx "else {";
                 increase_indent ctx;
-                emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str);
+                emit_assignment ();
                 decrease_indent ctx;
                 emit_line ctx "}"
           in
@@ -2478,7 +2488,7 @@ and generate_assignment ctx dest_val expr is_const =
          (* Generate normal assignment for complex expressions *)
          let dest_str = generate_c_value ctx dest_val in
          let expr_str = generate_c_expression ctx expr in
-         
+
          (* Check if we're assigning a dynptr-backed pointer to another variable *)
          (match expr.expr_desc with
           | IRValue src_val ->
@@ -2489,8 +2499,16 @@ and generate_assignment ctx dest_val expr is_const =
                    Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
                | None -> ())
           | _ -> ());
-         
-         emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+
+         (* Use memcpy for cross-size string assignments *)
+         let use_memcpy = match dest_val.val_type, expr.expr_desc with
+           | IRStr d, IRValue src_val -> (match src_val.val_type with IRStr s -> s <> d | _ -> false)
+           | _ -> false
+         in
+         if use_memcpy then
+           emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" dest_str expr_str expr_str)
+         else
+           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
        )
    | _ ->
        (* Check for dynptr pointer assignment tracking before string assignment *)
@@ -2508,10 +2526,14 @@ and generate_assignment ctx dest_val expr is_const =
        (* Check if this is a string assignment *)
        (match dest_val.val_type, expr.expr_desc with
         | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
-            (* String to string assignment with compatible sizes *)
+            (* String to string assignment - use memcpy for cross-size compatibility *)
             let dest_str = generate_c_value ctx dest_val in
             let src_str = generate_c_value ctx src_val in
-            emit_line ctx (sprintf "%s = %s;" dest_str src_str)
+            (match src_val.val_type with
+             | IRStr src_size when src_size <> dest_size ->
+                 emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" dest_str src_str src_str)
+             | _ ->
+                 emit_line ctx (sprintf "%s = %s;" dest_str src_str))
         | IRStr _, _ ->
             (* Other string expressions (concatenation, etc.) *)
             let dest_str = generate_c_value ctx dest_val in
@@ -2987,7 +3009,7 @@ let generate_assignment ctx dest_val expr is_const =
          (* Generate normal assignment for complex expressions *)
          let dest_str = generate_c_value ctx dest_val in
          let expr_str = generate_c_expression ctx expr in
-         
+
          (* Check if we're assigning a dynptr-backed pointer to another variable *)
          (match expr.expr_desc with
           | IRValue src_val ->
@@ -2998,8 +3020,16 @@ let generate_assignment ctx dest_val expr is_const =
                    Hashtbl.replace ctx.dynptr_backed_pointers dest_str dynptr_var
                | None -> ())
           | _ -> ());
-         
-         emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
+
+         (* Use memcpy for cross-size string assignments *)
+         let use_memcpy = match dest_val.val_type, expr.expr_desc with
+           | IRStr d, IRValue src_val -> (match src_val.val_type with IRStr s -> s <> d | _ -> false)
+           | _ -> false
+         in
+         if use_memcpy then
+           emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" dest_str expr_str expr_str)
+         else
+           emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
        )
    | _ ->
        (* Check for dynptr pointer assignment tracking before string assignment *)

@@ -937,8 +937,14 @@ let rec lower_expression ctx (expr : Ast.expr) =
       
       if has_block_arms then
         (* For match expressions with block arms, generate conditional statements *)
-        let result_val = allocate_temp_variable ctx "match_result" IRU32 expr.expr_pos in
-        
+        let result_type = match expr.expr_type with
+          | Some t -> ast_type_to_ir_type t
+          | None -> IRU32
+        in
+        let result_val = allocate_temp_variable ctx "match_result" result_type expr.expr_pos in
+        (* Declare result variable in the enclosing scope, before the if-else chain *)
+        emit_variable_decl_val ctx result_val result_type None expr.expr_pos;
+
         (* Generate if-else chain for the match arms *)
         let rec generate_conditions arms_remaining =
           match arms_remaining with
@@ -979,13 +985,30 @@ let rec lower_expression ctx (expr : Ast.expr) =
               (match arm.arm_body with
                | SingleExpr expr ->
                    let expr_val = lower_expression ctx expr in
-                   emit_variable_decl_val ctx result_val expr_val.val_type (Some (make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos)) arm.arm_pos
+                   let assign_expr = make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos in
+                   emit_instruction ctx (make_ir_instruction (IRAssign (result_val, assign_expr)) arm.arm_pos)
                | Block stmts ->
-                   (* Process block statements - they will be executed conditionally *)
-                   List.iter (lower_statement ctx) stmts;
-                   (* If no explicit assignment to result, use default value *)
-                   let default_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) IRU32 arm.arm_pos in
-                   emit_variable_decl_val ctx result_val IRU32 (Some (make_ir_expr (IRValue default_val) IRU32 arm.arm_pos)) arm.arm_pos);
+                   (* Process block statements; the last expression statement is the arm's value *)
+                   let last_is_expr = match List.rev stmts with
+                     | { stmt_desc = Ast.ExprStmt _; _ } :: _ -> true
+                     | _ -> false
+                   in
+                   if last_is_expr then (
+                     let non_last = List.rev (List.tl (List.rev stmts)) in
+                     let last_stmt = List.nth stmts (List.length stmts - 1) in
+                     List.iter (lower_statement ctx) non_last;
+                     match last_stmt.stmt_desc with
+                     | Ast.ExprStmt last_expr ->
+                         let expr_val = lower_expression ctx last_expr in
+                         let assign_expr = make_ir_expr (IRValue expr_val) expr_val.val_type arm.arm_pos in
+                         emit_instruction ctx (make_ir_instruction (IRAssign (result_val, assign_expr)) arm.arm_pos)
+                     | _ -> ()  (* unreachable *)
+                   ) else (
+                     List.iter (lower_statement ctx) stmts;
+                     let default_val = make_ir_value (IRLiteral (IntLit (Ast.Signed64 0L, None))) result_type arm.arm_pos in
+                     let assign_expr = make_ir_expr (IRValue default_val) result_type arm.arm_pos in
+                     emit_instruction ctx (make_ir_instruction (IRAssign (result_val, assign_expr)) arm.arm_pos)
+                   ));
               
               then_instructions := List.rev ctx.current_block;
               ctx.current_block <- old_block;
@@ -1035,10 +1058,16 @@ let rec lower_expression ctx (expr : Ast.expr) =
           { ir_arm_pattern = ir_pattern; ir_arm_value = ir_value; ir_arm_pos = arm.arm_pos }
         ) arms in
         
-        (* Infer result type from first arm *)
+        (* Infer result type from arms, using max string size for string types *)
         let result_type = match ir_arms with
-          | first_arm :: _ -> first_arm.ir_arm_value.val_type
-          | [] -> IRU32  (* Default type for empty match *)
+          | [] -> IRU32
+          | first_arm :: rest ->
+              let base_type = first_arm.ir_arm_value.val_type in
+              List.fold_left (fun acc arm ->
+                match acc, arm.ir_arm_value.val_type with
+                | IRStr s1, IRStr s2 -> IRStr (max s1 s2)
+                | _ -> acc
+              ) base_type rest
         in
         
         let result_val = allocate_temp_variable ctx "match_result" result_type expr.expr_pos in
