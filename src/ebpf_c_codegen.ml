@@ -448,7 +448,15 @@ let collect_string_sizes_from_multi_program ir_multi_prog =
   (* Also collect from kernel functions *)
   let kernel_func_sizes = concat_map (fun ir_func -> collect_string_sizes_from_function ir_func) (Ir.get_kernel_functions ir_multi_prog) in
 
-  program_sizes @ kernel_func_sizes
+  (* Also collect from struct field types in source_declarations *)
+  let struct_field_sizes = concat_map (fun decl ->
+    match decl.Ir.decl_desc with
+    | Ir.IRDeclStructDef (_, fields, _) ->
+        concat_map (fun (_, field_type) -> collect_string_sizes_from_type field_type) fields
+    | _ -> []
+  ) ir_multi_prog.Ir.source_declarations in
+
+  program_sizes @ kernel_func_sizes @ struct_field_sizes
 
 (** Collect enum definitions from IR types *)
 let collect_enum_definitions ir_multi_prog =
