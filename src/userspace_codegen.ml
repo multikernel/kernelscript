@@ -2610,7 +2610,13 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
     let pinned_globals_vars = List.filter (fun gv -> gv.is_pinned) global_variables in
     let has_pinned_globals = List.length pinned_globals_vars > 0 in
     
-    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations || func_usage.uses_exec || has_pinned_globals) then
+    (* Check if there are any pinned maps that need setup *)
+    let has_pinned_maps = match ir_multi_prog with
+      | Some multi_prog -> List.exists (fun map -> map.pin_path <> None) (Ir.get_global_maps multi_prog)
+      | None -> false
+    in
+    
+    let setup_call = if needs_object_loading && (List.length config_declarations > 0 || func_usage.uses_map_operations || func_usage.uses_exec || has_pinned_globals || has_pinned_maps) then
       let all_setup_parts = List.filter (fun s -> s <> "") [
         (if has_pinned_globals then
           let project_name = base_name in
@@ -2637,8 +2643,8 @@ let generate_c_function_from_ir ?(global_variables = []) ?(base_name = "") ?(con
         }
     }|} pin_path pin_path
                 else "");
-        (* Include all_setup_code only once for maps, config, struct_ops, and ringbuf *)
-        (if func_usage.uses_map_operations || func_usage.uses_exec || List.length config_declarations > 0 then all_setup_code else "");
+        (* Include all_setup_code for maps (including pinned maps), config, struct_ops, and ringbuf *)
+        (if func_usage.uses_map_operations || func_usage.uses_exec || List.length config_declarations > 0 || has_pinned_maps then all_setup_code else "");
         ] in
       if all_setup_parts <> [] then "\n" ^ String.concat "\n" all_setup_parts else ""
     else "" in
@@ -2957,23 +2963,30 @@ let generate_unified_map_setup_code ?(obj_var="obj->obj") maps =
     else map :: acc
   ) [] maps |> List.rev in
   
-  List.map (fun map ->
+  let map_setups = List.map (fun map ->
     (* Always load from eBPF object first, then handle pinning if needed *)
     let pin_logic = match map.pin_path with
       | Some pin_path ->
+          (* Extract directory path from pin_path *)
+          let dir_path = Filename.dirname pin_path in
+          (* Generate unique variable name for each map's existing_fd *)
           Printf.sprintf {|
         // Check if map is already pinned
-        int existing_fd = bpf_obj_get("%s");
-        if (existing_fd >= 0) {
-            %s_fd = existing_fd;
+        int %s_existing_fd = bpf_obj_get("%s");
+        if (%s_existing_fd >= 0) {
+            %s_fd = %s_existing_fd;
         } else {
-            // Map not pinned yet, pin it now
+            // Map not pinned yet, create directory and pin it
+            if (ensure_bpf_dir("%s") < 0) {
+                fprintf(stderr, "Failed to create directory %s: %%s\n", strerror(errno));
+                return 1;
+            }
             if (bpf_map__pin(%s_map, "%s") < 0) {
                 fprintf(stderr, "Failed to pin %s map to %s\n");
                 return 1;
             }
             %s_fd = bpf_map__fd(%s_map);
-        }|} pin_path map.map_name map.map_name pin_path map.map_name pin_path map.map_name map.map_name
+        }|} map.map_name pin_path map.map_name map.map_name map.map_name dir_path dir_path map.map_name pin_path map.map_name pin_path map.map_name map.map_name
       | None ->
           Printf.sprintf {|
         // Non-pinned map, just get file descriptor
@@ -2989,7 +3002,9 @@ let generate_unified_map_setup_code ?(obj_var="obj->obj") maps =
         fprintf(stderr, "Failed to get fd for %s map\n");
         return 1;
     }|} map.map_name map.map_name obj_var map.map_name map.map_name map.map_name pin_logic map.map_name map.map_name
-  ) deduplicated_maps |> String.concat "\n"
+  ) deduplicated_maps in
+  
+  String.concat "\n" map_setups
 
 (** Generate config struct definition from config declaration - reusing eBPF logic *)
 let generate_config_struct_from_decl (config_decl : Ast.config_declaration) =
@@ -3446,8 +3461,14 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
     maps_for_exec  (* Use all global maps directly for exec *)
   else used_global_maps in
 
+  (* Check if there are any pinned maps - this affects which headers we need *)
+  let has_any_pinned_maps = List.exists (fun map -> map.pin_path <> None) global_maps in
+  
+  (* For header generation, use all global maps if there are pinned maps, otherwise use the filtered list *)
+  let maps_for_headers = if has_any_pinned_maps then global_maps else used_global_maps_with_exec in
+  
   let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach in
-  let base_includes = generate_headers_for_maps ~uses_bpf_functions used_global_maps_with_exec in
+  let base_includes = generate_headers_for_maps ~uses_bpf_functions maps_for_headers in
   let additional_includes = {|#include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -3520,8 +3541,12 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
   else "" in
   
   (* Generate setup code first for use in main function *)
-  let map_setup_code = if all_usage.uses_map_operations || all_usage.uses_exec then
-    generate_unified_map_setup_code used_global_maps_with_exec
+  (* Check if there are any pinned maps that need setup *)
+  let has_pinned_maps = List.exists (fun map -> map.pin_path <> None) global_maps in
+  let map_setup_code = if all_usage.uses_map_operations || all_usage.uses_exec || has_pinned_maps then
+    (* For pinned maps, we need to include all of them in setup, not just used ones *)
+    let maps_for_setup = if has_pinned_maps then global_maps else used_global_maps_with_exec in
+    generate_unified_map_setup_code maps_for_setup
   else "" in
   
   (* Generate pinned globals support *)
@@ -3588,8 +3613,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
   
 
   
-  let map_fd_declarations = if all_usage.uses_map_operations || all_usage.uses_exec then
-    generate_map_fd_declarations used_global_maps_with_exec
+  let map_fd_declarations = if all_usage.uses_map_operations || all_usage.uses_exec || has_pinned_maps then
+    let maps_for_fd = if has_pinned_maps then global_maps else used_global_maps_with_exec in
+    generate_map_fd_declarations maps_for_fd
   else "" in
   
   (* Generate config map file descriptors if there are config declarations *)
@@ -3666,6 +3692,9 @@ void cleanup_bpf_maps(void) {
   
   (* Only generate BPF helper functions when they're actually used *)
   let bpf_helper_functions = 
+    (* Check if there are any pinned maps in the global maps *)
+    let has_pinned_maps = List.exists (fun map -> map.pin_path <> None) global_maps in
+    
     let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies (Ir.get_global_variables ir_multi_prog) in
     
     (* Global attachment storage (generated only when attach/detach are used) *)
@@ -4140,7 +4169,35 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
         ) maps_for_exec |> String.concat "\n")
     else "" in
 
-    let functions_list = List.filter (fun s -> s <> "") [attachment_storage; load_function; attach_function; detach_function; daemon_function; exec_function] in
+    (* Generate directory creation helper if there are pinned maps *)
+    let mkdir_helper_function = if has_pinned_maps then
+      {|// Helper function to create directory recursively
+static int ensure_bpf_dir(const char *path) {
+    char tmp[256];
+    char *p = NULL;
+    size_t len;
+    
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    if (tmp[len - 1] == '/') tmp[len - 1] = 0;
+    
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    return 0;
+}|}
+    else "" in
+
+    let functions_list = List.filter (fun s -> s <> "") [mkdir_helper_function; attachment_storage; load_function; attach_function; detach_function; daemon_function; exec_function] in
     if functions_list = [] && bpf_obj_decl = "" then ""
     else
       sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 
