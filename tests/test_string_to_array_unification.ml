@@ -42,8 +42,8 @@ struct TestStruct {
   try
     let ast = parse_string program_text in
     let symbol_table = create_test_symbol_table ast in
-    let (_typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "String to u8 array basic assignment" true true
+    let (typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "type check produces declarations" true (List.length typed_ast > 0)
   with
   | exn -> fail ("String to u8 array basic test failed: " ^ Printexc.to_string exn)
 
@@ -69,8 +69,7 @@ struct TestStruct {
     let (_typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
     fail "String too long for array should fail type checking"
   with
-  | Type_error (_, _) -> 
-      check bool "String too long for array correctly fails" true true
+  | Type_error (_, _) -> ()
   | exn -> fail ("Unexpected error: " ^ Printexc.to_string exn)
 
 (** Test string exactly fits in array *)
@@ -92,8 +91,8 @@ struct TestStruct {
   try
     let ast = parse_string program_text in
     let symbol_table = create_test_symbol_table ast in
-    let (_typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "String exact fit in array" true true
+    let (typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "type check produces declarations" true (List.length typed_ast > 0)
   with
   | exn -> fail ("String exact fit test failed: " ^ Printexc.to_string exn)
 
@@ -103,21 +102,21 @@ let test_unify_types_string_to_array () =
   let str_type = Str 10 in
   let array_type = Array (U8, 16) in
   (match unify_types str_type array_type with
-   | Some (Array (U8, 16)) -> check bool "String unifies with larger u8 array" true true
+   | Some (Array (U8, 16)) -> ()
    | _ -> fail "String should unify with larger u8 array");
   
   (* Test that larger string cannot unify with smaller array *)
   let large_str_type = Str 20 in
   let small_array_type = Array (U8, 16) in
   (match unify_types large_str_type small_array_type with
-   | None -> check bool "Large string cannot unify with smaller array" true true
+   | None -> ()
    | Some _ -> fail "Large string should not unify with smaller array");
   
   (* Test that string cannot unify with non-u8 array *)
   let str_type = Str 10 in
   let u32_array_type = Array (U32, 16) in
   (match unify_types str_type u32_array_type with
-   | None -> check bool "String cannot unify with non-u8 array" true true
+   | None -> ()
    | Some _ -> fail "String should not unify with non-u8 array")
 
 (** Test multiple string assignments in same struct *)
@@ -143,8 +142,8 @@ struct Config {
   try
     let ast = parse_string program_text in
     let symbol_table = create_test_symbol_table ast in
-    let (_typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Multiple string assignments in struct" true true
+    let (typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "type check produces declarations" true (List.length typed_ast > 0)
   with
   | exn -> fail ("Multiple string assignments test failed: " ^ Printexc.to_string exn)
 
@@ -175,8 +174,8 @@ struct Outer {
   try
     let ast = parse_string program_text in
     let symbol_table = create_test_symbol_table ast in
-    let (_typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Nested struct string assignment" true true
+    let (typed_ast, _typed_programs) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "type check produces declarations" true (List.length typed_ast > 0)
   with
   | exn -> fail ("Nested struct string assignment test failed: " ^ Printexc.to_string exn)
 
