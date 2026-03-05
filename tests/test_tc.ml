@@ -110,7 +110,7 @@ fn invalid_handler(ctx: *__sk_buff) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed parsing invalid TC direction"
   with
-  | _ -> check bool "Correctly rejected invalid direction" true true
+  | _ -> ()
 
 let test_tc_old_format_rejection _ =
   (* Test old @tc format without direction parameter *)
@@ -124,7 +124,7 @@ fn old_handler(ctx: *__sk_buff) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed parsing old TC format"
   with
-  | _ -> check bool "Correctly rejected old format" true true
+  | _ -> ()
 
 let test_tc_missing_direction _ =
   (* Test @tc() with empty direction *)
@@ -137,7 +137,7 @@ fn empty_direction_handler(ctx: *__sk_buff) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed with empty direction"
   with
-  | _ -> check bool "Correctly rejected empty direction" true true
+  | _ -> ()
 
 (* 2. Type Checking Tests *)
 let test_tc_ingress_type_checking _ =
@@ -198,8 +198,8 @@ fn test_handler(ctx: *__sk_buff) -> i32 {
     if should_succeed then (
       try
         let ast = parse_string source in
-        let _ = type_check_ast ast in
-        check bool (Printf.sprintf "Direction %s should be accepted" direction) true true
+        let typed = type_check_ast ast in
+        check bool (Printf.sprintf "Direction %s should be accepted" direction) true (List.length typed > 0)
       with
       | _ -> fail (Printf.sprintf "Direction %s should have been accepted" direction)
     ) else (
@@ -208,7 +208,7 @@ fn test_handler(ctx: *__sk_buff) -> i32 {
         let _ = type_check_ast ast in
         fail (Printf.sprintf "Direction %s should have been rejected" direction)
       with
-      | _ -> check bool (Printf.sprintf "Direction %s correctly rejected" direction) true true
+      | _ -> ()
     )
   ) test_directions
 
@@ -488,7 +488,7 @@ fn invalid_handler(ctx: i32) -> i32 {
     let _ = generate_ir typed_ast symbol_table "test" in
     fail "Should have failed with invalid context type"
   with
-  | _ -> check bool "Correctly rejected invalid context type" true true
+  | _ -> ()
 
 let test_tc_wrong_return_type _ =
   let source = "@tc(\"ingress\")
@@ -503,7 +503,7 @@ fn wrong_return_handler(ctx: *__sk_buff) -> str<64> {
     let _ = generate_ir typed_ast symbol_table "test" in
     fail "Should have failed with wrong return type"
   with
-  | _ -> check bool "Correctly rejected wrong return type" true true
+  | _ -> ()
 
 let test_tc_invalid_direction_values _ =
   (* Test various invalid direction values *)
@@ -528,7 +528,7 @@ fn invalid_dir_handler(ctx: *__sk_buff) -> i32 {
       let _ = type_check_ast ast in
       fail (Printf.sprintf "Should have failed with invalid direction: %s" direction)
     with
-    | _ -> check bool (Printf.sprintf "Correctly rejected direction: %s" direction) true true
+    | _ -> ()
   ) invalid_directions
 
 let test_tc_multiple_parameters _ =
@@ -544,7 +544,7 @@ fn multi_param_handler(ctx: *__sk_buff, extra: i32) -> i32 {
     let _ = generate_ir typed_ast symbol_table "test" in
     fail "Should have failed with multiple parameters"
   with
-  | _ -> check bool "Correctly rejected multiple parameters" true true
+  | _ -> ()
 
 (* 7. Integration Tests *)
 let test_tc_end_to_end_ingress _ =
