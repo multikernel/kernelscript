@@ -48,8 +48,8 @@ config network {
   try
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "valid config field access" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "valid config field access" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Valid config field access failed: " ^ Printexc.to_string e)
 
@@ -121,8 +121,8 @@ config network {
   try
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "config field type validation" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "config field type validation" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Config field type validation failed: " ^ Printexc.to_string e)
 
@@ -148,8 +148,8 @@ config security {
   try
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "multiple config declarations" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "multiple config declarations" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Multiple config declarations failed: " ^ Printexc.to_string e)
 
@@ -177,8 +177,8 @@ config limits {
   try
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "config field access in expressions" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "config field access in expressions" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Config field access in expressions failed: " ^ Printexc.to_string e)
 
@@ -199,8 +199,8 @@ config network {
   try
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "config with array fields" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "config with array fields" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Config with array fields failed: " ^ Printexc.to_string e)
 
@@ -220,8 +220,8 @@ config network {
   try
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "config field access chain validation" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "config field access chain validation" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Config field access chain validation failed: " ^ Printexc.to_string e)
 
@@ -242,8 +242,8 @@ config network {
     let ast = parse_string program_text in
     let symbol_table = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    let _ir_result = generate_ir ast symbol_table "test" in
-    check bool "config declaration IR generation" true true
+    let ir_result = generate_ir ast symbol_table "test" in
+    check bool "config declaration IR generation" true (List.length (Kernelscript.Ir.get_programs ir_result) > 0)
   with
   | e -> fail ("Config declaration IR generation failed: " ^ Printexc.to_string e)
 
