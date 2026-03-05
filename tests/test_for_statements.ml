@@ -15,10 +15,20 @@
  *)
 
 open Alcotest
+open Kernelscript.Ast
 open Kernelscript.Parse
 open Kernelscript.Type_checker
 
-(** Helper function to create test positions *)
+(** Helper: type-check a program and extract function body *)
+let type_check_and_get_body program_text =
+  let ast = parse_string program_text in
+  let typed_ast = type_check_ast ast in
+  match typed_ast with
+  | [AttributedFunction af] -> af.attr_function.func_body
+  | _ -> Alcotest.fail "expected single attributed function"
+
+let body_has_for body =
+  List.exists (fun s -> match s.stmt_desc with For _ -> true | _ -> false) body
 
 (** Test for loop with constant bounds *)
 let test_for_constant_bounds () =
@@ -30,12 +40,8 @@ let test_for_constant_bounds () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "constant bounds for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for constant bounds: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with variable bounds *)
 let test_for_variable_bounds () =
@@ -49,12 +55,8 @@ let test_for_variable_bounds () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "variable bounds for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for variable bounds: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with empty body *)
 let test_for_empty_body () =
@@ -65,12 +67,8 @@ let test_for_empty_body () =
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "empty body for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for empty body: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with single iteration (same bounds) *)
 let test_for_single_iteration () =
@@ -82,12 +80,8 @@ let test_for_single_iteration () =
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "single iteration for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for single iteration: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with simple arithmetic *)
 let test_for_simple_arithmetic () =
@@ -99,12 +93,8 @@ let test_for_simple_arithmetic () =
   return 1
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "simple arithmetic for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for simple arithmetic: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with break statement *)
 let test_for_with_break () =
@@ -119,12 +109,8 @@ let test_for_with_break () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "for loop with break parsed and type checked" true true
-  with
-  | e -> fail ("Failed for loop with break: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with continue statement *)
 let test_for_with_continue () =
@@ -139,12 +125,8 @@ let test_for_with_continue () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "for loop with continue parsed and type checked" true true
-  with
-  | e -> fail ("Failed for loop with continue: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with complex expressions in bounds *)
 let test_for_complex_bounds () =
@@ -158,12 +140,8 @@ let test_for_complex_bounds () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "for loop with complex bounds parsed and type checked" true true
-  with
-  | e -> fail ("Failed for loop with complex bounds: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with different integer types *)
 let test_for_different_integer_types () =
@@ -186,12 +164,8 @@ let test_for_different_integer_types () =
   return 2
 }
 |} type_name type_name in
-    try
-      let ast = parse_string program_text in
-      let _typed_ast = type_check_ast ast in
-      check bool (type_name ^ " bounds for loop") true true
-    with
-    | e -> fail ("Failed for " ^ type_name ^ " bounds: " ^ Printexc.to_string e)
+    let body = type_check_and_get_body program_text in
+    check bool (type_name ^ " bounds has for stmt") true (body_has_for body)
   ) test_cases
 
 (** Test for loop with large bounds *)
@@ -204,12 +178,8 @@ let test_for_large_bounds () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "large bounds for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for large bounds: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop with reverse bounds (start > end) *)
 let test_for_reverse_bounds () =
@@ -221,12 +191,8 @@ let test_for_reverse_bounds () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "reverse bounds for loop parsed and type checked" true true
-  with
-  | e -> fail ("Failed for reverse bounds: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop variable scoping *)
 let test_for_variable_scoping () =
@@ -240,12 +206,8 @@ let test_for_variable_scoping () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "for loop variable scoping parsed and type checked" true true
-  with
-  | e -> fail ("Failed for variable scoping: " ^ Printexc.to_string e)
+  let body = type_check_and_get_body program_text in
+  check bool "body contains for stmt" true (body_has_for body)
 
 (** Test for loop in global functions *)
 let test_for_in_global_function () =
@@ -265,12 +227,13 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    check bool "for loop in global function parsed and type checked" true true
-  with
-  | e -> fail ("Failed for loop in global function: " ^ Printexc.to_string e)
+  let ast = parse_string program_text in
+  let typed_ast = type_check_ast ast in
+  check int "decl count" 3 (List.length typed_ast);
+  let helper_body = List.find_map (fun d -> match d with
+    | GlobalFunction f when f.func_name = "helper" -> Some f.func_body
+    | _ -> None) typed_ast in
+  check bool "helper body has for stmt" true (body_has_for (Option.get helper_body))
 
 (** Test error cases for for statements *)
 let test_for_error_cases () =
@@ -289,13 +252,12 @@ let test_for_error_cases () =
   return 0
 }
 |} code in
-    try
+    (try
       let _ = parse_string full_program in
       fail ("Should have failed: " ^ desc)
     with
-    | Parse_error (_, _) -> check bool ("error case: " ^ desc) true true
-    | Type_error (_, _) -> check bool ("type error case: " ^ desc) true true
-    | _ -> fail ("Expected parse or type error for: " ^ desc)
+    | Parse_error _ | Type_error _ -> ()
+    | e -> fail ("Expected parse or type error for: " ^ desc ^ ", got: " ^ Printexc.to_string e))
   ) error_cases
 
 let for_statement_tests = [
