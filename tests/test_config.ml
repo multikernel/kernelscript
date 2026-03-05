@@ -133,15 +133,13 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let symbol_table = build_symbol_table ast in
-    check bool "no conflicts with different names" true true;
-    
     (* Verify both configs are in symbol table *)
     (match lookup_symbol symbol_table "network" with
-     | Some { kind = Config _; _ } -> check bool "network config found" true true
+     | Some { kind = Config _; _ } -> ()
      | _ -> fail "network config not found in symbol table");
-    
+
     (match lookup_symbol symbol_table "security" with
-     | Some { kind = Config _; _ } -> check bool "security config found" true true
+     | Some { kind = Config _; _ } -> ()
      | _ -> fail "security config not found in symbol table")
   with
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
@@ -173,11 +171,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _symbol_table = build_symbol_table ast in
-    check bool "valid config field access compiled" true true;
-    
+
     (* Also test type checking *)
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "valid config field access type checked" true true
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "type check produces declarations" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Unexpected error in valid field access: " ^ Printexc.to_string e)
 
@@ -204,10 +201,9 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _symbol_table = build_symbol_table ast in
-    check bool "config field access in expressions compiled" true true;
-    
-    let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "config field access in expressions type checked" true true
+
+    let (enhanced_ast, _) = type_check_and_annotate_ast ast in
+    check bool "type check produces declarations" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Unexpected error in expression field access: " ^ Printexc.to_string e)
 
@@ -298,9 +294,8 @@ fn main() -> i32 {
   try
     let _ast = parse_string program_text in
     fail "Expected error for config declared inside function"
-  with 
-  | _ ->
-    check bool "config inside function error detected" true true
+  with
+  | _ -> ()
 
 (** Test config declared inside program block (invalid) *)
 let test_config_inside_program () =
@@ -319,9 +314,8 @@ fn main() -> i32 {
   try
     let _ast = parse_string program_text in
     fail "Expected error for config declared inside program"
-  with 
-  | _ ->
-    check bool "config inside program error detected" true true
+  with
+  | _ -> ()
 
 (** Test 4: eBPF C Code Generation *)
 
@@ -510,7 +504,6 @@ fn main() -> i32 {
     let userspace_code = compile_to_userspace_c ast in
     
     (* Verify complete compilation pipeline *)
-    check bool "end-to-end compilation successful" true true;
     check int "one typed program generated" 1 (List.length typed_programs);
     check bool "eBPF code generated" true (String.length ebpf_code > 0);
     check bool "userspace code generated" true (String.length userspace_code > 0);
@@ -547,8 +540,6 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let _symbol_table = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    
-    check bool "different types compilation successful" true true;
     
     (* Test code generation with different types *)
     let ebpf_code = compile_to_ebpf_c ast in
