@@ -113,8 +113,8 @@ let test_main_correct_signature () =
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "correct main signature accepted" true true
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  check bool "correct main signature produces IR" true (List.length ir.Ir.source_declarations > 0)
 
 (** Test main function with struct parameter *)
 let test_main_with_struct_param () =
@@ -135,8 +135,8 @@ let test_main_with_struct_param () =
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "correct main signature with struct accepted" true true
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  check bool "struct param main produces IR" true (List.length ir.Ir.source_declarations > 0)
 
 (** Test main function with wrong parameter types *)
 let test_main_wrong_param_types () =
@@ -157,9 +157,10 @@ let test_main_wrong_param_types () =
   in
   try
     test_fn ();
-    check bool "wrong parameter types should fail" false true
+    fail "wrong parameter types should fail"
   with
-  | _ -> check bool "wrong parameter types correctly rejected" true true
+  | Failure msg -> check bool "wrong param types rejected" true (String.length msg > 0)
+  | Kernelscript.Type_checker.Type_error (msg, _) -> check bool "wrong param types rejected" true (String.length msg > 0)
 
 (** Test main function with wrong return type *)
 let test_main_wrong_return_type () =
@@ -180,9 +181,10 @@ let test_main_wrong_return_type () =
   in
   try
     test_fn ();
-    check bool "wrong return type should fail" false true
+    fail "wrong return type should fail"
   with
-  | _ -> check bool "wrong return type correctly rejected" true true
+  | Failure msg -> check bool "wrong return type rejected" true (String.length msg > 0)
+  | Kernelscript.Type_checker.Type_error (msg, _) -> check bool "wrong return type rejected" true (String.length msg > 0)
 
 (** Test main function with non-struct single parameter *)
 let test_main_non_struct_param () =
@@ -203,9 +205,10 @@ let test_main_non_struct_param () =
   in
   try
     test_fn ();
-    check bool "non-struct single parameter should fail" false true
+    fail "non-struct single parameter should fail"
   with
-  | _ -> check bool "non-struct single parameter correctly rejected" true true
+  | Failure msg -> check bool "non-struct param rejected" true (String.length msg > 0)
+  | Kernelscript.Type_checker.Type_error (msg, _) -> check bool "non-struct param rejected" true (String.length msg > 0)
 
 (** Test main function with too many parameters *)
 let test_main_too_many_params () =
@@ -226,9 +229,10 @@ let test_main_too_many_params () =
   in
   try
     test_fn ();
-    check bool "too many parameters should fail" false true
+    fail "too many parameters should fail"
   with
-  | _ -> check bool "too many parameters correctly rejected" true true
+  | Failure msg -> check bool "too many params rejected" true (String.length msg > 0)
+  | Kernelscript.Type_checker.Type_error (msg, _) -> check bool "too many params rejected" true (String.length msg > 0)
 
 (** Test missing main function *)
 let test_missing_main () =
@@ -249,9 +253,9 @@ let test_missing_main () =
   in
   try
     test_fn ();
-    check bool "missing main function should fail" false true
+    fail "missing main function should fail"
   with
-  | _ -> check bool "missing main function correctly rejected" true true
+  | Failure msg -> check bool "missing main rejected" true (String.length msg > 0)
 
 (** Test multiple main functions *)
 let test_multiple_main () =
@@ -272,9 +276,10 @@ let test_multiple_main () =
   in
   try
     test_fn ();
-    check bool "multiple main functions should fail" false true
+    fail "multiple main functions should fail"
   with
-  | _ -> check bool "multiple main functions correctly rejected" true true
+  | Failure msg -> check bool "multiple main rejected" true (String.length msg > 0)
+  | Kernelscript.Symbol_table.Symbol_error (msg, _) -> check bool "multiple main rejected" true (String.length msg > 0)
 
 (** Test global functions with other functions (should be allowed) *)
 let test_global_functions_with_other_functions () =
@@ -291,8 +296,8 @@ let test_global_functions_with_other_functions () =
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "global functions with other functions accepted" true true
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  check bool "global functions with other functions produces IR" true (List.length ir.Ir.source_declarations > 0)
 
 (** Test global functions with struct definitions *)
 let test_global_functions_with_structs () =
@@ -318,8 +323,8 @@ let test_global_functions_with_structs () =
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "global functions with structs accepted" true true
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  check bool "global functions with structs produces IR" true (List.length ir.Ir.source_declarations > 0)
 
 (** Test multiple programs with single global main *)
 let test_multiple_programs_single_main () =
@@ -339,8 +344,8 @@ let test_multiple_programs_single_main () =
   let ast = parse_string code in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-  check bool "multiple programs with single main accepted" true true
+  let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+  check bool "multiple programs with single main produces IR" true (List.length ir.Ir.source_declarations > 0)
 
 (** Test basic global function functionality *)
 let test_basic_global_functions () =
@@ -359,20 +364,12 @@ let test_basic_global_functions () =
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     match ir with
-    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; _ }; _ } ->
-      check bool "global functions block exists" true true;
-      check bool "main function exists" (List.exists (fun f -> f.Ir.func_name = "main") functions) true;
-      check bool "structs list accessible" (List.length structs >= 0) true;
-
-    | _ -> check bool "global functions block not found" false true
+    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; _ }; _ } ->
+      check bool "main function exists" true (List.exists (fun f -> f.Ir.func_name = "main") functions);
+      check int "userspace functions count" 1 (List.length functions)
+    | _ -> fail "global functions block not found"
   in
-  try
-    test_fn ();
-    check bool "basic global functions test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test global function code generation from AST *)
 let test_global_function_codegen () =
@@ -391,20 +388,12 @@ let test_global_function_codegen () =
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
     match ir with
-    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; userspace_structs = structs; _ }; _ } ->
-      check bool "global functions block exists" true true;
-      check bool "main function exists" (List.exists (fun f -> f.Ir.func_name = "main") functions) true;
-      check bool "structs list accessible" (List.length structs >= 0) true;
-
-    | _ -> check bool "global functions block not found" false true
+    | { Ir.userspace_program = Some { Ir.userspace_functions = functions; _ }; _ } ->
+      check bool "main function exists" true (List.exists (fun f -> f.Ir.func_name = "main") functions);
+      check int "userspace functions count" 1 (List.length functions)
+    | _ -> fail "global functions block not found"
   in
-  try
-    test_fn ();
-    check bool "global function codegen test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test literal map assignment with test functions - should not require main *)
 let test_literal_map_assignment () =
@@ -425,15 +414,10 @@ let test_literal_map_assignment () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "literal map assignment IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "literal map assignment test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test map lookup with literal key *)
 let test_map_lookup_with_literal_key () =
@@ -454,15 +438,10 @@ let test_map_lookup_with_literal_key () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "map lookup literal key IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "map lookup with literal key test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test map update with literal key and value *)
 let test_map_update_with_literal_key_value () =
@@ -484,15 +463,10 @@ let test_map_update_with_literal_key_value () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "map update literal key value IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "map update with literal key value test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test map delete with literal key *)
 let test_map_delete_with_literal_key () =
@@ -514,15 +488,10 @@ let test_map_delete_with_literal_key () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "map delete literal key IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "map delete with literal key test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test map iterate with literal key *)
 let test_map_iterate_with_literal_key () =
@@ -544,15 +513,10 @@ let test_map_iterate_with_literal_key () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "map iterate literal key IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "map iterate with literal key test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test mixed literal and variable expressions *)
 let test_mixed_literal_variable_expressions () =
@@ -574,15 +538,10 @@ let test_mixed_literal_variable_expressions () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "mixed literal variable expressions IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "mixed literal variable expressions test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test unique temporary variable names *)
 let test_unique_temp_var_names () =
@@ -605,15 +564,10 @@ let test_unique_temp_var_names () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "unique temp var names IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "unique temp var names test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test no direct literal addressing *)
 let test_no_direct_literal_addressing () =
@@ -634,15 +588,10 @@ let test_no_direct_literal_addressing () =
     let ast = parse_string code in
     let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    ignore (Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test")
+    let ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool "no direct literal addressing IR" true (ir.Ir.userspace_program <> None)
   in
-  try
-    test_fn ();
-    check bool "no direct literal addressing test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test that BPF functions are only generated when explicitly called *)
 let test_map_loading_code_generation () =
@@ -741,13 +690,7 @@ let test_map_loading_code_generation () =
       (try Unix.rmdir temp_dir with _ -> ());
       raise exn
   in
-  try
-    test_fn ();
-    check bool "map loading code generation test passed" true true
-  with
-  | e -> 
-    Printf.printf "Error: %s\n" (Printexc.to_string e);
-    check bool "test failed with exception" false true
+  test_fn ()
 
 (** Test suite *)
 let suite = [
