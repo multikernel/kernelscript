@@ -105,12 +105,8 @@ let test_register_with_struct_ops () =
   let ast = Parse.parse_string program in
   
   (* Type checking should succeed *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast in
-    check bool "register() with struct_ops should succeed" true true
-  with
-  | Type_checker.Type_error _ -> fail "Type checking should succeed for struct_ops with register()"
-  | _ -> fail "Unexpected error during type checking"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 (** Test register() function type checking rejects regular structs *)
 let test_register_rejects_regular_struct () =
@@ -190,11 +186,8 @@ let test_multiple_struct_ops () =
   check int "Number of struct_ops" 2 impl_count;
   
   (* Type checking should succeed *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast in
-    check bool "Multiple struct_ops type checking" true true
-  with
-  | _ -> fail "Type checking should succeed for multiple struct_ops"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 (** Test IR generation for struct_ops *)
 let test_struct_ops_ir_generation () =
@@ -362,8 +355,8 @@ let test_malformed_struct_ops_attribute () =
   
   (* For now, type checking passes this through - future enhancement could validate struct attributes *)
   (* This test documents current behavior and can be enhanced when validation is added *)
-  let _ = Type_checker.type_check_and_annotate_ast ast in
-  check bool "Malformed struct_ops attribute currently parses successfully" true true
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  check bool "malformed struct_ops still produces declarations" true (List.length typed_ast > 0)
 
 (** Test register() function with non-struct argument *)
 let test_register_with_non_struct () =
@@ -382,8 +375,8 @@ let test_register_with_non_struct () =
     let _ = Type_checker.type_check_and_annotate_ast ast in
     fail "register() with non-struct should fail type checking"
   with
-  | Type_checker.Type_error _ -> check bool "register() rejects non-struct" true true
-  | _ -> fail "Expected Type_error for register() with non-struct"
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test nested struct_ops detection *)
 let test_nested_struct_ops () =
@@ -418,11 +411,8 @@ let test_nested_struct_ops () =
   let ast = Parse.parse_string program in
   
   (* Type checking should succeed - multiple impl blocks are allowed *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast in
-    check bool "Multiple impl blocks type checking" true true
-  with
-  | _ -> fail "Type checking should succeed for multiple impl blocks"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 (** Test symbol table integration with struct_ops *)
 let test_symbol_table_struct_ops () =
@@ -626,11 +616,8 @@ let test_struct_ops_missing_required_function () =
   let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
   
   (* Type checking should now succeed since functions are optional *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
-    check bool "Missing functions should be allowed (functions are optional)" true true
-  with
-  | _ -> fail "Type checking should succeed since struct_ops functions are optional"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 let test_struct_ops_correct_signatures () =
   let program = {|
@@ -660,11 +647,8 @@ let test_struct_ops_correct_signatures () =
   let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
   
   (* Type checking should succeed for correct signatures *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
-    check bool "Correct signatures should pass validation" true true
-  with
-  | _ -> fail "Type checking should succeed for correct signatures"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 (** BTF Integration Tests *)
 
@@ -707,17 +691,17 @@ let test_btf_template_generation () =
     fail "Expected error when no BTF file is provided"
   with
   | Failure msg when String.contains msg 'B' && String.contains msg 'T' && String.contains msg 'F' ->
-      check bool "Correct error for missing BTF path" true true
-  | _ -> fail "Expected BTF-related error message");
-  
+      check bool "missing BTF error mentions BTF" true (String.length msg > 0)
+  | e -> fail ("Expected BTF-related Failure, got: " ^ Printexc.to_string e));
+
   (* Test with invalid BTF file path should also error *)
   (try
     let _ = Btf_parser.generate_struct_ops_template (Some "/nonexistent/btf") ["tcp_congestion_ops"] "test_project" in
     fail "Expected error for non-existent BTF file"
   with
   | Failure msg when String.contains msg 'B' && String.contains msg 'T' && String.contains msg 'F' ->
-      check bool "Correct error for invalid BTF path" true true
-  | _ -> fail "Expected BTF-related error message")
+      check bool "invalid BTF error mentions BTF" true (String.length msg > 0)
+  | e -> fail ("Expected BTF-related Failure, got: " ^ Printexc.to_string e))
 
 (** Test struct_ops initialization using main init command *)
 let test_init_command_struct_ops_detection () =
@@ -1013,12 +997,8 @@ let test_sched_ext_ops_parsing () =
   let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
   
   (* Type checking should succeed *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast_with_structs in
-    check bool "sched_ext_ops type checking should succeed" true true
-  with
-  | Type_checker.Type_error _ -> fail "Type checking should succeed for sched_ext_ops"
-  | _ -> fail "Unexpected error during type checking"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 (** Test sched_ext_ops IR generation *)
 let test_sched_ext_ops_ir_generation () =
@@ -1157,7 +1137,7 @@ let test_sched_ext_ops_btf_extraction () =
   (* Test BTF verification - should fail gracefully *)
   (match Struct_ops_registry.verify_struct_ops_against_btf "/non/existent/btf" "sched_ext_ops" [("select_cpu", "u32")] with
    | Ok () -> fail "Should have failed with non-existent BTF"
-   | Error _ -> check bool "BTF verification fails gracefully" true true);
+   | Error msg -> check bool "BTF error has message" true (String.length msg > 0));
   
   (* Test struct_ops extraction from BTF - should return empty list for non-existent file *)
   let definitions = Struct_ops_registry.extract_struct_ops_from_btf "/non/existent/btf" ["sched_ext_ops"] in
@@ -1251,17 +1231,8 @@ let test_struct_ops_can_call_kernel_functions () =
   let ast = Parse.parse_string program in
   
   (* This should succeed - struct_ops functions should be able to call kernel functions *)
-  try
-    let _ = Type_checker.type_check_and_annotate_ast ast in
-    check bool "struct_ops functions should be able to call kernel functions" true true
-  with
-  | Type_checker.Type_error (msg, _) ->
-      (* If we get the old error message, the bug is still present *)
-      if String.contains msg 'u' && String.contains msg 's' && String.contains msg 'e' && String.contains msg 'r' then
-        fail ("struct_ops functions should be able to call kernel functions, but got error: " ^ msg)
-      else
-        fail ("Unexpected type error: " ^ msg)
-  | _ -> fail "Unexpected error during type checking"
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  check bool "type check produces declarations" true (List.length typed_ast > 0)
 
 let tests = [
   "struct_ops parsing", `Quick, test_struct_ops_parsing;
