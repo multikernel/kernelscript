@@ -109,22 +109,22 @@ fn test_function() -> i32 {
   (* Check EventHandler type alias *)
   let event_handler = List.find (fun (name, _) -> name = "EventHandler") type_aliases in
   (match snd event_handler with
-   | Function ([U32; Pointer U8], I32) -> check bool "EventHandler type correct" true true
+   | Function ([U32; Pointer U8], I32) -> ()
    | _ -> fail "EventHandler should be fn(u32, *u8) -> i32");
   
   (* Check SimpleCallback type alias *)
   let simple_callback = List.find (fun (name, _) -> name = "SimpleCallback") type_aliases in
   (match snd simple_callback with
-   | Function ([], Void) -> check bool "SimpleCallback type correct" true true
+   | Function ([], Void) -> ()
    | _ -> fail "SimpleCallback should be fn() -> void");
   
   (* Test that type checking succeeds *)
   let symbol_table = build_symbol_table ast in
   try
-    let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Type checking should succeed" true true
+    let (typed_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "Type checking should succeed" true (List.length typed_ast > 0)
   with
-  | _ -> fail "Type checking should not raise an exception"
+  | e -> fail ("Type checking failed: " ^ Printexc.to_string e)
 
 (** Test function pointer call parsing *)
 let test_function_pointer_call_parsing () =
@@ -156,7 +156,6 @@ fn test_function() -> i32 {
             | Call (callee_expr, args) ->
                 (match callee_expr.expr_desc with
                  | Identifier "handler" ->
-                     check bool "Function call parsed correctly" true true;
                      check int "arg count" 1 (List.length args)
                  | _ -> fail "Expected handler identifier")
             | _ -> fail "Expected function call (parser treats function pointer calls as function calls)")
@@ -177,10 +176,10 @@ fn test_function() -> i32 {
   
   (* This should not raise an exception *)
   try
-    let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Type checking should succeed" true true
+    let (typed_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "Type checking should succeed" true (List.length typed_ast > 0)
   with
-  | _ -> fail "Type checking should not raise an exception"
+  | e -> fail ("Type checking failed: " ^ Printexc.to_string e)
 
 (** Test function pointer type mismatch errors *)
 let test_function_pointer_type_errors () =
@@ -269,8 +268,8 @@ fn setup_network() -> i32 {
   
   (* This should not raise an exception *)
   try
-    let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Complex function pointer type checking should succeed" true true
+    let (typed_ast, _) = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "Complex function pointer type checking should succeed" true (List.length typed_ast > 0)
   with
   | e -> 
       let msg = Printexc.to_string e in
@@ -363,7 +362,7 @@ fn main() -> i32 {
     let has_function_pointer_calls = try ignore (Str.search_forward (Str.regexp "var_\\(add_op\\|mul_op\\)(") c_code 0); true with Not_found -> false in
     check bool "C code should contain function pointer calls" true has_function_pointer_calls;
     
-    check bool "Test passed - function pointer calls generate correct IR" true true
+    ()
 
   with
   | exn -> 
