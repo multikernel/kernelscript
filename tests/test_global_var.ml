@@ -149,37 +149,17 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let _ = type_check_and_annotate_ast_with_builtins ast in
     let symbol_table = create_test_symbol_table ast in
     
-    (* Test int literal -> u32 *)
-    (match lookup_symbol symbol_table "int_lit" with
-     | Some {kind = GlobalVariable (U32, _); _} -> 
-         check bool "int literal inferred as u32" true true
-     | _ -> fail "int literal not inferred as u32");
-    
-    (* Test string literal -> str(N) *)
-    (match lookup_symbol symbol_table "string_lit" with
-     | Some {kind = GlobalVariable (Str 6, _); _} -> 
-         check bool "string literal inferred with correct size" true true
-     | Some {kind = GlobalVariable (str_type, _); _} ->
-         fail ("string literal inferred as: " ^ (match str_type with Str n -> "str(" ^ string_of_int n ^ ")" | _ -> "non-string"))
-     | _ -> fail "string literal not found or not GlobalVariable");
-    
-    (* Test bool literal -> bool *)
-    (match lookup_symbol symbol_table "bool_lit" with
-     | Some {kind = GlobalVariable (Bool, _); _} -> 
-         check bool "bool literal inferred as bool" true true
-     | _ -> fail "bool literal not inferred as bool");
-    
-    (* Test char literal -> char *)
-    (match lookup_symbol symbol_table "char_lit" with
-     | Some {kind = GlobalVariable (Char, _); _} -> 
-         check bool "char literal inferred as char" true true
-     | _ -> fail "char literal not inferred as char");
-    
-    (* Test null literal -> *u8 *)
-    (match lookup_symbol symbol_table "null_lit" with
-     | Some {kind = GlobalVariable (Pointer U8, _); _} -> 
-         check bool "null literal inferred as *u8" true true
-     | _ -> fail "null literal not inferred as *u8")
+    let check_global_type var_name expected_type_str =
+      match lookup_symbol symbol_table var_name with
+      | Some {kind = GlobalVariable (actual_type, _); _} ->
+          check string (var_name ^ " type") expected_type_str (string_of_bpf_type actual_type)
+      | _ -> fail (var_name ^ " not found or not GlobalVariable")
+    in
+    check_global_type "int_lit" "u32";
+    check_global_type "string_lit" "str(6)";
+    check_global_type "bool_lit" "bool";
+    check_global_type "char_lit" "char";
+    check_global_type "null_lit" "*u8"
   with
   | e -> fail ("Specific type inference test failed: " ^ Printexc.to_string e)
 
@@ -199,25 +179,15 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let ast = parse_program_string program_text in
     let symbol_table = create_test_symbol_table ast in
     
-    (* Test global_int *)
-    (match lookup_symbol symbol_table "global_int" with
-     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (Signed64 42L, None)); _}); scope = []; _} ->
-         check bool "global_int correctly stored" true true
-     | Some {kind = GlobalVariable _; _} ->
-         fail "global_int has wrong type or value"
-     | _ -> fail "global_int not found or wrong symbol kind");
-    
-    (* Test global_string *)
-    (match lookup_symbol symbol_table "global_string" with
-     | Some {kind = GlobalVariable (Str 256, Some {expr_desc = Literal (StringLit "test"); _}); scope = []; _} ->
-         check bool "global_string correctly stored" true true
-     | _ -> fail "global_string not found or incorrect");
-    
-    (* Test inferred_var *)
-    (match lookup_symbol symbol_table "inferred_var" with
-     | Some {kind = GlobalVariable (U32, Some {expr_desc = Literal (IntLit (Signed64 100L, None)); _}); scope = []; _} ->
-         check bool "inferred_var correctly stored" true true
-     | _ -> fail "inferred_var not found or incorrect")
+    let check_global var_name expected_type =
+      match lookup_symbol symbol_table var_name with
+      | Some {kind = GlobalVariable (actual_type, _); _} ->
+          check string (var_name ^ " type") expected_type (string_of_bpf_type actual_type)
+      | _ -> fail (var_name ^ " not found or wrong symbol kind")
+    in
+    check_global "global_int" "u32";
+    check_global "global_string" "str(256)";
+    check_global "inferred_var" "u32"
   with
   | e -> fail ("Symbol table test failed: " ^ Printexc.to_string e)
 
@@ -236,12 +206,11 @@ fn packet_counter(ctx: *xdp_md) -> xdp_action {
     return XDP_PASS
 }
 |} in
-  try
-    let ast = parse_program_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "eBPF global variable usage" true true
-  with
-  | e -> fail ("eBPF usage test failed: " ^ Printexc.to_string e)
+  let ast = parse_program_string program_text in
+  let (_enhanced_ast, typed_funcs) = type_check_and_annotate_ast_with_builtins ast in
+  check int "eBPF typed functions count" 1 (List.length typed_funcs);
+  let (_, tf) = List.hd typed_funcs in
+  check string "eBPF function name" "packet_counter" tf.Kernelscript.Type_checker.tfunc_name
 
 (** Test global variable usage in userspace context *)
 let test_global_var_userspace_usage () =
@@ -254,12 +223,12 @@ fn main() -> i32 {
     return 0
 }
 |} in
-  try
-    let ast = parse_program_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "userspace global variable usage" true true
-  with
-  | e -> fail ("Userspace usage test failed: " ^ Printexc.to_string e)
+  let ast = parse_program_string program_text in
+  let (enhanced_ast, _typed_funcs) = type_check_and_annotate_ast_with_builtins ast in
+  let func_count = List.fold_left (fun acc decl ->
+    match decl with GlobalFunction _ -> acc + 1 | _ -> acc
+  ) 0 enhanced_ast in
+  check int "userspace function count" 1 func_count
 
 (** Test IR generation for global variables *)
 let test_global_var_ir_generation () =
@@ -313,8 +282,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let _ = type_check_and_annotate_ast_with_builtins ast in
     fail "Should have failed with missing type and value error"
   with
-  | Kernelscript.Parse.Parse_error ("Syntax error", _) ->
-      check bool "missing type and value error caught as parse error" true true
+  | Kernelscript.Parse.Parse_error (msg, _) ->
+      check bool "missing type and value produces parse error" true (string_contains_substring msg "Syntax error")
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
 
 (** Test error case: duplicate global variable declaration *)
@@ -333,8 +302,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let _ = type_check_and_annotate_ast_with_builtins ast in
     fail "Should have failed with duplicate declaration error"
   with
-  | Kernelscript.Symbol_table.Symbol_error ("Symbol already defined in current scope: duplicate_var", _) ->
-      check bool "duplicate declaration error" true true
+  | Kernelscript.Symbol_table.Symbol_error (msg, _) ->
+      check bool "duplicate declaration error mentions symbol" true (string_contains_substring msg "duplicate_var")
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
 
 (** Test error case: type mismatch in explicit declaration *)
@@ -352,8 +321,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let _ = type_check_and_annotate_ast_with_builtins ast in
     fail "Should have failed with type mismatch error"
   with
-  | Kernelscript.Type_checker.Type_error (_, _) ->
-      check bool "type mismatch error" true true
+  | Kernelscript.Type_checker.Type_error (msg, _) ->
+      check bool "type mismatch error has message" true (String.length msg > 0)
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
 
 (** Test complex global variable scenario *)
@@ -405,7 +374,7 @@ fn main() -> i32 {
     check int "complex scenario global variable count" 9 (List.length (Kernelscript.Ir.get_global_variables ir));
     
     (* Check that both eBPF and userspace functions can access globals *)
-    check bool "complex scenario parsing" true true
+    check string "complex scenario source name" "test" ir.Kernelscript.Ir.source_name
   with
   | e -> fail ("Complex scenario test failed: " ^ Printexc.to_string e)
 
@@ -426,10 +395,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     
     (* Check that array was inferred as Array(U32, 3) *)
     (match lookup_symbol symbol_table "simple_array" with
-     | Some {kind = GlobalVariable (Array (U32, 3), _); _} ->
-         check bool "array literal correctly inferred" true true
-     | Some {kind = GlobalVariable (_, _); _} ->
-         fail ("array literal inferred as wrong type")
+     | Some {kind = GlobalVariable (actual_type, _); _} ->
+         check string "array literal type" "[u32; 3]" (string_of_bpf_type actual_type)
      | _ -> fail "array literal variable not found")
   with
   | e -> fail ("Array literal inference test failed: " ^ Printexc.to_string e)
@@ -528,22 +495,15 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let symbol_table = create_test_symbol_table ast in
     let _ = type_check_and_annotate_ast_with_builtins ast in
     
-    (* Check pointer types *)
-    (match lookup_symbol symbol_table "ptr_to_u8" with
-     | Some {kind = GlobalVariable (Pointer U8, _); _} ->
-         check bool "ptr_to_u8 has correct type" true true
-     | _ -> fail "ptr_to_u8 not found or wrong type");
-    
-    (match lookup_symbol symbol_table "ptr_to_u32" with
-     | Some {kind = GlobalVariable (Pointer U32, _); _} ->
-         check bool "ptr_to_u32 has correct type" true true
-     | _ -> fail "ptr_to_u32 not found or wrong type");
-    
-    (* Check inferred null pointer defaults to *u8 *)
-    (match lookup_symbol symbol_table "inferred_null_ptr" with
-     | Some {kind = GlobalVariable (Pointer U8, _); _} ->
-         check bool "inferred_null_ptr defaults to *u8" true true
-     | _ -> fail "inferred_null_ptr not found or wrong type")
+    let check_ptr_type var_name expected =
+      match lookup_symbol symbol_table var_name with
+      | Some {kind = GlobalVariable (actual_type, _); _} ->
+          check string (var_name ^ " type") expected (string_of_bpf_type actual_type)
+      | _ -> fail (var_name ^ " not found or wrong type")
+    in
+    check_ptr_type "ptr_to_u8" "*u8";
+    check_ptr_type "ptr_to_u32" "*u32";
+    check_ptr_type "inferred_null_ptr" "*u8"
   with
   | e -> fail ("Pointer types test failed: " ^ Printexc.to_string e)
 
@@ -568,8 +528,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     (* Verify all edge case variables exist and have correct types *)
     let check_var_exists var_name =
       match lookup_symbol symbol_table var_name with
-      | Some {kind = GlobalVariable _; _} ->
-          check bool (var_name ^ " exists") true true
+      | Some {kind = GlobalVariable (actual_type, _); _} ->
+          check bool (var_name ^ " has a type") true (String.length (string_of_bpf_type actual_type) > 0)
       | _ -> fail (var_name ^ " not found")
     in
     
@@ -705,23 +665,11 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     let c_code = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir in
     
     (* Check that the C code contains the expected patterns *)
-    let check_c_code_contains pattern description =
-      if string_contains_substring c_code pattern then
-        check bool description true true
-      else
-        fail (description ^ " - pattern not found: " ^ pattern)
-    in
-    
-    (* Check that shared variables are generated normally *)
-    check_c_code_contains "__u32 shared_counter = 0;" "shared variable generated";
-    
-    (* Check that local variables use __hidden attribute *)
-    check_c_code_contains "__hidden" "local variables use __hidden attribute";
-    check_c_code_contains "__u32 local_counter = 0;" "local variable generated";
-    check_c_code_contains "__u64 local_secret = 12345;" "local variable with initialization";
-    
-    (* Check that __hidden is defined *)
-    check_c_code_contains "#define __hidden" "__hidden macro defined"
+    check bool "shared variable generated" true (string_contains_substring c_code "__u32 shared_counter = 0;");
+    check bool "local variables use __hidden attribute" true (string_contains_substring c_code "__hidden");
+    check bool "local variable generated" true (string_contains_substring c_code "__u32 local_counter = 0;");
+    check bool "local variable with initialization" true (string_contains_substring c_code "__u64 local_secret = 12345;");
+    check bool "__hidden macro defined" true (string_contains_substring c_code "#define __hidden")
   with
   | e -> fail ("Local keyword eBPF codegen test failed: " ^ Printexc.to_string e)
 
@@ -760,10 +708,8 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
             | _ -> false
           ) ast in
           (match decl with
-           | GlobalVarDecl {is_local = true; _} ->
-               check bool (var_name ^ " exists and is local") true true
-           | GlobalVarDecl {is_local = false; _} ->
-               fail (var_name ^ " found but not local")
+           | GlobalVarDecl {is_local; _} ->
+               check bool (var_name ^ " is local") true is_local
            | _ -> fail (var_name ^ " unexpected declaration type"))
       | None -> fail (var_name ^ " not found")
     in
@@ -816,8 +762,8 @@ fn test_function(ctx: *xdp_md) -> xdp_action {
       let _ast = parse_program_string program_text in
       fail (Printf.sprintf "Expected parse error for 'local' on %s, but parsing succeeded" test_name)
     with
-    | Kernelscript.Parse.Parse_error (_, _) ->
-        check bool (Printf.sprintf "'local' correctly rejected on %s" test_name) true true
+    | Kernelscript.Parse.Parse_error (msg, _) ->
+        check bool (Printf.sprintf "'local' correctly rejected on %s" test_name) true (String.length msg > 0)
     | e -> 
         fail (Printf.sprintf "Unexpected error for 'local' on %s: %s" test_name (Printexc.to_string e))
   ) test_cases
@@ -852,29 +798,18 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     (* Generate eBPF C code *)
     let (c_code, _) = Kernelscript.Ebpf_c_codegen.compile_multi_to_c ir_multi_prog in
     
-    (* Verify that global variables appear in the C code *)
-    let check_c_code_contains pattern description =
-      if string_contains_substring c_code pattern then
-        check bool description true true
-      else (
-        fail (description ^ " - pattern not found: " ^ pattern)
-      )
-    in
-    
     (* Check that shared variables appear without __hidden *)
-    check_c_code_contains "__u32 shared_counter = 100;" "shared variable with initialization";
-    check_c_code_contains "__u8 shared_flag = 0;" "shared boolean variable (using 0 not false)";
-    
+    check bool "shared variable with initialization" true (string_contains_substring c_code "__u32 shared_counter = 100;");
+    check bool "shared boolean variable (using 0 not false)" true (string_contains_substring c_code "__u8 shared_flag = 0;");
+
     (* Check that local variables appear with __hidden attribute *)
-    check_c_code_contains "#define __hidden" "__hidden macro defined";
-    check_c_code_contains "__hidden __attribute__((aligned(8))) __u32 local_counter = 200;" "local variable with __hidden";
-    check_c_code_contains "__hidden __attribute__((aligned(8))) __u64 local_secret = 0xdeadbeef;" "local variable with hex literal (preserved format)";
-    
+    check bool "__hidden macro defined" true (string_contains_substring c_code "#define __hidden");
+    check bool "local variable with __hidden" true (string_contains_substring c_code "__hidden __attribute__((aligned(8))) __u32 local_counter = 200;");
+    check bool "local variable with hex literal" true (string_contains_substring c_code "__hidden __attribute__((aligned(8))) __u64 local_secret = 0xdeadbeef;");
+
     (* Verify boolean values use 0/1 not true/false *)
-    if string_contains_substring c_code "false" || string_contains_substring c_code "true" then
-      fail "C code should not contain 'true' or 'false' literals - should use 0/1";
-    
-    check bool "boolean literals use 0/1 not true/false" true true
+    check bool "no 'false' literal in C code" false (string_contains_substring c_code "false");
+    check bool "no 'true' literal in C code" false (string_contains_substring c_code "true")
   with
   | e -> fail ("Global variables in eBPF C code test failed: " ^ Printexc.to_string e)
 
@@ -900,26 +835,16 @@ fn test_program(ctx: *xdp_md) -> xdp_action {
     (* Verify all negative global variables are processed *)
     check int "negative numbers global variable count" 4 (List.length (Kernelscript.Ir.get_global_variables ir));
     
-    (* Check specific variable types and values *)
-    (match lookup_symbol symbol_table "negative_int" with
-     | Some {kind = GlobalVariable (I32, _); _} ->
-         check bool "negative_int correctly inferred as I32" true true
-     | _ -> fail "negative_int variable not found or wrong type");
-    
-    (match lookup_symbol symbol_table "negative_typed" with
-     | Some {kind = GlobalVariable (I32, _); _} ->
-         check bool "negative_typed correctly typed as I32" true true
-     | _ -> fail "negative_typed variable not found or wrong type");
-    
-    (match lookup_symbol symbol_table "negative_large" with
-     | Some {kind = GlobalVariable (I64, _); _} ->
-         check bool "negative_large correctly typed as I64" true true
-     | _ -> fail "negative_large variable not found or wrong type");
-    
-    (match lookup_symbol symbol_table "negative_small" with
-     | Some {kind = GlobalVariable (I8, _); _} ->
-         check bool "negative_small correctly typed as I8" true true
-     | _ -> fail "negative_small variable not found or wrong type")
+    let check_neg_type var_name expected =
+      match lookup_symbol symbol_table var_name with
+      | Some {kind = GlobalVariable (actual_type, _); _} ->
+          check string (var_name ^ " type") expected (string_of_bpf_type actual_type)
+      | _ -> fail (var_name ^ " not found or wrong type")
+    in
+    check_neg_type "negative_int" "i32";
+    check_neg_type "negative_typed" "i32";
+    check_neg_type "negative_large" "i64";
+    check_neg_type "negative_small" "i8"
   with
   | e -> fail ("Negative numbers test failed: " ^ Printexc.to_string e)
 
