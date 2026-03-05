@@ -46,7 +46,7 @@ let test_array_literal_basic_types () =
       let ast = parse_string program_text in
       let _ = build_symbol_table ast in
       let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-      check bool (description ^ " type inference") true true
+      check bool (description ^ " type inference") true (List.length _enhanced_ast > 0)
     with
     | e -> fail (description ^ " failed: " ^ Printexc.to_string e)
   ) test_cases
@@ -71,7 +71,7 @@ let test_array_literal_type_consistency () =
       let ast = parse_string program_text in
       let _ = build_symbol_table ast in
       let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-      check bool (description ^ " consistency check") true true
+      check bool (description ^ " consistency check") true (List.length _enhanced_ast > 0)
     with
     | e -> fail (description ^ " failed: " ^ Printexc.to_string e)
   ) valid_cases
@@ -115,7 +115,7 @@ let test_empty_array_literals () =
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "empty array literal" true true
+    check bool "empty array literal" true (List.length _enhanced_ast > 0)
   with
   | e -> fail ("Empty array literal failed: " ^ Printexc.to_string e)
 
@@ -136,7 +136,7 @@ config network {
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "array literals in config" true true
+    check bool "array literals in config" true (List.length _enhanced_ast > 0)
   with
   | e -> fail ("Array literals in config failed: " ^ Printexc.to_string e)
 
@@ -157,7 +157,7 @@ config test_config {
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "array literal size validation" true true
+    check bool "array literal size validation" true (List.length _enhanced_ast > 0)
   with
   | e -> fail ("Array literal size validation failed: " ^ Printexc.to_string e)
 
@@ -173,7 +173,7 @@ let test_nested_array_literals () =
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "nested array literals" true true
+    check bool "nested array literals" true (List.length _enhanced_ast > 0)
   with
   | e -> fail ("Nested array literals failed: " ^ Printexc.to_string e)
 
@@ -190,7 +190,7 @@ let test_large_array_literals () =
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    check bool "large array literals" true true
+    check bool "large array literals" true (List.length _enhanced_ast > 0)
   with
   | e -> fail ("Large array literals failed: " ^ Printexc.to_string e)
 
@@ -207,8 +207,8 @@ let test_array_literal_ir_generation () =
     let ast = parse_string program_text in
     let symbol_table = build_symbol_table ast in
     let (_enhanced_ast, _) = type_check_and_annotate_ast ast in
-    let _ir_result = generate_ir ast symbol_table "test" in
-    check bool "array literal IR generation" true true
+    let ir_result = generate_ir ast symbol_table "test" in
+    check bool "array literal IR generation" true (List.length (Kernelscript.Ir.get_programs ir_result) > 0)
   with
   | e -> fail ("Array literal IR generation failed: " ^ Printexc.to_string e)
 
