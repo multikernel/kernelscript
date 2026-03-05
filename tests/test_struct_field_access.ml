@@ -15,8 +15,10 @@
  *)
 
 open Alcotest
+open Kernelscript.Ast
 open Kernelscript.Symbol_table
 open Kernelscript.Type_checker
+open Kernelscript.Ir
 open Kernelscript.Ir_generator
 
 (* Initialize context codegens *)
@@ -69,14 +71,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
-    check bool "top-level struct eBPF parameter" true true
-  with
-  | exn -> fail ("Top-level struct eBPF parameter test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test" in
+  check string "source name" "test" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 2: Local struct within eBPF program *)
 let test_local_struct_ebpf_program () =
@@ -104,14 +104,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
-    check bool "local struct eBPF program" true true
-  with
-  | exn -> fail ("Local struct eBPF program test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test" in
+  check string "source name" "test" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 3: Cross-scope struct access - top-level struct used in eBPF *)
 let test_cross_scope_struct_access () =
@@ -140,14 +138,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "monitor" in
-    check bool "cross-scope struct access" true true
-  with
-  | exn -> fail ("Cross-scope struct access test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "monitor" in
+  check string "source name" "monitor" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 4: Userspace struct parameter field access *)
 let test_userspace_struct_parameter_field_access () =
@@ -175,14 +171,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
-    check bool "userspace struct parameter field access" true true
-  with
-  | exn -> fail ("Userspace test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test" in
+  check string "source name" "test" ir.source_name;
+  check bool "has userspace program" true (ir.userspace_program <> None)
 
 (** Test 5: Multiple struct parameters with field access *)
 let test_multiple_struct_parameters () =
@@ -214,14 +208,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
-    check bool "multiple struct parameters" true true
-  with
-  | exn -> fail ("Multiple struct parameters test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test" in
+  check string "source name" "test" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 6: Struct field access in complex expressions *)
 let test_struct_field_access_in_expressions () =
@@ -258,14 +250,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "packet_filter" in
-    check bool "struct field access in expressions" true true
-  with
-  | exn -> fail ("Struct field access in expressions test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "packet_filter" in
+  check string "source name" "packet_filter" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 7: Mixed top-level and local structs *)
 let test_mixed_toplevel_local_structs () =
@@ -293,14 +283,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
-    check bool "mixed top-level and local structs" true true
-  with
-  | exn -> fail ("Mixed structs test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test" in
+  check string "source name" "test" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 8: eBPF main calling helper function with struct parameter *)
 let test_main_calling_helper_with_struct () =
@@ -329,14 +317,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table_with_builtins ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
-    let _ir = generate_ir annotated_ast symbol_table "test" in
-    check bool "main calling helper with struct" true true
-  with
-  | exn -> fail ("Main calling helper with struct test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table_with_builtins ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
+  let ir = generate_ir annotated_ast symbol_table "test" in
+  check string "source name" "test" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test 9: Error case - accessing non-existent field *)
 let test_nonexistent_field_error () =
@@ -385,15 +371,14 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
+  (try
     let ast = parse_string program_text in
     let _symbol_table = build_symbol_table ast in
     let (_annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
     fail "Should have failed with undefined struct error"
   with
-  | Type_error (_, _) ->
-      check bool "undefined struct error detected" true true
-  | _ -> fail "Wrong type of error detected"
+  | Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e))
 
 (** Test 11: Comprehensive test with userspace and eBPF struct usage *)
 let test_comprehensive_struct_usage () =
@@ -444,14 +429,12 @@ fn main() -> i32 {
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir = generate_ir annotated_ast symbol_table "monitor" in
-    check bool "comprehensive struct usage" true true
-  with
-  | exn -> fail ("Comprehensive struct usage test failed: " ^ Printexc.to_string exn)
+  let ast = parse_string program_text in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "monitor" in
+  check string "source name" "monitor" ir.source_name;
+  check bool "has userspace program" true (ir.userspace_program <> None)
 
 (** Test struct field assignment type checking *)
 let test_struct_field_assignment_type_checking () =
@@ -495,16 +478,12 @@ let test_struct_field_assignment_ir_generation () =
     }
   |} in
   
-  try
-    let ast = Kernelscript.Parse.parse_string source in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir_multi_prog = generate_ir annotated_ast symbol_table "test_program" in
-    
-    (* If we reach here, IR generation succeeded, which means field assignment is working *)
-    check bool "IR generation succeeded for field assignment" true true
-  with
-  | e -> failwith ("IR generation should succeed: " ^ Printexc.to_string e)
+  let ast = Kernelscript.Parse.parse_string source in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test_program" in
+  check string "source name" "test_program" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test struct field assignment C code generation *)
 let test_struct_field_assignment_c_generation () =
@@ -521,16 +500,12 @@ let test_struct_field_assignment_c_generation () =
     }
   |} in
   
-  try
-    let ast = Kernelscript.Parse.parse_string source in
-    let symbol_table = build_symbol_table ast in
-    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-    let _ir_multi_prog = generate_ir annotated_ast symbol_table "test_program" in
-    
-    (* If we reach here, C code generation would succeed, which means field assignment is working *)
-    check bool "C code generation succeeded for field assignment" true true
-  with
-  | e -> failwith ("C code generation should succeed: " ^ Printexc.to_string e)
+  let ast = Kernelscript.Parse.parse_string source in
+  let symbol_table = build_symbol_table ast in
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  let ir = generate_ir annotated_ast symbol_table "test_program" in
+  check string "source name" "test_program" ir.source_name;
+  check bool "has declarations" true (ir.source_declarations <> [])
 
 (** Test error cases for struct field assignment *)
 let test_struct_field_assignment_errors () =
@@ -598,9 +573,7 @@ struct PacketStats {
        contains_substr c_code "Counter val_" ||
        contains_substr c_code "Counter count_val" ||
        contains_substr c_code "Counter __field_access_" in
-     check bool "Counter used in variable declarations" true has_counter_var;
-    
-    check bool "type alias field access test passed" true true
+     check bool "Counter used in variable declarations" true has_counter_var
   with
   | exn -> fail ("Type alias field access test failed: " ^ Printexc.to_string exn)
 
@@ -632,17 +605,16 @@ let test_type_keyword_as_field_name () =
     match ast with
     | [StructDecl struct_def; GlobalFunction func_def] ->
         (* Check struct has 'type' field *)
-        let type_field_exists = List.exists (fun (field_name, _) -> 
+        let type_field_exists = List.exists (fun (field_name, _) ->
           field_name = "type"
         ) struct_def.struct_fields in
         check bool "'type' field exists in struct" true type_field_exists;
-        
+
         (* Verify we can access the symbol table without errors *)
         let symbol_table = create_symbol_table () in
         process_declaration symbol_table (StructDecl struct_def);
         process_declaration symbol_table (GlobalFunction func_def);
-        
-        check bool "'type' keyword successfully used as field name" true true
+        check string "function name" "test_function" func_def.func_name
         
     | _ -> 
         fail "Expected struct declaration and function declaration"
@@ -672,8 +644,7 @@ let test_btf_trace_entry_struct () =
         check bool "'flags' field present" true (List.mem "flags" field_names);
         check bool "'preempt_count' field present" true (List.mem "preempt_count" field_names);
         check bool "'pid' field present" true (List.mem "pid" field_names);
-        
-        check bool "BTF trace_entry struct with 'type' field parsed successfully" true true
+        check int "field count" 4 (List.length field_names)
     | _ ->
         fail "Expected single struct declaration"
   with
