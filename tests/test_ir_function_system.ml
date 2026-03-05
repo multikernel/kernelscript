@@ -152,9 +152,8 @@ fn helper(x: u32, y: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "function registration test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "function registration test" true (Kernelscript.Symbol_table.lookup_symbol st "helper" <> None)
   with
   | e -> fail ("Failed to test function registration: " ^ Printexc.to_string e)
 
@@ -173,9 +172,8 @@ fn valid_function(x: u32, y: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "function signature validation test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "function signature validation test" true (Kernelscript.Symbol_table.lookup_symbol st "valid_function" <> None)
   with
   | e -> fail ("Failed to test function signature validation: " ^ Printexc.to_string e)
 
@@ -194,9 +192,8 @@ fn multiply(x: u32, y: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "function call resolution test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "function call resolution test" true (Kernelscript.Symbol_table.lookup_symbol st "multiply" <> None)
   with
   | e -> fail ("Failed to test function call resolution: " ^ Printexc.to_string e)
 
@@ -215,9 +212,8 @@ fn helper() -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "recursive function detection test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "recursive function detection test" true (Kernelscript.Symbol_table.lookup_symbol st "helper" <> None)
   with
   | e -> fail ("Failed to test recursive function detection: " ^ Printexc.to_string e)
 
@@ -236,9 +232,8 @@ fn level1() -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "function dependency analysis test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "function dependency analysis test" true (Kernelscript.Symbol_table.lookup_symbol st "level1" <> None)
   with
   | e -> fail ("Failed to test function dependency analysis: " ^ Printexc.to_string e)
 
@@ -258,9 +253,8 @@ fn simple_math(x: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "function optimization test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "function optimization test" true (Kernelscript.Symbol_table.lookup_symbol st "simple_math" <> None)
   with
   | e -> fail ("Failed to test function optimization: " ^ Printexc.to_string e)
 
@@ -287,9 +281,8 @@ fn multiply(x: u32, y: u32) -> u32 {
 |} in
   try
     let ast = parse_string program_text in
-    let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    
-    check bool "comprehensive function system test" true true
+    let st = Kernelscript.Symbol_table.build_symbol_table ast in
+    check bool "comprehensive function system test" true (Kernelscript.Symbol_table.lookup_symbol st "add" <> None && Kernelscript.Symbol_table.lookup_symbol st "multiply" <> None)
   with
   | e -> fail ("Failed to test comprehensive function system: " ^ Printexc.to_string e)
 
