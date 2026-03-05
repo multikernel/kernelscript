@@ -2118,7 +2118,9 @@ let rec generate_c_instruction_from_ir ctx instruction =
           | IntCatchPattern code -> (sprintf "error_%d" code, code)
           | WildcardCatchPattern -> ("any_error", i + 1) (* Use index for wildcard *)
         in
-        sprintf "    case %d: /* catch %s */\n        /* Handle error here */\n        break;" case_code pattern_str
+        (* Generate the actual catch body instructions *)
+        let catch_body = String.concat "\n        " (List.map (generate_c_instruction_from_ir ctx) catch_clause.catch_body) in
+        sprintf "    case %d: /* catch %s */\n        %s\n        break;" case_code pattern_str catch_body
       ) catch_clauses in
       let catch_code = String.concat "\n" catch_handlers in
       sprintf {|{

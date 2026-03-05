@@ -123,6 +123,8 @@ type c_context = {
   mutable callback_dependencies: callback_dependency list;
   (* Current error variable for try/catch blocks *)
   mutable current_error_var: string option;
+  (* Current catch label for try/catch blocks *)
+  mutable current_catch_label: string option;
   (* Pinned global variables for transparent access *)
   mutable pinned_globals: string list;
   (* Flag to indicate if we're generating code for a return context *)
@@ -151,6 +153,7 @@ let create_c_context () = {
   pending_callbacks = [];
   callback_dependencies = [];
   current_error_var = None;
+  current_catch_label = None;
   pinned_globals = [];
   in_return_context = false;
   pending_string_literals = [];
@@ -2346,6 +2349,7 @@ and generate_c_instruction ctx ir_instr =
   | IRTry (try_instructions, _catch_clauses) ->
       (* For eBPF, generate structured try/catch with error status variable and if() checks *)
       let error_var = sprintf "__error_status_%d" ctx.next_label_id in
+      let catch_label = sprintf "__catch_%d" ctx.next_label_id in
       ctx.next_label_id <- ctx.next_label_id + 1;
       
       emit_line ctx "/* try block start */";
@@ -2354,14 +2358,20 @@ and generate_c_instruction ctx ir_instr =
       increase_indent ctx;
       
       (* Generate try block instructions *)
-      (* We need to track the error variable in context for throw statements *)
+      (* We need to track the error variable and catch label in context for throw statements *)
       let old_error_var = ctx.current_error_var in
+      let old_catch_label = ctx.current_catch_label in
       ctx.current_error_var <- Some error_var;
+      ctx.current_catch_label <- Some catch_label;
       List.iter (generate_c_instruction ctx) try_instructions;
       ctx.current_error_var <- old_error_var;
+      ctx.current_catch_label <- old_catch_label;
       
       decrease_indent ctx;
       emit_line ctx "}";
+      
+      (* Emit catch label for goto jumps from throw *)
+      emit_line ctx (sprintf "%s:" catch_label);
       
       (* Generate catch blocks as if-else chain *)
       List.iteri (fun i catch_clause ->
@@ -2388,14 +2398,18 @@ and generate_c_instruction ctx ir_instr =
       emit_line ctx "/* try block end */"
 
   | IRThrow error_code ->
-      (* Generate assignment to error status variable *)
+      (* Generate assignment to error status variable and goto catch *)
       let code_val = match error_code with
         | IntErrorCode code -> code
       in
-      (match ctx.current_error_var with
-       | Some error_var ->
+      (match ctx.current_error_var, ctx.current_catch_label with
+       | Some error_var, Some catch_label ->
+           emit_line ctx (sprintf "%s = %d; /* throw %d */" error_var code_val code_val);
+           emit_line ctx (sprintf "goto %s;" catch_label)
+       | Some error_var, None ->
+           (* Error var but no catch label - shouldn't happen, but fall back to assignment only *)
            emit_line ctx (sprintf "%s = %d; /* throw %d */" error_var code_val code_val)
-       | None ->
+       | None, _ ->
            (* If not in a try block, this is an uncaught throw - could return error code *)
            emit_line ctx (sprintf "return %d; /* uncaught throw %d */" code_val code_val))
 
