@@ -158,18 +158,13 @@ fn kernel_helper(x: u32) -> u32 {
     ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
   in
   
-  try
+  (try
     test_fn ();
-    check bool "helper function call from userspace should fail" false true
+    fail "helper function call from userspace should fail"
   with
-  | Kernelscript.Type_checker.Type_error (msg, _) ->
-      Printf.printf "Type error caught: %s\n" msg;
-      check bool "correctly rejected helper function call from userspace" true true
-  | Failure msg ->
-      Printf.printf "Failure caught: %s\n" msg;
-      check bool "correctly rejected helper function call from userspace" true true
-  | _ ->
-      check bool "unexpected error type for helper/userspace restriction" false true
+  | Kernelscript.Type_checker.Type_error _ -> ()
+  | Failure _ -> ()
+  | e -> fail ("expected Type_error or Failure, got: " ^ Printexc.to_string e))
 
 (** Test 5: Mixed kernel and userspace functions *)
 let test_mixed_kernel_userspace_functions () =
@@ -277,9 +272,11 @@ fn analyze_packet(size: u32, protocol: u16, valid: bool) -> bool {
   let ast = Kernelscript.Parse.parse_string source in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test" in
-  
-  check bool "kernel function with multiple parameters works" true true
+  let multi_ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test" in
+  let has_analyze = List.exists (fun func ->
+    func.Kernelscript.Ir.func_name = "analyze_packet"
+  ) (Kernelscript.Ir.get_kernel_functions multi_ir) in
+  check bool "multi-program has analyze_packet" true has_analyze
 
 (** Test 8: Kernel function calling other kernel functions *)
 let test_kernel_function_calling_kernel_function () =
@@ -345,18 +342,13 @@ let test_undefined_kernel_function_error () =
     ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
   in
   
-  try
+  (try
     test_fn ();
-    check bool "should fail for undefined function" false true
+    fail "should fail for undefined function"
   with
-  | Kernelscript.Type_checker.Type_error (msg, _) ->
-      Printf.printf "Type error: %s\n" msg;
-      check bool "correctly rejected undefined function" true true
-  | Kernelscript.Symbol_table.Symbol_error (msg, _) ->
-      Printf.printf "Symbol error: %s\n" msg;
-      check bool "correctly rejected undefined function" true true
-  | _ ->
-      check bool "unexpected error for undefined function" false true
+  | Kernelscript.Type_checker.Type_error _ -> ()
+  | Kernelscript.Symbol_table.Symbol_error _ -> ()
+  | e -> fail ("expected Type_error or Symbol_error, got: " ^ Printexc.to_string e))
 
 (** Test 10: Userspace functions calling other userspace functions *)
 let test_userspace_function_calling_userspace () =
@@ -379,9 +371,8 @@ let test_userspace_function_calling_userspace () =
   let ast = Kernelscript.Parse.parse_string source in
   let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
   let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-  let _ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test" in
-  
-  check bool "userspace functions calling userspace functions works" true true
+  let multi_ir = Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test" in
+  check bool "has userspace program" true (Option.is_some multi_ir.Kernelscript.Ir.userspace_program)
 
 (** Test 11: Comprehensive kernel function system *)
 let test_comprehensive_kernel_function_system () =
@@ -568,18 +559,13 @@ let test_attributed_function_userspace_restriction () =
     ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
   in
   
-  try
+  (try
     test_fn ();
-    check bool "attributed function call from userspace should fail" false true
+    fail "attributed function call from userspace should fail"
   with
-  | Kernelscript.Type_checker.Type_error (msg, _) ->
-      Printf.printf "Type error caught: %s\n" msg;
-      check bool "correctly rejected attributed function call from userspace" true true
-  | Failure msg ->
-      Printf.printf "Failure caught: %s\n" msg;
-      check bool "correctly rejected attributed function call from userspace" true true
-  | _ ->
-      check bool "unexpected error type for attributed/userspace restriction" false true
+  | Kernelscript.Type_checker.Type_error _ -> ()
+  | Failure _ -> ()
+  | e -> fail ("expected Type_error or Failure, got: " ^ Printexc.to_string e))
 
 (** Test 14: Attributed functions cannot be called from kernel functions *)
 let test_attributed_function_kernel_restriction () =
@@ -607,18 +593,13 @@ let test_attributed_function_kernel_restriction () =
     ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
   in
   
-  try
+  (try
     test_fn ();
-    check bool "attributed function call from kernel function should fail" false true
+    fail "attributed function call from kernel function should fail"
   with
-  | Kernelscript.Type_checker.Type_error (msg, _) ->
-      Printf.printf "Type error caught: %s\n" msg;
-      check bool "correctly rejected attributed function call from kernel function" true true
-  | Failure msg ->
-      Printf.printf "Failure caught: %s\n" msg;
-      check bool "correctly rejected attributed function call from kernel function" true true
-  | _ ->
-      check bool "unexpected error type for attributed/kernel restriction" false true
+  | Kernelscript.Type_checker.Type_error _ -> ()
+  | Failure _ -> ()
+  | e -> fail ("expected Type_error or Failure, got: " ^ Printexc.to_string e))
 
 (** Test 15: Attributed functions cannot be called from other attributed functions *)
 let test_attributed_function_cross_call_restriction () =
@@ -644,18 +625,13 @@ let test_attributed_function_cross_call_restriction () =
     ignore (Kernelscript.Ir_generator.lower_multi_program annotated_ast symbol_table "test")
   in
   
-  try
+  (try
     test_fn ();
-    check bool "attributed function call from other attributed function should fail" false true
+    fail "attributed function call from other attributed function should fail"
   with
-  | Kernelscript.Type_checker.Type_error (msg, _) ->
-      Printf.printf "Type error caught: %s\n" msg;
-      check bool "correctly rejected cross-attributed function call" true true
-  | Failure msg ->
-      Printf.printf "Failure caught: %s\n" msg;
-      check bool "correctly rejected cross-attributed function call" true true
-  | _ ->
-      check bool "unexpected error type for cross-attributed restriction" false true
+  | Kernelscript.Type_checker.Type_error _ -> ()
+  | Failure _ -> ()
+  | e -> fail ("expected Type_error or Failure, got: " ^ Printexc.to_string e))
 
 let () =
   run "Function Scope Tests" [
