@@ -22,11 +22,11 @@ open Alcotest
 let make_ast_map_declaration = Kernelscript.Ast.make_map_declaration
 
 (* Import needed functions from Maps module *)
-let analyze_expr_access_pattern = Kernelscript.Maps.analyze_expr_access_pattern
-let validate_map_declaration = Kernelscript.Maps.validate_map_declaration
-let validate_map_operation = Kernelscript.Maps.validate_map_operation
-let is_map_compatible_with_program = Kernelscript.Maps.is_map_compatible_with_program
-let recommend_map_type = Kernelscript.Maps.recommend_map_type
+let _analyze_expr_access_pattern = Kernelscript.Maps.analyze_expr_access_pattern
+let _validate_map_declaration = Kernelscript.Maps.validate_map_declaration
+let _validate_map_operation = Kernelscript.Maps.validate_map_operation
+let _is_map_compatible_with_program = Kernelscript.Maps.is_map_compatible_with_program
+let _recommend_map_type = Kernelscript.Maps.recommend_map_type
 
 let pos = make_position 1 1 "test.ks"
 
@@ -43,12 +43,10 @@ let test_map_origin_tracking () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "map origin tracking basic test" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "map origin tracking decl count" 2 (List.length ast);
+  check bool "has global var decl" true (List.exists (fun d -> match d with GlobalVarDecl _ -> true | _ -> false) ast);
+  check bool "has attributed function" true (List.exists (fun d -> match d with AttributedFunction _ -> true | _ -> false) ast)
 
 (** Test map origin variable tracking with multiple assignments *)
 let test_map_origin_multiple_assignments () =
@@ -65,12 +63,12 @@ let test_map_origin_multiple_assignments () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "map origin multiple assignments" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "multiple assignments decl count" 2 (List.length ast);
+  let func = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check bool "has function" true (func <> None);
+  let af = Option.get func in
+  check string "function name" "test_tracking" af.attr_function.func_name
 
 (** Test map origin tracking with conditional assignments *)
 let test_map_origin_conditional_assignments () =
@@ -88,12 +86,10 @@ let test_map_origin_conditional_assignments () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "map origin conditional assignments" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "conditional assignments decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check string "function name" "test_conditional" (Option.get af).attr_function.func_name
 
 (** Test that non-map variables are not tracked *)
 let test_non_map_variable_tracking () =
@@ -105,12 +101,9 @@ let test_non_map_variable_tracking () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "non-map variable tracking" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "non-map decl count" 1 (List.length ast);
+  check bool "no map decl" false (List.exists (fun d -> match d with MapDecl _ -> true | _ -> false) ast)
 
 (** Test address-of operation on map-derived values *)
 let test_address_of_map_values () =
@@ -128,12 +121,10 @@ let test_address_of_map_values () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "address-of map values" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "address-of map values decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check string "function name" "test_address_of" (Option.get af).attr_function.func_name
 
 (** Test address-of operation on regular variables *)
 let test_address_of_regular_variables () =
@@ -145,12 +136,9 @@ let test_address_of_regular_variables () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "address-of regular variables" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "address-of regular vars decl count" 1 (List.length ast);
+  check bool "no map decl" false (List.exists (fun d -> match d with MapDecl _ -> true | _ -> false) ast)
 
 (** Test address-of operation type checking *)
 let test_address_of_type_checking () =
@@ -168,12 +156,10 @@ let test_address_of_type_checking () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "address-of type checking" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "address-of type checking decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check string "function name" "test_address_of_types" (Option.get af).attr_function.func_name
 
 (** Test address-of operation in different contexts *)
 let test_address_of_contexts () =
@@ -199,12 +185,11 @@ let test_address_of_contexts () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "address-of in different contexts" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "address-of contexts decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  let body = (Option.get af).attr_function.func_body in
+  check bool "body has statements" true (List.length body > 0)
 
 (** Test none comparison with map values *)
 let test_none_comparison_map_values () =
@@ -225,12 +210,10 @@ let test_none_comparison_map_values () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "none comparison with map values" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "none comparison decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check string "function name" "test_none_comparison" (Option.get af).attr_function.func_name
 
 (** Test none comparison with different map types *)
 let test_none_comparison_different_map_types () =
@@ -261,12 +244,10 @@ let test_none_comparison_different_map_types () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "none comparison with different map types" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "different map types decl count" 4 (List.length ast);
+  let map_count = List.length (List.filter (fun d -> match d with GlobalVarDecl _ -> true | _ -> false) ast) in
+  check int "map declaration count" 3 map_count
 
 (** Test none comparison in conditional statements *)
 let test_none_comparison_conditional_statements () =
@@ -293,12 +274,10 @@ let test_none_comparison_conditional_statements () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "none comparison in conditional statements" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "none conditionals decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check string "function name" "test_none_conditionals" (Option.get af).attr_function.func_name
 
 (** Test none comparison with different value types *)
 let test_none_comparison_different_value_types () =
@@ -329,12 +308,10 @@ let test_none_comparison_different_value_types () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "none comparison with different value types" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "different value types decl count" 4 (List.length ast);
+  let map_count = List.length (List.filter (fun d -> match d with GlobalVarDecl _ -> true | _ -> false) ast) in
+  check int "map declaration count" 3 map_count
 
 (** Test complex scenarios with map value tracking, address-of, and none comparison *)
 let test_complex_map_value_scenarios () =
@@ -362,12 +339,10 @@ let test_complex_map_value_scenarios () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "complex map value scenarios" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "complex scenarios decl count" 3 (List.length ast);
+  let map_count = List.length (List.filter (fun d -> match d with GlobalVarDecl _ -> true | _ -> false) ast) in
+  check int "map declaration count" 2 map_count
 
 (** Test map value tracking with nested access patterns *)
 let test_nested_map_value_access () =
@@ -400,12 +375,10 @@ let test_nested_map_value_access () =
     }
   |} in
   
-  try
-    let _ast = parse_string test_program in
-    check bool "nested map value access" true true
-  with
-  | Parse_error (msg, pos) ->
-      failwith ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
+  let ast = parse_string test_program in
+  check int "nested access decl count" 2 (List.length ast);
+  let af = List.find_map (fun d -> match d with AttributedFunction af -> Some af | _ -> None) ast in
+  check string "function name" "test_nested_access" (Option.get af).attr_function.func_name
 
 (** Test error cases for map value operations *)
 let test_map_value_error_cases () =
@@ -428,26 +401,26 @@ let test_map_value_error_cases () =
     }
   |} in
   
-  (* For now, we'll test that the parser/type checker handles these cases *)
-  try
-    let _ast1 = parse_string test_program1 in
-    let _ast2 = parse_string test_program2 in
-    check bool "map value error cases parsing" true true
-  with
-  | Parse_error (_, _) ->
-      check bool "map value error cases parsing" true true
+  (* These programs parse fine; errors would be caught at type-check time *)
+  let ast1 = parse_string test_program1 in
+  check int "error case 1 decl count" 1 (List.length ast1);
+  let ast2 = parse_string test_program2 in
+  check int "error case 2 decl count" 1 (List.length ast2)
 
 (** Test access pattern analysis *)
 let test_access_pattern_analysis () =
   let key_expr = make_expr (Literal (IntLit (Signed64 42L, None))) pos in
   
-  (* Simplified pattern analysis *)
-  check bool "access pattern analysis" true (match key_expr.expr_desc with Literal _ -> true | _ -> false)
+  (* Verify expression structure *)
+  check bool "key expr is literal" true (match key_expr.expr_desc with Literal (IntLit (Signed64 42L, None)) -> true | _ -> false)
 
 (** Test concurrent access safety *)
 let test_concurrent_access_safety () =
-  (* Simplified test - just check that basic types work *)
-  check bool "concurrent access safety" true true
+  (* Verify that percpu map types exist and can be constructed *)
+  let config = make_map_config 1024 () in
+  let percpu_map = make_ast_map_declaration "percpu_test" U32 U64 Percpu_hash config true ~is_pinned:false pos in
+  check string "percpu map name" "percpu_test" percpu_map.name;
+  check int "percpu map max entries" 1024 percpu_map.config.max_entries
 
 (** Test basic map operations *)
 let test_basic_map_operations () =
@@ -456,8 +429,8 @@ let test_basic_map_operations () =
   
   (* Test basic map properties *)
   check string "basic map name" "basic_map" map_decl.name;
-  check bool "basic map key type" true (map_decl.key_type = U32);
-  check bool "basic map value type" true (map_decl.value_type = U64)
+  check string "basic map key type" "u32" (string_of_bpf_type map_decl.key_type);
+  check string "basic map value type" "u64" (string_of_bpf_type map_decl.value_type)
 
 (** Test map lookup operations *)
 let test_map_lookup_operations () =
@@ -467,9 +440,10 @@ let test_map_lookup_operations () =
     make_expr (Literal (IntLit (Signed64 100L, None))) pos;
   ] in
   
-  List.iteri (fun i _key_expr ->
-    (* pattern analysis simplified *)
-    check bool ("lookup operation " ^ string_of_int i) true true
+  check int "lookup key count" 3 (List.length test_keys);
+  List.iteri (fun i key_expr ->
+    check bool ("lookup key " ^ string_of_int i ^ " is literal") true
+      (match key_expr.expr_desc with Literal (IntLit _) -> true | _ -> false)
   ) test_keys
 
 (** Test map update operations *)
@@ -480,10 +454,12 @@ let test_map_update_operations () =
     (make_expr (Literal (IntLit (Signed64 3L, None))) pos, make_expr (Literal (IntLit (Signed64 30L, None))) pos);
   ] in
   
-  List.iteri (fun i (_key_expr, _value_expr) ->
-    (* Simplified tests *)
-    check bool ("update key pattern " ^ string_of_int i) true true;
-    check bool ("update value pattern " ^ string_of_int i) true true
+  check int "update pair count" 3 (List.length updates);
+  List.iteri (fun i (key_expr, value_expr) ->
+    check bool ("update key " ^ string_of_int i ^ " is literal") true
+      (match key_expr.expr_desc with Literal (IntLit _) -> true | _ -> false);
+    check bool ("update value " ^ string_of_int i ^ " is literal") true
+      (match value_expr.expr_desc with Literal (IntLit _) -> true | _ -> false)
   ) updates
 
 (** Test map delete operations *)
@@ -494,19 +470,21 @@ let test_map_delete_operations () =
     make_expr (Literal (IntLit (Signed64 25L, None))) pos;
   ] in
   
-  List.iteri (fun _i _key_expr ->
-    (* pattern analysis simplified *)
-    check bool "simplified test" true true
+  check int "delete key count" 3 (List.length delete_keys);
+  List.iteri (fun i key_expr ->
+    check bool ("delete key " ^ string_of_int i ^ " is literal") true
+      (match key_expr.expr_desc with Literal (IntLit _) -> true | _ -> false)
   ) delete_keys
 
 (** Test complex map operations *)
 let test_complex_map_operations () =
-  let _key_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 10L, None))) pos, Add, make_expr (Literal (IntLit (Signed64 5L, None))) pos)) pos in
-  let _value_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 20L, None))) pos, Mul, make_expr (Literal (IntLit (Signed64 2L, None))) pos)) pos in
-  
-  (* Simplified tests *)
-  check bool "complex key pattern" true true;
-  check bool "complex value pattern" true true
+  let key_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 10L, None))) pos, Add, make_expr (Literal (IntLit (Signed64 5L, None))) pos)) pos in
+  let value_expr = make_expr (BinaryOp (make_expr (Literal (IntLit (Signed64 20L, None))) pos, Mul, make_expr (Literal (IntLit (Signed64 2L, None))) pos)) pos in
+
+  check bool "complex key is binary op" true
+    (match key_expr.expr_desc with BinaryOp (_, Add, _) -> true | _ -> false);
+  check bool "complex value is binary op" true
+    (match value_expr.expr_desc with BinaryOp (_, Mul, _) -> true | _ -> false)
 
 (** Test map operation validation *)
 let test_map_operation_validation () =
@@ -515,13 +493,16 @@ let test_map_operation_validation () =
   
   (* Test basic map properties *)
   check string "validation test map name" "validation_test" map_decl.name;
-  check bool "validation test key type" true (map_decl.key_type = U32);
-  check bool "validation test value type" true (map_decl.value_type = U64)
+  check string "validation test key type" "u32" (string_of_bpf_type map_decl.key_type);
+  check string "validation test value type" "u64" (string_of_bpf_type map_decl.value_type)
 
 (** Test map operation optimization *)
 let test_map_operation_optimization () =
-  (* Simplified test *)
-  check bool "optimization recommendation" true true
+  (* Verify LRU maps have correct type for optimized lookups *)
+  let config = make_map_config 512 () in
+  let lru_map = make_ast_map_declaration "lru_opt" U32 U64 Lru_hash config true ~is_pinned:false pos in
+  check string "lru map name" "lru_opt" lru_map.name;
+  check int "lru map max entries" 512 lru_map.config.max_entries
 
 (** Test map operation performance *)
 let test_map_operation_performance () =
@@ -543,8 +524,8 @@ let test_comprehensive_map_operation_analysis () =
   
   (* Simplified test - just check basic map properties *)
   check string "comprehensive test map name" "comprehensive_test" map_decl.name;
-  check bool "comprehensive test key type" true (map_decl.key_type = U32);
-  check bool "comprehensive test value type" true (map_decl.value_type = U64)
+  check string "comprehensive test key type" "u32" (string_of_bpf_type map_decl.key_type);
+  check string "comprehensive test value type" "u64" (string_of_bpf_type map_decl.value_type)
 
 (** Test delete statement AST construction *)
 let test_delete_statement_ast () =
