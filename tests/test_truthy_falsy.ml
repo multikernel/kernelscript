@@ -81,7 +81,7 @@ let test_truthy_type_checking () =
   List.iter (fun expr ->
     try
       let _ = type_check_condition ctx expr in
-      check bool "Type checking should succeed" true true
+      ()
     with
     | Type_error (msg, _) -> 
         failwith ("Type checking failed for truthy/falsy conversion: " ^ msg)
@@ -125,7 +125,7 @@ let test_truthy_evaluation () =
     failwith "Should have failed - arrays cannot be used in boolean context"
   with 
   | Failure msg when try ignore (Str.search_forward (Str.regexp "boolean context") msg 0); true with Not_found -> false -> 
-      check bool "Arrays cannot be used in boolean context" true true
+      ()
   | _ -> check bool "Arrays should fail in boolean context" false true);
   
   (try
@@ -133,7 +133,7 @@ let test_truthy_evaluation () =
     failwith "Should have failed - structs cannot be used in boolean context"
   with 
   | Failure msg when try ignore (Str.search_forward (Str.regexp "boolean context") msg 0); true with Not_found -> false -> 
-      check bool "Structs cannot be used in boolean context" true true
+      ()
   | _ -> check bool "Structs should fail in boolean context" false true);
   
   (* Test enum truthiness *)
@@ -172,7 +172,7 @@ let test_if_statement_truthy () =
   List.iter (fun stmt ->
     try
       let _ = type_check_statement ctx stmt in
-      check bool "If statement should type check" true true
+      ()
     with
     | Type_error (msg, _) -> 
         failwith ("If statement type checking failed: " ^ msg)
@@ -195,7 +195,7 @@ let test_while_loop_truthy () =
   
   try
     let _ = type_check_statement ctx while_loop in
-    check bool "While loop should type check" true true
+    ()
   with
   | Type_error (msg, _) -> 
       failwith ("While loop type checking failed: " ^ msg)
@@ -233,7 +233,7 @@ let test_map_lookup_truthy () =
   
   try
     let _ = type_check_statement ctx if_stmt in
-    check bool "Map lookup if statement should type check" true true
+    ()
   with
   | Type_error (msg, _) -> 
       failwith ("Map lookup if statement type checking failed: " ^ msg)
@@ -280,7 +280,7 @@ let test_complex_boolean_expressions () =
   
   try
     let _ = type_check_statement ctx simple_if in
-    check bool "Complex boolean expression should type check" true true
+    ()
   with
   | Type_error (msg, _) -> 
       failwith ("Complex boolean expression type checking failed: " ^ msg)
