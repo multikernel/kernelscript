@@ -179,7 +179,7 @@ fn main() -> i32 {
   with
   | Failure _ | Parse_error _ | _ ->
       (* Expected - the old syntax should be rejected *)
-      check bool "Old ringbuf syntax correctly rejected" true true
+      ()
 
 (** Test ringbuf size validation - power of 2 *)
 let test_ringbuf_size_validation_power_of_2 () =
@@ -191,12 +191,10 @@ fn main() -> i32 { return 0 }
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for non-power-of-2 size" false true
+    fail "Should fail for non-power-of-2 size"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects non-power-of-2 size" true true
-  | _ -> 
-    check bool "Should throw Type_error for invalid size" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test ringbuf size validation - minimum size *)
 let test_ringbuf_size_validation_minimum () =
@@ -208,12 +206,10 @@ fn main() -> i32 { return 0 }
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for size < 4096" false true
+    fail "Should fail for size < 4096"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects size < 4096" true true
-  | _ -> 
-    check bool "Should throw Type_error for too small size" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test ringbuf size validation - maximum size *)
 let test_ringbuf_size_validation_maximum () =
@@ -225,12 +221,10 @@ fn main() -> i32 { return 0 }
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for size > 128MB" false true
+    fail "Should fail for size > 128MB"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects size > 128MB" true true
-  | _ -> 
-    check bool "Should throw Type_error for too large size" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test ringbuf value type validation *)
 let test_ringbuf_value_type_validation () =
@@ -241,12 +235,10 @@ fn main() -> i32 { return 0 }
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for non-struct value type" false true
+    fail "Should fail for non-struct value type"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects non-struct value type" true true
-  | _ -> 
-    check bool "Should throw Type_error for invalid value type" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test ringbuf reserve operation type checking *)
 let test_ringbuf_reserve_type_checking () =
@@ -321,12 +313,10 @@ fn main() -> i32 { return 0 }
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for invalid submit argument" false true
+    fail "Should fail for invalid submit argument"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects invalid submit argument" true true
-  | _ -> 
-    check bool "Should throw Type_error for invalid argument" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test reserve with arguments should fail *)
 let test_reserve_with_arguments_fails () =
@@ -344,12 +334,10 @@ fn main() -> i32 { return 0 }
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for reserve with arguments" false true
+    fail "Should fail for reserve with arguments"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects reserve with arguments" true true
-  | _ -> 
-    check bool "Should throw Type_error for reserve with args" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test IR generation for ringbuf operations *)
 let test_ringbuf_ir_generation () =
@@ -694,12 +682,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for incorrect handler signature" false true
+    fail "Should fail for incorrect handler signature"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects incorrect handler signature" true true
-  | _ -> 
-    check bool "Should throw Type_error for bad signature" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test on_event with wrong return type *)
 let test_on_event_wrong_return_type () =
@@ -719,12 +705,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for wrong return type" false true
+    fail "Should fail for wrong return type"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects wrong return type" true true
-  | _ -> 
-    check bool "Should throw Type_error for wrong return type" false true
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test on_event IR generation *)
 let test_on_event_ir_generation () =
@@ -874,13 +858,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for non-ring buffer arguments" false true
+    fail "Should fail for non-ring buffer arguments"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects non-ring buffer arguments" true true
-  | _ -> 
-    check bool "Should throw Type_error for invalid arguments" false true;
-  ()
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test dispatch with no arguments should fail *)
 let test_dispatch_no_args () =
@@ -897,13 +878,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program in
     let _ = type_check_ast ast in
-    check bool "Should fail for dispatch with no arguments" false true
+    fail "Should fail for dispatch with no arguments"
   with
-  | Type_checker.Type_error _ -> 
-    check bool "Correctly rejects dispatch with no arguments" true true
-  | _ -> 
-    check bool "Should throw Type_error for no arguments" false true;
-  ()
+  | Type_checker.Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test dispatch IR generation *)
 let test_dispatch_ir_generation () =
