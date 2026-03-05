@@ -60,11 +60,8 @@ type Port = u16
   let ast = program Kernelscript.Lexer.token lexbuf in
   
   (* Type check the AST using modern API *)
-  let (_annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-  
-  (* For attributed functions, we verify that type checking succeeds *)
-  (* The detailed verification happens at the IR level *)
-  check bool "type checking succeeded for attributed function" true true
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  check int "annotated decl count" (List.length ast) (List.length annotated_ast)
 
 let test_array_type_alias () =
   let source = {|
@@ -84,10 +81,8 @@ type EthBuffer = u8[14]
    | _ -> fail "Expected EthBuffer array type alias");
   
   (* Type check the AST using modern API *)
-  let (_annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-  
-  (* For attributed functions, we verify that type checking succeeds *)
-  check bool "array type alias type checking succeeded" true true
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  check int "annotated decl count" (List.length ast) (List.length annotated_ast)
 
 let test_nested_type_aliases () =
   let source = {|
@@ -103,10 +98,8 @@ type BufferSize = Size
   let ast = program Kernelscript.Lexer.token lexbuf in
   
   (* Type check the AST using modern API *)
-  let (_annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
-  
-  (* For attributed functions, we verify that type checking succeeds *)
-  check bool "nested type alias type checking succeeded" true true
+  let (annotated_ast, _typed_programs) = type_check_and_annotate_ast ast in
+  check int "annotated decl count" (List.length ast) (List.length annotated_ast)
 
 let test_type_alias_in_map_declarations () =
   let program = {|
@@ -146,26 +139,23 @@ fn main() -> i32 {
   let cpu_counters_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "cpu_counters") (Kernelscript.Ir.get_global_maps ir) in
   let value_type = cpu_counters_map.map_value_type in
   (match value_type with
-   | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) -> 
-       check bool "Counter is IRTypeAlias" true true
-   | _ -> 
+   | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) -> ()
+   | _ ->
        fail "Counter should be IRTypeAlias(Counter, IRU64)");
   
   (* Test that IpAddress is also a type alias *)
   let ip_stats_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "ip_stats") (Kernelscript.Ir.get_global_maps ir) in
   let key_type = ip_stats_map.map_key_type in
   (match key_type with
-   | Kernelscript.Ir.IRTypeAlias ("IpAddress", Kernelscript.Ir.IRU32) -> 
-       check bool "IpAddress is IRTypeAlias" true true
-   | _ -> 
+   | Kernelscript.Ir.IRTypeAlias ("IpAddress", Kernelscript.Ir.IRU32) -> ()
+   | _ ->
        fail "IpAddress should be IRTypeAlias(IpAddress, IRU32)");
   
   (* Test that PacketStats is a real struct *)
   let struct_value_type = ip_stats_map.map_value_type in
   (match struct_value_type with
-   | Kernelscript.Ir.IRStruct ("PacketStats", _fields) -> 
-       check bool "PacketStats is IRStruct" true true
-   | _ -> 
+   | Kernelscript.Ir.IRStruct ("PacketStats", _fields) -> ()
+   | _ ->
        fail "PacketStats should be IRStruct");
 
   (* Test struct fields use type aliases correctly *)
@@ -175,8 +165,7 @@ fn main() -> i32 {
        let count_field = List.find (fun (name, _) -> name = "count") fields in
        let (_, field_type) = count_field in
        (match field_type with
-        | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) ->
-            check bool "PacketStats.count field uses IRTypeAlias" true true
+        | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) -> ()
         | _ ->
             fail "PacketStats.count field should be IRTypeAlias(Counter, IRU64)")
    | _ -> 
@@ -262,16 +251,12 @@ var user_groups : hash<GroupId, u64>(100)
     let user_groups_map = List.find (fun map -> map.Kernelscript.Ir.map_name = "user_groups") (Kernelscript.Ir.get_global_maps ir) in
     let key_type = user_groups_map.map_key_type in
     (match key_type with
-     | Kernelscript.Ir.IRTypeAlias ("GroupId", _) -> 
-         check bool "GroupId is IRTypeAlias" true true
-     | _ -> 
-         check bool "GroupId should be IRTypeAlias" false true);
-         
-    check bool "test completed successfully" true true
+     | Kernelscript.Ir.IRTypeAlias ("GroupId", _) -> ()
+     | _ ->
+         fail ("GroupId should be IRTypeAlias, got: " ^ Kernelscript.Ir.string_of_ir_type key_type))
   with
   | ex ->
-    Printf.printf "Exception in edge cases: %s\n" (Printexc.to_string ex);
-    check bool "edge case test should not throw exception" false true
+    fail ("edge case test should not throw: " ^ Printexc.to_string ex)
 
 (** Test the specific bug that was fixed: struct fields with type aliases 
     generating incorrect "struct Counter" instead of "Counter" in userspace C code *)
@@ -332,20 +317,18 @@ fn main() -> i32 {
        let count_field = List.find (fun (name, _) -> name = "count") packet_stats_struct.struct_fields in
        let (_, field_type) = count_field in
        (match field_type with
-        | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) ->
-            check bool "PacketStats.count is IRTypeAlias in userspace IR" true true
+        | Kernelscript.Ir.IRTypeAlias ("Counter", Kernelscript.Ir.IRU64) -> ()
         | _ ->
-            fail (Printf.sprintf "PacketStats.count should be IRTypeAlias(Counter, IRU64), got: %s" 
+            fail (Printf.sprintf "PacketStats.count should be IRTypeAlias(Counter, IRU64), got: %s"
                     (Kernelscript.Ir.string_of_ir_type field_type)));
             
        let network_info_struct = List.find (fun s -> s.Kernelscript.Ir.struct_name = "NetworkInfo") userspace_prog.userspace_structs in
        let src_ip_field = List.find (fun (name, _) -> name = "src_ip") network_info_struct.struct_fields in
        let (_, src_ip_field_type) = src_ip_field in
        (match src_ip_field_type with
-        | Kernelscript.Ir.IRTypeAlias ("IpAddress", Kernelscript.Ir.IRU32) ->
-            check bool "NetworkInfo.src_ip is IRTypeAlias in userspace IR" true true
+        | Kernelscript.Ir.IRTypeAlias ("IpAddress", Kernelscript.Ir.IRU32) -> ()
         | _ ->
-            fail (Printf.sprintf "NetworkInfo.src_ip should be IRTypeAlias(IpAddress, IRU32), got: %s" 
+            fail (Printf.sprintf "NetworkInfo.src_ip should be IRTypeAlias(IpAddress, IRU32), got: %s"
                     (Kernelscript.Ir.string_of_ir_type src_ip_field_type)))
    | None ->
        fail "Userspace program should be generated");
