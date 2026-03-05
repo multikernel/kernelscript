@@ -34,15 +34,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "program reference type checking" true true
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "program reference type checking" true (List.length typed_ast > 0)
   with
-  | Type_error (msg, _) -> 
-      Printf.printf "Type error: %s\n" msg;
-      check bool "program reference type checking" true false
-  | e -> 
-      Printf.printf "Other error: %s\n" (Printexc.to_string e);
-      check bool "program reference type checking" true false
+  | e -> fail ("program reference type checking failed: " ^ Printexc.to_string e)
 
 (** Test program reference with different program types *)
 let test_different_program_types () =
@@ -68,18 +63,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "different program types" true true
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "different program types" true (List.length typed_ast > 0)
   with
-  | Type_error (msg, _) -> 
-      Printf.printf "Type error: %s\n" msg;
-      check bool "different program types" true false
-  | Parse_error (msg, _) ->
-      Printf.printf "Parse error: %s\n" msg;
-      check bool "different program types" true false
-  | e -> 
-      Printf.printf "Other error: %s\n" (Printexc.to_string e);
-      check bool "different program types" true false
+  | e -> fail ("different program types failed: " ^ Printexc.to_string e)
 
 (** Test invalid program reference *)
 let test_invalid_program_reference () =
@@ -93,14 +80,11 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
     let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "should fail for non-existent program" false true
+    fail "should fail for non-existent program"
   with
-  | Type_error _ -> 
-      check bool "should fail for non-existent program" true true
-  | Kernelscript.Symbol_table.Symbol_error _ ->
-      check bool "should fail for non-existent program" true true
-  | _ -> 
-      check bool "should fail for non-existent program" false true
+  | Type_error _ -> ()
+  | Kernelscript.Symbol_table.Symbol_error _ -> ()
+  | e -> fail ("Expected Type_error or Symbol_error, got: " ^ Printexc.to_string e)
 
 (** Test program reference as variable *)
 let test_program_reference_as_variable () =
@@ -118,14 +102,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "program reference as variable" true true
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "program reference as variable" true (List.length typed_ast > 0)
   with
-  | Type_error (msg, _) -> 
-      Printf.printf "Type error: %s\n" msg;
-      check bool "program reference as variable" true false
-  | _ -> 
-      check bool "program reference as variable" true false
+  | e -> fail ("program reference as variable failed: " ^ Printexc.to_string e)
 
 (** Test wrong argument types for program functions *)
 let test_wrong_argument_types () =
@@ -143,12 +123,10 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
     let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "should fail for wrong argument type" false true
+    fail "should fail for wrong argument type"
   with
-  | Type_error _ -> 
-      check bool "should fail for wrong argument type" true true
-  | _ -> 
-      check bool "should fail for wrong argument type" false true
+  | Type_error _ -> ()
+  | e -> fail ("Expected Type_error, got: " ^ Printexc.to_string e)
 
 (** Test stdlib integration *)
 let test_stdlib_integration () =
@@ -221,14 +199,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "multiple program handles should work" true true
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "multiple program handles should work" true (List.length typed_ast > 0)
   with
-  | Type_error (msg, _) -> 
-      Printf.printf "Type error: %s\n" msg;
-      check bool "multiple program handles should work" true false
-  | _ -> 
-      check bool "multiple program handles should work" true false
+  | e -> fail ("multiple program handles failed: " ^ Printexc.to_string e)
 
 (** Test that program handle variables can be named appropriately *)
 let test_program_handle_naming () =
@@ -250,14 +224,10 @@ fn main() -> i32 {
   try
     let ast = parse_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "program handle naming should work" true true
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "program handle naming should work" true (List.length typed_ast > 0)
   with
-  | Type_error (msg, _) -> 
-      Printf.printf "Type error: %s\n" msg;
-      check bool "program handle naming should work" true false
-  | _ -> 
-      check bool "program handle naming should work" true false
+  | e -> fail ("program handle naming failed: " ^ Printexc.to_string e)
 
 (** Test suite *)
 let program_ref_tests = [
