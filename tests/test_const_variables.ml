@@ -35,8 +35,8 @@ let test_valid_const_declaration () =
   try
     let ast = parse_program_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "valid const declaration" true true
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "valid const declaration" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Valid const declaration failed: " ^ Printexc.to_string e)
 
@@ -54,8 +54,7 @@ let test_const_assignment_error () =
     let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     fail "Should have failed with const assignment error"
   with
-  | Kernelscript.Type_checker.Type_error ("Cannot assign to const variable: MAX_SIZE", _) ->
-    check bool "const assignment error" true true
+  | Kernelscript.Type_checker.Type_error ("Cannot assign to const variable: MAX_SIZE", _) -> ()
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
 
 let test_const_integer_types_only () =
@@ -71,8 +70,7 @@ let test_const_integer_types_only () =
     let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     fail "Should have failed with const string type error"
   with
-  | Kernelscript.Type_checker.Type_error ("Const variables can only be integer types", _) ->
-    check bool "const integer types only" true true
+  | Kernelscript.Type_checker.Type_error ("Const variables can only be integer types", _) -> ()
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
 
 let test_const_must_be_literal () =
@@ -89,8 +87,7 @@ let test_const_must_be_literal () =
     let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     fail "Should have failed with const literal requirement error"
   with
-  | Kernelscript.Type_checker.Type_error ("Const variable must be initialized with a literal value", _) ->
-    check bool "const must be literal" true true
+  | Kernelscript.Type_checker.Type_error ("Const variable must be initialized with a literal value", _) -> ()
   | e -> fail ("Unexpected error: " ^ Printexc.to_string e)
 
 let test_const_type_inference () =
@@ -104,8 +101,8 @@ let test_const_type_inference () =
   try
     let ast = parse_program_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "const type inference" true true
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "const type inference" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Const type inference failed: " ^ Printexc.to_string e)
 
@@ -120,8 +117,8 @@ let test_const_in_userspace () =
   try
     let ast = parse_program_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "const in userspace" true true
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "const in userspace" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Const in userspace failed: " ^ Printexc.to_string e)
 
@@ -142,8 +139,8 @@ let test_const_with_different_integer_types () =
   try
     let ast = parse_program_string program_text in
     let _ = Kernelscript.Symbol_table.build_symbol_table ast in
-    let (_enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
-    check bool "const with different integer types" true true
+    let (enhanced_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
+    check bool "const with different integer types" true (List.length enhanced_ast > 0)
   with
   | e -> fail ("Const with different integer types failed: " ^ Printexc.to_string e)
 
