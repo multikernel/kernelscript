@@ -55,9 +55,9 @@ let test_memory_bridge_integration () =
    | Some info -> 
        (match info.Kernelscript.Ebpf_c_codegen.region_type with
         | Kernelscript.Ebpf_c_codegen.PacketData -> 
-            check bool (test_name ^ " - packet_ptr has PacketData region") true true
+            ()
         | Kernelscript.Ebpf_c_codegen.LocalStack ->
-            check bool (test_name ^ " - packet_ptr has LocalStack region (expected for variable allocation)") true true
+            ()
         | _ -> 
             let region_str = match info.Kernelscript.Ebpf_c_codegen.region_type with
               | Kernelscript.Ebpf_c_codegen.PacketData -> "PacketData"

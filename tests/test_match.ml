@@ -494,7 +494,7 @@ let test_match_block_implicit_returns () =
   (* The main test: Type checking should succeed (this would fail before the bug fix) *)
   (try 
     let (_typed_ast, _typed_functions) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "type checking should succeed for match arms with implicit returns" true true
+    ()
   with
   | Failure msg when msg = "Block arms must end with a return statement" ->
       fail "Bug regression: type checker still requires explicit returns in match arm blocks"
@@ -632,7 +632,7 @@ let test_enum_constant_resolution_in_match () =
      
   (* This test ensures that the bug fix works: enum constants in match patterns
      should be resolved to their actual values, not hardcoded to 0 *)
-  check bool "enum constants should be properly resolved in match patterns" true true
+  ()
 
 let suite = [
   "test_basic_match_parsing", `Quick, test_basic_match_parsing;

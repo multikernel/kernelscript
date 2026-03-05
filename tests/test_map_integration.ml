@@ -196,10 +196,10 @@ var test_map : hash<u32, u64>(100)
     with
     | Kernelscript.Type_checker.Type_error (_, _) -> 
         (* Expected to fail with Type_error *)
-        check bool "correctly rejected invalid map operation" true true
+        ()
     | Kernelscript.Symbol_table.Symbol_error (_, _) -> 
         (* Expected to fail with Symbol_error for undefined identifiers *)
-        check bool "correctly rejected invalid map operation" true true
+        ()
     | _ -> 
         fail "Unexpected error type for invalid map operation"
   ) invalid_programs

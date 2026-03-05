@@ -316,7 +316,7 @@ let test_complete_pipeline () =
   (* This test would require full compilation pipeline, which is complex
      For now, we'll test the individual components above *)
   (* TODO: Add full pipeline test when integration test framework is available *)
-  check bool "pipeline test placeholder" true true
+  ()
 
 (** Test string_of_literal preserves format *)
 let test_string_of_literal () =

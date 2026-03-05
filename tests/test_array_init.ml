@@ -139,7 +139,7 @@ let test_semantic_analysis () =
     ("var arr: bool[2] = [true]", "Boolean fill should work");
   ] in
   
-  List.iter (fun (input, description) ->
+  List.iter (fun (input, _description) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
@@ -150,7 +150,7 @@ let test_semantic_analysis () =
       let ast = Kernelscript.Parse.parse_string program_text in
       let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
       let (_typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-      check bool description true true
+      ()
     with
     | e -> fail ("Semantic analysis failed for " ^ input ^ ": " ^ Printexc.to_string e)
   ) test_cases
@@ -162,7 +162,7 @@ let test_error_cases () =
     ("var arr: u32[4] = [1, true, 3]", "Array elements must have consistent type");
   ] in
   
-  List.iter (fun (input, expected_error) ->
+  List.iter (fun (input, _expected_error) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
   %s
@@ -175,7 +175,7 @@ let test_error_cases () =
       let (_typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
       fail ("Expected error for " ^ input ^ " but compilation succeeded")
     with
-    | _ -> check bool expected_error true true
+    | _ -> ()
   ) test_cases
 
 let () =

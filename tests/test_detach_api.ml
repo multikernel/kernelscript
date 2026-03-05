@@ -143,10 +143,10 @@ fn main() -> i32 {
   with
   | Type_error (_, _) -> 
       (* Expected type error *)
-      check bool "Got expected type error" true true
+      ()
   | Failure msg when string_contains_substring msg "type" -> 
       (* Expected type error as Failure *)
-      check bool "Got expected type error" true true
+      ()
   | _ -> (fail "Should have failed with type error" : unit)
 
 (* Test suite definition *)

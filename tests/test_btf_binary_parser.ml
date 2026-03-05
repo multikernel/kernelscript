@@ -184,7 +184,7 @@ let test_btf_array_type_resolution () =
     );
     
     (* Verify that the function interface works correctly *)
-    check bool "BTF parser handles invalid input gracefully" true true
+    ()
   in
   
   test_array_scenario ()
@@ -206,11 +206,7 @@ let test_btf_kind_coverage () =
     *)
     
     (* Verify that these improvements compiled and are available *)
-    check bool "BTF kind coverage includes arrays" true true;
-    check bool "BTF kind coverage includes forward declarations" true true;
-    check bool "BTF kind coverage includes float types" true true;
-    check bool "BTF kind coverage includes variables" true true;
-    check bool "BTF kind coverage includes data sections" true true;
+    ();
   in
   
   test_kind_scenarios ()

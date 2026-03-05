@@ -66,7 +66,7 @@ let test_delete_targets () =
 let test_ir_generation () =
   (* This test verifies that the new and delete constructs can be processed *)
   (* In a real implementation, this would test IR generation *)
-  check bool "IR object allocation representable" true true
+  ()
 
 (** Test that variable assignments are correct (regression test for var_0/var_1 bug) *)
 let test_variable_assignment_bug () =
@@ -87,12 +87,12 @@ let test_variable_assignment_bug () =
   
   (* The core fix is in IR generation - if the above AST can be created, *)
   (* and our previous tests pass, then the variable assignment bug is fixed *)
-  check bool "variable assignment bug pattern works in AST" true true
+  ()
 
 (** Test error cases *)
 let test_error_cases () =
   (* This should be caught during validation *)
-  check bool "invalid delete target should be detected" true true
+  ()
 
 let tests = [
   ("new expression AST", `Quick, test_new_expression_ast);

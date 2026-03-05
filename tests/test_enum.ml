@@ -222,7 +222,7 @@ let test_enum_edge_cases () =
   with
   | Symbol_error _ -> 
     (* If it fails, that's also acceptable behavior *)
-    check bool "duplicate rejected" true true
+    ()
 
 (** Test enum with large values *)
 let test_enum_large_values () =
@@ -370,7 +370,7 @@ let test_enum_not_numeric_literals () =
   (* Verify it's NOT IRLiteral *)
   (match ir_value.value_desc with
    | IRLiteral _ -> check bool "should not be IRLiteral" false true
-   | IREnumConstant _ -> check bool "correctly preserved as IREnumConstant" true true
+   | IREnumConstant _ -> ()
    | _ -> check bool "unexpected IR value type" false true)
 
 (** Test complete enum preservation pipeline *)
@@ -580,14 +580,14 @@ let test_enum_array_index () =
     let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
     
     (* If we reach here, type checking succeeded *)
-    check bool "enum array index type checking passes" true true
+    ()
   with
   | Type_error (msg, _) when String.contains msg 'A' && String.contains msg 'r' ->
       (* If we get "Array index must be integer type" error, the test fails *)
       check bool ("enum array index should be allowed: " ^ msg) false true
   | Type_error (_, _) ->
       (* Other type errors are acceptable for this test *)
-      check bool "enum array index type checking passes" true true
+      ()
   | Parse_error (msg, _) ->
       check bool ("parse error: " ^ msg) false true
   | e ->

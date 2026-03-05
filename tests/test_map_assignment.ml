@@ -131,7 +131,7 @@ var typed_map : hash<u32, u64>(1024)
     let type_check_result = {all_valid = false; errors = []; analysis_complete = true} in  (* Placeholder *)
     check bool "invalid assignments fail type check" false type_check_result.all_valid
   with
-  | _ -> check bool "expected error for invalid assignment" true true
+  | _ -> ()
   )
 
 (** Test assignment optimization *)
@@ -244,7 +244,7 @@ var valid_map : hash<u32, u64>(1024)
     let validation_result = validate_assignments assignments in
     check bool "invalid assignments fail validation" false validation_result.all_valid
   with
-  | _ -> check bool "expected parse error for invalid" true true
+  | _ -> ()
   )
 
 (** Test assignment safety analysis *)

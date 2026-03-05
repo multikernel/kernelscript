@@ -225,7 +225,7 @@ fn main() -> i32 {
     
     (* Note: There's a known issue where void function calls are assigned to variables in C generation *)
     (* This doesn't affect correctness but could be optimized in the future *)
-    check bool "void function call code generation works" true true
+    ()
   with
   | exn -> fail ("Void function code generation failed: " ^ Printexc.to_string exn)
 
@@ -249,7 +249,7 @@ fn main() -> i32 {
     
     (* If we get here without exceptions, the userspace void function was accepted *)
     (* We don't need to generate IR for userspace-only tests, type checking is sufficient *)
-    check bool "userspace void function should be accepted" true true
+    ()
   with
   | exn -> fail ("Userspace void function should be accepted, but got: " ^ Printexc.to_string exn)
 

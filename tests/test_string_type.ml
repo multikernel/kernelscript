@@ -71,7 +71,7 @@ let test_string_concatenation _ =
   try
     let (_ctx, _typed_prog) = parse_and_type_check program_text in
     (* If we get here without exception, type checking passed *)
-    check bool "String concatenation type checking passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
       fail ("String concatenation failed: " ^ msg)
@@ -96,7 +96,7 @@ let test_string_equality _ =
   
   try
     let (_ctx, _typed_prog) = parse_and_type_check program_text in
-    check bool "String equality comparison type checking passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
       fail ("String equality failed: " ^ msg)
@@ -116,7 +116,7 @@ let test_string_indexing _ =
   
   try
     let (_ctx, _typed_prog) = parse_and_type_check program_text in
-    check bool "String indexing type checking passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
       fail ("String indexing failed: " ^ msg)
@@ -142,7 +142,7 @@ let test_invalid_string_operations _ =
     fail "Should have failed on string ordering comparison"
   with
   | Type_error (msg, _) when String.contains msg '<' -> 
-      check bool "Correctly rejected string ordering comparison" true true
+      ()
   | _ -> 
       fail "Wrong error for string ordering comparison")
 
@@ -159,7 +159,7 @@ let test_string_assignment _ =
   
   try
     let (_ctx, _typed_prog) = parse_and_type_check program_text in
-    check bool "String assignment type checking passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
       fail ("String assignment failed: " ^ msg)
@@ -180,7 +180,7 @@ let test_arbitrary_string_sizes _ =
   
   try
     let (_ctx, _typed_prog) = parse_and_type_check program_text in
-    check bool "Arbitrary string sizes type checking passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
       fail ("Arbitrary string sizes failed: " ^ msg)

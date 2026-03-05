@@ -31,8 +31,8 @@ let test_pos = make_pos 1 1
 
 let check_parse_success program_text test_name =
   try
-    let _ast = parse_string program_text in
-    check bool test_name true true
+    let ast = parse_string program_text in
+    check bool test_name true (List.length ast > 0)
   with
   | Parse_error (msg, _) -> fail (test_name ^ " - Parse error: " ^ msg)
   | exn -> fail (test_name ^ " - Unexpected error: " ^ Printexc.to_string exn)
@@ -54,8 +54,8 @@ let type_check_program program_text =
 
 let check_type_success program_text test_name =
   try
-    let _result = type_check_program program_text in
-    check bool test_name true true
+    let (_ast, _st, annotated) = type_check_program program_text in
+    check bool test_name true (List.length annotated > 0)
   with
   | Type_error (msg, _) -> fail (test_name ^ " - Type error: " ^ msg)
   | exn -> fail (test_name ^ " - Unexpected error: " ^ Printexc.to_string exn)
@@ -317,8 +317,6 @@ let test_pointer_ir_generation () =
   try
     let ir = generate_ir_from_program simple_pointer_program "update_point" in
     (* Check that IR generation succeeds for pointer operations *)
-    check bool "IR generation succeeds for pointer operations" true true;
-    
     (* Check that the IR has some basic structure - at least one program and one basic block *)
     let programs = get_programs ir in
     let has_programs = List.length programs > 0 in
@@ -380,7 +378,6 @@ let test_address_of_dereference_codegen () =
     
     (* The exact C code generation depends on implementation, 
        but should handle address-of and dereference safely *)
-    check bool "Address-of/dereference IR generation succeeds" true true;
     check bool "C code generation succeeds" true (String.length c_code > 0)
     
   with
@@ -404,9 +401,8 @@ let test_userspace_pointer_generation () =
   |} in
   
   try
-    let (_ast, _symbol_table, _annotated_ast) = type_check_program userspace_pointer_program in
-    (* Just check that parsing and type checking succeed for userspace pointer code *)
-    check bool "Userspace pointer syntax is valid" true true
+    let (_ast, _symbol_table, annotated_ast) = type_check_program userspace_pointer_program in
+    check bool "Userspace pointer syntax is valid" true (List.length annotated_ast > 0)
   with
   | exn -> fail ("Userspace pointer syntax validation failed: " ^ Printexc.to_string exn)
 
@@ -459,7 +455,6 @@ let test_nested_pointer_structures () =
     let ir = generate_ir_from_program nested_program "process_rectangle" in
     let c_code = generate_c_multi_program ir in
     
-    check bool "Nested pointer structures IR generation" true true;
     check bool "Nested structures C code generation" true (String.length c_code > 0);
     
   with

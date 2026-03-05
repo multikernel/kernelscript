@@ -197,7 +197,7 @@ fn main(custom_args: CustomArgs) -> i32 {
     let (annotated_ast, _typed_programs) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     let _ir = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test_validation" in
     
-    check bool "custom struct validation passes" true true;
+    ();
     
   with
   | exn -> fail ("Validation failed with custom struct: " ^ Printexc.to_string exn)

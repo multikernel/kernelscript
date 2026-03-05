@@ -154,7 +154,7 @@ var invalid_map : hash<u32, u64>(0)  // Invalid size
     let validation_result = Maps.validate_map_flags map_flags in
     check bool "invalid flags fail validation" true validation_result.all_valid (* Maps with 0 entries are parsed but flagged later *)
   with
-  | _ -> check bool "expected parse error for invalid flags" true true
+  | _ -> ()
   )
 
 (** Test map flags with initialization *)
@@ -281,7 +281,7 @@ let test_map_flags_size_limits () =
       let validation_result = Maps.validate_map_flags map_flags in
       check bool ("size validation: " ^ string_of_int expected_size) should_be_valid validation_result.all_valid
     with
-    | _ when not should_be_valid -> check bool ("expected error for size: " ^ string_of_int expected_size) true true
+    | _ when not should_be_valid -> ()
     | _ -> fail ("Unexpected result for size: " ^ string_of_int expected_size)
   ) test_cases
 

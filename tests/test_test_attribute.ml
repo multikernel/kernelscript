@@ -115,7 +115,7 @@ let test_test_function_with_builtin_calls () =
     let ast = Parse.parse_string program in
     let symbol_table = Symbol_table.build_symbol_table ast in
     let (_, _) = Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "@test function with builtin calls parsed and typed successfully" true true
+    ()
   with
   | exn -> 
     fail ("Failed to parse/type check @test function with builtin calls: " ^ Printexc.to_string exn)
@@ -176,7 +176,7 @@ let test_builtin_restricted_to_test_functions () =
   | Type_checker.Type_error (msg, _) ->
     (* Check that the error message mentions test() restriction *)
     if String.contains msg 't' && String.contains msg 'e' && String.contains msg 's' && String.contains msg '(' then
-      check bool "test() call in non-@test function properly rejected" true true
+      ()
     else
       fail ("Got Type_error but with unexpected message: " ^ msg)
   | exn -> 

@@ -27,7 +27,7 @@ let test_comment_at_start () =
   try
     let ast = parse_string program_text in
     check int "AST declarations count" 1 (List.length ast);
-    check bool "comment at start parsing" true true
+    ()
   with
   | Parse_error (msg, pos) ->
     fail ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
@@ -41,7 +41,7 @@ let test_comment_with_whitespace () =
   try
     let ast = parse_string program_text in
     check int "AST declarations count" 1 (List.length ast);
-    check bool "comment with whitespace parsing" true true
+    ()
   with
   | Parse_error (msg, pos) ->
     fail ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
@@ -83,7 +83,7 @@ let test_multiple_line_comments () =
   try
     let ast = parse_string program_text in
     check int "AST declarations count" 1 (List.length ast);
-    check bool "multiple line comments parsing" true true
+    ()
   with
   | Parse_error (msg, pos) ->
     fail ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)
@@ -96,7 +96,7 @@ let test_inline_comments () =
   try
     let ast = parse_string program_text in
     check int "AST declarations count" 1 (List.length ast);
-    check bool "inline comments parsing" true true
+    ()
   with
   | Parse_error (msg, pos) ->
     fail ("Parse error: " ^ msg ^ " at " ^ string_of_position pos)

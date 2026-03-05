@@ -124,7 +124,7 @@ let test_map_program_integration () =
   check string "second map name" "byte_count" byte_count_map.name;
   
   (* Test map compatibility - simplified *)
-  check bool "program uses maps" true true
+  ()
 
 (** Test map type compatibility *)
 let test_map_type_compatibility () =
@@ -164,9 +164,9 @@ let test_map_error_handling () =
   (* Test error conditions *)
   try
     let _ = make_ast_map_declaration "" U32 U64 Hash config true ~is_pinned:false pos in
-    check bool "empty name handled" true true
+    ()
   with
-  | _ -> check bool "empty name error handled" true true
+  | _ -> ()
 
 (** Test map metadata *)
 let test_map_metadata () =

@@ -89,7 +89,7 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_, _) = type_check_and_annotate_ast ast in
-    check bool "proper eBPF function names should be accepted" true true
+    ()
   with
   | _ ->
       check bool "proper eBPF function names rejected unexpectedly" false true
@@ -109,7 +109,7 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let (_, _) = type_check_and_annotate_ast ast in
-    check bool "userspace main function should be accepted" true true
+    ()
   with
   | _ ->
       check bool "userspace main function rejected unexpectedly" false true

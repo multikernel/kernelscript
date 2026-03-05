@@ -406,7 +406,7 @@ fn main(wrong_param: u32) -> i32 {
       fail ("Should have failed for: " ^ description)
     with
     | Parse_error _ ->
-        check bool ("correctly rejected parse error: " ^ description) true true
+        ()
     | Failure msg when String.length msg > 0 ->
         (* Check that the error message is related to main function validation *)
         let is_main_function_error = 

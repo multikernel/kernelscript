@@ -311,7 +311,7 @@ fn main() -> i32 {
     let ast = parse_string program_text in
     let _ = build_symbol_table ast in
     let _ = type_check_and_annotate_ast ast in
-    check bool "config field reads allowed in eBPF" true true
+    ()
   with
   | e -> fail ("Unexpected error in config read test: " ^ Printexc.to_string e)
 

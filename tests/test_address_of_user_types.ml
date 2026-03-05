@@ -48,7 +48,7 @@ let test_address_of_user_type_resolution () =
     let ast = Kernelscript.Parse.parse_string code in
     let symbol_table = Test_utils.Helpers.create_test_symbol_table ~include_xdp:true ast in
     let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Address-of user type resolution test passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
     Alcotest.fail ("Type error should not occur: " ^ msg)
@@ -91,7 +91,7 @@ let test_address_of_nested_user_types () =
     let ast = Kernelscript.Parse.parse_string code in
     let symbol_table = Test_utils.Helpers.create_test_symbol_table ~include_xdp:true ast in
     let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
-    check bool "Nested address-of user type resolution test passed" true true
+    ()
   with
   | Type_error (msg, _) -> 
     Alcotest.fail ("Type error should not occur: " ^ msg)

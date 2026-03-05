@@ -121,7 +121,7 @@ fn invalid_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed parsing invalid tracepoint format"
   with
-  | _ -> check bool "Correctly rejected invalid format" true true
+  | _ -> ()
 
 let test_tracepoint_old_format_rejection _ =
   (* Test old @tracepoint format without arguments *)
@@ -135,7 +135,7 @@ fn old_handler(ctx: *trace_event_raw_sched_switch) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed parsing old tracepoint format"
   with
-  | _ -> check bool "Correctly rejected old format" true true
+  | _ -> ()
 
 (* 2. Type Checking Tests *)
 let test_tracepoint_type_checking _ =
@@ -378,7 +378,7 @@ fn invalid_handler(ctx: i32) -> i32 {
     let _ = generate_ir typed_ast symbol_table "test" in
     fail "Should have failed with invalid context type"
   with
-  | _ -> check bool "Correctly rejected invalid context type" true true
+  | _ -> ()
 
 let test_tracepoint_wrong_return_type _ =
   let source = "@tracepoint(\"sched/sched_switch\")
@@ -393,7 +393,7 @@ fn wrong_return_handler(ctx: *trace_event_raw_sched_switch) -> str<64> {
     let _ = generate_ir typed_ast symbol_table "test" in
     fail "Should have failed with wrong return type"
   with
-  | _ -> check bool "Correctly rejected wrong return type" true true
+  | _ -> ()
 
 (* 7. Integration Tests *)
 let test_tracepoint_end_to_end_syscall _ =

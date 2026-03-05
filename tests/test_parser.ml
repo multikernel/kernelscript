@@ -324,7 +324,7 @@ let test_error_handling () =
       let _ = parse_string invalid_text in
       fail ("Should have failed to parse: " ^ invalid_text)
     with
-    | _ -> check bool ("error handling: " ^ invalid_text) true true
+    | _ -> ()
   ) invalid_programs
 
 (** Test operator precedence *)
@@ -339,7 +339,7 @@ let test_operator_precedence () =
 |} in
   try
     let _ = parse_string program_text in
-    check bool "operator precedence parsing" true true
+    ()
   with
   | _ -> fail "Failed to parse operator precedence"
 
@@ -485,7 +485,7 @@ let test_if_else_if_else () =
               check int "else contains nested if" 1 (List.length else_stmts);
              (* Check that else contains another if statement *)
              (match (List.hd else_stmts).stmt_desc with
-              | If (_, _, Some _) -> check bool "nested if-else" true true
+              | If (_, _, Some _) -> ()
               | _ -> fail "Expected nested if-else")
          | _ -> fail "Expected if-else statement")
     | _ -> fail "Expected attributed function declaration"
@@ -622,7 +622,7 @@ let test_if_error_cases () =
       let _ = parse_string code in
       fail ("Should have failed: " ^ desc)
     with
-    | Parse_error (_, _) -> check bool ("error case: " ^ desc) true true
+    | Parse_error (_, _) -> ()
     | _ -> fail ("Expected parse error for: " ^ desc)
   ) error_cases
 
