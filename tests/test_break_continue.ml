@@ -49,7 +49,7 @@ let test_break_statement_parsing () =
 }
 |} in
   match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "break statement parsed and type checked" true true
+  | Ok typed -> check bool "break statement parsed and type checked" true (List.length typed > 0)
   | Error msg -> fail ("Failed to parse break statement: " ^ msg)
 
 (** Test basic continue statement parsing *)
@@ -66,7 +66,7 @@ let test_continue_statement_parsing () =
 }
 |} in
   match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "continue statement parsed and type checked" true true
+  | Ok typed -> check bool "continue statement parsed and type checked" true (List.length typed > 0)
   | Error msg -> fail ("Failed to parse continue statement: " ^ msg)
 
 (** Test break in while loop *)
@@ -85,7 +85,7 @@ let test_break_in_while_loop () =
 }
 |} in
   match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "break in while loop parsed and type checked" true true
+  | Ok typed -> check bool "break in while loop parsed and type checked" true (List.length typed > 0)
   | Error msg -> fail ("Failed to parse break in while loop: " ^ msg)
 
 (** Test continue in while loop *)
@@ -104,7 +104,7 @@ let test_continue_in_while_loop () =
 }
 |} in
   match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "continue in while loop parsed and type checked" true true
+  | Ok typed -> check bool "continue in while loop parsed and type checked" true (List.length typed > 0)
   | Error msg -> fail ("Failed to parse continue in while loop: " ^ msg)
 
 (** Test error case: break outside loop *)
@@ -155,7 +155,7 @@ let test_break_continue_in_nested_conditional () =
 }
 |} in
   match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "break/continue in nested conditional parsed and type checked" true true
+  | Ok typed -> check bool "break/continue in nested conditional parsed and type checked" true (List.length typed > 0)
   | Error msg -> fail ("Failed to parse break/continue in nested conditional: " ^ msg)
 
 (** Test multiple break/continue statements in same loop *)
@@ -178,7 +178,7 @@ let test_multiple_break_continue_statements () =
 }
 |} in
   match parse_and_check_break_continue program_text with
-  | Ok _ -> check bool "multiple break/continue statements parsed and type checked" true true
+  | Ok typed -> check bool "multiple break/continue statements parsed and type checked" true (List.length typed > 0)
   | Error msg -> fail ("Failed to parse multiple break/continue statements: " ^ msg)
 
 (** Test evaluation of break statement (simple simulation) *)
@@ -195,10 +195,8 @@ let test_break_evaluation () =
 |} in
   try
     let ast = parse_string program_text in
-    let _typed_ast = type_check_ast ast in
-    (* For this test, we just verify it parses and type checks correctly *)
-    (* Full evaluation testing would require more complex setup *)
-    check bool "break statement evaluation setup works" true true
+    let typed_ast = type_check_ast ast in
+    check bool "break statement evaluation setup works" true (List.length typed_ast > 0)
   with
   | e -> fail ("Failed break evaluation test: " ^ Printexc.to_string e)
 
