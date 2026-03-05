@@ -241,15 +241,13 @@ let test_builtin_function_recognition () =
   } in
   
   (* Test that process_expression handles built-in functions without error *)
-  try
+  (try
     process_expression table print_expr;
-    check bool "built-in function recognized" true true
   with
-  | Symbol_error (msg, _) -> 
-      check string "should not error on built-in function" "" msg;
-      check bool "built-in function recognized" true false
-  | _ -> 
-      check bool "built-in function recognized" true false;
+  | Symbol_error (msg, _) ->
+      fail ("should not error on built-in function: " ^ msg)
+  | e ->
+      fail ("unexpected error: " ^ Printexc.to_string e));
   
   (* Test that non-existent functions still raise errors *)
   let invalid_expr = {
@@ -264,14 +262,13 @@ let test_builtin_function_recognition () =
     map_scope = None;
   } in
   
-  try
+  (try
     process_expression table invalid_expr;
-    check bool "non-existent function should error" false true
+    fail "non-existent function should raise Symbol_error"
   with
-  | Symbol_error _ -> 
-      check bool "non-existent function should error" true true
-  | _ -> 
-      check bool "non-existent function should error" false true
+  | Symbol_error _ -> ()
+  | e ->
+      fail ("expected Symbol_error, got: " ^ Printexc.to_string e))
 
 (** Test 3: Built-in function calls in different contexts *)
 let test_builtin_function_contexts () =
@@ -293,15 +290,13 @@ let test_builtin_function_contexts () =
     map_scope = None;
   } in
   
-  try
+  (try
     process_expression table_with_prog print_expr;
-    check bool "built-in function in program context" true true
   with
-  | Symbol_error (msg, _) -> 
-      check string "should not error in program context" "" msg;
-      check bool "built-in function in program context" true false
-  | _ -> 
-      check bool "built-in function in program context" true false
+  | Symbol_error (msg, _) ->
+      fail ("should not error in program context: " ^ msg)
+  | e ->
+      fail ("unexpected error: " ^ Printexc.to_string e))
 
 (** Test 4: Multiple built-in function types *)
 let test_multiple_builtin_functions () =
@@ -326,20 +321,15 @@ let test_multiple_builtin_functions () =
       map_scope = None;
     } in
     
-    try
+    (try
       process_expression table func_expr;
-      check bool (func_name ^ " function recognized with " ^ test_desc) true true
     with
-    | Symbol_error (msg, _) -> 
-        (* Only fail if it's an undefined function error and we expect the function to exist *)
-        if is_undefined_function_error msg && Kernelscript.Stdlib.is_builtin_function func_name then (
-          check string ("should not error on built-in " ^ func_name) "" msg;
-          check bool (func_name ^ " function recognized") true false
-        ) else (
-          check bool (func_name ^ " function recognized") true true
-        )
-    | _ -> 
-        check bool (func_name ^ " function recognized") true false
+    | Symbol_error (msg, _) ->
+        if is_undefined_function_error msg && Kernelscript.Stdlib.is_builtin_function func_name then
+          fail ("should not error on built-in " ^ func_name ^ ": " ^ msg)
+        (* Non-undefined errors are acceptable for some built-ins *)
+    | e ->
+        fail (func_name ^ " function failed with " ^ test_desc ^ ": " ^ Printexc.to_string e))
   ) test_functions
 
 (** Test 5: Global map handling *)
@@ -367,8 +357,7 @@ let test_local_map_rejection () =
     add_map_decl table_with_prog local_map;
     fail "Expected error for local map declaration"
   with Symbol_error (msg, _) ->
-    check bool "local map error detected" true (String.contains msg 'g');  (* Check for "global" in error message *)
-    check bool "local map rejection test passed" true true
+    check bool "local map error mentions global" true (String.contains msg 'g')
 
 (** Test 4: Scope management *)
 let test_scope_management () =
@@ -418,9 +407,8 @@ let test_symbol_lookup_and_visibility () =
    | Some symbol -> check string "local function found" "local_func" symbol.name
    | None -> fail "expected to find local_func");
    
-  (match lookup_symbol table_with_prog "nonexistent" with
-   | Some _ -> fail "should not find nonexistent symbol"
-   | None -> check bool "nonexistent symbol not found" true true)
+  check (option string) "nonexistent symbol not found" None
+    (match lookup_symbol table_with_prog "nonexistent" with Some s -> Some s.name | None -> None)
 
 (** Test 6: Type definition handling *)
 let test_type_definition_handling () =
@@ -469,14 +457,12 @@ let test_function_parameter_handling () =
   
   (* Test parameter lookup *)
   (match lookup_symbol table_with_func "param1" with
-   | Some { kind = Variable U32; _ } -> check bool "param1 type correct" true true
+   | Some { kind = Variable t; _ } -> check string "param1 type" "u32" (string_of_bpf_type t)
    | _ -> fail "expected to find param1 with type U32");
-   
+
   (match lookup_symbol table_with_func "param2" with
-   | Some { kind = Variable U64; _ } -> check bool "param2 type correct" true true
-   | _ -> fail "expected to find param2 with type U64");
-   
-  check bool "function parameter handling test passed" true true
+   | Some { kind = Variable t; _ } -> check string "param2 type" "u64" (string_of_bpf_type t)
+   | _ -> fail "expected to find param2 with type U64")
 
 (** Test 8: Global-only scoping *)
 let test_global_only_scoping () =
@@ -494,13 +480,10 @@ let test_global_only_scoping () =
   
   (* Test that attempting to add local map fails *)
   let local_map = create_test_map_decl "local_map" false in
-  try
+  (try
     add_map_decl table_with_prog local_map;
     fail "Expected error for local map declaration"
-  with Symbol_error _ ->
-    check bool "local map correctly rejected" true true;
-  
-  check bool "global-only scoping test passed" true true
+  with Symbol_error _ -> ())
 
 (** Test 9: Global map visibility rules *)
 let test_global_map_visibility_rules () =
@@ -527,14 +510,12 @@ let test_global_map_visibility_rules () =
   
   (* Test that we can access global maps from any scope *)
   (match get_map_declaration table_prog1 "global_counter1" with
-   | Some _ -> check bool "global map accessible from prog1" true true
+   | Some md -> check string "global map from prog1" "global_counter1" md.name
    | None -> fail "should be able to access global map from prog1");
-   
+
   (match get_map_declaration table_prog2 "global_counter2" with
-   | Some _ -> check bool "global map accessible from prog2" true true
-   | None -> fail "should be able to access global map from prog2");
-  
-  check bool "global map visibility rules test passed" true true
+   | Some md -> check string "global map from prog2" "global_counter2" md.name
+   | None -> fail "should be able to access global map from prog2")
 
 (** Test 10: Build symbol table from AST *)
 let test_build_symbol_table_from_ast () =
@@ -562,10 +543,8 @@ let test_build_symbol_table_from_ast () =
        fail "attributed function should have global scope"
    | Some _ -> 
        fail "packet_filter should be a function"
-   | None -> 
-       check int "program function count" 0 1); (* Function not found *)
-  
-  check bool "build symbol table from AST test passed" true true
+   | None ->
+       check int "program function count" 0 1) (* Function not found *)
 
 (** Test 11: Error handling *)
 let test_error_handling () =
@@ -580,9 +559,8 @@ let test_error_handling () =
      check bool "symbol redefinition error" true (Str.search_forward (Str.regexp "already defined") msg 0 >= 0));
   
   (* Test undefined symbol lookup *)
-  (match lookup_symbol table "undefined_var" with
-   | None -> check bool "undefined symbol not found" true true
-   | Some _ -> fail "should not find undefined_var");
+  check (option string) "undefined symbol not found" None
+    (match lookup_symbol table "undefined_var" with Some s -> Some s.name | None -> None);
   
   (* Test local map rejection error *)
   let local_map = create_test_map_decl "invalid_local" false in
@@ -590,9 +568,7 @@ let test_error_handling () =
      add_map_decl table local_map;
      fail "expected Symbol_error exception"
    with Symbol_error (msg, _) ->
-     check bool "local map rejection error" true (String.contains msg 'g'));  (* Check for "global" in error message *)
-  
-  check bool "error handling test passed" true true
+     check bool "local map rejection error mentions global" true (String.contains msg 'g'))
 
 (** Test 12: Complex integration scenario *)
 let test_complex_integration () =
@@ -623,28 +599,24 @@ let test_complex_integration () =
   check bool "global map visible" true (is_global_map table_func "global_stats");
   
   (match lookup_symbol table_func "PacketInfo" with
-   | Some { kind = TypeDef _; _ } -> check bool "packet info type" true true
+   | Some { kind = TypeDef (StructDef (name, _, _)); _ } -> check string "packet info type" "PacketInfo" name
    | _ -> fail "expected to find PacketInfo type");
-   
+
   (match lookup_symbol table_func "XDP_PASS" with
-   | Some { kind = EnumConstant _; _ } -> check bool "XDP_PASS enum constant" true true
+   | Some { kind = EnumConstant (enum_name, _); _ } -> check string "XDP_PASS enum" "xdp_action" enum_name
    | _ -> fail "expected to find XDP_PASS enum constant");
-   
+
   (match lookup_symbol table_func "ctx" with
-   | Some { kind = Variable Xdp_md; _ } -> check bool "ctx variable" true true
-   | _ -> fail "expected to find ctx variable");
-   
-  check bool "complex integration test passed" true true
+   | Some { kind = Variable t; _ } -> check string "ctx variable type" "xdp_md" (string_of_bpf_type t)
+   | _ -> fail "expected to find ctx variable")
 
 (** Test basic symbol table operations *)
 let test_basic_symbol_table () =
   let symbol_table = create_symbol_table () in
   
   (* Test adding symbols *)
-  let _success1 = add_symbol symbol_table "x" (Variable U32) Public dummy_pos in
-  let _success2 = add_symbol symbol_table "y" (Variable U64) Public dummy_pos in
-  check bool "add symbol x" true true;  (* add_symbol returns unit, not bool *)
-  check bool "add symbol y" true true;
+  add_symbol symbol_table "x" (Variable U32) Public dummy_pos;
+  add_symbol symbol_table "y" (Variable U64) Public dummy_pos;
   
   (* Test symbol lookup *)
   let x_symbol = lookup_symbol symbol_table "x" in
@@ -758,20 +730,19 @@ let test_symbol_conflicts () =
   let symbol_table = create_symbol_table () in
   
   (* Add a symbol *)
-  let _success1 = add_symbol symbol_table "conflict" (Variable U32) Public dummy_pos in
-  check bool "first symbol added" true true;  (* add_symbol returns unit *)
-  
+  add_symbol symbol_table "conflict" (Variable U32) Public dummy_pos;
+  check bool "first symbol exists" true (lookup_symbol symbol_table "conflict" <> None);
+
   (* Try to add conflicting symbol in same scope - this should raise an exception *)
   (try
-    let _success2 = add_symbol symbol_table "conflict" (Variable U64) Public dummy_pos in
-    check bool "conflicting symbol should fail" false true  (* Should not reach here *)
+    add_symbol symbol_table "conflict" (Variable U64) Public dummy_pos;
+    fail "conflicting symbol should raise exception"
   with
-  | _ -> check bool "conflicting symbol correctly rejected" true true);
-  
+  | _ -> ());
+
   (* Add in different scope should work *)
   let symbol_table_new_scope = enter_scope symbol_table (ProgramScope "new_scope") in
-  let _success3 = add_symbol symbol_table_new_scope "conflict" (Variable U64) Private dummy_pos in
-  check bool "symbol in new scope allowed" true true;
+  add_symbol symbol_table_new_scope "conflict" (Variable U64) Private dummy_pos;
   
   (* Lookup should return the local version *)
   let conflict_type = lookup_symbol symbol_table_new_scope "conflict" in
@@ -803,8 +774,7 @@ var flags : array<u16, bool>(256)
 |} in
   try
     let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in  (* This function builds and returns the symbol table *)
-    check bool "map symbol table built" true true;
+    let symbol_table = build_symbol_table ast in
     
     (* Check map symbols *)
     let counter_map = lookup_map symbol_table "counter" in
@@ -842,8 +812,7 @@ fn calculate(x: u32, y: u32) -> u64 {
 |} in
   try
     let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in  (* This function builds and returns the symbol table *)
-    check bool "type checking integration setup" true true;
+    let symbol_table = build_symbol_table ast in
     
     let type_errors = check_types_with_symbol_table symbol_table ast in
     check int "no type errors" 0 (List.length type_errors);
@@ -925,8 +894,7 @@ fn validate_packet(size: u32) -> bool {
 |} in
   try
     let ast = parse_string program_text in
-    let symbol_table = build_symbol_table ast in  (* This function builds and returns the symbol table *)
-    check bool "comprehensive analysis setup" true true;
+    let symbol_table = build_symbol_table ast in
     
     (* Full analysis - now implemented properly *)
     let analysis = comprehensive_symbol_analysis symbol_table ast in
