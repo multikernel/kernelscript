@@ -120,7 +120,7 @@ fn invalid_handler(fd: u32) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed parsing old format"
   with
-  | _ -> check bool "Correctly rejected old format" true true
+  | _ -> ()
 
 let test_probe_missing_target_function _ =
   (* Test @probe without target function specification *)
@@ -133,7 +133,7 @@ fn empty_target_handler(fd: u32) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed with empty target function"
   with
-  | _ -> check bool "Correctly rejected empty target function" true true
+  | _ -> ()
 
 (* 2. Type Checking Tests *)
 let test_probe_type_checking _ =
@@ -200,7 +200,7 @@ let test_probe_invalid_return_types _ =
       let _ = type_check_ast ast in
       fail (Printf.sprintf "Should have rejected %s return type for probe function" ret_type)
     with
-    | _ -> check bool (Printf.sprintf "Correctly rejected %s return type" ret_type) true true
+    | _ -> ()
   ) invalid_cases
 
 let test_probe_too_many_parameters _ =
@@ -214,7 +214,7 @@ fn too_many_params(p1: u32, p2: u32, p3: u32, p4: u32, p5: u32, p6: u32, p7: u32
     let _ = type_check_ast ast in
     fail "Should have failed with too many parameters"
   with
-  | _ -> check bool "Correctly rejected too many parameters" true true
+  | _ -> ()
 
 let test_probe_pt_regs_rejection _ =
   (* Test rejection of direct pt_regs parameter usage *)
@@ -227,7 +227,7 @@ fn invalid_handler(ctx: *pt_regs) -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed with pt_regs parameter"
   with
-  | _ -> check bool "Correctly rejected pt_regs parameter" true true
+  | _ -> ()
 
 (* 3. IR Generation Tests *)
 let test_probe_ir_generation _ =
@@ -469,7 +469,7 @@ fn invalid_return_handler(fd: u32) -> str<64> {
     let _ = generate_ir typed_ast symbol_table "test" in
     fail "Should have failed with invalid return type"
   with
-  | _ -> check bool "Correctly rejected invalid return type" true true
+  | _ -> ()
 
 let test_probe_invalid_parameter_count _ =
   let source = "@probe(\"invalid_function\")
@@ -482,7 +482,7 @@ fn seven_params_handler(p1: u32, p2: u32, p3: u32, p4: u32, p5: u32, p6: u32, p7
     let _ = type_check_ast ast in
     fail "Should have failed with too many parameters"
   with
-  | _ -> check bool "Correctly rejected too many parameters" true true
+  | _ -> ()
 
 let test_probe_empty_target_function _ =
   let source = "@probe(\"\")
@@ -494,7 +494,7 @@ fn empty_target_handler() -> i32 {
     let _ = type_check_ast ast in
     fail "Should have failed with empty target function"
   with
-  | _ -> check bool "Correctly rejected empty target function" true true
+  | _ -> ()
 
 (* 7. Integration Tests *)
 let test_fprobe_end_to_end_syscall _ =
