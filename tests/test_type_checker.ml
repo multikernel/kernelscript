@@ -88,12 +88,12 @@ let test_variable_type_checking () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "variable type checking" true true
-  with
-  | _ -> fail "Error occurred"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 1 (List.length typed_attributed_functions);
+  let (_attrs, typed_func) = List.hd typed_attributed_functions in
+  check string "function name" "test" typed_func.tfunc_name;
+  check int "body has 4 statements" 4 (List.length typed_func.tfunc_body)
 
 (** Test binary operations *)
 let test_binary_operations () =
@@ -137,12 +137,13 @@ fn helper(x: u32, y: u32) -> u32 {
   return result
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "function call type checking" true true
-  with
-  | _ -> fail "Error occurred"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 2 (List.length typed_attributed_functions);
+  let helper_func = List.find (fun (_, tf) -> tf.tfunc_name = "helper") typed_attributed_functions in
+  let (_, helper_tf) = helper_func in
+  check int "helper params" 2 (List.length helper_tf.tfunc_params);
+  check string "helper return type" "u32" (Kernelscript.Ast.string_of_bpf_type helper_tf.tfunc_return_type)
 
 (** Test context types *)
 let test_context_types () =
@@ -151,12 +152,15 @@ let test_context_types () =
   return 2
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "context type checking" true true
-  with
-  | _ -> fail "Error occurred"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 1 (List.length typed_attributed_functions);
+  let (_attrs, typed_func) = List.hd typed_attributed_functions in
+  check string "function name" "test" typed_func.tfunc_name;
+  check int "param count" 1 (List.length typed_func.tfunc_params);
+  let (param_name, param_type) = List.hd typed_func.tfunc_params in
+  check string "context param name" "ctx" param_name;
+  check string "context param type" "*xdp_md" (Kernelscript.Ast.string_of_bpf_type param_type)
 
 (** Test struct field access *)
 let test_struct_field_access () =
@@ -166,12 +170,11 @@ let test_struct_field_access () =
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "struct field access" true true
-  with
-  | _ -> fail "Error occurred"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 1 (List.length typed_attributed_functions);
+  let (_attrs, typed_func) = List.hd typed_attributed_functions in
+  check int "body has 2 statements" 2 (List.length typed_func.tfunc_body)
 
 (** Test statement type checking *)
 let test_statement_type_checking () =
@@ -185,12 +188,12 @@ let test_statement_type_checking () =
   return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "statement type checking" true true
-  with
-  | _ -> fail "Error occurred"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 1 (List.length typed_attributed_functions);
+  let (_attrs, typed_func) = List.hd typed_attributed_functions in
+  check string "function name" "test" typed_func.tfunc_name;
+  check int "body has 4 statements" 4 (List.length typed_func.tfunc_body)
 
 (** Test function type checking *)
 let test_function_type_checking () =
@@ -206,12 +209,13 @@ fn calculate(a: u32, b: u32) -> u32 {
   return value
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "function type checking" true true
-  with
-  | _ -> fail "Error occurred"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 2 (List.length typed_attributed_functions);
+  let calc_func = List.find (fun (_, tf) -> tf.tfunc_name = "calculate") typed_attributed_functions in
+  let (_, calc_tf) = calc_func in
+  check int "calculate params" 2 (List.length calc_tf.tfunc_params);
+  check string "calculate return type" "u32" (Kernelscript.Ast.string_of_bpf_type calc_tf.tfunc_return_type)
 
 (** Test built-in function type checking *)
 let test_builtin_function_type_checking () =
@@ -223,12 +227,11 @@ let test_builtin_function_type_checking () =
     return 0
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "built-in function type checking" true true
-  with
-  | _ -> fail "Built-in function type checking failed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 1 (List.length typed_attributed_functions);
+  let (_attrs, typed_func) = List.hd typed_attributed_functions in
+  check int "body has 4 statements (3 print + 1 return)" 4 (List.length typed_func.tfunc_body)
 
 (** Test variadic function argument handling *)
 let test_variadic_function_arguments () =
@@ -263,12 +266,11 @@ let test_builtin_function_return_types () =
     return result
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "built-in function return type" true true
-  with
-  | _ -> fail "Built-in function return type checking failed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 1 (List.length typed_attributed_functions);
+  let (_attrs, typed_func) = List.hd typed_attributed_functions in
+  check int "body has 2 statements" 2 (List.length typed_func.tfunc_body)
 
 (** Test built-in vs user-defined function precedence *)
 let test_builtin_vs_user_function_precedence () =
@@ -284,12 +286,12 @@ fn my_function(x: u32) -> u32 {
   return user_result
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "built-in vs user function precedence" true true
-  with
-  | _ -> fail "Built-in vs user function precedence test failed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 2 (List.length typed_attributed_functions);
+  let my_func = List.find (fun (_, tf) -> tf.tfunc_name = "my_function") typed_attributed_functions in
+  let (_, my_tf) = my_func in
+  check string "user function return type" "u32" (Kernelscript.Ast.string_of_bpf_type my_tf.tfunc_return_type)
 
 (** Test stdlib integration *)
 let test_stdlib_integration () =
@@ -316,12 +318,12 @@ let test_stdlib_integration () =
 (** Test error handling *)
 let test_error_handling () =
   let invalid_programs = [
-    ("var x: u32 = true;", "type mismatch");
-    ("var x = 1 + true;", "invalid binary operation");
-    ("var x = unknown_var;", "undefined variable");
-    ("var x = func_not_exists();", "undefined function");
+    ("var x: u32 = true", "type mismatch");
+    ("var x = 1 + true", "invalid binary operation");
+    ("var x = unknown_var", "undefined variable");
+    ("var x = func_not_exists()", "undefined function");
   ] in
-  
+
   List.iter (fun (stmt, description) ->
     let program_text = Printf.sprintf {|
 @xdp fn test(ctx: *xdp_md) -> xdp_action {
@@ -334,7 +336,12 @@ let test_error_handling () =
       let _ = type_check_and_annotate_ast_with_builtins ast in
       fail ("Should have failed for: " ^ description)
     with
-    | _ -> check bool ("error handling: " ^ description) true true
+    | Type_error (msg, _) ->
+        check bool ("error handling got Type_error: " ^ description) true (String.length msg > 0)
+    | Kernelscript.Symbol_table.Symbol_error (msg, _) ->
+        check bool ("error handling got Symbol_error: " ^ description) true (String.length msg > 0)
+    | Failure msg ->
+        check bool ("error handling got Failure: " ^ description) true (String.length msg > 0)
   ) invalid_programs
 
 (** Test program type checking *)
@@ -398,13 +405,12 @@ var counter : hash<u32, u64>(1024)
     let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
     check int "type promotion programs count" 1 (List.length typed_attributed_functions);
     
-    (* Verify that type checking completed without errors *)
-    match List.hd typed_attributed_functions with
-    | (_attr_list, typed_func) -> 
-        check string "type promotion program name" "test_promotion" typed_func.tfunc_name;
-        check bool "integer type promotion" true true
+    let xdp_func = List.find (fun (_, tf) -> tf.tfunc_name = "test_promotion") typed_attributed_functions in
+    let (_, typed_func) = xdp_func in
+    check string "type promotion program name" "test_promotion" typed_func.tfunc_name;
+    check int "body statements" 8 (List.length typed_func.tfunc_body)
   with
-  | exn -> 
+  | exn ->
     Printf.printf "Error in integer type promotion test: %s\n" (Printexc.to_string exn);
     fail "Error occurred in type promotion test"
 
@@ -561,14 +567,11 @@ let test_arithmetic_promotion () =
   return 2 // XDP_PASS
 }
 |} stmt in
-    try
-      let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast_with_builtins ast in
-      check bool ("arithmetic promotion: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed arithmetic promotion test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("arithmetic promotion: " ^ desc) false true
+    let ast = parse_string program_text in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+    check int ("arithmetic promotion func count: " ^ desc) 1 (List.length typed_attributed_functions);
+    let (_, tf) = List.hd typed_attributed_functions in
+    check string ("arithmetic promotion func name: " ^ desc) "test" tf.tfunc_name
   ) arithmetic_tests
 
 (** Test comparison operations with integer promotion *)
@@ -597,14 +600,11 @@ let test_comparison_promotion () =
   return 2 // XDP_PASS
 }
 |} stmt in
-    try
-      let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast_with_builtins ast in
-      check bool ("comparison promotion: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed comparison promotion test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("comparison promotion: " ^ desc) false true
+    let ast = parse_string program_text in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+    check int ("comparison promotion func count: " ^ desc) 1 (List.length typed_attributed_functions);
+    let (_, tf) = List.hd typed_attributed_functions in
+    check string ("comparison promotion func name: " ^ desc) "test" tf.tfunc_name
   ) comparison_tests
 
 (** Test map operations with type promotion *)
@@ -651,14 +651,11 @@ var stats : hash<u32, Counter>(1000)
   ] in
   
   List.iter (fun (program_text, desc) ->
-    try
-      let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast_with_builtins ast in
-      check bool ("map promotion: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed map promotion test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("map promotion: " ^ desc) false true
+    let ast = parse_string program_text in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+    check bool ("map promotion has typed funcs: " ^ desc) true (List.length typed_attributed_functions >= 1);
+    let (_, tf) = List.hd typed_attributed_functions in
+    check string ("map promotion func name: " ^ desc) "test" tf.tfunc_name
   ) map_tests
 
 (** Test edge cases for type promotion *)
@@ -714,14 +711,12 @@ fn process(value: u64) -> u64 {
   ] in
   
   List.iter (fun (program_text, desc) ->
-    try
-      let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast_with_builtins ast in
-      check bool ("edge case promotion: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed edge case promotion test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("edge case promotion: " ^ desc) false true
+    let ast = parse_string program_text in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+    check bool ("edge case promotion has typed funcs: " ^ desc) true (List.length typed_attributed_functions >= 1);
+    let test_func = List.find (fun (_, tf) -> tf.tfunc_name = "test") typed_attributed_functions in
+    let (_, tf) = test_func in
+    check string ("edge case promotion func name: " ^ desc) "test" tf.tfunc_name
   ) edge_case_tests
 
 (** Test null literal typing *)
@@ -756,16 +751,11 @@ let test_null_literal_typing () =
   ] in
   
   List.iter (fun (program_text, desc) ->
-    try
-      let ast = parse_string program_text in
-      let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
-      let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-      check bool ("null literal typing: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed null literal test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("null literal typing: " ^ desc) false true
+    let ast = parse_string program_text in
+    let symbol_table = create_symbol_table_with_builtins ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool ("null literal typing IR generated: " ^ desc) true (List.length ir_program.Kernelscript.Ir.source_declarations > 0)
   ) null_tests
 
 (** Test null comparisons with different types *)
@@ -797,16 +787,11 @@ let test_null_comparisons () =
   return 2 // XDP_PASS
 }
 |} stmt in
-    try
-      let ast = parse_string program_text in
-      let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
-      let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-      check bool ("null comparison: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed null comparison test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("null comparison: " ^ desc) false true
+    let ast = parse_string program_text in
+    let symbol_table = create_symbol_table_with_builtins ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool ("null comparison IR generated: " ^ desc) true (List.length ir_program.Kernelscript.Ir.source_declarations > 0)
   ) comparison_tests
 
 (** Test map operations with null semantics *)
@@ -859,16 +844,11 @@ var packets : hash<u32, u32>(100)
   ] in
   
   List.iter (fun (program_text, desc) ->
-    try
-      let ast = parse_string program_text in
-      let symbol_table = create_symbol_table_with_builtins ast in
-      let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
-      let _ = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
-      check bool ("map null semantics: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed map null test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("map null semantics: " ^ desc) false true
+    let ast = parse_string program_text in
+    let symbol_table = create_symbol_table_with_builtins ast in
+    let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
+    let ir_program = Kernelscript.Ir_generator.generate_ir annotated_ast symbol_table "test" in
+    check bool ("map null semantics IR generated: " ^ desc) true (List.length ir_program.Kernelscript.Ir.source_declarations > 0)
   ) map_null_tests
 
 (** Test null vs throw pattern adherence *)
@@ -926,14 +906,9 @@ fn lookup_value(key: u32) -> u32 {
   ] in
   
   List.iter (fun (program_text, desc) ->
-    try
-      let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast_with_builtins ast in
-      check bool ("null vs throw pattern: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed pattern test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("null vs throw pattern: " ^ desc) false true
+    let ast = parse_string program_text in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+    check bool ("null vs throw pattern has typed funcs: " ^ desc) true (List.length typed_attributed_functions >= 1)
   ) pattern_tests
 
 (** Test comprehensive null semantics *)
@@ -985,14 +960,9 @@ var map2 : hash<u32, u32>(100)
   ] in
   
   List.iter (fun (program_text, desc) ->
-    try
-      let ast = parse_string program_text in
-      let _ = type_check_and_annotate_ast_with_builtins ast in
-      check bool ("comprehensive null: " ^ desc) true true
-    with
-    | exn -> 
-      Printf.printf "Failed comprehensive null test '%s': %s\n" desc (Printexc.to_string exn);
-      check bool ("comprehensive null: " ^ desc) false true
+    let ast = parse_string program_text in
+    let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+    check bool ("comprehensive null has typed funcs: " ^ desc) true (List.length typed_attributed_functions >= 1)
   ) comprehensive_tests
 
 (** Helper function to check if string contains substring *)
@@ -1038,11 +1008,9 @@ let test_xdp_signature_validation () =
       check bool ("XDP signature validation should have failed for: " ^ desc) false true
     with
     | Kernelscript.Type_checker.Type_error (msg, _) when contains_substr msg "attributed function must have signature" ->
-        (* Expected failure - signature validation caught the error during type checking *)
-        check bool ("XDP signature validation correctly rejected: " ^ desc) true true
+        check bool ("XDP signature Type_error contains expected message: " ^ desc) true (contains_substr msg "attributed function must have signature")
     | Failure msg when contains_substr msg "Invalid function signature" ->
-        (* Expected failure - signature validation caught the error during IR generation *)
-        check bool ("XDP signature validation correctly rejected: " ^ desc) true true
+        check bool ("XDP signature Failure contains expected message: " ^ desc) true (contains_substr msg "Invalid function signature")
     | exn -> 
         Printf.printf "Unexpected error in XDP signature test '%s': %s\n" desc (Printexc.to_string exn);
         check bool ("XDP signature validation failed unexpectedly for: " ^ desc) false true
@@ -1059,12 +1027,12 @@ let test_xdp_signature_validation () =
     let symbol_table = create_symbol_table_with_builtins ast in
     let (annotated_ast, _typed_programs) = type_check_and_annotate_ast_with_builtins ast in
     let multi_prog_analysis = Kernelscript.Multi_program_analyzer.analyze_multi_program_system ast in
-    let _ = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
-    check bool "valid XDP signature should pass" true true
+    let ir_program = Kernelscript.Multi_program_ir_optimizer.generate_optimized_ir annotated_ast multi_prog_analysis symbol_table "test" in
+    check bool "valid XDP signature produces IR" true (List.length ir_program.Kernelscript.Ir.source_declarations > 0)
   with
   | exn ->
       Printf.printf "Valid XDP signature unexpectedly failed: %s\n" (Printexc.to_string exn);
-      check bool "valid XDP signature should pass" false true
+      fail "Valid XDP signature should pass"
 
 (** Test kernel function calls from attributed functions *)
 let test_kernel_function_calls_from_attributed () =
@@ -1082,14 +1050,12 @@ fn get_src_ip(ctx: *xdp_md) -> IpAddress {
     return 2 // XDP_PASS
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "kernel function call from attributed function" true true
-  with
-  | exn -> 
-      Printf.printf "Kernel function call test failed: %s\n" (Printexc.to_string exn);
-      fail "Kernel function call from attributed function should succeed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 2 (List.length typed_attributed_functions);
+  let xdp_func = List.find (fun (_, tf) -> tf.tfunc_name = "packet_analyzer") typed_attributed_functions in
+  let (_, tf) = xdp_func in
+  check int "packet_analyzer params" 1 (List.length tf.tfunc_params)
 
 (** Test multiple kernel function calls with different parameter types *)
 let test_multiple_kernel_function_calls () =
@@ -1122,14 +1088,12 @@ fn validate_headers(ctx: *xdp_md, min_size: u32, max_size: u32) -> bool {
     }
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "multiple kernel function calls" true true
-  with
-  | exn -> 
-      Printf.printf "Multiple kernel function calls test failed: %s\n" (Printexc.to_string exn);
-      fail "Multiple kernel function calls should succeed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 4 (List.length typed_attributed_functions);
+  let complex_func = List.find (fun (_, tf) -> tf.tfunc_name = "complex_handler") typed_attributed_functions in
+  let (_, tf) = complex_func in
+  check int "complex_handler body statements" 4 (List.length tf.tfunc_body)
 
 (** Test kernel functions calling other kernel functions *)
 let test_kernel_to_kernel_function_calls () =
@@ -1151,14 +1115,12 @@ fn main_kernel_function(ctx: *xdp_md) -> u32 {
     return 2 // XDP_PASS
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "kernel to kernel function calls" true true
-  with
-  | exn -> 
-      Printf.printf "Kernel to kernel function calls test failed: %s\n" (Printexc.to_string exn);
-      fail "Kernel to kernel function calls should succeed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 3 (List.length typed_attributed_functions);
+  let main_func = List.find (fun (_, tf) -> tf.tfunc_name = "main_kernel_function") typed_attributed_functions in
+  let (_, tf) = main_func in
+  check string "return type" "u32" (Kernelscript.Ast.string_of_bpf_type tf.tfunc_return_type)
 
 (** Test function call type resolution with user-defined types *)
 let test_function_call_user_type_resolution () =
@@ -1186,14 +1148,12 @@ fn convert_ip_to_u32(addr: IpAddress) -> u32 {
     }
 }
 |} in
-  try
-    let ast = parse_string program_text in
-    let _ = type_check_and_annotate_ast_with_builtins ast in
-    check bool "function call user type resolution" true true
-  with
-  | exn -> 
-      Printf.printf "Function call user type resolution test failed: %s\n" (Printexc.to_string exn);
-      fail "Function call user type resolution should succeed"
+  let ast = parse_string program_text in
+  let (_enhanced_ast, typed_attributed_functions) = type_check_and_annotate_ast_with_builtins ast in
+  check int "typed functions count" 3 (List.length typed_attributed_functions);
+  let convert_func = List.find (fun (_, tf) -> tf.tfunc_name = "convert_ip_to_u32") typed_attributed_functions in
+  let (_, tf) = convert_func in
+  check string "convert return type" "u32" (Kernelscript.Ast.string_of_bpf_type tf.tfunc_return_type)
 
 (** Test tail call type compatibility - different program types should be rejected *)
 let test_tail_call_cross_program_type_restriction _ =
@@ -1280,8 +1240,8 @@ var packet_filter : lru_hash<PacketInfo, u32>(512)             // Struct key
     let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
     let _typed_ast = type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
     
-    (* If we reach here, type checking succeeded *)
-    check bool "map index type resolution works for structs, enums, and type aliases" true true
+    (* If we reach here, type checking succeeded - verify we got typed functions *)
+    check bool "map index type resolution produced typed functions" true (List.length (snd _typed_ast) >= 1)
   with
   | Type_error (msg, _) when String.contains msg 'A' && String.contains msg 'r' && String.contains msg 'i' ->
       (* If we get "Array index must be integer type" error, the test fails *)
