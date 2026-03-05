@@ -161,8 +161,8 @@ pin var pinned_local : hash<u32, u64>(512)
 }
 |} in
   try
-    let _ = parse_string_with_builtins program in
-    check bool "comprehensive syntax parsing" true true
+    let (typed_ast, _) = parse_string_with_builtins program in
+    check bool "comprehensive syntax parsing" true (List.length typed_ast > 0)
   with
   | exn ->
     Printf.printf "Comprehensive syntax parsing failed with: %s\n" (Printexc.to_string exn);
@@ -187,8 +187,8 @@ pin var pinned_map : hash<u32, u64>(1024)
 }
 |} in
   try
-    let (_ast, _) = parse_string_with_builtins program in
-    check bool "new syntax type checking" true true
+    let (ast, _) = parse_string_with_builtins program in
+    check bool "new syntax type checking" true (List.length ast > 0)
   with
   | exn ->
     Printf.printf "New syntax type checking failed with: %s\n" (Printexc.to_string exn);
@@ -215,12 +215,10 @@ pin var pinned_map : hash<u32, u64>(1024)
     let (typed_ast, symbol_table) = parse_string_with_builtins program in
     
     (* Test that IR generation completes without errors *)
-    let _ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
-    check bool "test passed" true true
+    let ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
+    check bool "IR generation produces programs" true (List.length (Kernelscript.Ir.get_programs ir) > 0)
   with
-  | exn ->
-    Printf.printf "IR generation failed with: %s\n" (Printexc.to_string exn);
-    check bool "IR generation test failed" true false
+  | exn -> fail ("IR generation failed: " ^ Printexc.to_string exn)
 
 (** Test C code generation with new syntax *)
 let test_new_syntax_c_generation () =
@@ -315,12 +313,10 @@ var packet_counts : hash<u32, u64>(1024)
 }
 |} in
   try
-    let _ = parse_string_with_builtins program in
-    check bool "test passed" true true
+    let (typed_ast, _) = parse_string_with_builtins program in
+    check bool "complete map program parsing" true (List.length typed_ast > 0)
   with
-  | exn ->
-    Printf.printf "Complete map program parsing failed with: %s\n" (Printexc.to_string exn);
-    check bool "test passed" true false
+  | exn -> fail ("Complete map program parsing failed: " ^ Printexc.to_string exn)
 
 (** Test map type checking *)
 let test_map_type_checking () =
@@ -335,12 +331,10 @@ var test_map : hash<u32, u64>(1024)
 }
 |} in
   try
-    let (_ast, _) = parse_string_with_builtins program in
-    check bool "test passed" true true
+    let (ast, _) = parse_string_with_builtins program in
+    check bool "map type checking" true (List.length ast > 0)
   with
-  | exn ->
-    Printf.printf "Type checking failed with: %s\n" (Printexc.to_string exn);
-    check bool "test passed" true false
+  | exn -> fail ("Map type checking failed: " ^ Printexc.to_string exn)
 
 (** Test map type validation *)
 let test_map_type_validation () =
@@ -386,9 +380,8 @@ var global_map : hash<u32, u64>(1024)
 }
 |} in
   try
-    let (_typed_ast, _) = parse_string_with_builtins program in
-    (* If we get here, the map identifier was resolved successfully *)
-    check bool "map identifier resolution" true true
+    let (typed_ast, _) = parse_string_with_builtins program in
+    check bool "map identifier resolution" true (List.length typed_ast > 0)
   with
   | _ ->
     check bool "map identifier resolution" true false
@@ -410,12 +403,10 @@ var test_map : hash<u32, u64>(1024)
     let (typed_ast, symbol_table) = parse_string_with_builtins program in
     
     (* Test that IR generation completes without errors *)
-    let _ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
-    check bool "test passed" true true
+    let ir = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test" in
+    check bool "map IR generation produces programs" true (List.length (Kernelscript.Ir.get_programs ir) > 0)
   with
-  | exn ->
-    Printf.printf "Map IR generation failed with: %s\n" (Printexc.to_string exn);
-    check bool "IR generation test failed" true false
+  | exn -> fail ("Map IR generation failed: " ^ Printexc.to_string exn)
 
 (** Test C code generation for maps *)
 let test_map_c_generation () =
