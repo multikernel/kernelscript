@@ -2559,7 +2559,10 @@ and generate_assignment ctx dest_val expr is_const =
              | IRValue src_val ->
                  (* Simple value assignment *)
                  let dest_str = generate_c_value ctx dest_val in
-                 let src_str = generate_c_value ctx src_val in
+                 (* Auto-dereference map access to get the value, not the pointer *)
+                 let src_str = (match src_val.value_desc with
+                   | IRMapAccess (_, _, _) -> generate_c_value ~auto_deref_map_access:true ctx src_val
+                   | _ -> generate_c_value ctx src_val) in
                  emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str src_str)
              | _ ->
                  (* Other expressions *)
