@@ -418,7 +418,7 @@ fn main(wrong_param: u32) -> i32 {
         check bool ("should have failed for: " ^ description) false true
   ) invalid_programs
 
-(** Test 6: Map file descriptor generation for userspace *)
+(** Test 7: Map file descriptor generation for userspace *)
 let test_map_fd_generation () =
   let code = {|
 pin var shared_counter : hash<u32, u32>(1024)
@@ -475,6 +475,315 @@ fn main() -> i32 {
   with
   | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
 
+(** Test 8: No map FD declarations when outer condition is false (no map ops, no exec, no pinned maps) *)
+let test_map_fd_not_generated_without_usage () =
+  (* Map used only in eBPF program (not in main), no pinned maps, no exec *)
+  let code = {|
+var ebpf_side_only : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  ebpf_side_only[1] = 100
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_no_fd.ks" with
+    | Some generated_content ->
+        (* uses_map_operations=false, uses_exec=false, has_pinned_maps=false
+           → map_fd_declarations = "" → no "int ebpf_side_only_fd = -1" *)
+        let has_fd_decl = contains_pattern generated_content "int ebpf_side_only_fd" in
+        check bool "no fd declaration when no userspace map usage" false has_fd_decl
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 9: Only userspace-used maps get FD declarations when no pinned maps *)
+let test_map_fd_only_for_userspace_used_maps () =
+  (* used_map is referenced in main; ebpf_only_map is referenced only in @xdp fn *)
+  let code = {|
+var used_map : hash<u32, u64>(1024)
+var ebpf_only_map : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  ebpf_only_map[1] = 100
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  used_map[1] = 42
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_used_maps_fd.ks" with
+    | Some generated_content ->
+        (* uses_map_operations=true, has_pinned_maps=false
+           → maps_for_fd = used_global_maps_with_exec = [used_map] (not ebpf_only_map) *)
+        let has_used_map_fd = contains_pattern generated_content "int used_map_fd" in
+        let has_ebpf_only_fd = contains_pattern generated_content "int ebpf_only_map_fd" in
+        check bool "used map gets fd declaration" true has_used_map_fd;
+        check bool "ebpf-only map does NOT get fd declaration" false has_ebpf_only_fd
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 10: Pinned maps cause all global maps (including eBPF-only ones) to get FD declarations *)
+let test_map_fd_pinned_includes_all_global_maps () =
+  (* pinned_map is pinned and used in main; other_map is non-pinned and used only in @xdp fn *)
+  let code = {|
+pin var pinned_map : hash<u32, u64>(1024)
+var other_map : hash<u32, u64>(512)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  other_map[1] = 100
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  pinned_map[1] = 10
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_pinned_fd.ks" with
+    | Some generated_content ->
+        (* has_pinned_maps=true → outer condition true, maps_for_fd = global_maps
+           → BOTH pinned_map and other_map get int ..._fd = -1 declarations *)
+        let has_pinned_map_fd = contains_pattern generated_content "int pinned_map_fd" in
+        let has_other_map_fd = contains_pattern generated_content "int other_map_fd" in
+        check bool "pinned map gets fd declaration" true has_pinned_map_fd;
+        check bool "non-pinned ebpf-only map ALSO gets fd declaration (global_maps used)" true has_other_map_fd
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 11: Map setup code not generated when no userspace map usage, no exec, no pinned maps *)
+let test_map_setup_not_generated_without_usage () =
+  (* Map used only in eBPF program, no map access in main, no pinned maps, no exec *)
+  let code = {|
+var ebpf_only : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  ebpf_only[1] = 100
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_no_setup.ks" with
+    | Some generated_content ->
+        (* map_setup_code="" → all_setup_code="" → no bpf_object__find_map_by_name anywhere *)
+        let has_find_map = contains_pattern generated_content "bpf_object__find_map_by_name" in
+        check bool "no bpf_object__find_map_by_name when no userspace map usage" false has_find_map
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 12: Map setup code uses only userspace-used maps when no pinned maps *)
+let test_map_setup_only_for_used_maps () =
+  (* var count triggers skeleton loading (has_global_vars=true → needs_object_loading=true).
+     used_map is referenced in main; ebpf_only_map is referenced only in @xdp fn. *)
+  let code = {|
+var count : u64 = 0
+var used_map : hash<u32, u64>(1024)
+var ebpf_only_map : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  ebpf_only_map[1] = 100
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  used_map[1] = 42
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_setup_used_maps.ks" with
+    | Some generated_content ->
+        (* has_pinned_maps=false, uses_map_operations=true
+           → maps_for_setup = used_global_maps_with_exec = [used_map]
+           setup_call injects all_setup_code; only used_map gets find_map_by_name *)
+        let has_used_map_setup = contains_pattern generated_content "find_map_by_name.*used_map" in
+        let has_ebpf_only_setup = contains_pattern generated_content "find_map_by_name.*ebpf_only_map" in
+        check bool "used_map has setup code (find_map_by_name)" true has_used_map_setup;
+        check bool "ebpf_only_map does NOT get setup code" false has_ebpf_only_setup
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 13: Map setup code includes all global maps when pinned maps exist *)
+let test_map_setup_pinned_includes_all_global_maps () =
+  (* var count triggers skeleton loading.
+     pinned_map is pinned. other_map is non-pinned and eBPF-only (not accessed in main).
+     Because has_pinned_maps=true, maps_for_setup = global_maps = [pinned_map, other_map]. *)
+  let code = {|
+var count : u64 = 0
+pin var pinned_map : hash<u32, u64>(1024)
+var other_map : hash<u32, u64>(512)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  other_map[1] = 100
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_setup_pinned.ks" with
+    | Some generated_content ->
+        (* has_pinned_maps=true → maps_for_setup = global_maps = [pinned_map, other_map]
+           setup_call is triggered by has_pinned_maps; all_setup_code includes setup for BOTH maps *)
+        let has_pinned_map_setup = contains_pattern generated_content "find_map_by_name.*pinned_map" in
+        let has_other_map_setup = contains_pattern generated_content "find_map_by_name.*other_map" in
+        check bool "pinned_map gets setup code (find_map_by_name)" true has_pinned_map_setup;
+        check bool "eBPF-only other_map ALSO gets setup code (global_maps used)" true has_other_map_setup
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 14: Directory creation helper (ensure_bpf_dir) generated when pinned maps exist *)
+let test_mkdir_helper_generated_with_pinned_maps () =
+  let code = {|
+pin var my_map : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  my_map[1] = 99
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_mkdir_pinned.ks" with
+    | Some generated_content ->
+        (* has_pinned_maps=true → mkdir_helper_function is the ensure_bpf_dir function *)
+        let has_ensure_bpf_dir = contains_pattern generated_content "ensure_bpf_dir" in
+        check bool "ensure_bpf_dir present when pinned maps exist" true has_ensure_bpf_dir
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 15: Directory creation helper (ensure_bpf_dir) not generated without pinned maps *)
+let test_mkdir_helper_not_generated_without_pinned_maps () =
+  let code = {|
+var regular_map : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  regular_map[1] = 42
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_mkdir_no_pinned.ks" with
+    | Some generated_content ->
+        (* has_pinned_maps=false → mkdir_helper_function = "" *)
+        let has_ensure_bpf_dir = contains_pattern generated_content "ensure_bpf_dir" in
+        check bool "ensure_bpf_dir absent when no pinned maps" false has_ensure_bpf_dir
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 16: Pinned map setup emits bpf_obj_get / ensure_bpf_dir / bpf_map__pin logic *)
+let test_pin_logic_pinned_map_setup () =
+  let code = {|
+var count : u64 = 0
+pin var pinned_counter : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_pin_logic.ks" with
+    | Some generated_content ->
+        (* Some pin_path branch: generates bpf_obj_get to check existing pin *)
+        let has_bpf_obj_get = contains_pattern generated_content "bpf_obj_get" in
+        (* ... _existing_fd variable for the pinned map *)
+        let has_existing_fd = contains_pattern generated_content "pinned_counter_existing_fd" in
+        (* ... ensure_bpf_dir to create directory before pinning *)
+        let has_ensure_bpf_dir = contains_pattern generated_content "ensure_bpf_dir" in
+        (* ... bpf_map__pin to pin the map object *)
+        let has_bpf_map_pin = contains_pattern generated_content "bpf_map__pin.*pinned_counter" in
+        check bool "bpf_obj_get present for pinned map" true has_bpf_obj_get;
+        check bool "_existing_fd variable present for pinned map" true has_existing_fd;
+        check bool "ensure_bpf_dir called before pinning" true has_ensure_bpf_dir;
+        check bool "bpf_map__pin called to pin the map" true has_bpf_map_pin
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
+(** Test 17: Non-pinned map setup uses plain bpf_map__fd only *)
+let test_pin_logic_non_pinned_map_setup () =
+  let code = {|
+var count : u64 = 0
+var regular_map : hash<u32, u64>(1024)
+
+@xdp fn test(ctx: *xdp_md) -> xdp_action {
+  return XDP_PASS
+}
+
+fn main() -> i32 {
+  regular_map[1] = 42
+  return 0
+}
+|} in
+  try
+    let ast = parse_string_with_builtins code in
+    match get_generated_userspace_code ast "test_no_pin_logic.ks" with
+    | Some generated_content ->
+        (* None branch: plain fd fetch *)
+        let has_bpf_map_fd = contains_pattern generated_content "bpf_map__fd.*regular_map" in
+        (* None branch: no pinning machinery *)
+        let has_bpf_obj_get = contains_pattern generated_content "bpf_obj_get" in
+        let has_existing_fd = contains_pattern generated_content "regular_map_existing_fd" in
+        let has_bpf_map_pin = contains_pattern generated_content "bpf_map__pin.*regular_map" in
+        check bool "bpf_map__fd used for non-pinned map" true has_bpf_map_fd;
+        check bool "bpf_obj_get NOT present for non-pinned map" false has_bpf_obj_get;
+        check bool "_existing_fd NOT present for non-pinned map" false has_existing_fd;
+        check bool "bpf_map__pin NOT called for non-pinned map" false has_bpf_map_pin
+    | None ->
+        fail "Failed to generate userspace code"
+  with
+  | exn -> fail ("Error occurred: " ^ Printexc.to_string exn)
+
 let global_function_maps_tests = [
   "global_map_accessibility", `Quick, test_global_map_accessibility;
   "global_only_map_access", `Quick, test_global_only_map_access;
@@ -483,6 +792,16 @@ let global_function_maps_tests = [
   "global_function_code_structure", `Quick, test_global_function_code_structure;
   "global_function_error_handling", `Quick, test_global_function_error_handling;
   "map_fd_generation", `Quick, test_map_fd_generation;
+  "map_fd_not_generated_without_usage", `Quick, test_map_fd_not_generated_without_usage;
+  "map_fd_only_for_userspace_used_maps", `Quick, test_map_fd_only_for_userspace_used_maps;
+  "map_fd_pinned_includes_all_global_maps", `Quick, test_map_fd_pinned_includes_all_global_maps;
+  "mkdir_helper_generated_with_pinned_maps", `Quick, test_mkdir_helper_generated_with_pinned_maps;
+  "mkdir_helper_not_generated_without_pinned_maps", `Quick, test_mkdir_helper_not_generated_without_pinned_maps;
+  "map_setup_not_generated_without_usage", `Quick, test_map_setup_not_generated_without_usage;
+  "map_setup_only_for_used_maps", `Quick, test_map_setup_only_for_used_maps;
+  "map_setup_pinned_includes_all_global_maps", `Quick, test_map_setup_pinned_includes_all_global_maps;
+  "pin_logic_pinned_map_setup", `Quick, test_pin_logic_pinned_map_setup;
+  "pin_logic_non_pinned_map_setup", `Quick, test_pin_logic_non_pinned_map_setup;
 ]
 
 let () =
