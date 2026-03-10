@@ -4173,13 +4173,18 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
     let mkdir_helper_function = if has_pinned_maps then
       {|// Helper function to create directory recursively
 static int ensure_bpf_dir(const char *path) {
-    char tmp[256];
+    char tmp[4096];
     char *p = NULL;
     size_t len;
     
+    if (!path || strlen(path) >= sizeof(tmp)) {
+        fprintf(stderr, "ensure_bpf_dir: path too long or NULL\n");
+        return -1;
+    }
+    
     snprintf(tmp, sizeof(tmp), "%s", path);
     len = strlen(tmp);
-    if (tmp[len - 1] == '/') tmp[len - 1] = 0;
+    if (len > 0 && tmp[len - 1] == '/') tmp[len - 1] = 0;
     
     for (p = tmp + 1; *p; p++) {
         if (*p == '/') {
