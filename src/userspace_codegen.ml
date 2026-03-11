@@ -2817,6 +2817,19 @@ let generate_pinned_globals_support _project_name global_variables =
 
 (** Generate ring buffer event handler functions *)
 let generate_ringbuf_handlers_from_registry (registry : Ir.ir_ring_buffer_registry) ~dispatch_used =
+  (* Generate forward declarations for callback functions *)
+  let forward_declarations = List.map (fun rb_decl ->
+    let ringbuf_name = rb_decl.rb_name in
+    let value_type = c_type_from_ir_type rb_decl.rb_value_type in
+    let handler_name = match List.assoc_opt ringbuf_name registry.event_handler_registrations with
+      | Some handler -> handler
+      | None -> 
+          (* Try callback function naming convention: {ringbuf_name}_callback *)
+          ringbuf_name ^ "_callback"
+    in
+    sprintf "int %s(%s *event);" handler_name value_type
+  ) registry.ring_buffer_declarations |> String.concat "\n" in
+  
   let event_handlers = List.map (fun rb_decl ->
     let ringbuf_name = rb_decl.rb_name in
     let value_type = c_type_from_ir_type rb_decl.rb_value_type in
@@ -2842,7 +2855,11 @@ static int %s_event_handler(void *ctx, void *data, size_t data_sz) {
   else "" in
   
   (* Only generate event handlers if dispatch is actually used *)
-  let final_event_handlers = if dispatch_used then event_handlers else "" in
+  let final_event_handlers = if dispatch_used then 
+    if List.length registry.ring_buffer_declarations > 0 then
+      sprintf "\n// Forward declarations for ring buffer callbacks\n%s\n%s" forward_declarations event_handlers
+    else ""
+  else "" in
   
   final_event_handlers ^ combined_rb_declaration
 

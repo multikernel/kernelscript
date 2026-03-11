@@ -1146,6 +1146,37 @@ let test_global_map_redefinition_fix () =
   
   ()
 
+(** Test map access auto-dereference in variable assignment (covers lines 2559-2566) *)
+let test_map_access_auto_deref_in_assignment () =
+  let ctx = create_c_context () in
+
+  (* Build: count = my_map[user_key]
+     IRMapAccess carries the raw lookup-pointer as its underlying value. *)
+  let key_val = make_ir_value (IRVariable "user_key") IRU32 test_pos in
+  let underlying_desc = IRVariable "map_ptr_0" in
+  let underlying_type = IRPointer (IRU64, make_bounds_info ()) in
+  let src_val = make_ir_value
+    (IRMapAccess ("my_map", key_val, (underlying_desc, underlying_type)))
+    IRU64 test_pos in
+
+  let dest_val = make_ir_value (IRVariable "count") IRU64 test_pos in
+  let assign_instr = make_ir_instruction
+    (IRAssign (dest_val, make_ir_expr (IRValue src_val) IRU64 test_pos))
+    test_pos in
+
+  generate_c_instruction ctx assign_instr;
+
+  let output = String.concat "\n" ctx.output_lines in
+
+  (* auto_deref_map_access:true emits a guarded dereference:
+     count = ({ __u64 __val = {0}; if (map_ptr_0) { __val = *(map_ptr_0); } __val; }); *)
+  check bool "dest variable present in output" true (contains_substr output "count =");
+  check bool "__val used for safe dereference" true (contains_substr output "__val");
+  check bool "null-guard if-check emitted" true (contains_substr output "if (map_ptr_0)");
+  check bool "pointer dereference emitted" true (contains_substr output "*(map_ptr_0)");
+  (* Without the fix this branch would fall through to the raw-pointer path *)
+  check bool "no raw pointer assignment" false (contains_substr output "count = map_ptr_0")
+
 (** Test suite definition *)
 let suite =
   [
@@ -1191,6 +1222,8 @@ let suite =
     ("eBPF function generation bug fix", `Quick, test_ebpf_function_generation_bug_fix);
     (* Test to prevent global variable map redefinition regression *)
     ("Global map redefinition fix", `Quick, test_global_map_redefinition_fix);
+    (* Coverage for IRMapAccess auto-dereference path in generate_assignment *)
+    ("Map access auto-deref in assignment", `Quick, test_map_access_auto_deref_in_assignment);
   ]
 
 (** Run all tests *)

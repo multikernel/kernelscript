@@ -1095,6 +1095,107 @@ fn main() -> i32 {
   check bool "Should generate user handler functions" true 
     (contains_substr c_code "handle_network" && contains_substr c_code "handle_security")
 
+(** ── Unit tests for generate_ringbuf_handlers_from_registry (lines 2812-2826) ── *)
+
+(** Helper: build a minimal ir_ring_buffer_registry for unit testing *)
+let make_registry ?(event_handler_registrations = []) rb_decls =
+  {
+    Ir.ring_buffer_declarations = rb_decls;
+    Ir.event_handler_registrations = event_handler_registrations;
+    Ir.usage_summary = {
+      Ir.used_in_ebpf = [];
+      Ir.used_in_userspace = [];
+      Ir.needs_event_processing = [];
+    };
+  }
+
+let make_rb_decl name value_type =
+  {
+    Ir.rb_name = name;
+    Ir.rb_value_type = value_type;
+    Ir.rb_size = 4096;
+    Ir.rb_is_global = true;
+    Ir.rb_declaration_pos = { Ast.line = 1; column = 1; filename = "test.ks" };
+  }
+
+(** Test: empty registry produces empty output regardless of dispatch_used *)
+let test_handlers_empty_registry () =
+  let registry = make_registry [] in
+  let out_true  = Userspace_codegen.generate_ringbuf_handlers_from_registry
+                    registry ~dispatch_used:true in
+  let out_false = Userspace_codegen.generate_ringbuf_handlers_from_registry
+                    registry ~dispatch_used:false in
+  check string "empty registry + dispatch_used:true  → empty" "" out_true;
+  check string "empty registry + dispatch_used:false → empty" "" out_false
+
+(** Test: None branch – no event_handler_registrations entry → fallback to {rb_name}_callback *)
+let test_handlers_none_branch_fallback () =
+  (* No registration entry for "events" → handler name must fall back to "events_callback" *)
+  let decl     = make_rb_decl "events" Ir.IRU32 in
+  let registry = make_registry [decl] in            (* event_handler_registrations = [] *)
+  let out = Userspace_codegen.generate_ringbuf_handlers_from_registry
+              registry ~dispatch_used:true in
+  check bool "None branch: _callback fallback in event handler wrapper"
+    true (contains_substr out "events_callback");
+  check bool "None branch: event handler wrapper function generated"
+    true (contains_substr out "events_event_handler");
+  check bool "None branch: wrapper calls fallback handler"
+    true (contains_substr out "return events_callback(event)")
+
+(** Test: Some branch – registered handler name is used instead of fallback *)
+let test_handlers_some_branch_registered_name () =
+  let decl     = make_rb_decl "events" (Ir.IRStruct ("Event", [("id", Ir.IRU32)])) in
+  let registry = make_registry ~event_handler_registrations:[("events", "handle_event")] [decl] in
+  let out = Userspace_codegen.generate_ringbuf_handlers_from_registry
+              registry ~dispatch_used:true in
+  check bool "Some branch: registered handler name used in wrapper"
+    true (contains_substr out "handle_event");
+  check bool "Some branch: wrapper calls registered handler"
+    true (contains_substr out "return handle_event(event)");
+  check bool "Some branch: fallback name NOT used"
+    false (contains_substr out "events_callback")
+
+(** Test: dispatch_used:false → no event handler wrappers emitted *)
+let test_handlers_dispatch_false_no_wrappers () =
+  let decl     = make_rb_decl "events" Ir.IRU32 in
+  let registry = make_registry ~event_handler_registrations:[("events", "handle_event")] [decl] in
+  let out = Userspace_codegen.generate_ringbuf_handlers_from_registry
+              registry ~dispatch_used:false in
+  check bool "dispatch_used:false → no event_handler wrapper"
+    false (contains_substr out "events_event_handler");
+  check bool "dispatch_used:false → no combined_rb declaration"
+    false (contains_substr out "combined_rb")
+
+(** Test: dispatch_used:true → combined_rb declaration emitted *)
+let test_handlers_dispatch_true_combined_rb () =
+  let decl     = make_rb_decl "events" Ir.IRU32 in
+  let registry = make_registry ~event_handler_registrations:[("events", "handle_event")] [decl] in
+  let out = Userspace_codegen.generate_ringbuf_handlers_from_registry
+              registry ~dispatch_used:true in
+  check bool "dispatch_used:true → combined_rb NULL declaration emitted"
+    true (contains_substr out "combined_rb = NULL")
+
+(** Test: multiple ring buffers – every buffer gets its own event handler wrapper *)
+let test_handlers_multiple_ringbufs () =
+  let decl1 = make_rb_decl "net_events"  (Ir.IRStruct ("NetEvent",  [("src_ip", Ir.IRU32)])) in
+  let decl2 = make_rb_decl "sec_events"  (Ir.IRStruct ("SecEvent",  [("severity", Ir.IRU32)])) in
+  let registry = make_registry
+    ~event_handler_registrations:[
+      ("net_events", "handle_net");
+      ("sec_events", "handle_sec");
+    ]
+    [decl1; decl2] in
+  let out = Userspace_codegen.generate_ringbuf_handlers_from_registry
+              registry ~dispatch_used:true in
+  check bool "multiple: net_events_event_handler generated"
+    true (contains_substr out "net_events_event_handler");
+  check bool "multiple: sec_events_event_handler generated"
+    true (contains_substr out "sec_events_event_handler");
+  check bool "multiple: handle_net referenced"
+    true (contains_substr out "handle_net");
+  check bool "multiple: handle_sec referenced"
+    true (contains_substr out "handle_sec")
+
 (** Run all tests *)
 let () =
   run "Ring Buffer Tests" [
@@ -1150,5 +1251,13 @@ let () =
       test_case "error handling" `Quick test_ringbuf_error_handling;
       test_case "complex operations" `Quick test_ringbuf_complex_operations;
       test_case "on_event and dispatch integration" `Quick test_on_event_dispatch_integration;
+    ];
+    "handler registry unit tests", [
+      test_case "empty registry" `Quick test_handlers_empty_registry;
+      test_case "None branch fallback to _callback" `Quick test_handlers_none_branch_fallback;
+      test_case "Some branch registered handler name" `Quick test_handlers_some_branch_registered_name;
+      test_case "dispatch_used false suppresses wrappers" `Quick test_handlers_dispatch_false_no_wrappers;
+      test_case "dispatch_used true emits combined_rb" `Quick test_handlers_dispatch_true_combined_rb;
+      test_case "multiple ring buffers each get wrapper" `Quick test_handlers_multiple_ringbufs;
     ];
   ] 
