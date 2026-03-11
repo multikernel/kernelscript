@@ -2825,12 +2825,15 @@ let lower_multi_program ast symbol_table source_name =
           let ir_map = lower_map_declaration symbol_table map_decl in
           ((decl, `Map ir_map) :: decls, ir_map :: maps, vars)
       | Ast.GlobalVarDecl var_decl when is_global_var_map var_decl ->
+          (* When a global variable has a map type, convert it to a map definition only.
+             Do NOT create a corresponding IR global variable, as that causes the map
+             to be incorrectly treated as a pinned global variable in userspace codegen. *)
           let ir_map = match convert_global_var_to_map symbol_table var_decl with
             | Some map -> map
             | None -> failwith "Expected map conversion to succeed"
           in
-          let ir_var = lower_global_variable_declaration symbol_table var_decl in
-          ((decl, `MapFromGlobalVar (ir_map, ir_var)) :: decls, ir_map :: maps, ir_var :: vars)
+          (* Only track as map, not as global variable *)
+          ((decl, `MapFromGlobalVar ir_map) :: decls, ir_map :: maps, vars)
       | Ast.GlobalVarDecl var_decl ->
           let ir_var = lower_global_variable_declaration symbol_table var_decl in
           ((decl, `GlobalVar ir_var) :: decls, maps, ir_var :: vars)
@@ -3136,10 +3139,11 @@ let lower_multi_program ast symbol_table source_name =
     match processed with
     | `Map ir_map -> 
         add_source_declaration (IRDeclMapDef ir_map) pos
-    | `MapFromGlobalVar (ir_map, ir_var) ->
-        (* For global variables with map types, add both the map and the variable *)
-        add_source_declaration (IRDeclMapDef ir_map) pos;
-        add_source_declaration (IRDeclGlobalVarDef ir_var) pos
+    | `MapFromGlobalVar ir_map ->
+        (* For global variables with map types, only add the map definition.
+           Do NOT add a global variable declaration, as it would incorrectly be treated
+           as a pinned global variable in userspace codegen. *)
+        add_source_declaration (IRDeclMapDef ir_map) pos
     | `GlobalVar ir_var ->
         add_source_declaration (IRDeclGlobalVarDef ir_var) pos
     | `Other decl ->
