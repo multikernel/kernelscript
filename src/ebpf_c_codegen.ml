@@ -163,6 +163,16 @@ let create_c_context () = {
   dynptr_backed_pointers = Hashtbl.create 32;
 }
 
+(** Get the appropriate fallback return value when bpf_tail_call() fails.
+    bpf_tail_call() is not guaranteed to succeed; when it fails execution
+    continues past the call site. Every arm that uses a tail call must have
+    an explicit return so the eBPF verifier can confirm all paths exit. *)
+let get_tail_call_fallback_return ctx =
+  match ctx.current_function_context_type with
+  | Some "xdp" -> "XDP_PASS"
+  | Some "tc"  -> "TC_ACT_OK"
+  | _           -> "0"
+
 (** Helper functions for code generation *)
 
 (** Calculate the size of a type for dynptr field assignment operations.
@@ -2021,7 +2031,8 @@ and generate_c_instruction ctx ir_instr =
       (* Generate bpf_tail_call instruction *)
       emit_line ctx (sprintf "/* Tail call to %s (index %d) */" name index);
       emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, %d);" index);
-      emit_line ctx "/* If tail call fails, continue execution */"
+        let fallback = get_tail_call_fallback_return ctx in
+        emit_line ctx (sprintf "return %s; /* tail call fallback */" fallback)
 
   | IRMapLoad (map_val, key_val, dest_val, load_type) ->
       generate_map_load ctx map_val key_val dest_val load_type
@@ -2200,13 +2211,19 @@ and generate_c_instruction ctx ir_instr =
                  let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
                  emit_line ctx (sprintf "/* Tail call to %s */" func_name);
                  emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, 0); /* %s(%s) */" func_name args_str);
-                 emit_line ctx "/* If tail call fails, continue execution */"
+                 (* Fallback return: bpf_tail_call() may fail; verifier requires all
+                    branches to have an explicit return. *)
+                 let fallback = get_tail_call_fallback_return ctx in
+                 emit_line ctx (sprintf "return %s; /* tail call fallback */" fallback)
              | IRReturnTailCall (func_name, args, index) ->
                  (* Generate explicit tail call *)
                  let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
                  emit_line ctx (sprintf "/* Tail call to %s (index %d) */" func_name index);
                  emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, %d); /* %s(%s) */" index func_name args_str);
-                 emit_line ctx "/* If tail call fails, continue execution */");
+                 (* Fallback return: bpf_tail_call() may fail; verifier requires all
+                    branches to have an explicit return. *)
+                 let fallback = get_tail_call_fallback_return ctx in
+                 emit_line ctx (sprintf "return %s; /* tail call fallback */" fallback));
             
             decrease_indent ctx
         | IRDefaultPattern ->
@@ -2223,13 +2240,19 @@ and generate_c_instruction ctx ir_instr =
                  let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
                  emit_line ctx (sprintf "/* Tail call to %s */" func_name);
                  emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, 0); /* %s(%s) */" func_name args_str);
-                 emit_line ctx "/* If tail call fails, continue execution */"
+                 (* Fallback return: bpf_tail_call() may fail; verifier requires all
+                    branches to have an explicit return. *)
+                 let fallback = get_tail_call_fallback_return ctx in
+                 emit_line ctx (sprintf "return %s; /* tail call fallback */" fallback)
              | IRReturnTailCall (func_name, args, index) ->
                  (* Generate explicit tail call *)
                  let args_str = String.concat ", " (List.map (generate_c_value ctx) args) in
                  emit_line ctx (sprintf "/* Tail call to %s (index %d) */" func_name index);
                  emit_line ctx (sprintf "bpf_tail_call(ctx, &prog_array, %d); /* %s(%s) */" index func_name args_str);
-                 emit_line ctx "/* If tail call fails, continue execution */");
+                 (* Fallback return: bpf_tail_call() may fail; verifier requires all
+                    branches to have an explicit return. *)
+                 let fallback = get_tail_call_fallback_return ctx in
+                 emit_line ctx (sprintf "return %s; /* tail call fallback */" fallback));
             
             decrease_indent ctx;
             emit_line ctx "}"
