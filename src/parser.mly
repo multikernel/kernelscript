@@ -391,6 +391,12 @@ if_statement:
     { make_stmt (If ($3, $6, Some $10)) (make_pos ()) }
   | IF LPAREN expression RPAREN LBRACE statement_list RBRACE ELSE if_statement
     { make_stmt (If ($3, $6, Some [$9])) (make_pos ()) }
+  | IF LPAREN VAR IDENTIFIER ASSIGN expression RPAREN LBRACE statement_list RBRACE
+    { make_stmt (IfLet ($4, $6, $9, None)) (make_pos ()) }
+  | IF LPAREN VAR IDENTIFIER ASSIGN expression RPAREN LBRACE statement_list RBRACE ELSE LBRACE statement_list RBRACE
+    { make_stmt (IfLet ($4, $6, $9, Some $13)) (make_pos ()) }
+  | IF LPAREN VAR IDENTIFIER ASSIGN expression RPAREN LBRACE statement_list RBRACE ELSE if_statement
+    { make_stmt (IfLet ($4, $6, $9, Some [$12])) (make_pos ()) }
 
 while_statement:
   | WHILE LPAREN expression RPAREN LBRACE statement_list RBRACE

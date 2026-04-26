@@ -211,6 +211,12 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         (match else_stmts_opt with
          | Some else_stmts -> List.iter (analyze_stmt_for_maps prog_name) else_stmts
          | None -> ())
+    | IfLet (_, expr, then_stmts, else_stmts_opt) ->
+        analyze_expr_for_maps prog_name expr;
+        List.iter (analyze_stmt_for_maps prog_name) then_stmts;
+        (match else_stmts_opt with
+         | Some else_stmts -> List.iter (analyze_stmt_for_maps prog_name) else_stmts
+         | None -> ())
     | For (_, start_expr, end_expr, body_stmts) ->
         analyze_expr_for_maps prog_name start_expr;
         analyze_expr_for_maps prog_name end_expr;

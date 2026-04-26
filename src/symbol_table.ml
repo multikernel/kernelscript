@@ -720,6 +720,21 @@ and process_statement table stmt =
            List.iter (process_statement table_with_else) else_stmts;
            let _ = exit_scope table_with_else in ()
        | None -> ())
+
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      process_expression table expr;
+      let table_with_block = enter_scope table BlockScope in
+      (* Bind `name` only inside the truthy branch.
+         Type is unknown at this stage; type checker fills the precise type. *)
+      add_variable table_with_block name U32 stmt.stmt_pos;
+      List.iter (process_statement table_with_block) then_stmts;
+      let _ = exit_scope table_with_block in
+      (match else_opt with
+       | Some else_stmts ->
+           let table_with_else = enter_scope table BlockScope in
+           List.iter (process_statement table_with_else) else_stmts;
+           let _ = exit_scope table_with_else in ()
+       | None -> ())
       
   | For (var_name, start_expr, end_expr, body) ->
       process_expression table start_expr;

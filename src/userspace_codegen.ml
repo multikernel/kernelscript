@@ -1406,26 +1406,28 @@ let generate_c_expression_from_ir ctx ir_expr =
            let index_str = generate_c_value_from_ir ctx right_val in
            sprintf "%s[%s]" array_str index_str
        | _ ->
-           (* Check for none comparisons first *)
+           (* Both `none` and `null` count as absence literals here. The
+              codegen emits a pointer presence check against the underlying
+              map-lookup pointer (or the pointer value directly), avoiding
+              an extra dereference. *)
+           let is_absence_lit = function
+             | IRLiteral (Ast.NoneLit) | IRLiteral (Ast.NullLit) -> true
+             | _ -> false
+           in
+           let pointer_str v =
+             match v.value_desc with
+             | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx v
+             | _ -> generate_c_value_from_ir ctx v
+           in
            (match left_val.value_desc, op, right_val.value_desc with
-            | _, IREq, IRLiteral (Ast.NoneLit) 
-            | IRLiteral (Ast.NoneLit), IREq, _ ->
-                (* Comparison with none: check if pointer is NULL *)
-                let non_none_val = if left_val.value_desc = IRLiteral (Ast.NoneLit) then right_val else left_val in
-                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
-                let val_str = (match non_none_val.value_desc with
-                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx non_none_val
-                  | _ -> generate_c_value_from_ir ctx non_none_val) in
-                sprintf "(%s == NULL)" val_str
-            | _, IRNe, IRLiteral (Ast.NoneLit)
-            | IRLiteral (Ast.NoneLit), IRNe, _ ->
-                (* Not-equal comparison with none: check if pointer is not NULL *)
-                let non_none_val = if left_val.value_desc = IRLiteral (Ast.NoneLit) then right_val else left_val in
-                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
-                let val_str = (match non_none_val.value_desc with
-                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx non_none_val
-                  | _ -> generate_c_value_from_ir ctx non_none_val) in
-                sprintf "(%s != NULL)" val_str
+            | _, IREq, _ when is_absence_lit right_val.value_desc ->
+                sprintf "(%s == NULL)" (pointer_str left_val)
+            | _, IREq, _ when is_absence_lit left_val.value_desc ->
+                sprintf "(%s == NULL)" (pointer_str right_val)
+            | _, IRNe, _ when is_absence_lit right_val.value_desc ->
+                sprintf "(%s != NULL)" (pointer_str left_val)
+            | _, IRNe, _ when is_absence_lit left_val.value_desc ->
+                sprintf "(%s != NULL)" (pointer_str right_val)
             | _ ->
                 (* Regular binary operation - auto-dereference map access for operands *)
                 let left_str = (match left_val.value_desc with

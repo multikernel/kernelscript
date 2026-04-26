@@ -110,7 +110,11 @@ let validate_ast ast =
     | Return None -> true
     | Return (Some expr) -> validate_expr expr
     | If (cond, then_stmts, else_opt) ->
-        validate_expr cond && 
+        validate_expr cond &&
+        List.for_all validate_stmt then_stmts &&
+        (match else_opt with None -> true | Some stmts -> List.for_all validate_stmt stmts)
+    | IfLet (_, expr, then_stmts, else_opt) ->
+        validate_expr expr &&
         List.for_all validate_stmt then_stmts &&
         (match else_opt with None -> true | Some stmts -> List.for_all validate_stmt stmts)
     | For (_, start, end_, body) ->

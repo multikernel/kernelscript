@@ -878,6 +878,21 @@ and eval_statement ctx stmt =
         (match else_opt with
          | Some else_stmts -> eval_statements ctx else_stmts
          | None -> ())
+
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      let v = eval_expression ctx expr in
+      let present = is_truthy_value v in
+      if present then begin
+        let old = try Some (Hashtbl.find ctx.variables name) with Not_found -> None in
+        Hashtbl.replace ctx.variables name v;
+        eval_statements ctx then_stmts;
+        (match old with
+         | Some o -> Hashtbl.replace ctx.variables name o
+         | None -> Hashtbl.remove ctx.variables name)
+      end else
+        (match else_opt with
+         | Some else_stmts -> eval_statements ctx else_stmts
+         | None -> ())
   
   | For (var, start_expr, end_expr, body) ->
       let start_val = eval_expression ctx start_expr in

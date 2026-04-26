@@ -101,6 +101,8 @@ and typed_stmt_desc =
   | TConstDeclaration of string * bpf_type * typed_expr
   | TReturn of typed_expr option
   | TIf of typed_expr * typed_statement list * typed_statement list option
+  | TIfLet of string * bpf_type * typed_expr * typed_statement list * typed_statement list option
+      (* name, bound_type (type of `name` inside then-branch), source expr, then, else *)
   | TFor of string * typed_expr * typed_expr * typed_statement list
   | TForIter of string * string * typed_expr * typed_statement list
   | TWhile of typed_expr * typed_statement list
@@ -697,6 +699,16 @@ let rec extract_block_return_type stmts arm_pos =
     | TIf (_, _, None) ->
         (* If without else - this doesn't work as a return value *)
         type_error "If statement without else cannot be used as return value in match arm" arm_pos
+    | TIfLet (_, _, _, then_stmts, Some else_stmts) ->
+        let then_type = extract_block_return_type then_stmts arm_pos in
+        let else_type = extract_block_return_type else_stmts arm_pos in
+        (match unify_types then_type else_type with
+         | Some unified_type -> unified_type
+         | None -> type_error ("If-let branches have incompatible types: " ^
+                               string_of_bpf_type then_type ^ " vs " ^
+                               string_of_bpf_type else_type) arm_pos)
+    | TIfLet (_, _, _, _, None) ->
+        type_error "If-let without else cannot be used as return value in match arm" arm_pos
     | _ -> 
         type_error "Block arms must end with a return statement, expression, or if-else statement" arm_pos
   in
@@ -2028,6 +2040,24 @@ and type_check_statement ctx stmt =
       let typed_then = List.map (type_check_statement ctx) then_stmts in
       let typed_else = Option.map (List.map (type_check_statement ctx)) else_opt in
       { tstmt_desc = TIf (typed_cond, typed_then, typed_else); tstmt_pos = stmt.stmt_pos }
+
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      (* `if (var name = expr) { ... }` — bind `name` only inside then-branch.
+         The bound type matches what `var name = expr` would normally produce:
+         the value type for map access (auto-deref via IRMapAccess), and
+         the pointer type for raw pointer expressions. We just type-check the
+         RHS and use its inferred type as the binding type. *)
+      let typed_expr = type_check_expression ctx expr in
+      let bound_type = typed_expr.texpr_type in
+      let saved = Hashtbl.find_opt ctx.variables name in
+      Hashtbl.replace ctx.variables name bound_type;
+      let typed_then = List.map (type_check_statement ctx) then_stmts in
+      (match saved with
+       | Some t -> Hashtbl.replace ctx.variables name t
+       | None -> Hashtbl.remove ctx.variables name);
+      let typed_else = Option.map (List.map (type_check_statement ctx)) else_opt in
+      { tstmt_desc = TIfLet (name, bound_type, typed_expr, typed_then, typed_else);
+        tstmt_pos = stmt.stmt_pos }
   
   | For (var, start, end_, body) ->
       if !loop_depth > 0 then
@@ -2579,10 +2609,15 @@ and typed_stmt_to_stmt tstmt =
     | TDeclaration (name, typ, expr_opt) -> Declaration (name, Some typ, Option.map typed_expr_to_expr expr_opt)
   | TConstDeclaration (name, typ, expr) -> ConstDeclaration (name, Some typ, typed_expr_to_expr expr)
     | TReturn expr_opt -> Return (Option.map typed_expr_to_expr expr_opt)
-    | TIf (cond, then_stmts, else_opt) -> 
-        If (typed_expr_to_expr cond, 
+    | TIf (cond, then_stmts, else_opt) ->
+        If (typed_expr_to_expr cond,
             List.map typed_stmt_to_stmt then_stmts,
             Option.map (List.map typed_stmt_to_stmt) else_opt)
+    | TIfLet (name, _bound_type, expr, then_stmts, else_opt) ->
+        IfLet (name,
+               typed_expr_to_expr expr,
+               List.map typed_stmt_to_stmt then_stmts,
+               Option.map (List.map typed_stmt_to_stmt) else_opt)
     | TFor (var, start, end_, body) ->
         For (var, typed_expr_to_expr start, typed_expr_to_expr end_, List.map typed_stmt_to_stmt body)
     | TForIter (index_var, value_var, iterable, body) ->
@@ -3266,6 +3301,12 @@ and populate_multi_program_context ast multi_prog_analysis =
         (match else_stmts_opt with
          | Some else_stmts -> List.iter (enhance_stmt prog_type) else_stmts
          | None -> ())
+    | IfLet (_, expr, then_stmts, else_stmts_opt) ->
+        enhance_expr prog_type expr;
+        List.iter (enhance_stmt prog_type) then_stmts;
+        (match else_stmts_opt with
+         | Some else_stmts -> List.iter (enhance_stmt prog_type) else_stmts
+         | None -> ())
     | For (_, start_expr, end_expr, body_stmts) ->
         enhance_expr prog_type start_expr;
         enhance_expr prog_type end_expr;
@@ -3356,6 +3397,12 @@ and populate_multi_program_context ast multi_prog_analysis =
           enhance_userspace_expr expr
       | If (cond_expr, then_stmts, else_stmts_opt) ->
           enhance_userspace_expr cond_expr;
+          List.iter enhance_userspace_stmt_inner then_stmts;
+          (match else_stmts_opt with
+           | Some else_stmts -> List.iter enhance_userspace_stmt_inner else_stmts
+           | None -> ())
+      | IfLet (_, expr, then_stmts, else_stmts_opt) ->
+          enhance_userspace_expr expr;
           List.iter enhance_userspace_stmt_inner then_stmts;
           (match else_stmts_opt with
            | Some else_stmts -> List.iter enhance_userspace_stmt_inner else_stmts

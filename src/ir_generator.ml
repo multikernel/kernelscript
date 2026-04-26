@@ -2039,11 +2039,33 @@ and lower_statement ctx stmt =
         in
         
         (* Generate IRIf instruction *)
-        let if_instr = make_ir_instruction 
+        let if_instr = make_ir_instruction
           (IRIf (cond_val, !then_instructions, else_instrs_opt))
           stmt.stmt_pos in
         emit_instruction ctx if_instr
-      
+
+  | Ast.IfLet (name, expr, then_stmts, else_opt) ->
+      (* Desugar `if (var name = expr) { T } else { E }` into:
+           var name = expr
+           if (name != null) { T } else { E }
+         The eBPF/userspace codegen rule for `IRMapAccess <op> NullLit` (and
+         the symmetric form for raw pointers) emits a pointer presence
+         check, so this lowers correctly without an extra dereference. *)
+      let pos = stmt.stmt_pos in
+      let decl_stmt = { Ast.stmt_desc = Ast.Declaration (name, None, Some expr); stmt_pos = pos } in
+      let name_ident = { Ast.expr_desc = Ast.Identifier name; expr_type = expr.Ast.expr_type;
+                         expr_pos = pos; type_checked = false; program_context = None;
+                         map_scope = None } in
+      let null_lit = { Ast.expr_desc = Ast.Literal Ast.NullLit; expr_type = None;
+                       expr_pos = pos; type_checked = false; program_context = None;
+                       map_scope = None } in
+      let cond = { Ast.expr_desc = Ast.BinaryOp (name_ident, Ast.Ne, null_lit);
+                   expr_type = Some Ast.Bool; expr_pos = pos; type_checked = false;
+                   program_context = None; map_scope = None } in
+      let if_stmt = { Ast.stmt_desc = Ast.If (cond, then_stmts, else_opt); stmt_pos = pos } in
+      lower_statement ctx decl_stmt;
+      lower_statement ctx if_stmt
+
   | Ast.For (var, start_expr, end_expr, body_stmts) ->
       (* Analyze the loop to determine if it's bounded or unbounded *)
       let loop_analysis = 

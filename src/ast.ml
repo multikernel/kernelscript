@@ -292,6 +292,10 @@ and stmt_desc =
   | ConstDeclaration of string * bpf_type option * expr  (* const name : type = value *)
   | Return of expr option
   | If of expr * statement list * statement list option
+  | IfLet of string * expr * statement list * statement list option
+      (* if (var name = expr) { then_stmts } else { else_stmts }
+         Truthy iff expr is "present": map hit, non-null pointer return, etc.
+         `name` is bound only inside then_stmts. *)
   | For of string * expr * expr * statement list
   | ForIter of string * string * expr * statement list  (* for (index, value) in expr.iter() { ... } *)
   | While of expr * statement list
@@ -842,10 +846,18 @@ and string_of_stmt stmt =
       let then_str = String.concat " " (List.map string_of_stmt then_stmts) in
       let else_str = match else_opt with
         | None -> ""
-        | Some else_stmts -> 
+        | Some else_stmts ->
             " else { " ^ String.concat " " (List.map string_of_stmt else_stmts) ^ " }"
       in
       Printf.sprintf "if (%s) { %s }%s" (string_of_expr cond) then_str else_str
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      let then_str = String.concat " " (List.map string_of_stmt then_stmts) in
+      let else_str = match else_opt with
+        | None -> ""
+        | Some else_stmts ->
+            " else { " ^ String.concat " " (List.map string_of_stmt else_stmts) ^ " }"
+      in
+      Printf.sprintf "if (var %s = %s) { %s }%s" name (string_of_expr expr) then_str else_str
   | For (var, start, end_, body) ->
       let body_str = String.concat " " (List.map string_of_stmt body) in
       Printf.sprintf "for (%s in %s..%s) { %s }" 
