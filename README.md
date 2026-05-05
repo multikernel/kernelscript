@@ -62,6 +62,8 @@ KernelScript addresses these problems through revolutionary language features:
 
 ✅ **Zero-boilerplate shared state** - Maps are automatically accessible across all programs as regular global variables in a programming language
 
+✅ **Ergonomic map idioms** - Declaration-as-condition (`if (var s = m[k]) { s.field = ... }`) and compound assignment on map indices (`m[k].count += 1`) compile down to a single presence-checked lookup with in-place mutation, no manual write-back
+
 ✅ **Builtin kfunc support** - Define full-privilege kernel functions that eBPF programs can call directly, automatically generating kernel modules and BTF registrations
 
 ✅ **Unified error handling** - C-style integer throw/catch works seamlessly in both eBPF and userspace contexts, unlike complex Result types
@@ -222,6 +224,27 @@ fn lookup_or_create(ip: IpAddress) -> Counter {
         connection_count[ip] = 1  // Create new entry
         return 1
     }
+}
+
+// Declaration-as-condition: bind only inside the truthy branch.
+// For struct-valued maps, the bound name is the lookup pointer, so
+// field access auto-derefs and the generated eBPF performs in-place
+// mutation against the underlying entry — no write-back needed.
+pin var ip_stats : hash<IpAddress, PacketInfo>(1024)
+
+@helper
+fn record_packet(ip: IpAddress, size: PacketSize) {
+    if (var stats = ip_stats[ip]) {
+        stats.size = size
+    } else {
+        ip_stats[ip] = PacketInfo { src_ip: ip, dst_ip: 0, protocol: 0, size: size }
+    }
+}
+
+// Compound assignment indexes into struct-valued maps directly:
+@helper
+fn bump_size(ip: IpAddress, delta: PacketSize) {
+    ip_stats[ip].size += delta   // emits a presence-checked ptr->size += delta
 }
 ```
 
