@@ -589,14 +589,14 @@ let make_config_declaration name fields pos = {
   config_pos = pos;
 }
 
-let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) ?(attrs=[]) () = {
+let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) ?(attributes=[]) () = {
   global_var_name = name;
   global_var_type = typ;
   global_var_init = init;
   global_var_pos = pos;
   is_local;
   is_pinned;
-  global_var_attributes = attrs;
+  global_var_attributes = attributes;
 }
 
 let make_impl_block name attributes items pos = {
@@ -964,6 +964,8 @@ let string_of_declaration = function
       ) struct_def.struct_fields) in
       Printf.sprintf "%sstruct %s {\n    %s\n}" attrs_str struct_def.struct_name fields_str
   | GlobalVarDecl decl ->
+      let attrs_str = if decl.global_var_attributes = [] then "" else
+        (String.concat " " (List.map string_of_attribute decl.global_var_attributes)) ^ "\n" in
       let pin_str = if decl.is_pinned then "pin " else "" in
       let local_str = if decl.is_local then "local " else "" in
       let type_str = match decl.global_var_type with
@@ -974,7 +976,7 @@ let string_of_declaration = function
         | None -> ""
         | Some expr -> " = " ^ string_of_expr expr
       in
-      Printf.sprintf "%s%svar %s%s%s;" pin_str local_str decl.global_var_name type_str init_str
+      Printf.sprintf "%s%s%svar %s%s%s;" attrs_str pin_str local_str decl.global_var_name type_str init_str
   | ImplBlock impl_block ->
       let attrs_str = String.concat " " (List.map string_of_attribute impl_block.impl_attributes) in
       let items_str = String.concat "\n    " (List.map (function
