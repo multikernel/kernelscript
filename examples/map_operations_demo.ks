@@ -70,16 +70,13 @@ struct ArrayElement {
     
     // Per-CPU access for maximum performance
     var cpu_id = 0
-    var data = percpu_data[cpu_id]
-    if (data != none) {
+    if (var data = percpu_data[cpu_id]) {
         data.local_counter = data.local_counter + 1
-        percpu_data[cpu_id] = data
     } else {
-        var new_data = PerCpuData {
+        percpu_data[cpu_id] = PerCpuData {
             local_counter: 1,
             temp_storage: [0],
         }
-        percpu_data[cpu_id] = new_data
     }
     
     return XDP_PASS
@@ -157,19 +154,16 @@ fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
 fn data_processor(file: *file, buf: *u8, count: size_t, pos: *i64) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
-        var element = sequential_data[i]
-        if (element != none) {
+        if (var element = sequential_data[i]) {
             if (!element.processed) {
                 element.value = element.value * 2
                 element.processed = true
-                sequential_data[i] = element
             }
         } else {
-            var new_element = ArrayElement {
+            sequential_data[i] = ArrayElement {
                 value: i,
                 processed: false,
             }
-            sequential_data[i] = new_element
         }
     }
     
