@@ -430,6 +430,56 @@ var stats : hash<u32, Stats>(1024)
     (List.length (get_programs ir_multi_program) > 0);
   print_endline "✓ map[k].field += rhs compiles end-to-end"
 
+(** Test 15: Codegen for `m[k].field op= rhs` produces the expected eBPF C
+    shape. This locks in the Phase 2 codegen path:
+
+    (a) The synthetic pointer binding for the lowered IfLet is declared
+        with a pointer type (`struct Stats* __cidx_field_N`) and is
+        initialised from the lookup pointer directly — *not* via the
+        deref-load statement-expression. A regression to the old shape
+        produced a `struct Stats* x = ({ struct Stats __val = ...; __val; })`
+        that fails clang -target bpf with a value-to-pointer mismatch.
+
+    (b) The body emits a presence-checked `ptr->field = ptr->field op rhs`
+        using the underlying map lookup pointer.
+
+    (c) The field's type width matches the struct definition (u64) — i.e.
+        the codegen does not default to u32 because the synthesized
+        FieldAccess loses its `expr_type` annotation. *)
+let test_map_index_field_compound_codegen () =
+  let source = {|
+struct Stats { count: u64, bytes: u64 }
+var stats : hash<u32, Stats>(1024)
+
+@xdp fn probe(ctx: *xdp_md) -> xdp_action {
+  stats[1].count += 1
+  return XDP_PASS
+}
+|} in
+  let ast = parse_string source in
+  let (typed_ast, _) = type_check_and_annotate_ast_with_builtins ast in
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  let ir_multi_program =
+    Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "probe" in
+  let c = Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir_multi_program in
+  let contains s =
+    try let _ = Str.search_forward (Str.regexp_string s) c 0 in true
+    with Not_found -> false in
+  (* (a) pointer-typed synthetic binding initialised from the lookup pointer *)
+  check bool "synthetic binding declared as a struct pointer" true
+    (contains "struct Stats* __cidx_field_");
+  let bad_value_init = contains
+    "struct Stats* __cidx_field_0 = ({ struct Stats __val" in
+  check bool "synthetic binding does NOT use deref-load init" false bad_value_init;
+  (* (b) presence-checked in-place mutation *)
+  check bool "single map lookup" true (contains "bpf_map_lookup_elem(&stats");
+  check bool "presence check"     true (contains "!= NULL");
+  check bool "ptr->count write"   true (contains "->count =");
+  (* (c) field width is u64, not the IRU32 default *)
+  check bool "field access width is u64" true
+    (contains "__u64 __field_access_");
+  print_endline "✓ map[k].field += rhs codegen shape locked in"
+
 let compound_index_assignment_tests = [
   "basic_parsing", `Quick, test_basic_parsing;
   "all_operators_parsing", `Quick, test_all_operators_parsing;
@@ -445,6 +495,7 @@ let compound_index_assignment_tests = [
   "ir_instruction_ordering", `Quick, test_ir_instruction_ordering;
   "end_to_end_compilation", `Quick, test_end_to_end_compilation;
   "map_index_field_compound_assignment", `Quick, test_map_index_field_compound_assignment;
+  "map_index_field_compound_codegen",    `Quick, test_map_index_field_compound_codegen;
 ]
 
 let () =
