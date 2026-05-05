@@ -215,10 +215,11 @@ fn handle_action(action: FilterAction) -> xdp_action {
     }
 }
 
-// Map lookup and update patterns
+// Map lookup and update patterns — declaration-as-condition binds
+// `count` only inside the truthy branch; one map lookup, no extra
+// presence-check variable.
 fn lookup_or_create(ip: IpAddress) -> Counter {
-    var count = connection_count[ip]
-    if (count != null) {
+    if (var count = connection_count[ip]) {
         return count  // Entry exists
     } else {
         connection_count[ip] = 1  // Create new entry

@@ -1476,8 +1476,7 @@ fn ddos_protection(ctx: *xdp_md) -> xdp_action {
 
 @tc("ingress")
 fn connection_tracker(ctx: *__sk_buff) -> i32 {
-    var tcp_info = extract_tcp_info(ctx)  // Reuse same helper
-    if (tcp_info != null) {
+    if (var tcp_info = extract_tcp_info(ctx)) {  // Reuse same helper
         track_connection(tcp_info.src_port, tcp_info.dst_port)
     }
     return 0  // TC_ACT_OK
@@ -2357,9 +2356,9 @@ fn ebpf_pointer_usage(ctx: *xdp_md) -> xdp_action {
         }
     }
     
-    // Dynptr-backed pointers (transparent to user)
-    var log_buffer: *u8 = event_log.reserve(256)  // Returns dynptr-backed pointer
-    if (log_buffer != null) {
+    // Dynptr-backed pointers (transparent to user) — `log_buffer` is the
+    // *u8 returned by reserve(), in scope only inside the truthy branch.
+    if (var log_buffer = event_log.reserve(256)) {
         // Regular pointer operations - compiler uses dynptr API internally
         log_buffer[0] = EVENT_TYPE_PACKET
         write_packet_summary(log_buffer + 1, packet_data, 255)
@@ -2428,15 +2427,14 @@ var flow_map : hash<FlowKey, FlowData>(1024)
 
 @helper
 fn map_pointer_operations(flow_key: FlowKey) {
-    // Map lookup returns pointer to value
-    var flow_data = flow_map[flow_key]
-    
-    if (flow_data != null) {
+    // Declaration-as-condition: a single map lookup; `flow_data` is the
+    // returned pointer, in scope only inside the truthy branch.
+    if (var flow_data = flow_map[flow_key]) {
         // Direct modification through pointer
         flow_data->packet_count += 1
         flow_data->byte_count += packet_size
         flow_data->last_seen = bpf_ktime_get_ns()
-        
+
         // Compiler tracks map value lifetime
         // flow_data becomes invalid after certain map operations
     }
@@ -2605,9 +2603,8 @@ fn egress_monitor(ctx: *__sk_buff) -> i32 {
 fn security_analyzer(ctx: LsmContext) -> i32 {
     var flow_key = extract_flow_key_from_socket(ctx)?
     
-    // Check global flow statistics
-    if (global_flows[flow_key] != null) {
-        var flow_stats = global_flows[flow_key]
+    // Check global flow statistics — single lookup via IfLet
+    if (var flow_stats = global_flows[flow_key]) {
         if (flow_stats.is_suspicious()) {
             security_events.submit(SecurityEvent {
                 event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
@@ -2617,7 +2614,7 @@ fn security_analyzer(ctx: LsmContext) -> i32 {
             return -EPERM  // Block connection
         }
     }
-    
+
     return 0  // Allow connection
 }
 ```
@@ -3736,9 +3733,8 @@ pin var global_config : array<ConfigKey, ConfigValue>(64)
 fn security_filter(ctx: LsmContext) -> i32 {
     var flow_key = extract_flow_key_from_socket(ctx)
         
-    // Check global flow statistics for threat detection
-    if (global_flows[flow_key] != null) {
-        var flow_stats = global_flows[flow_key]
+    // Check global flow statistics for threat detection — single lookup
+    if (var flow_stats = global_flows[flow_key]) {
         if (flow_stats.is_suspicious()) {
             global_events.submit(EVENT_THREAT_DETECTED { flow_key })
             return -EPERM  // Block connection
@@ -3779,8 +3775,7 @@ fn start_coordinator() -> i32 {
 
 fn process_events(coordinator: *SystemCoordinator) {
     // Process events from all programs
-    var event = coordinator->global_events.read()
-    if (event != null) {
+    if (var event = coordinator->global_events.read()) {
         if (event.event_type == EVENT_PACKET_PROCESSED) {
             print("Processed packet for flow: ", event.flow_key)
         } else if (event.event_type == EVENT_THREAT_DETECTED) {
@@ -3931,17 +3926,17 @@ var event_log : hash<u32, Event>(1024)
 
 @helper
 fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
-    // User writes simple pointer code
-    var log_entry: *u8 = event_log.reserve(data_len + 16)  // Dynptr-backed pointer
-    if (log_entry != null) {
+    // User writes simple pointer code — IfLet binds the *u8 returned by
+    // reserve() only inside the truthy branch.
+    if (var log_entry = event_log.reserve(data_len + 16)) {
         // Regular pointer operations - compiler uses dynptr API internally
         var header = log_entry as *EventHeader
         header->timestamp = bpf_ktime_get_ns()
         header->data_len = data_len
-        
+
         // Memory copy using pointer arithmetic
         memory_copy(event_data, log_entry + 16, data_len)
-        
+
         event_log.submit(log_entry)  // Compiler ensures proper cleanup
     }
 }
@@ -4028,15 +4023,14 @@ var cache_map : hash<u32, DataCache>(1024)
 
 @helper
 fn map_lifetime_safety(key: u32) {
-    var cache_entry = cache_map[key]
-    if (cache_entry != null) {
+    if (var cache_entry = cache_map[key]) {
         // Compiler tracks that cache_entry is valid here
         cache_entry->access_count += 1
         cache_entry->last_access = bpf_ktime_get_ns()
-        
+
         // Compiler warns/errors if cache_entry used after invalidating operations
         cache_map[other_key] = other_value  // Invalidates cache_entry
-        
+
         // ❌ Compiler error: "Use of potentially invalidated map value pointer"
         // cache_entry->access_count += 1
     }
@@ -4084,12 +4078,11 @@ fn kernel_side_processing(ctx: *xdp_md) -> xdp_action {
     var packet_data = ctx->data()
     
     // Shared memory through maps - safe across contexts
-    var shared_buffer = shared_map[0]
-    if (shared_buffer != null) {
+    if (var shared_buffer = shared_map[0]) {
         shared_buffer->kernel_processed_count += 1
         memory_copy(packet_data, shared_buffer->data, min(packet_len, 64))
     }
-    
+
     return XDP_PASS
 }
 
@@ -4097,14 +4090,13 @@ fn kernel_side_processing(ctx: *xdp_md) -> xdp_action {
 fn userspace_processing() -> i32 {
     // ❌ Cannot access kernel context pointers directly
     // var packet_data = some_kernel_context.data()  // Compilation error
-    
+
     // ✅ Access through shared maps
-    var shared_buffer = shared_map[0]
-    if (shared_buffer != null) {
+    if (var shared_buffer = shared_map[0]) {
         shared_buffer->userspace_processed_count += 1
         process_shared_data(shared_buffer->data)
     }
-    
+
     return 0
 }
 ```

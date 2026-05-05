@@ -113,10 +113,8 @@ fn stats_updater(ctx: *__sk_buff) -> i32 {
     // Batch operation pattern - will be detected as batch access
     for (i in 0..20) {
         var batch_key = ifindex + i
-        var entry = shared_stats[batch_key]
-        if (entry != null) {
+        if (var entry = shared_stats[batch_key]) {
             entry.packet_count = entry.packet_count + 1
-            shared_stats[batch_key] = entry
         }
     }
     
@@ -129,8 +127,7 @@ fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
     // Ring buffer output - single writer recommended
     try {
         // Reserve space in the ring buffer
-        var reserved = event_stream.reserve()
-        if (reserved != null) {
+        if (var reserved = event_stream.reserve()) {
             // Successfully reserved space - populate event data inline
             reserved->timestamp = 123456  // Fake timestamp
             reserved->event_type = ctx->id  // Use syscall ID from sys_enter context

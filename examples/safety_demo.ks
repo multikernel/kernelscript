@@ -109,8 +109,7 @@ fn array_validation_demo(ctx: *xdp_md) -> xdp_action {
   
   // Safe map access
   var key: u32 = 1
-  var count = packet_stats[key]
-  if (count != null) {
+  if (var count = packet_stats[key]) {
     packet_stats[key] = count + 1
   } else {
     packet_stats[key] = 1
