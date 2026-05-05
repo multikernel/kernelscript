@@ -2044,6 +2044,49 @@ and lower_statement ctx stmt =
           stmt.stmt_pos in
         emit_instruction ctx if_instr
 
+  | Ast.CompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+      (* Desugar `map[k].field op= rhs` to:
+           if (var __cidx_field_N = map[k]) {
+             __cidx_field_N.field = __cidx_field_N.field op rhs
+           }
+         The IfLet lowering (above) handles the presence check; the field-store
+         lowers to a pointer-checked `ptr->field = ...` via IRStructFieldAssignment.
+         We look up the field's AST type from the map's value-struct definition so
+         that the synthesized FieldAccess/BinaryOp get correct expr_type — without
+         this the IR generator defaults to IRU32, mis-sizing wider fields. *)
+      let pos = stmt.stmt_pos in
+      let synth_name = generate_temp_variable ctx "cidx_field" in
+      let map_name = match map_expr.expr_desc with
+        | Ast.Identifier mn -> mn
+        | _ -> failwith "Compound field-index assignment requires a map identifier"
+      in
+      let map_def = Hashtbl.find ctx.maps map_name in
+      let field_ast_type =
+        let rec resolve_struct_name = function
+          | Ast.Struct n | Ast.UserType n -> Some n
+          | _ -> None
+        and resolve t =
+          match resolve_struct_name t with
+          | Some n ->
+              (match Symbol_table.lookup_symbol ctx.symbol_table n with
+               | Some { kind = Symbol_table.TypeDef (Ast.StructDef (_, fs, _)); _ } ->
+                   (try Some (List.assoc field fs) with Not_found -> None)
+               | _ -> None)
+          | None -> None
+        in
+        resolve map_def.ast_value_type
+      in
+      let mk_expr ?ty d =
+        { Ast.expr_desc = d; expr_pos = pos; expr_type = ty;
+          type_checked = false; program_context = None; map_scope = None } in
+      let access = mk_expr (Ast.ArrayAccess (map_expr, key_expr)) in
+      let tmp_id = mk_expr (Ast.Identifier synth_name) in
+      let cur_field = mk_expr ?ty:field_ast_type (Ast.FieldAccess (tmp_id, field)) in
+      let bin = mk_expr ?ty:field_ast_type (Ast.BinaryOp (cur_field, op, value_expr)) in
+      let store = { Ast.stmt_desc = Ast.FieldAssignment (tmp_id, field, bin); stmt_pos = pos } in
+      let iflet = { Ast.stmt_desc = Ast.IfLet (synth_name, access, [store], None); stmt_pos = pos } in
+      lower_statement ctx iflet
+
   | Ast.IfLet (name, expr, then_stmts, else_opt) ->
       (* Desugar `if (var name = expr) { T } else { E }` into:
            var name = expr

@@ -804,6 +804,11 @@ and eval_statement ctx stmt =
       in
       let result = eval_binary_op current_val op value_val stmt.stmt_pos in
       Hashtbl.replace map_store key_str result
+
+  | CompoundFieldIndexAssignment (_, _, _, _, _) ->
+      (* The interpreter is used for compile-time evaluation only;
+         struct-field compound assignment on map values is a runtime construct. *)
+      eval_error "map[key].field op= rhs is not supported in the interpreter" stmt.stmt_pos
   
   | FieldAssignment (obj_expr, _field, value_expr) ->
       (* For evaluation purposes, treat config field assignment as no-op *)

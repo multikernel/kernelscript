@@ -94,6 +94,8 @@ and typed_stmt_desc =
   | TAssignment of string * typed_expr
   | TCompoundAssignment of string * binary_op * typed_expr  (* var op= expr *)
   | TCompoundIndexAssignment of typed_expr * typed_expr * binary_op * typed_expr  (* map[key] op= expr *)
+  | TCompoundFieldIndexAssignment of typed_expr * typed_expr * string * binary_op * typed_expr
+      (* map[key].field op= expr *)
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TArrowAssignment of typed_expr * string * typed_expr  (* pointer, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
@@ -1820,7 +1822,57 @@ and type_check_statement ctx stmt =
                      type_error ("Operator " ^ string_of_binary_op op ^ 
                                 " not supported for type " ^ string_of_bpf_type element_type) stmt.stmt_pos)
             | _ -> type_error ("Compound index assignment can only be used on maps or arrays") stmt.stmt_pos))
-  
+
+  | CompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+      let typed_key = type_check_expression ctx key_expr in
+      let typed_value = type_check_expression ctx value_expr in
+      let map_name = match map_expr.expr_desc with
+        | Identifier name when Hashtbl.mem ctx.maps name -> name
+        | _ -> type_error "Compound field-index assignment requires a map identifier" stmt.stmt_pos
+      in
+      let map_decl = Hashtbl.find ctx.maps map_name in
+      (* Key type *)
+      let resolved_key_type = resolve_user_type ctx map_decl.ast_key_type in
+      let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
+      (match unify_types resolved_key_type resolved_typed_key_type with
+       | Some _ -> ()
+       | None -> type_error "Map key type mismatch" stmt.stmt_pos);
+      (* Resolve the map's value type to a struct *)
+      let resolved_value_type = resolve_user_type ctx map_decl.ast_value_type in
+      let struct_name = match resolved_value_type with
+        | Struct n | UserType n -> n
+        | _ -> type_error "map[k].field op= rhs requires the map's value type to be a struct" stmt.stmt_pos
+      in
+      let fields =
+        try
+          (match Hashtbl.find ctx.types struct_name with
+           | StructDef (_, fs, _) -> fs
+           | _ -> type_error (struct_name ^ " is not a struct") stmt.stmt_pos)
+        with Not_found -> type_error ("Undefined struct: " ^ struct_name) stmt.stmt_pos
+      in
+      let field_type =
+        try List.assoc field fields
+        with Not_found ->
+          type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) stmt.stmt_pos
+      in
+      (* rhs must match field type *)
+      let resolved_field_type = resolve_user_type ctx field_type in
+      let resolved_typed_value_type = resolve_user_type ctx typed_value.texpr_type in
+      (match unify_types resolved_field_type resolved_typed_value_type with
+       | Some _ -> ()
+       | None -> type_error ("Field value type mismatch for " ^ field) stmt.stmt_pos);
+      (* op must be valid for the field type *)
+      (match op, resolved_field_type with
+       | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
+           let typed_map = { texpr_desc = TIdentifier map_name;
+                             texpr_type = Map (map_decl.ast_key_type, map_decl.ast_value_type, map_decl.ast_map_type, map_decl.max_entries);
+                             texpr_pos = map_expr.expr_pos } in
+           { tstmt_desc = TCompoundFieldIndexAssignment (typed_map, typed_key, field, op, typed_value);
+             tstmt_pos = stmt.stmt_pos }
+       | _, _ ->
+           type_error ("Operator " ^ string_of_binary_op op ^
+                      " not supported for field type " ^ string_of_bpf_type resolved_field_type) stmt.stmt_pos)
+
   | Declaration (name, type_opt, expr_opt) ->
       let typed_expr_opt = Option.map (type_check_expression ctx) expr_opt in
       
@@ -2600,6 +2652,8 @@ and typed_stmt_to_stmt tstmt =
     | TCompoundAssignment (name, op, expr) -> CompoundAssignment (name, op, typed_expr_to_expr expr)
     | TCompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
         CompoundIndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, op, typed_expr_to_expr value_expr)
+    | TCompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+        CompoundFieldIndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, field, op, typed_expr_to_expr value_expr)
     | TFieldAssignment (obj_expr, field, value_expr) ->
         FieldAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TArrowAssignment (obj_expr, field, value_expr) ->
@@ -3272,6 +3326,13 @@ and populate_multi_program_context ast multi_prog_analysis =
         (match map_expr.program_context with
          | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
          | None -> ())
+    | CompoundFieldIndexAssignment (map_expr, key_expr, _, _, value_expr) ->
+        enhance_expr prog_type map_expr;
+        enhance_expr prog_type key_expr;
+        enhance_expr prog_type value_expr;
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
     | FieldAssignment (obj_expr, _, value_expr) ->
         enhance_expr prog_type obj_expr;
         enhance_expr prog_type value_expr
@@ -3374,6 +3435,10 @@ and populate_multi_program_context ast multi_prog_analysis =
       | CompoundAssignment (_, _, expr) ->
           enhance_userspace_expr expr
       | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
+          enhance_userspace_expr map_expr;
+          enhance_userspace_expr key_expr;
+          enhance_userspace_expr value_expr
+      | CompoundFieldIndexAssignment (map_expr, key_expr, _, _, value_expr) ->
           enhance_userspace_expr map_expr;
           enhance_userspace_expr key_expr;
           enhance_userspace_expr value_expr

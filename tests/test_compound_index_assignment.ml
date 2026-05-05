@@ -404,12 +404,31 @@ var packet_counts : hash<u32, u64>(1024)
     let (typed_ast, _) = type_check_and_annotate_ast_with_builtins ast in
     let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
     let ir_multi_program = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "rate_limiter" in
-    
+
     (* Check that compilation was successful *)
     check bool "end-to-end compilation successful" true (List.length (get_programs ir_multi_program) > 0);
     print_endline "✓ End-to-end compilation test passed"
   with
   | e -> failwith ("End-to-end compilation failed: " ^ Printexc.to_string e)
+
+(** Test 14: Compound assignment on a struct field accessed via map index *)
+let test_map_index_field_compound_assignment () =
+  let source = {|
+struct Stats { count: u64, bytes: u64 }
+var stats : hash<u32, Stats>(1024)
+
+@xdp fn probe(ctx: *xdp_md) -> xdp_action {
+  stats[1].count += 1
+  return XDP_PASS
+}
+|} in
+  let ast = parse_string source in
+  let (typed_ast, _) = type_check_and_annotate_ast_with_builtins ast in
+  let symbol_table = Test_utils.Helpers.create_test_symbol_table ast in
+  let ir_multi_program = Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "probe" in
+  check bool "map[k].field compound assign compiles" true
+    (List.length (get_programs ir_multi_program) > 0);
+  print_endline "✓ map[k].field += rhs compiles end-to-end"
 
 let compound_index_assignment_tests = [
   "basic_parsing", `Quick, test_basic_parsing;
@@ -425,6 +444,7 @@ let compound_index_assignment_tests = [
   "ir_generation", `Quick, test_ir_generation;
   "ir_instruction_ordering", `Quick, test_ir_instruction_ordering;
   "end_to_end_compilation", `Quick, test_end_to_end_compilation;
+  "map_index_field_compound_assignment", `Quick, test_map_index_field_compound_assignment;
 ]
 
 let () =

@@ -1819,7 +1819,15 @@ let rec generate_c_instruction_from_ir ctx instruction =
            let decl_str = generate_c_declaration typ c_var_name in
            (match init_expr_opt with
             | Some init_expr ->
-                let init_str = generate_c_expression_from_ir ctx init_expr in
+                let init_str =
+                  (match typ, init_expr.expr_desc with
+                   | IRPointer _, IRValue src_val
+                       when (match src_val.value_desc with IRMapAccess _ -> true | _ -> false) ->
+                       (* Pointer-typed variable initialized from a map lookup: keep the pointer. *)
+                       generate_c_value_from_ir ~auto_deref_map_access:false ctx src_val
+                   | _ ->
+                       generate_c_expression_from_ir ctx init_expr)
+                in
                 sprintf "%s = %s;" decl_str init_str
             | None ->
                 sprintf "%s;" decl_str))

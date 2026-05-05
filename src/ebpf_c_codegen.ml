@@ -1952,6 +1952,10 @@ and generate_c_instruction ctx ir_instr =
                   (* Other string expressions (concatenation, etc.) *)
                   let init_str = generate_c_expression ctx init_expr in
                   emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+              | IRPointer _, IRValue src_val when (match src_val.value_desc with IRMapAccess _ -> true | _ -> false) ->
+                  (* Pointer-typed variable initialized from a map lookup: keep the pointer. *)
+                  let init_str = generate_c_value ~auto_deref_map_access:false ctx src_val in
+                  emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
               | _ ->
                   (* Regular non-string assignment *)
                   let init_str = generate_c_expression ctx init_expr in

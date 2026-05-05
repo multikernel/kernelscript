@@ -126,6 +126,7 @@
 %type <Ast.statement> assignment_or_expression_statement
 %type <Ast.statement> compound_assignment_statement
 %type <Ast.statement> compound_index_assignment_statement
+%type <Ast.statement> compound_field_index_assignment_statement
 %type <Ast.statement> field_assignment_statement
 %type <Ast.statement> arrow_assignment_statement
 %type <Ast.statement> index_assignment_statement
@@ -313,6 +314,7 @@ statement:
   | index_assignment_statement { $1 }
   | compound_assignment_statement { $1 }
   | compound_index_assignment_statement { $1 }
+  | compound_field_index_assignment_statement { $1 }
   | assignment_or_expression_statement { $1 }
   | return_statement { $1 }
   | if_statement { $1 }
@@ -379,6 +381,18 @@ compound_index_assignment_statement:
     { make_stmt (CompoundIndexAssignment ($1, $3, Div, $6)) (make_pos ()) }
   | expression LBRACKET expression RBRACKET MODULO_ASSIGN expression
     { make_stmt (CompoundIndexAssignment ($1, $3, Mod, $6)) (make_pos ()) }
+
+compound_field_index_assignment_statement:
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER PLUS_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Add, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER MINUS_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Sub, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER MULTIPLY_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Mul, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER DIVIDE_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Div, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER MODULO_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Mod, $8)) (make_pos ()) }
 
 return_statement:
   | RETURN { make_stmt (Return None) (make_pos ()) }
