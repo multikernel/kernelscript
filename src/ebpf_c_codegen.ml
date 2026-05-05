@@ -1230,8 +1230,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
   | IRLiteral (BoolLit b) -> if b then "1" else "0"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (NullLit) -> "NULL"
-  | IRLiteral (NoneLit) -> "0"
-  | IRLiteral (StringLit s) -> 
+  | IRLiteral (StringLit s) ->
       (* Generate string literal as struct initialization *)
       (match ir_val.val_type with
        | IRStr size ->
@@ -1263,7 +1262,6 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" (escape_c_string s)
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "0"
              | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
            in
            "{" ^ fill_str ^ "}"
@@ -1275,7 +1273,6 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" (escape_c_string s)
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "0"
              | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
            ) elements in
            if List.length elements = 0 then
@@ -1433,15 +1430,13 @@ let generate_c_expression ctx ir_expr =
            let index_str = generate_c_value ctx right in
            sprintf "%s.data[%s]" array_str index_str
        | _ ->
-           (* Check for absence-literal comparisons first.
-              Both `none` and `null` count as absence literals here; the
-              codegen emits a pointer presence check against the underlying
-              lookup pointer (or against the value directly when it is
-              already a pointer). This is what makes `if (var x = map[k])`
-              and `entry != null` produce correct C without an extra
-              dereference. *)
+           (* `null` comparisons against a map-access lower to a presence
+              check against the underlying lookup pointer (or against the
+              value directly when it is already a pointer), so
+              `if (var x = map[k])` and `entry != null` produce correct C
+              without an extra dereference. *)
            let is_absence_lit = function
-             | IRLiteral (Ast.NoneLit) | IRLiteral (Ast.NullLit) -> true
+             | IRLiteral (Ast.NullLit) -> true
              | _ -> false
            in
            (match left.value_desc, op, right.value_desc with

@@ -116,9 +116,6 @@ let test_truthy_evaluation () =
   check bool "Null pointer is falsy" (is_truthy_value (PointerValue 0)) false;
   check bool "Non-null pointer is truthy" (is_truthy_value (PointerValue 0x1234)) true;
   
-  (* Test none sentinel - always falsy *)
-  check bool "none is falsy" (is_truthy_value None) false;
-  
   (* Test that structs and arrays cannot be used in boolean context *)
   (try
     let _ = is_truthy_value (ArrayValue [||]) in

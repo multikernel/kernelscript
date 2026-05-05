@@ -81,8 +81,6 @@ type bpf_type =
   (* Ring buffer reference type - represents a ring buffer for dispatch *)
   | RingbufRef of bpf_type (* value type *)
   | Ringbuf of bpf_type * int (* value_type, size - ring buffer object *)
-  (* None type - represents missing/absent values *)
-  | NoneType
   (* Null type - represents null pointers, compatible with any pointer type *)
   | Null
 
@@ -187,7 +185,6 @@ type literal =
   | BoolLit of bool
   | ArrayLit of array_init_style   (* Enhanced array initialization *)
   | NullLit
-  | NoneLit
 
 (** Array initialization styles *)
 and array_init_style =
@@ -716,7 +713,6 @@ let rec string_of_bpf_type = function
   | ProgramHandle -> "ProgramHandle"
   | RingbufRef value_type -> Printf.sprintf "ringbuf_ref<%s>" (string_of_bpf_type value_type)
   | Ringbuf (value_type, size) -> Printf.sprintf "ringbuf<%s>(%d)" (string_of_bpf_type value_type) size
-  | NoneType -> "none"
   | Null -> "null"
 
 let rec string_of_literal = function
@@ -732,7 +728,6 @@ let rec string_of_literal = function
       Printf.sprintf "[%s]" (String.concat ", " (List.map string_of_literal literals))
   | ArrayLit (ZeroArray) -> "[]"
   | NullLit -> "null"
-  | NoneLit -> "none"
 
 let string_of_binary_op = function
   | Add -> "+"

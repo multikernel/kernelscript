@@ -44,7 +44,7 @@ fn get_timestamp() -> u64 {
 @xdp fn network_monitor(ctx: *xdp_md) -> xdp_action {
   var key: u32 = 0
   var stat = stats[key]
-  if (stat == none) {
+  if (stat == null) {
     var init_stat = Stats { events_submitted: 0, events_dropped: 0, buffer_full_count: 0 }
     stats[key] = init_stat
     stat = stats[key]

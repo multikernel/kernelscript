@@ -218,7 +218,7 @@ fn handle_action(action: FilterAction) -> xdp_action {
 // Map lookup and update patterns
 fn lookup_or_create(ip: IpAddress) -> Counter {
     var count = connection_count[ip]
-    if (count != none) {
+    if (count != null) {
         return count  // Entry exists
     } else {
         connection_count[ip] = 1  // Create new entry

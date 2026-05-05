@@ -58,7 +58,7 @@ struct ArrayElement {
     
     // Safe concurrent read access - multiple programs can read simultaneously
     var counter = global_counter[key]
-    if (counter != none) {
+    if (counter != null) {
         // High-frequency lookup pattern - will generate optimization suggestions
         for (i in 0..100) {
             var _ = global_counter[key + i]
@@ -89,7 +89,7 @@ fn stats_updater(ctx: *__sk_buff) -> i32 {
     
     // Potential write conflict with other programs
     var stats = shared_stats[ifindex]
-    if (stats == none) {
+    if (stats == null) {
         stats = Statistics {
             packet_count: 0,
             byte_count: 0,

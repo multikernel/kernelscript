@@ -408,7 +408,6 @@ let get_literal_type lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
-  | NoneLit -> NoneType
   | ArrayLit _ -> U32  (* Nested arrays default to u32 *)
 
 (** Helper function to check type equality for array literals *)
@@ -435,7 +434,6 @@ let type_check_literal lit pos =
     | CharLit _ -> Char
     | BoolLit _ -> Bool
     | NullLit -> Null  (* null literal - can unify with any pointer or function type *)
-    | NoneLit -> NoneType  (* none literal represents missing/absent values *)
     | ArrayLit init_style ->
         (* Handle enhanced array literal type checking *)
         (match init_style with
@@ -488,7 +486,6 @@ let type_of_literal lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
-  | NoneLit -> NoneType
   | ArrayLit init_style ->
       (* Handle enhanced array literal type checking *)
       (match init_style with
@@ -1096,29 +1093,6 @@ and type_check_binary_op ctx left op right pos =
          (* Null comparisons - any type can be compared with null *)
          | Null, _ | _, Null -> Bool  (* Direct null comparisons *)
          | _, Pointer _ | Pointer _, _ -> Bool  (* Pointer comparisons (legacy) *)
-         (* None comparisons - allow with map access expressions or variables that could contain map results *)
-         | NoneType, _ | _, NoneType -> 
-             (* Check if at least one operand is a map access or could reasonably be a map result *)
-             let has_map_related_value = 
-               (match left.expr_desc with
-                | ArrayAccess (map_expr, _) -> 
-                    (match map_expr.expr_desc with
-                     | Identifier map_name -> Hashtbl.mem ctx.maps map_name
-                     | _ -> false)
-                | Identifier _ -> true  (* Variables can contain map lookup results *)
-                | _ -> false) ||
-               (match right.expr_desc with
-                | ArrayAccess (map_expr, _) -> 
-                    (match map_expr.expr_desc with
-                     | Identifier map_name -> Hashtbl.mem ctx.maps map_name
-                     | _ -> false)
-                | Identifier _ -> true  (* Variables can contain map lookup results *)
-                | _ -> false)
-             in
-             if has_map_related_value then
-               Bool
-             else
-               type_error "'none' can only be compared with map access expressions or variables that may contain map results" pos
          | _ ->
              (match unify_types resolved_left_type resolved_right_type with
               | Some _ -> Bool
@@ -1571,10 +1545,6 @@ and type_check_statement ctx stmt =
   
     | Assignment (name, expr) ->
       let typed_expr = type_check_expression ctx expr in
-      (* Check if trying to assign none to a variable *)
-      (match typed_expr.texpr_type with
-       | NoneType -> type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
-       | _ -> ());
       (* Check if the variable is const by looking it up in the symbol table *)
       (match Symbol_table.lookup_symbol ctx.symbol_table name with
        | Some symbol when Symbol_table.is_const_variable symbol ->
@@ -1882,12 +1852,6 @@ and type_check_statement ctx stmt =
            type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
        | _ -> ());
       
-      (* Check if trying to assign none to a variable *)
-      (match typed_expr_opt with
-       | Some typed_expr when (match typed_expr.texpr_type with NoneType -> true | _ -> false) ->
-           type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
-       | _ -> ());
-      
       let var_type = match type_opt with
         | Some declared_type ->
             let resolved_declared_type = resolve_user_type ctx declared_type in
@@ -1919,11 +1883,6 @@ and type_check_statement ctx stmt =
       (* Check if trying to assign a map to a const *)
       (match typed_expr.texpr_type with
        | Map (_, _, _, _) -> type_error ("Maps cannot be assigned to const variables") stmt.stmt_pos
-       | _ -> ());
-      
-      (* Check if trying to assign none to a const *)
-      (match typed_expr.texpr_type with
-       | NoneType -> type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
        | _ -> ());
       
       (* Validate that the expression is a compile-time constant (literals and negated literals) *)

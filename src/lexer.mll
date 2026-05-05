@@ -122,7 +122,6 @@
     | "true" -> BOOL_LIT true
     | "false" -> BOOL_LIT false
     | "null" -> NULL
-    | "none" -> NONE
     | id -> IDENTIFIER id
 }
 

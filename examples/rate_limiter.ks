@@ -21,7 +21,7 @@ config network {
   var src_ip = 0x7F000001 // Placeholder IP (127.0.0.1)
     
   // Update the count
-  if (packet_counts[src_ip] != none) {
+  if (packet_counts[src_ip] != null) {
     packet_counts[src_ip] += 1
   } else {
     packet_counts[src_ip] = 0

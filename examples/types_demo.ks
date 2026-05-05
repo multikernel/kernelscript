@@ -64,7 +64,7 @@ fn extract_packet_info(ctx: *xdp_md) -> *PacketInfo {
 fn get_filter_action(info: PacketInfo) -> FilterAction {
   // Look up in the filter map
   var action = packet_filter[info]
-  if (action != none) {
+  if (action != null) {
     return action
   } else {
     return FILTER_ACTION_ALLOW
@@ -86,7 +86,7 @@ fn protocol_from_u8(proto_num: u8) -> Protocol {
 fn update_stats(info: PacketInfo) {
   // Update connection count
   var current_count = connection_count[info.src_ip]
-  if (current_count != none) {
+  if (current_count != null) {
     connection_count[info.src_ip] = current_count + 1
   } else {
     connection_count[info.src_ip] = 1
@@ -95,7 +95,7 @@ fn update_stats(info: PacketInfo) {
   // Update protocol stats
   var proto = protocol_from_u8(info.protocol)
   var stats = protocol_stats[proto]
-  if (stats != none) {
+  if (stats != null) {
     protocol_stats[proto] = stats + 1
   } else {
     protocol_stats[proto] = 1
@@ -107,7 +107,7 @@ fn update_stats(info: PacketInfo) {
   // Extract packet information
   var packet_info = extract_packet_info(ctx)
   
-  if (packet_info != none) {
+  if (packet_info != null) {
     // Update statistics
     update_stats(*packet_info)
     

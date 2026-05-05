@@ -46,7 +46,7 @@
 %token <string> STRING IDENTIFIER
 %token <char> CHAR_LIT
 %token <bool> BOOL_LIT
-%token NULL NONE
+%token NULL
 
 /* Keywords */
 %token FN EXTERN INCLUDE PIN TYPE STRUCT ENUM IMPL
@@ -516,7 +516,6 @@ literal:
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
   | NULL { NullLit }
-  | NONE { NoneLit }
   | LBRACKET array_init_expr RBRACKET { ArrayLit $2 }
 
 array_init_expr:

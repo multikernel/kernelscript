@@ -1219,7 +1219,6 @@ let determine_global_var_section (global_var : ir_global_variable) =
          | IRLiteral (Ast.IntLit (Ast.Signed64 0L, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
   | IRLiteral (Ast.BoolLit false) -> "bss"      (* False booleans go to .bss *)
   | IRLiteral (Ast.NullLit) -> "bss"            (* Null pointers go to .bss *)
-  | IRLiteral (Ast.NoneLit) -> "bss"            (* None values go to .bss *)
   | IRLiteral (Ast.IntLit (_, _)) -> "data"     (* Non-zero integers go to .data *)
   | IRLiteral (Ast.BoolLit true) -> "data"      (* True booleans go to .data *)
   | IRLiteral (Ast.StringLit _) -> "data"       (* String literals go to .data *)
@@ -1277,8 +1276,7 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (NullLit) -> "NULL"
-  | IRLiteral (NoneLit) -> "/* none */"
-  | IRLiteral (StringLit s) -> 
+  | IRLiteral (StringLit s) ->
       (* Generate simple string literal for userspace *)
       sprintf "\"%s\"" s
   | IRLiteral (ArrayLit init_style) -> 
@@ -1292,7 +1290,6 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" s
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "/* none */"
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            in
            sprintf "{%s}" fill_str
@@ -1303,7 +1300,6 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
              | Ast.BoolLit b -> if b then "true" else "false"
              | Ast.StringLit s -> sprintf "\"%s\"" s
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "/* none */"
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            ) elems in
            sprintf "{%s}" (String.concat ", " elem_strs))
@@ -1406,12 +1402,11 @@ let generate_c_expression_from_ir ctx ir_expr =
            let index_str = generate_c_value_from_ir ctx right_val in
            sprintf "%s[%s]" array_str index_str
        | _ ->
-           (* Both `none` and `null` count as absence literals here. The
-              codegen emits a pointer presence check against the underlying
-              map-lookup pointer (or the pointer value directly), avoiding
-              an extra dereference. *)
+           (* `null` comparisons against a map-access lower to a presence
+              check against the underlying lookup pointer (or the pointer
+              value directly), avoiding an extra dereference. *)
            let is_absence_lit = function
-             | IRLiteral (Ast.NoneLit) | IRLiteral (Ast.NullLit) -> true
+             | IRLiteral (Ast.NullLit) -> true
              | _ -> false
            in
            let pointer_str v =

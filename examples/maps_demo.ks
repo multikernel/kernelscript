@@ -84,7 +84,7 @@ fn get_timestamp() -> u64 {
   }
 
   // Log repeated connections
-  if (recent_connections[src_ip] != none) {
+  if (recent_connections[src_ip] != null) {
     event_log[0] = 1
   }
   

@@ -2431,7 +2431,7 @@ fn map_pointer_operations(flow_key: FlowKey) {
     // Map lookup returns pointer to value
     var flow_data = flow_map[flow_key]
     
-    if (flow_data != none) {
+    if (flow_data != null) {
         // Direct modification through pointer
         flow_data->packet_count += 1
         flow_data->byte_count += packet_size
@@ -3016,7 +3016,7 @@ fn packet_filter(ctx: *xdp_md) -> action: xdp_action {
 
 // Userspace functions with named returns
 fn lookup_counter(ip: u32) -> counter_ptr: *u64 {
-    if (counters[ip] == none) {
+    if (counters[ip] == null) {
         counters[ip] = 0
     }
     counter_ptr = &counters[ip]
@@ -3737,7 +3737,7 @@ fn security_filter(ctx: LsmContext) -> i32 {
     var flow_key = extract_flow_key_from_socket(ctx)
         
     // Check global flow statistics for threat detection
-    if (global_flows[flow_key] != none) {
+    if (global_flows[flow_key] != null) {
         var flow_stats = global_flows[flow_key]
         if (flow_stats.is_suspicious()) {
             global_events.submit(EVENT_THREAT_DETECTED { flow_key })
@@ -4029,7 +4029,7 @@ var cache_map : hash<u32, DataCache>(1024)
 @helper
 fn map_lifetime_safety(key: u32) {
     var cache_entry = cache_map[key]
-    if (cache_entry != none) {
+    if (cache_entry != null) {
         // Compiler tracks that cache_entry is valid here
         cache_entry->access_count += 1
         cache_entry->last_access = bpf_ktime_get_ns()
@@ -4085,7 +4085,7 @@ fn kernel_side_processing(ctx: *xdp_md) -> xdp_action {
     
     // Shared memory through maps - safe across contexts
     var shared_buffer = shared_map[0]
-    if (shared_buffer != none) {
+    if (shared_buffer != null) {
         shared_buffer->kernel_processed_count += 1
         memory_copy(packet_data, shared_buffer->data, min(packet_len, 64))
     }
@@ -4100,7 +4100,7 @@ fn userspace_processing() -> i32 {
     
     // ✅ Access through shared maps
     var shared_buffer = shared_map[0]
-    if (shared_buffer != none) {
+    if (shared_buffer != null) {
         shared_buffer->userspace_processed_count += 1
         process_shared_data(shared_buffer->data)
     }

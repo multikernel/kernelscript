@@ -430,7 +430,7 @@ var test_map : hash<u32, TestEnum>(64)
 @helper
 fn get_value(key: u32) -> TestEnum {
   var result = test_map[key]
-  if (result != none) {
+  if (result != null) {
     return result  // This should return the dereferenced value, not pointer
   } else {
     return VALUE_A

@@ -22,7 +22,7 @@ fn process_key(key: u32) -> u32 {
     try {
         // Check if key exists (expected absence - use null)
         var value = test_map[key]
-        if (value == none) {
+        if (value == null) {
             // Key doesn't exist - create default value (expected pattern)
             var default_value = 42
             test_map[key] = default_value

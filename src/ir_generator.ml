@@ -234,11 +234,10 @@ let lower_literal lit pos =
     | StringLit s -> IRStr (max 1 (String.length s))  (* String literals get IRStr type *)
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
-    | NullLit -> 
+    | NullLit ->
         let bounds = make_bounds_info ~nullable:true () in
         IRPointer (IRU32, bounds)  (* null literal as nullable pointer to u32 *)
-    | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
-    | ArrayLit init_style -> 
+    | ArrayLit init_style ->
         (* Handle enhanced array literal lowering *)
         (match init_style with
          | ZeroArray ->
@@ -251,10 +250,9 @@ let lower_literal lit pos =
                | BoolLit _ -> IRBool
                | CharLit _ -> IRChar
                | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-               | NullLit -> 
+               | NullLit ->
                    let bounds = make_bounds_info ~nullable:true () in
                    IRPointer (IRU32, bounds)
-               | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
                | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
              in
              IRArray (element_ir_type, 0, make_bounds_info ())  (* Size resolved during type unification *)
@@ -271,10 +269,9 @@ let lower_literal lit pos =
                  | CharLit _ -> IRChar
                  | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
                  | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
-                 | NullLit -> 
+                 | NullLit ->
                      let bounds = make_bounds_info ~nullable:true () in
                      IRPointer (IRU32, bounds)
-                 | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
                in
                let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
                IRArray (element_ir_type, element_count, bounds_info))
@@ -314,7 +311,6 @@ let literal_to_ir_type = function
   | CharLit _ -> IRChar
   | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
   | NullLit -> IRPointer (IRU32, make_bounds_info ~nullable:true ())
-  | NoneLit -> IRU32
   | ArrayLit _ -> IRU32  (* Default for arrays *)
 
 (** Unified AST to IR type conversion for basic types *)
