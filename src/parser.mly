@@ -673,6 +673,12 @@ global_variable_declaration:
     { make_global_var_decl $4 (Some $6) None (make_pos ()) ~is_local:true ~is_pinned:true () }
   | PIN LOCAL VAR IDENTIFIER ASSIGN expression
     { make_global_var_decl $4 None (Some $6) (make_pos ()) ~is_local:true ~is_pinned:true () }
+  | attribute_list VAR IDENTIFIER COLON bpf_type ASSIGN expression
+    { make_global_var_decl $3 (Some $5) (Some $7) (make_pos ()) ~attrs:$1 () }
+  | attribute_list VAR IDENTIFIER COLON bpf_type
+    { make_global_var_decl $3 (Some $5) None (make_pos ()) ~attrs:$1 () }
+  | attribute_list VAR IDENTIFIER ASSIGN expression
+    { make_global_var_decl $3 None (Some $5) (make_pos ()) ~attrs:$1 () }
 
 /* Match expressions: match (expr) { pattern: expr, ... } */
 match_expression:

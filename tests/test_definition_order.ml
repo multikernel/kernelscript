@@ -54,6 +54,7 @@ let make_test_global_var name var_type line =
     global_var_pos = make_test_position line 1;
     is_local = false;
     is_pinned = false;
+    global_var_attributes = [];
   }
 
 let make_test_function name params return_type body line =

@@ -441,6 +441,11 @@
  (modules test_definition_order)
  (libraries kernelscript alcotest))
 
+(executable
+ (name test_sysctl)
+ (modules test_sysctl)
+ (libraries kernelscript alcotest str))
+
 
 
 ; Top-level alias to build all tests
@@ -531,7 +536,8 @@
   test_tc.exe
   test_exec.exe
   test_void_functions.exe
-  test_definition_order.exe))
+  test_definition_order.exe
+  test_sysctl.exe))
 
 ; Runtest rules to actually execute the tests
 (rule
@@ -872,4 +878,8 @@
 
 (rule
  (alias runtest)
- (action (run ./test_definition_order.exe))) 
+ (action (run ./test_definition_order.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_sysctl.exe)))

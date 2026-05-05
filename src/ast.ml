@@ -389,6 +389,7 @@ type global_variable_declaration = {
   global_var_pos: position;
   is_local: bool; (* true if declared with 'local' keyword *)
   is_pinned: bool; (* true if declared with 'pin' keyword *)
+  global_var_attributes: attribute list;
 }
 
 (** Impl block for struct_ops - Option 1 from proposal *)
@@ -588,13 +589,14 @@ let make_config_declaration name fields pos = {
   config_pos = pos;
 }
 
-let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) () = {
+let make_global_var_decl name typ init pos ?(is_local=false) ?(is_pinned=false) ?(attrs=[]) () = {
   global_var_name = name;
   global_var_type = typ;
   global_var_init = init;
   global_var_pos = pos;
   is_local;
   is_pinned;
+  global_var_attributes = attrs;
 }
 
 let make_impl_block name attributes items pos = {
