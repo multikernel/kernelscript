@@ -1227,6 +1227,39 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
     "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
   ) else ""
 
+(** Static inline helpers for the sysctl_read_str / sysctl_write_str escape hatch.
+    Emitted once when any @sysctl global is present. *)
+let sysctl_stdlib_helpers_c = {|/* sysctl stdlib helpers */
+static inline int __ks_sysctl_read_str(const char *dot_path, char *out, uint32_t out_len) {
+    char p[256]; size_t i = 0, j = 0;
+    j += snprintf(p + j, sizeof(p) - j, "/proc/sys/");
+    while (dot_path[i] && j < sizeof(p) - 1) {
+        p[j++] = dot_path[i] == '.' ? '/' : dot_path[i]; i++;
+    }
+    p[j] = 0;
+    int fd = open(p, O_RDONLY); if (fd < 0) return -errno;
+    ssize_t n = read(fd, out, out_len - 1); int e = errno; close(fd);
+    if (n < 0) return -e;
+    if ((uint32_t)n == out_len - 1) return -ERANGE;
+    out[n] = 0;
+    if (n > 0 && out[n - 1] == '\n') out[n - 1] = 0;
+    return 0;
+}
+
+static inline int __ks_sysctl_write_str(const char *dot_path, const char *value) {
+    char p[256]; size_t i = 0, j = 0;
+    j += snprintf(p + j, sizeof(p) - j, "/proc/sys/");
+    while (dot_path[i] && j < sizeof(p) - 1) {
+        p[j++] = dot_path[i] == '.' ? '/' : dot_path[i]; i++;
+    }
+    p[j] = 0;
+    int fd = open(p, O_WRONLY); if (fd < 0) return -errno;
+    size_t l = strlen(value);
+    ssize_t w = write(fd, value, l); int e = errno; close(fd);
+    if (w < 0) return -e;
+    return 0;
+}|}
+
 (** Generate /proc/sys path constant and read/write accessors for a @sysctl global. *)
 let generate_sysctl_accessors_userspace (gv : ir_global_variable) =
   match gv.sysctl_path with
@@ -1321,6 +1354,7 @@ static inline void __ks_sysctl_%s_write(%s v) {
 (** Generate ALL declarations in original source order for userspace - complete implementation *)
 let generate_declarations_in_source_order_userspace ir_multi_prog =
   let declarations = ref [] in
+  let sysctl_helpers_emitted = ref false in
   
   (* Process source declarations in their original order - handle ALL declaration types *)
   List.iter (fun source_decl ->
@@ -1350,7 +1384,12 @@ let generate_declarations_in_source_order_userspace ir_multi_prog =
         (* Sysctl globals get inline accessors emitted here.
            Other globals are handled by the eBPF skeleton infrastructure. *)
         (match generate_sysctl_accessors_userspace global_var with
-         | Some accessors -> declarations := accessors :: !declarations
+         | Some accessors ->
+             if not !sysctl_helpers_emitted then begin
+               sysctl_helpers_emitted := true;
+               declarations := sysctl_stdlib_helpers_c :: !declarations
+             end;
+             declarations := accessors :: !declarations
          | None -> ())
     
     | Ir.IRDeclFunctionDef _func_def ->

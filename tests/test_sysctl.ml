@@ -266,6 +266,15 @@ let read_file p =
   let s = really_input_string ic (in_channel_length ic) in
   close_in ic; s
 
+let test_stdlib_helpers_emitted () =
+  let c = user_c_of {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@xdp fn p(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 { return 0 }
+|} in
+  Alcotest.(check bool) "read helper defined"  true (mentions "__ks_sysctl_read_str(" c);
+  Alcotest.(check bool) "write helper defined" true (mentions "__ks_sysctl_write_str(" c)
+
 let test_e2e_compiles_example () =
   let example = "examples/sysctl_demo.ks" in
   if not (Sys.file_exists example) then Alcotest.skip ()
@@ -305,6 +314,9 @@ let () =
       Alcotest.test_case "eBPF codegen omits sysctl globals" `Quick test_ebpf_codegen_omits_sysctl_globals;
       Alcotest.test_case "userspace emits sysctl accessors" `Quick test_userspace_emits_accessors;
       Alcotest.test_case "userspace rewrites load/store" `Quick test_userspace_rewrites_load_store;
+    ];
+    "stdlib", [
+      Alcotest.test_case "stdlib helpers emitted" `Quick test_stdlib_helpers_emitted;
     ];
     "e2e", [
       Alcotest.test_case "example file compiles" `Quick test_e2e_compiles_example;

@@ -251,6 +251,28 @@ let builtin_functions = [
     kernel_impl = "";
     validate = Some validate_read_function;
   };
+  {
+    name = "sysctl_read_str";
+    param_types = [Str 256; Pointer U8; U32];
+    return_type = I32;
+    description = "Read a sysctl as a raw string. Returns 0 or negative errno (userspace only).";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "__ks_sysctl_read_str";
+    kernel_impl = ""; (* Not available in kernel context *)
+    validate = None;
+  };
+  {
+    name = "sysctl_write_str";
+    param_types = [Str 256; Str 256];
+    return_type = I32;
+    description = "Write a string value to a sysctl. Returns 0 or negative errno (userspace only).";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "__ks_sysctl_write_str";
+    kernel_impl = ""; (* Not available in kernel context *)
+    validate = None;
+  };
 ]
 
 (** Get built-in function definition by name *)
