@@ -938,8 +938,6 @@ fn main() -> i32 {
 }
 ```
 
-**Escape hatch:** for dynamic paths or sysctls that don't fit the typed-handle shape (multi-valued sysctls like `kernel.printk`), use the stdlib helpers `sysctl_read_str` and `sysctl_write_str` documented in `BUILTINS.md`.
-
 ### 3.4 Kernel-Userspace Scoping Model
 
 KernelScript uses a simple and intuitive scoping model:
