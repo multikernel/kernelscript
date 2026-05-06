@@ -83,13 +83,13 @@ fn main() -> i32 {
 
 ---
 
-#### `attach(handle, target, flags)` / `attach(handle, attr)`
+#### `attach(handle, target, flags)` / `attach(handle, opts, flags)`
 **Signature:** `attach(handle: ProgramHandle, target: str(128), flags: u32) -> u32`
-**Signature:** `attach(handle: ProgramHandle, attr: perf_event_attr) -> u32`
+**Signature:** `attach(handle: ProgramHandle, opts: perf_options, flags: u32) -> u32`
 **Variadic:** No
 **Context:** Userspace only
 
-**Description:** Attach a loaded eBPF program to a target interface or attachment point, or attach it to a perf event described by `perf_event_attr`.
+**Description:** Attach a loaded eBPF program to a target interface or attachment point, or to a perf event counter described by `perf_options`. Both forms take three arguments, keeping a uniform call shape across all program types.
 
 **Parameters:**
 - Standard form:
@@ -98,7 +98,8 @@ fn main() -> i32 {
     - `flags`: Attachment flags (context-dependent)
 - Perf event form:
     - `handle`: Program handle returned from `load()`
-    - `attr`: `perf_event_attr` value describing counter, pid, cpu, period, and filter flags
+    - `opts`: `perf_options` value — only `counter` is required; all other fields have defaults
+    - `flags`: Reserved (pass `0`)
 
 **Return Value:**
 - Returns `0` on success
@@ -112,24 +113,17 @@ if (result != 0) {
     print("Failed to attach program")
 }
 
-var perf_attr = perf_event_attr {
-    counter: branch_misses,
-    pid: -1,
-    cpu: 0,
-    period: 1000000,
-    wakeup: 1,
-    inherit: false,
-    exclude_kernel: false,
-    exclude_user: false
-}
-
+// Minimal perf attach — all non-counter fields use defaults:
+// pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1, flags=false
 var perf_prog = load(on_branch_miss)
-attach(perf_prog, perf_attr)
+attach(perf_prog, perf_options { counter: branch_misses }, 0)
+var count = perf_read(perf_prog)
+detach(perf_prog)
 ```
 
 **Context-specific implementations:**
 - **eBPF:** Not available
-- **Userspace:** Uses `attach_bpf_program_by_fd` for standard targets and `ks_open_perf_event` for perf events
+- **Userspace:** Uses `attach_bpf_program_by_fd` for standard targets and `ks_attach_perf_event` for perf events
 - **Kernel Module:** Not available
 
 ---
@@ -359,7 +353,7 @@ fn main() -> i32 {
 |----------|------|-----------|---------------|-------|
 | `print()` | ✅ | ✅ | ✅ | Different output destinations |
 | `load()` | ❌ | ✅ | ❌ | Program management only |
-| `attach()` | ❌ | ✅ | ❌ | Standard attach and perf_event_attr attach |
+| `attach()` | ❌ | ✅ | ❌ | Standard attach and perf_options attach |
 | `detach()` | ❌ | ✅ | ❌ | Program management only |
 | `register()` | ❌ | ✅ | ❌ | struct_ops registration |
 | `test()` | ❌ | ✅ | ❌ | Testing framework only |

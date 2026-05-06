@@ -146,7 +146,14 @@ let test_stdlib_integration () =
       (* attach uses custom validation (param_types = []), so count is 0 *)
       check int "attach parameter count" 0 (List.length params);
       check bool "attach return type is U32" true (return_type = Kernelscript.Ast.U32)
-  | None -> check bool "attach function signature should exist" false true)
+  | None -> check bool "attach function signature should exist" false true);
+
+  (* Verify that the custom validation function is wired up on the attach entry *)
+  (match Kernelscript.Stdlib.get_builtin_function "attach" with
+  | Some func ->
+      check bool "attach has custom validation wired up" true
+        (match func.validate with Some _ -> true | None -> false)
+  | None -> check bool "attach builtin should exist" false true)
 
 (** Test that calling attach without load fails *)
 let test_attach_without_load_fails () =
@@ -166,10 +173,12 @@ fn main() -> i32 {
     let (_, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ast in
     check bool "should fail when attach called with program reference" false true
   with
-  | Type_error (msg, _) -> 
+  | Type_error (msg, _) ->
       check bool "should fail with type error" true (String.length msg > 0);
-      check bool "error should mention attach" true (String.length msg > 5)
-  | _ -> 
+      (* Error message is: "attach() requires (handle, target, flags) — ..." *)
+      check bool "error message starts with attach()" true
+        (String.length msg >= 8 && String.sub msg 0 8 = "attach()")
+  | _ ->
       check bool "should fail when attach called with program reference" false true
 
 (** Test multiple program handles with proper resource management *)

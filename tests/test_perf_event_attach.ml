@@ -2,6 +2,8 @@ open Alcotest
 open Kernelscript.Ast
 open Kernelscript.Ir
 open Kernelscript.Userspace_codegen
+open Kernelscript.Parse
+open Kernelscript.Type_checker
 
 let contains_substr str substr =
   try
@@ -41,7 +43,7 @@ let perf_counter_value name raw_value =
 
 let perf_attr_expr ~pid ~cpu =
   make_ir_expr
-    (IRStructLiteral ("perf_event_attr", [
+    (IRStructLiteral ("perf_options", [
       ("counter", perf_counter_value "branch_misses" 5L);
       ("pid", int32_value pid);
       ("cpu", int32_value cpu);
@@ -51,7 +53,7 @@ let perf_attr_expr ~pid ~cpu =
       ("exclude_kernel", bool_value false);
       ("exclude_user", bool_value false);
     ]))
-    (IRStruct ("perf_event_attr", []))
+    (IRStruct ("perf_options", []))
     test_pos
 
 let make_generated_code instructions =
@@ -69,15 +71,16 @@ let make_generated_code instructions =
 
 let test_perf_event_codegen_enforces_pid_cpu_rules () =
   let prog_handle = make_ir_value (IRVariable "prog") IRI32 test_pos in
-  let attr_value = make_ir_value (IRVariable "attr") (IRStruct ("perf_event_attr", [])) test_pos in
+  let attr_value = make_ir_value (IRVariable "attr") (IRStruct ("perf_options", [])) test_pos in
+  let flags_value = uint32_value 0L in
   let attr_decl =
     make_ir_instruction
-      (IRVariableDecl (attr_value, IRStruct ("perf_event_attr", []), Some (perf_attr_expr ~pid:(-1L) ~cpu:(-1L))))
+      (IRVariableDecl (attr_value, IRStruct ("perf_options", []), Some (perf_attr_expr ~pid:(-1L) ~cpu:(-1L))))
       test_pos
   in
   let attach_call =
     make_ir_instruction
-      (IRCall (DirectCall "attach", [prog_handle; attr_value], None))
+      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], None))
       test_pos
   in
   let generated_code = make_generated_code [attr_decl; attach_call] in
@@ -100,10 +103,15 @@ let test_perf_event_codegen_enforces_pid_cpu_rules () =
   check bool "perf attach emits IOC_ENABLE on success" true
     (contains_substr generated_code "PERF_EVENT_IOC_ENABLE");
   check bool "perf attach prints success message" true
-    (contains_substr generated_code "Perf event program attached to perf_fd");
+    (contains_substr generated_code "Perf event program attached");
   (* Detach success detection *)
   check bool "perf detach prints success message" true
-    (contains_substr generated_code "Perf event program detached")
+    (contains_substr generated_code "Perf event program detached");
+  (* Duplicate attach protection and invalid fd guard *)
+  check bool "perf attach rejects duplicate prog_fd" true
+    (contains_substr generated_code "already attached. Use detach() first.");
+  check bool "perf attach rejects invalid prog_fd" true
+    (contains_substr generated_code "Invalid program file descriptor:")
 
 let find_substr_pos str substr =
   try Some (Str.search_forward (Str.regexp_string substr) str 0)
@@ -117,7 +125,7 @@ let appears_before str a b =
 
 let perf_attr_expr_with ~period ~wakeup =
   make_ir_expr
-    (IRStructLiteral ("perf_event_attr", [
+    (IRStructLiteral ("perf_options", [
       ("counter", perf_counter_value "branch_misses" 5L);
       ("pid",     int32_value 1234L);
       ("cpu",     int32_value 0L);
@@ -127,22 +135,23 @@ let perf_attr_expr_with ~period ~wakeup =
       ("exclude_kernel",  bool_value false);
       ("exclude_user",    bool_value false);
     ]))
-    (IRStruct ("perf_event_attr", []))
+    (IRStruct ("perf_options", []))
     test_pos
 
-(* Generate code that opens a perf event (calls ks_open_perf_event via attach(prog, attr)) *)
+(* Generate code that attaches a perf_event program via 3-arg attach(prog, opts, flags) *)
 let make_perf_code_with ~period ~wakeup =
   let prog_handle = make_ir_value (IRVariable "prog") IRI32 test_pos in
-  let attr_value  = make_ir_value (IRVariable "attr") (IRStruct ("perf_event_attr", [])) test_pos in
+  let attr_value  = make_ir_value (IRVariable "attr") (IRStruct ("perf_options", [])) test_pos in
+  let flags_value = uint32_value 0L in
   let attr_decl =
     make_ir_instruction
-      (IRVariableDecl (attr_value, IRStruct ("perf_event_attr", []),
+      (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
                        Some (perf_attr_expr_with ~period ~wakeup)))
       test_pos
   in
   let attach_call =
     make_ir_instruction
-      (IRCall (DirectCall "attach", [prog_handle; attr_value], None))
+      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], None))
       test_pos
   in
   make_generated_code [attr_decl; attach_call]
@@ -208,7 +217,10 @@ let test_standard_attach_uses_libbpf_error_checks () =
   in
   let generated_code = make_generated_code [attach_call] in
 
-  check int "standard attach branches use libbpf_get_error" 5
+  (* After removing the dead PERF_EVENT case from attach_bpf_program_by_fd, only
+     the four non-XDP program types (kprobe, tracing, tracepoint, TC) have a
+     libbpf_get_error check; XDP uses bpf_xdp_attach which returns a plain errno. *)
+  check int "standard attach branches use libbpf_get_error" 4
     (count_substr generated_code "libbpf_get_error(link)");
   check bool "old null-link checks removed" false
     (contains_substr generated_code "if (!link)");
@@ -220,11 +232,11 @@ let test_standard_attach_uses_libbpf_error_checks () =
     (contains_substr generated_code "Failed to attach TC program to interface '%s': %s")
 
 let test_perf_read_count_function_generated () =
-  (* Any program that uses attach(prog, attr) must also get the read/print helpers
+  (* Any program that uses attach(prog, opts, 0) must also get the read/print helpers
      so userspace code can observe real counting progress. *)
   let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
 
-  (* ks_read_perf_count must exist and use read() for the raw count *)
+  (* ks_read_perf_count is the low-level fd-level reader *)
   check bool "ks_read_perf_count function generated" true
     (contains_substr code "ks_read_perf_count");
   check bool "read() syscall used to fetch count from perf_fd" true
@@ -232,9 +244,15 @@ let test_perf_read_count_function_generated () =
   check bool "returns int64_t count value" true
     (contains_substr code "return (int64_t)count;");
 
-  (* ks_print_perf_count must exist and print with the PRId64 format for portability *)
-  check bool "ks_print_perf_count function generated" true
-    (contains_substr code "ks_print_perf_count");
+  (* ks_perf_read is the high-level program-handle reader (new API) *)
+  check bool "ks_perf_read function generated" true
+    (contains_substr code "ks_perf_read");
+  check bool "ks_perf_read looks up attachment for prog_fd" true
+    (contains_substr code "ks_perf_read: no active attachment");
+
+  (* ks_perf_print wraps ks_perf_read for quick diagnostics *)
+  check bool "ks_perf_print function generated" true
+    (contains_substr code "ks_perf_print");
   check bool "prints counter with PRId64 format" true
     (contains_substr code "PRId64");
   check bool "prints [perf] prefix for easy log grepping" true
@@ -246,15 +264,103 @@ let test_perf_read_count_function_generated () =
   check bool "short read diagnostic present" true
     (contains_substr code "short read")
 
+let test_perf_attach_event_function_generated () =
+  (* attach(prog, perf_options{...}, 0) must generate ks_attach_perf_event which
+     owns the full open-reset-attach-enable lifecycle in a single C function. *)
+  let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
+
+  check bool "ks_attach_perf_event function generated" true
+    (contains_substr code "ks_attach_perf_event");
+  check bool "ks_attach_perf_event calls ks_open_perf_event" true
+    (contains_substr code "ks_open_perf_event");
+  check bool "counter reset before attach" true
+    (contains_substr code "PERF_EVENT_IOC_RESET");
+  check bool "bpf_program__attach_perf_event used for linking" true
+    (contains_substr code "bpf_program__attach_perf_event");
+  check bool "IOC_ENABLE used to start counting" true
+    (contains_substr code "PERF_EVENT_IOC_ENABLE");
+  (* The old __PERF_RAW_EMIT__ sentinel and snprintf string hack must be gone *)
+  check bool "no __PERF_RAW_EMIT__ sentinel in generated code" false
+    (contains_substr code "__PERF_RAW_EMIT__");
+  check bool "no snprintf perf_fd string hack" false
+    (contains_substr code "snprintf(%s, sizeof(%s),");
+  check bool "find_prog_by_fd helper used for program lookup" true
+    (contains_substr code "find_prog_by_fd")
+
+(* ── Type-checking regression tests ───────────────────────────────────── *)
+
+let parse_and_check source =
+  let ast = parse_string source in
+  type_check_ast ast
+
+(* A well-formed @perf_event function must pass the type checker end-to-end. *)
+let test_perf_event_valid_signature () =
+  let source =
+    "@perf_event\nfn on_event(ctx: *bpf_perf_event_data) -> i32 {\n    return 0\n}" in
+  (match parse_and_check source with
+   | [_] -> ()
+   | _ -> fail "Valid @perf_event signature should pass type checking")
+
+(* Using the wrong context type (e.g. *xdp_md) must be rejected. *)
+let test_perf_event_wrong_ctx_type () =
+  let source =
+    "@perf_event\nfn on_event(ctx: *xdp_md) -> i32 {\n    return 0\n}" in
+  (try
+    let _ = parse_and_check source in
+    fail "Wrong context type should have been rejected by type checker"
+  with _ -> ())
+
+(* Zero parameters must be rejected. *)
+let test_perf_event_no_params () =
+  let source =
+    "@perf_event\nfn on_event() -> i32 {\n    return 0\n}" in
+  (try
+    let _ = parse_and_check source in
+    fail "Zero parameters should have been rejected by type checker"
+  with _ -> ())
+
+(* More than one parameter must be rejected. *)
+let test_perf_event_too_many_params () =
+  let source =
+    "@perf_event\nfn on_event(ctx: *bpf_perf_event_data, extra: u32) -> i32 {\n    return 0\n}" in
+  (try
+    let _ = parse_and_check source in
+    fail "Two parameters should have been rejected by type checker"
+  with _ -> ())
+
+(* Non-i32 return types (u32, void, bool) must be rejected. *)
+let test_perf_event_wrong_return_type () =
+  let invalid_cases = [
+    ("u32",  "@perf_event\nfn on_event(ctx: *bpf_perf_event_data) -> u32 { return 0 }");
+    ("void", "@perf_event\nfn on_event(ctx: *bpf_perf_event_data) -> void { }");
+    ("bool", "@perf_event\nfn on_event(ctx: *bpf_perf_event_data) -> bool { return false }");
+  ] in
+  List.iter (fun (label, source) ->
+    (try
+      let _ = parse_and_check source in
+      fail (Printf.sprintf "Return type '%s' should have been rejected by type checker" label)
+    with _ -> ())
+  ) invalid_cases
+
+let type_checking_tests = [
+  test_case "perf_event_valid_signature"  `Quick test_perf_event_valid_signature;
+  test_case "perf_event_wrong_ctx_type"   `Quick test_perf_event_wrong_ctx_type;
+  test_case "perf_event_no_params"        `Quick test_perf_event_no_params;
+  test_case "perf_event_too_many_params"  `Quick test_perf_event_too_many_params;
+  test_case "perf_event_wrong_return_type"`Quick test_perf_event_wrong_return_type;
+]
+
 let tests = [
   test_case "perf_event_codegen_enforces_pid_cpu_rules" `Quick test_perf_event_codegen_enforces_pid_cpu_rules;
   test_case "perf_event_counting_starts_correctly"      `Quick test_perf_event_counting_starts_correctly;
   test_case "perf_event_period_and_wakeup_defaults"     `Quick test_perf_event_period_and_wakeup_defaults;
   test_case "perf_event_period_and_wakeup_custom"       `Quick test_perf_event_period_and_wakeup_custom;
   test_case "perf_read_count_function_generated"        `Quick test_perf_read_count_function_generated;
+  test_case "perf_attach_event_function_generated"      `Quick test_perf_attach_event_function_generated;
   test_case "standard_attach_uses_libbpf_error_checks"  `Quick test_standard_attach_uses_libbpf_error_checks;
 ]
 
 let () = run "Perf Event Attach Tests" [
   ("perf_event_attach", tests);
+  ("perf_event_type_checking", type_checking_tests);
 ]

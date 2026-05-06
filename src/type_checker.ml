@@ -1177,6 +1177,17 @@ and type_check_struct_literal ctx struct_name field_assignments pos =
     let type_def = Hashtbl.find ctx.types struct_name in
     match type_def with
     | StructDef (_, struct_fields, _) ->
+        (* Fill in optional fields from language-level defaults before type-checking.
+           Required fields (absent from the defaults table) still cause an error if omitted. *)
+        let field_assignments =
+          match Stdlib.get_struct_field_defaults struct_name with
+          | None -> field_assignments
+          | Some defaults ->
+              List.fold_left (fun acc (field_name, default_lit) ->
+                if List.mem_assoc field_name acc then acc
+                else acc @ [(field_name, make_expr (Literal default_lit) pos)]
+              ) field_assignments defaults
+        in
         (* Type check each field assignment *)
         let typed_field_assignments = List.map (fun (field_name, field_expr) ->
           let typed_field_expr = type_check_expression ctx field_expr in

@@ -109,17 +109,17 @@ let validate_register_function arg_types ast_context _pos =
     | _ -> 
         (false, Some "register() requires an impl block argument")
 
-(** Validation function for attach() - accepts either standard 3-arg form or perf 2-arg form *)
+(** Validation function for attach() - accepts standard 3-arg form, and perf_options 3-arg form *)
 let validate_attach_function arg_types _ast_context _pos =
   match arg_types with
   | [ProgramHandle; Str _; (U8|U16|U32|U64|I8|I16|I32|I64)] ->
       (* Standard form: attach(prog, target, flags) *)
       (true, None)
-  | [ProgramHandle; Struct "perf_event_attr"] | [ProgramHandle; UserType "perf_event_attr"] ->
-      (* Perf event form: attach(prog, perf_event_attr) - compiler detects and routes appropriately *)
+  | [ProgramHandle; (Struct "perf_options" | UserType "perf_options"); (U8|U16|U32|U64|I8|I16|I32|I64)] ->
+      (* Perf event form: attach(prog, perf_options { ... }, flags) - uniform 3-arg shape *)
       (true, None)
   | _ ->
-      (false, Some "attach() requires either (handle, target, flags) or (handle, perf_event_attr)")
+      (false, Some "attach() requires (handle, target, flags) — target is a string or perf_options { ... }")
 
 (** Standard library built-in functions *)
 let builtin_functions = [
@@ -147,9 +147,9 @@ let builtin_functions = [
   };
   {
     name = "attach";
-    param_types = []; (* Custom validation handles both standard and perf_event forms *)
+    param_types = []; (* Custom validation handles both standard and perf_options forms *)
     return_type = U32; (* Returns 0 on success *)
-    description = "Attach a loaded eBPF program to a target with flags, or to a perf event counter";
+    description = "Attach a loaded eBPF program to a target with flags; target is a string or perf_options { ... }";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "bpf_prog_attach";
@@ -221,6 +221,28 @@ let builtin_functions = [
     userspace_impl = "exec_builtin"; (* Custom implementation in userspace *)
     kernel_impl = ""; (* Not available in kernel context *)
     validate = Some validate_exec_function;
+  };
+  {
+    name = "perf_read";
+    param_types = [ProgramHandle];
+    return_type = I64; (* Raw counter value, or -1 on error *)
+    description = "Read the current hardware/software counter value for a perf_event program";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "ks_perf_read";
+    kernel_impl = "";
+    validate = None;
+  };
+  {
+    name = "perf_print";
+    param_types = [ProgramHandle; Str 128];
+    return_type = Void;
+    description = "Print the current counter value for a perf_event program with a label";
+    is_variadic = false;
+    ebpf_impl = ""; (* Not available in eBPF context *)
+    userspace_impl = "ks_perf_print";
+    kernel_impl = "";
+    validate = None;
   };
 
 ]
@@ -300,8 +322,9 @@ let builtin_types = [
     ("cpu_migrations",       Some (Ast.Signed64 8L));
   ], builtin_pos));
 
-  (* perf_event_attr: KernelScript struct for specifying perf event configuration *)
-  TypeDef (StructDef ("perf_event_attr", [
+  (* perf_options: configuration bag for @perf_event programs.
+     Only 'counter' is required; all other fields have language-level defaults. *)
+  TypeDef (StructDef ("perf_options", [
     ("counter",        Enum "perf_counter");
     ("pid",            I32);
     ("cpu",            I32);
@@ -312,6 +335,23 @@ let builtin_types = [
     ("exclude_user",   Bool);
   ], builtin_pos));
 ]
+
+(** Default field values for structs that support partial initialisation.
+    Returns [(field_name, default_literal)] for optional fields only.
+    Required fields (e.g. counter in perf_options) are absent from the list,
+    so the type checker will still error if they are omitted. *)
+let get_struct_field_defaults = function
+  | "perf_options" ->
+      Some [
+        ("pid",            IntLit (Signed64 (-1L),      None));
+        ("cpu",            IntLit (Signed64 0L,         None));
+        ("period",         IntLit (Unsigned64 1000000L, None));
+        ("wakeup",         IntLit (Unsigned64 1L,       None));
+        ("inherit",        BoolLit false);
+        ("exclude_kernel", BoolLit false);
+        ("exclude_user",   BoolLit false);
+      ]
+  | _ -> None
 
 (** Get all builtin type definitions *)
 let get_builtin_types () = builtin_types

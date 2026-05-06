@@ -43,7 +43,7 @@ let rec ir_type_to_c target = function
        | UserspaceStd -> "char") (* Base type for userspace string - size handled in declaration *)
   | IRPointer (inner_type, _) -> sprintf "%s*" (ir_type_to_c target inner_type)
   | IRArray (inner_type, size, _) -> sprintf "%s[%d]" (ir_type_to_c target inner_type) size
-  | IRStruct ("perf_event_attr", _) -> "ks_perf_event_attr"  (* Avoid conflict with linux/perf_event.h *)
+  | IRStruct ("perf_options", _) -> "ks_perf_options"  (* Namespace KS type away from kernel structs *)
   | IRStruct (name, _) -> sprintf "struct %s" name
   | IREnum (name, _) -> sprintf "enum %s" name
   | IRResult (ok_type, _err_type) -> ir_type_to_c target ok_type (* simplified to ok type *)

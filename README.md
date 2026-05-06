@@ -270,7 +270,7 @@ fn main() -> i32 {
 
 ### Hardware Performance Counter Programs
 
-Use `@perf_event` to attach eBPF programs to hardware or software performance counters. The userspace side describes the counter via a `perf_event_attr` struct literal and calls `attach(prog, attr)`:
+Use `@perf_event` to attach eBPF programs to hardware or software performance counters. Only `counter` is required in the `perf_options` struct; all other fields have sensible defaults. Call `attach(prog, perf_options { ... }, 0)` and read back the counter with `perf_read(prog)`:
 
 ```kernelscript
 // eBPF program fires on every hardware branch-miss sample
@@ -280,20 +280,16 @@ fn on_branch_miss(ctx: *bpf_perf_event_data) -> i32 {
 }
 
 fn main() -> i32 {
-    var attr = perf_event_attr {
-        counter: branch_misses,   // hardware counter (see perf_counter enum)
-        pid: -1,                  // all processes
-        cpu: 0,                   // CPU 0
-        period: 1000000,          // sample every 1 million events
-        wakeup: 1,
-        inherit: false,
-        exclude_kernel: false,
-        exclude_user: false
-    }
-
     var prog = load(on_branch_miss)
-    attach(prog, attr)    // opens perf_event_open fd, resets, attaches BPF, enables
-    detach(prog)          // disables counter, destroys BPF link, closes fd
+
+    // Minimal form — defaults: pid=-1 (all procs), cpu=0,
+    // period=1_000_000, wakeup=1, all flags=false
+    attach(prog, perf_options { counter: branch_misses }, 0)
+
+    var count = perf_read(prog)   // read counter via program handle
+    print(count)
+
+    detach(prog)   // disables counter, destroys BPF link, closes fd
     return 0
 }
 ```
