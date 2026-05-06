@@ -4053,7 +4053,8 @@ struct attachment_entry {
     uint32_t flags;
     struct bpf_link *link;    // For kprobe/tracepoint programs (NULL for XDP)
     int ifindex;              // For XDP programs (0 for kprobe/tracepoint)
-  int perf_fd;              // For perf_event programs (-1 otherwise)
+    int perf_fd;              // For perf_event programs (-1 otherwise)
+    int detaching;            // Non-zero while teardown is in progress
     enum bpf_prog_type type;
     struct attachment_entry *next;
 };
@@ -4081,11 +4082,14 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
     entry->perf_fd = perf_fd;
     entry->type = type;
     
+    entry->detaching = 0;
     pthread_mutex_lock(&attachment_mutex);
-    /* Reject duplicate insertions atomically */
+    /* Reject duplicate insertions atomically.
+     * Skip entries that are currently being torn down (detaching != 0) so that
+     * a new attach can succeed while the old detach is still running. */
     struct attachment_entry *existing = attached_programs;
     while (existing) {
-        if (existing->prog_fd == prog_fd) {
+        if (existing->prog_fd == prog_fd && !existing->detaching) {
             pthread_mutex_unlock(&attachment_mutex);
             free(entry);
             fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
@@ -4328,18 +4332,16 @@ static struct bpf_program *find_prog_by_fd(int prog_fd) {
         return;
     }
     
-    /* Atomically extract the entry from the list so concurrent detach/perf_read
-     * cannot dereference a freed pointer. */
+    /* Phase 1: mark the entry as detaching under the lock so concurrent
+     * perf_read skips it and a concurrent add_attachment can proceed. */
     pthread_mutex_lock(&attachment_mutex);
-    struct attachment_entry *entry = NULL;
-    struct attachment_entry **cur = &attached_programs;
-    while (*cur) {
-        if ((*cur)->prog_fd == prog_fd) {
-            entry = *cur;
-            *cur = entry->next;
+    struct attachment_entry *entry = attached_programs;
+    while (entry) {
+        if (entry->prog_fd == prog_fd && !entry->detaching) {
+            entry->detaching = 1;
             break;
         }
-        cur = &(*cur)->next;
+        entry = entry->next;
     }
     pthread_mutex_unlock(&attachment_mutex);
 
@@ -4400,6 +4402,17 @@ static struct bpf_program *find_prog_by_fd(int prog_fd) {
             break;
     }
     
+    /* Phase 2: teardown is complete; remove entry from tracking list and free. */
+    pthread_mutex_lock(&attachment_mutex);
+    struct attachment_entry **cur2 = &attached_programs;
+    while (*cur2) {
+        if (*cur2 == entry) {
+            *cur2 = entry->next;
+            break;
+        }
+        cur2 = &(*cur2)->next;
+    }
+    pthread_mutex_unlock(&attachment_mutex);
     free(entry);
 }|} detach_perf_case
     else "" in
@@ -4685,15 +4698,18 @@ int64_t ks_read_perf_count(int perf_fd) {
 /* Read the counter for the perf_event program bound to prog_fd.
  * Looks up the perf_fd from the attachment table and calls ks_read_perf_count. */
 int64_t ks_perf_read(int prog_fd) {
-    /* Read perf_fd under the lock so the entry cannot be freed concurrently */
+    /* Dup perf_fd under the lock so a concurrent detach closing the original fd
+     * cannot affect the fd we read from.  Skip entries marked detaching. */
     pthread_mutex_lock(&attachment_mutex);
     int found = 0;
-    int perf_fd = -1;
+    int dup_fd = -1;
     struct attachment_entry *cur = attached_programs;
     while (cur) {
         if (cur->prog_fd == prog_fd) {
-            found = 1;
-            perf_fd = cur->perf_fd;
+            if (!cur->detaching && cur->perf_fd >= 0) {
+                found = 1;
+                dup_fd = dup(cur->perf_fd);
+            }
             break;
         }
         cur = cur->next;
@@ -4703,11 +4719,13 @@ int64_t ks_perf_read(int prog_fd) {
         fprintf(stderr, "ks_perf_read: no active attachment for program fd %d\n", prog_fd);
         return -1;
     }
-    if (perf_fd < 0) {
+    if (dup_fd < 0) {
         fprintf(stderr, "ks_perf_read: program fd %d is not a perf_event program\n", prog_fd);
         return -1;
     }
-    return ks_read_perf_count(perf_fd);
+    int64_t result = ks_read_perf_count(dup_fd);
+    close(dup_fd);
+    return result;
 }
 
 /* Print the current counter value for a named event to stdout.

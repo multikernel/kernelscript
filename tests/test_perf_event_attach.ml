@@ -263,8 +263,19 @@ let test_perf_read_count_function_generated () =
     (contains_substr code "ks_read_perf_count: read failed on perf_fd");
   check bool "short read diagnostic present" true
     (contains_substr code "short read");
-  check bool "ks_perf_read reads perf_fd under the lock" true
-    (contains_substr code "Read perf_fd under the lock")
+  check bool "ks_perf_read dups perf_fd under the lock" true
+    (contains_substr code "Dup perf_fd under the lock")
+
+let test_perf_read_detach_concurrent_window () =
+  (* When detach runs concurrently with perf_read, perf_read must dup the fd
+   * under the lock so that close(perf_fd) in detach cannot affect the read. *)
+  let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
+  check bool "ks_perf_read dups perf_fd under the lock" true
+    (contains_substr code "dup_fd = dup(cur->perf_fd)");
+  check bool "ks_perf_read closes dup'd fd after reading" true
+    (contains_substr code "close(dup_fd)");
+  check bool "ks_perf_read skips detaching entries" true
+    (contains_substr code "!cur->detaching && cur->perf_fd >= 0")
 
 let test_perf_attach_event_function_generated () =
   (* attach(prog, perf_options{...}, 0) must generate ks_attach_perf_event which
@@ -292,6 +303,20 @@ let test_perf_attach_event_function_generated () =
     (contains_substr code "is not a @perf_event program");
   check bool "add_attachment performs atomic duplicate check" true
     (contains_substr code "Reject duplicate insertions atomically")
+
+let test_detach_attach_concurrent_window () =
+  (* During a detach, the entry stays in the list but is marked detaching=1.
+   * A concurrent attach for the same prog_fd must succeed (not be blocked by
+   * the still-present but detaching entry). *)
+  let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
+  check bool "attachment_entry has detaching field" true
+    (contains_substr code "int detaching;");
+  check bool "add_attachment skips detaching entries in duplicate check" true
+    (contains_substr code "!existing->detaching");
+  check bool "detach marks entry as detaching before teardown" true
+    (contains_substr code "entry->detaching = 1");
+  check bool "detach re-locks to unlink and free entry after teardown" true
+    (contains_substr code "Phase 2: teardown is complete")
 
 (* ── Type-checking regression tests ───────────────────────────────────── *)
 
@@ -363,6 +388,8 @@ let tests = [
   test_case "perf_event_period_and_wakeup_custom"       `Quick test_perf_event_period_and_wakeup_custom;
   test_case "perf_read_count_function_generated"        `Quick test_perf_read_count_function_generated;
   test_case "perf_attach_event_function_generated"      `Quick test_perf_attach_event_function_generated;
+  test_case "perf_read_detach_concurrent_window"        `Quick test_perf_read_detach_concurrent_window;
+  test_case "detach_attach_concurrent_window"           `Quick test_detach_attach_concurrent_window;
   test_case "standard_attach_uses_libbpf_error_checks"  `Quick test_standard_attach_uses_libbpf_error_checks;
 ]
 
