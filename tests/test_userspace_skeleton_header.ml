@@ -86,6 +86,7 @@ let test_skeleton_header_included_with_global_variables () =
     global_var_pos = test_pos;
     is_local = false;
     is_pinned = false;
+    sysctl_path = None;
   } in
   
   let printf_call = make_ir_instruction (IRCall (DirectCall "printf", [make_ir_value (IRLiteral (StringLit "Hello World")) (IRStr 20) test_pos], None)) test_pos in

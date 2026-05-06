@@ -2751,6 +2751,11 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
               | _ -> None))
     | None -> None
   in
+  let sysctl_path =
+    List.find_map (function
+      | Ast.AttributeWithArg ("sysctl", p) -> Some p
+      | _ -> None) global_var_decl.global_var_attributes
+  in
   make_ir_global_variable
     global_var_decl.global_var_name
     ir_type
@@ -2758,6 +2763,7 @@ let lower_global_variable_declaration symbol_table (global_var_decl : Ast.global
     global_var_decl.global_var_pos
     ~is_local:global_var_decl.is_local
     ~is_pinned:global_var_decl.is_pinned
+    ~sysctl_path
     ()
 
 

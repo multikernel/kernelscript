@@ -173,6 +173,41 @@ fn main() -> i32 {
 }
 |})
 
+let ir_of src =
+  let ast = Kernelscript.Parse.parse_string src in
+  let symbol_table = Kernelscript.Symbol_table.build_symbol_table ast in
+  let (typed_ast, _) =
+    Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+  Kernelscript.Ir_generator.generate_ir typed_ast symbol_table "test"
+
+let test_ir_carries_sysctl_path () =
+  let ir = ir_of {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@xdp fn p(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 { return 0 }
+|} in
+  let globals = Kernelscript.Ir.get_global_variables ir in
+  let found =
+    List.exists (fun gv ->
+      gv.Kernelscript.Ir.global_var_name = "somaxconn"
+      && gv.Kernelscript.Ir.sysctl_path = Some "net.core.somaxconn")
+      globals in
+  Alcotest.(check bool) "IR records sysctl path" true found
+
+let test_ir_no_path_for_plain_global () =
+  let ir = ir_of {|
+var plain: u32
+@xdp fn p(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 { return 0 }
+|} in
+  let globals = Kernelscript.Ir.get_global_variables ir in
+  let found =
+    List.exists (fun gv ->
+      gv.Kernelscript.Ir.global_var_name = "plain"
+      && gv.Kernelscript.Ir.sysctl_path = None)
+      globals in
+  Alcotest.(check bool) "plain global has sysctl_path = None" true found
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
@@ -191,5 +226,9 @@ let () =
       Alcotest.test_case "reject access from @helper" `Quick test_reject_sysctl_in_helper;
       Alcotest.test_case "reject access from @kfunc" `Quick test_reject_sysctl_in_kfunc;
       Alcotest.test_case "allow access from userspace" `Quick test_allow_sysctl_in_userspace;
+    ];
+    "ir", [
+      Alcotest.test_case "IR carries sysctl path" `Quick test_ir_carries_sysctl_path;
+      Alcotest.test_case "plain global has no sysctl path" `Quick test_ir_no_path_for_plain_global;
     ];
   ]
