@@ -273,6 +273,48 @@ var stats : hash<u32, Stats>(1024)
   check bool "field write goes through the underlying lookup pointer" true
     (contains_substr c "->count =")
 
+(** 11a. Reject: int-literal RHS — `if (var x = 5)` is not a presence check.
+        The construct only makes sense when the RHS is a map access (auto-
+        deref'd to a value but underlying-pointer-checked) or a pointer-typed
+        expression. An integer RHS would lower to `__u32 x; if (x != NULL)`,
+        which warns under -Wpointer-integer-compare and is semantically
+        incoherent — also the evaluator's truthiness rules diverge from the
+        codegen's `!= NULL` for non-pointer types. *)
+let test_reject_int_literal_rhs () =
+  let source = {|
+@xdp fn probe(ctx: *xdp_md) -> xdp_action {
+  if (var x = 5) {
+    return XDP_PASS
+  }
+  return XDP_DROP
+}
+|} in
+  try
+    let _ = typecheck source in
+    fail "expected rejection of integer-literal RHS"
+  with
+  | Kernelscript.Type_checker.Type_error _ -> ()
+
+(** 11b. Reject: non-pointer-returning function RHS. *)
+let test_reject_non_pointer_call_rhs () =
+  let source = {|
+@helper fn returns_zero() -> u32 {
+  return 0
+}
+
+@xdp fn probe(ctx: *xdp_md) -> xdp_action {
+  if (var x = returns_zero()) {
+    return XDP_PASS
+  }
+  return XDP_DROP
+}
+|} in
+  try
+    let _ = typecheck source in
+    fail "expected rejection of non-pointer-returning call as RHS"
+  with
+  | Kernelscript.Type_checker.Type_error _ -> ()
+
 (** 11. Codegen (shadowing): an outer binding of the same name as the IfLet
        binding must survive both branches and remain referenceable after the
        if. The branch-local invariant the frontend enforces (binding visible
@@ -325,6 +367,8 @@ let suite = [
   "codegen_scalar_value_binding",     `Quick, test_codegen_scalar_value_binding;
   "codegen_struct_value_binding_shape", `Quick, test_codegen_struct_value_binding_shape;
   "codegen_shadow_outer_binding",     `Quick, test_codegen_shadow_outer_binding;
+  "reject_int_literal_rhs",           `Quick, test_reject_int_literal_rhs;
+  "reject_non_pointer_call_rhs",      `Quick, test_reject_non_pointer_call_rhs;
 ]
 
 let () =

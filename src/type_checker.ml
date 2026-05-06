@@ -2054,12 +2054,37 @@ and type_check_statement ctx stmt =
 
   | IfLet (name, expr, then_stmts, else_opt) ->
       (* `if (var name = expr) { ... }` — bind `name` only inside then-branch.
-         The bound type matches what `var name = expr` would normally produce:
-         the value type for map access (auto-deref via IRMapAccess), and
-         the pointer type for raw pointer expressions. We just type-check the
-         RHS and use its inferred type as the binding type. *)
+         The bound type matches what `var name = expr` would normally
+         produce: the value type for map access (auto-deref via
+         IRMapAccess), and the pointer type for raw pointer expressions.
+         We restrict the RHS to "presence-producing" expressions, since
+         the construct's truthiness is defined as "expr produced a present
+         value" — i.e., a map hit or a non-null pointer. Allowing arbitrary
+         scalar / struct RHS would let the codegen emit `x != NULL`
+         against a non-pointer value (clang -Wpointer-integer-compare,
+         invalid C for struct types) and would let the evaluator's general
+         truthy-falsy rule diverge from the codegen's pointer presence
+         check. The legal shapes are:
+           - `m[k]` where `m` is a known map (auto-deref'd value type at
+             this layer, but underlying-pointer-checked at codegen)
+           - any expression of pointer type. *)
       let typed_expr = type_check_expression ctx expr in
       let bound_type = typed_expr.texpr_type in
+      let is_map_access_rhs = match expr.expr_desc with
+        | ArrayAccess ({ expr_desc = Identifier mn; _ }, _) ->
+            Hashtbl.mem ctx.maps mn
+        | _ -> false
+      in
+      let is_pointer_rhs = match bound_type with
+        | Pointer _ -> true
+        | _ -> false
+      in
+      if not (is_map_access_rhs || is_pointer_rhs) then
+        type_error
+          ("`if (var " ^ name ^ " = expr)` requires expr to be a map access " ^
+           "(`m[k]`) or a pointer-typed expression; got " ^
+           string_of_bpf_type bound_type)
+          stmt.stmt_pos;
       let saved = Hashtbl.find_opt ctx.variables name in
       Hashtbl.replace ctx.variables name bound_type;
       let typed_then = List.map (type_check_statement ctx) then_stmts in
