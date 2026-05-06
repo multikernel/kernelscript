@@ -1882,7 +1882,7 @@ let generate_variable_assignment ctx dest src is_const =
         (* For string assignments, use safer approach to avoid truncation warnings *)
         let result = (match dest.val_type with
          | IRStr size -> 
-             sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+             sprintf "%s{ const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str dest_str size dest_str size
          | _ -> 
              sprintf "%s%s = %s;" assignment_prefix dest_str src_str) in
         
@@ -1903,7 +1903,7 @@ let generate_variable_assignment ctx dest src is_const =
       (* For string assignments, use safer approach to avoid truncation warnings *)
       let result = (match dest.val_type with
        | IRStr size -> 
-           sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+           sprintf "%s{ const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str dest_str size dest_str size
        | _ -> 
            sprintf "%s%s = %s;" assignment_prefix dest_str src_str) in
       
@@ -1972,10 +1972,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
                 (match init_expr.expr_desc with
                  | IRValue (ir_val) when (match ir_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
                      (* Simple string literal - use safe initialization with length checking *)
-                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name init_str c_var_name init_str size c_var_name size
+                     sprintf "%s;\n    { const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name c_var_name size c_var_name size
                  | _ ->
                      (* Complex expression (function call, concatenation, etc.) - use safe strcpy with length checking *)
-                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name init_str c_var_name init_str size c_var_name size)
+                     sprintf "%s;\n    { const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name c_var_name size c_var_name size)
             | None ->
                 sprintf "%s;" string_decl)
        | IRArray (element_type, size, _) ->

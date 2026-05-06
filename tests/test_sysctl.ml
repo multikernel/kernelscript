@@ -261,6 +261,34 @@ fn main() -> i32 {
   Alcotest.(check bool) "load → read call"   true (mentions "__ks_sysctl_somaxconn_read(" c);
   Alcotest.(check bool) "store → write call" true (mentions "__ks_sysctl_somaxconn_write(" c)
 
+(* Count how many times a substring appears in a string. *)
+let count_occurrences needle haystack =
+  let nlen = String.length needle in
+  let rec loop i acc =
+    if i > String.length haystack - nlen then acc
+    else if String.sub haystack i nlen = needle then loop (i + nlen) (acc + 1)
+    else loop (i + 1) acc
+  in
+  loop 0 0
+
+let test_str_sysctl_load_store () =
+  let c = user_c_of {|
+@sysctl("kernel.hostname") var hostname: str(64)
+@xdp fn p(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 {
+  var current: str(64) = hostname
+  hostname = "edge-01"
+  return 0
+}
+|} in
+  Alcotest.(check bool) "str load → read call"   true (mentions "__ks_sysctl_hostname_read(" c);
+  Alcotest.(check bool) "str store → write call" true (mentions "__ks_sysctl_hostname_write(\"edge-01\")" c);
+  (* Reading hostname into a local must not re-invoke the accessor multiple
+     times. The call count for the whole file is 1 (the load) plus 1 (the
+     accessor's own definition reference). *)
+  let calls = count_occurrences "__ks_sysctl_hostname_read(__ks_sb_hostname)" c in
+  Alcotest.(check int) "read called once per load" 1 calls
+
 let read_file p =
   let ic = open_in p in
   let s = really_input_string ic (in_channel_length ic) in
@@ -305,6 +333,7 @@ let () =
       Alcotest.test_case "eBPF codegen omits sysctl globals" `Quick test_ebpf_codegen_omits_sysctl_globals;
       Alcotest.test_case "userspace emits sysctl accessors" `Quick test_userspace_emits_accessors;
       Alcotest.test_case "userspace rewrites load/store" `Quick test_userspace_rewrites_load_store;
+      Alcotest.test_case "str sysctl load/store" `Quick test_str_sysctl_load_store;
     ];
     "e2e", [
       Alcotest.test_case "example file compiles" `Quick test_e2e_compiles_example;
