@@ -386,6 +386,52 @@ let validate_ringbuf_object ctx _name ringbuf_type pos =
         type_error ("Ring buffer size must not exceed 128MB, got: " ^ string_of_int size) pos
   | _ -> () (* Not a ring buffer, no validation needed *)
 
+(** Validate a @sysctl global variable declaration *)
+let validate_sysctl_decl gv =
+  let path =
+    List.find_map (function
+      | AttributeWithArg ("sysctl", p) -> Some p
+      | _ -> None) gv.global_var_attributes
+  in
+  match path with
+  | None -> ()
+  | Some path ->
+    if path = ""
+       || String.contains path '/'
+       || (try ignore (Str.search_forward (Str.regexp_string "..") path 0); true
+           with Not_found -> false)
+    then type_error
+           ("Invalid sysctl path '" ^ path ^ "': must be a non-empty dotted string with no '/' or '..'")
+           gv.global_var_pos;
+
+    let type_ok = match gv.global_var_type with
+      | Some t ->
+        (match t with
+         | U8 | U16 | U32 | U64
+         | I8 | I16 | I32 | I64
+         | Bool
+         | Str _ -> true
+         | _ -> false)
+      | None -> false
+    in
+    if not type_ok then
+      type_error
+        ("sysctl variable '" ^ gv.global_var_name ^
+         "' must be an integer, bool, or str(N) (no struct/array/map types)")
+        gv.global_var_pos;
+
+    if gv.global_var_init <> None then
+      type_error
+        ("sysctl variable '" ^ gv.global_var_name ^
+         "' cannot have an initializer; values come from /proc/sys")
+        gv.global_var_pos;
+
+    if gv.is_pinned then
+      type_error
+        ("sysctl variable '" ^ gv.global_var_name ^
+         "' cannot also be 'pin'")
+        gv.global_var_pos
+
 (** Check if we can assign from_type to to_type (for variable declarations) *)
 let can_assign to_type from_type =
   match unify_types to_type from_type with
@@ -2487,13 +2533,15 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
         in
         Hashtbl.replace ctx.maps map_decl.name ir_map_def
     | GlobalVarDecl global_var_decl ->
+        (* Validate @sysctl declarations *)
+        validate_sysctl_decl global_var_decl;
         (* Validate pinning rules: cannot pin local variables *)
         if global_var_decl.is_pinned && global_var_decl.is_local then
           type_error "Cannot pin local variables - only shared variables can be pinned" global_var_decl.global_var_pos;
-        
+
         (* Add global variable to type checker context *)
         let var_type = match global_var_decl.global_var_type with
-          | Some t -> 
+          | Some t ->
               let resolved_type = resolve_user_type ctx t in
               (* Validate ring buffer objects *)
               validate_ringbuf_object ctx global_var_decl.global_var_name resolved_type global_var_decl.global_var_pos;
@@ -2503,7 +2551,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
         Hashtbl.replace ctx.variables global_var_decl.global_var_name var_type
     | _ -> ()
   ) ast;
-  
+
   (* Second pass: First register ALL function signatures (global and attributed) *)
   List.iter (function
     | GlobalFunction func ->
@@ -2848,13 +2896,15 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
     | ConfigDecl config_decl ->
         Hashtbl.replace ctx.configs config_decl.config_name config_decl
     | GlobalVarDecl global_var_decl ->
+        (* Validate @sysctl declarations *)
+        validate_sysctl_decl global_var_decl;
         (* Validate pinning rules: cannot pin local variables *)
         if global_var_decl.is_pinned && global_var_decl.is_local then
           type_error "Cannot pin local variables - only shared variables can be pinned" global_var_decl.global_var_pos;
-        
+
         (* Add global variable to type checker context *)
         let var_type = match global_var_decl.global_var_type with
-          | Some t -> 
+          | Some t ->
               let resolved_type = resolve_user_type ctx t in
               (* Validate ring buffer objects *)
               validate_ringbuf_object ctx global_var_decl.global_var_name resolved_type global_var_decl.global_var_pos;

@@ -68,11 +68,86 @@ fn main() -> i32 { return 0 }
     | _ -> acc) 0 ast in
   Alcotest.(check int) "two attributes accumulated" 2 count
 
+let typecheck_string src =
+  let ast = Kernelscript.Parse.parse_string src in
+  Kernelscript.Type_checker.type_check_ast ast
+
+let expect_typecheck_error ~fragment src =
+  let got =
+    try Ok (typecheck_string src) with
+    | Kernelscript.Type_checker.Type_error (m, _) -> Error m
+  in
+  match got with
+  | Error m ->
+    let contains hay needle =
+      try ignore (Str.search_forward (Str.regexp_string needle) hay 0); true
+      with Not_found -> false
+    in
+    Alcotest.(check bool) ("error contains '" ^ fragment ^ "'") true (contains m fragment)
+  | Ok _ ->
+    Alcotest.failf "expected type error containing '%s', got success" fragment
+
+let test_reject_unsupported_type () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net.core.somaxconn")
+var somaxconn: hash<u32, u32>(1)
+fn main() -> i32 { return 0 }
+|}
+
+let test_reject_bad_path_double_dot () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net..core")
+var x: u32
+fn main() -> i32 { return 0 }
+|}
+
+let test_reject_bad_path_absolute () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("/proc/sys/net/core/somaxconn")
+var x: u32
+fn main() -> i32 { return 0 }
+|}
+
+let test_reject_initializer () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net.core.somaxconn")
+var x: u32 = 100
+fn main() -> i32 { return 0 }
+|}
+
+let test_reject_pin_combination () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net.core.somaxconn")
+pin var x: u32
+fn main() -> i32 { return 0 }
+|}
+
+let test_accept_int_bool_str () =
+  ignore (typecheck_string {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@sysctl("net.ipv4.ip_forward") var ip_forward: bool
+@sysctl("kernel.hostname") var hostname: str(64)
+fn main() -> i32 { return 0 }
+|})
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
       Alcotest.test_case "attribute on global var" `Quick test_parse_sysctl_attribute;
       Alcotest.test_case "simple attribute on global var" `Quick test_parse_simple_attribute;
       Alcotest.test_case "multiple attributes on global var" `Quick test_parse_multiple_attributes;
+    ];
+    "typecheck", [
+      Alcotest.test_case "reject unsupported type" `Quick test_reject_unsupported_type;
+      Alcotest.test_case "reject bad path (double dot)" `Quick test_reject_bad_path_double_dot;
+      Alcotest.test_case "reject bad path (absolute)" `Quick test_reject_bad_path_absolute;
+      Alcotest.test_case "reject initializer" `Quick test_reject_initializer;
+      Alcotest.test_case "reject pin combination" `Quick test_reject_pin_combination;
+      Alcotest.test_case "accept int/bool/str" `Quick test_accept_int_bool_str;
     ];
   ]
