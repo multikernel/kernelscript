@@ -1470,13 +1470,23 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            ) elems in
            sprintf "{%s}" (String.concat ", " elem_strs))
-  | IRVariable name -> 
+  | IRVariable name ->
       (* Check if this is a global variable that should be accessed through skeleton *)
       let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
       if is_global then
         (* Access global variable through skeleton *)
         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
-        if global_var.is_local then
+        if global_var.sysctl_path <> None then
+          (* sysctl reads call the typed accessor.
+             For str(N) we wrap in a stmt-expr backed by a static buffer
+             so the load expression has a usable lifetime. *)
+          (match global_var.global_var_type with
+           | IRStr n ->
+               sprintf "({ static char __ks_sb_%s[%d]; __ks_sysctl_%s_read(__ks_sb_%s); __ks_sb_%s; })"
+                 name n name name name
+           | _ ->
+               sprintf "__ks_sysctl_%s_read()" name)
+        else if global_var.is_local then
           (* Local global variables are not accessible from userspace *)
           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
         else if global_var.is_pinned then
@@ -1854,7 +1864,9 @@ let generate_variable_assignment ctx dest src is_const =
       if is_global then
         (* Global variable assignment - add null check to prevent segfault *)
         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
-        if global_var.is_local then
+        if global_var.sysctl_path <> None then
+          sprintf "%s__ks_sysctl_%s_write(%s);" assignment_prefix name src_str
+        else if global_var.is_local then
           (* Local global variables are not accessible from userspace *)
           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
         else if global_var.is_pinned then

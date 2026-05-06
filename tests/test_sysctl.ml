@@ -248,6 +248,19 @@ fn main() -> i32 { return 0 }
   Alcotest.(check bool) "read accessor"  true (mentions "__ks_sysctl_somaxconn_read" c);
   Alcotest.(check bool) "write accessor" true (mentions "__ks_sysctl_somaxconn_write" c)
 
+let test_userspace_rewrites_load_store () =
+  let c = user_c_of {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@xdp fn p(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 {
+  var was = somaxconn
+  somaxconn = 4096
+  return 0
+}
+|} in
+  Alcotest.(check bool) "load → read call"   true (mentions "__ks_sysctl_somaxconn_read(" c);
+  Alcotest.(check bool) "store → write call" true (mentions "__ks_sysctl_somaxconn_write(" c)
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
@@ -274,5 +287,6 @@ let () =
     "codegen", [
       Alcotest.test_case "eBPF codegen omits sysctl globals" `Quick test_ebpf_codegen_omits_sysctl_globals;
       Alcotest.test_case "userspace emits sysctl accessors" `Quick test_userspace_emits_accessors;
+      Alcotest.test_case "userspace rewrites load/store" `Quick test_userspace_rewrites_load_store;
     ];
   ]
