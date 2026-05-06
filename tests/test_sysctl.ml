@@ -261,6 +261,23 @@ fn main() -> i32 {
   Alcotest.(check bool) "load → read call"   true (mentions "__ks_sysctl_somaxconn_read(" c);
   Alcotest.(check bool) "store → write call" true (mentions "__ks_sysctl_somaxconn_write(" c)
 
+let read_file p =
+  let ic = open_in p in
+  let s = really_input_string ic (in_channel_length ic) in
+  close_in ic; s
+
+let test_e2e_compiles_example () =
+  let example = "examples/sysctl_demo.ks" in
+  if not (Sys.file_exists example) then Alcotest.skip ()
+  else
+    let src = read_file example in
+    let c = user_c_of src in
+    Alcotest.(check bool) "ostype path"      true (mentions "/proc/sys/kernel/ostype" c);
+    Alcotest.(check bool) "ostype read"      true (mentions "__ks_sysctl_ostype_read" c);
+    Alcotest.(check bool) "somaxconn path"   true (mentions "/proc/sys/net/core/somaxconn" c);
+    Alcotest.(check bool) "somaxconn read"   true (mentions "__ks_sysctl_somaxconn_read" c);
+    Alcotest.(check bool) "somaxconn write"  true (mentions "__ks_sysctl_somaxconn_write" c)
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
@@ -288,5 +305,8 @@ let () =
       Alcotest.test_case "eBPF codegen omits sysctl globals" `Quick test_ebpf_codegen_omits_sysctl_globals;
       Alcotest.test_case "userspace emits sysctl accessors" `Quick test_userspace_emits_accessors;
       Alcotest.test_case "userspace rewrites load/store" `Quick test_userspace_rewrites_load_store;
+    ];
+    "e2e", [
+      Alcotest.test_case "example file compiles" `Quick test_e2e_compiles_example;
     ];
   ]
