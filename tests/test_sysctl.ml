@@ -225,6 +225,29 @@ fn main() -> i32 { return 0 }
   Alcotest.(check bool) "no sysctl global in eBPF" false (mentions "somaxconn" c);
   Alcotest.(check bool) "no /proc/sys reference"  false (mentions "/proc/sys" c)
 
+let user_c_of src =
+  let ir = ir_of src in
+  let tmp = Filename.temp_file "ks_user_" "" in
+  Sys.remove tmp; Unix.mkdir tmp 0o755;
+  Kernelscript.Userspace_codegen.generate_userspace_code_from_ir
+    ir ~output_dir:tmp "test.ks";
+  let path = Filename.concat tmp "test.c" in
+  let ic = open_in path in
+  let s = really_input_string ic (in_channel_length ic) in
+  close_in ic;
+  s
+
+let test_userspace_emits_accessors () =
+  let c = user_c_of {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@xdp fn p(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 { return 0 }
+|} in
+  Alcotest.(check bool) "path constant"  true (mentions "__ks_sysctl_somaxconn_path" c);
+  Alcotest.(check bool) "proc path"      true (mentions "/proc/sys/net/core/somaxconn" c);
+  Alcotest.(check bool) "read accessor"  true (mentions "__ks_sysctl_somaxconn_read" c);
+  Alcotest.(check bool) "write accessor" true (mentions "__ks_sysctl_somaxconn_write" c)
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
@@ -250,5 +273,6 @@ let () =
     ];
     "codegen", [
       Alcotest.test_case "eBPF codegen omits sysctl globals" `Quick test_ebpf_codegen_omits_sysctl_globals;
+      Alcotest.test_case "userspace emits sysctl accessors" `Quick test_userspace_emits_accessors;
     ];
   ]

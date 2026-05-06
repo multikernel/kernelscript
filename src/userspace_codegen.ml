@@ -1227,6 +1227,97 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
     "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
   ) else ""
 
+(** Generate /proc/sys path constant and read/write accessors for a @sysctl global. *)
+let generate_sysctl_accessors_userspace (gv : ir_global_variable) =
+  match gv.sysctl_path with
+  | None -> None
+  | Some dot_path ->
+    let name = gv.global_var_name in
+    let proc_path =
+      "/proc/sys/" ^
+      String.map (fun c -> if c = '.' then '/' else c) dot_path
+    in
+    let path_const =
+      sprintf "static const char __ks_sysctl_%s_path[] = \"%s\";" name proc_path
+    in
+    let body = match gv.global_var_type with
+      | IRStr n ->
+        sprintf {|static inline void __ks_sysctl_%s_read(char out[%d]) {
+    int __fd = open(__ks_sysctl_%s_path, O_RDONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        out[0] = 0; return;
+    }
+    ssize_t __n = read(__fd, out, %d - 1);
+    int __e = errno; close(__fd);
+    if (__n < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+        out[0] = 0; return;
+    }
+    out[__n] = 0;
+    if (__n > 0 && out[__n - 1] == '\n') out[__n - 1] = 0;
+}
+
+static inline void __ks_sysctl_%s_write(const char *v) {
+    int __fd = open(__ks_sysctl_%s_path, O_WRONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        return;
+    }
+    size_t __l = strlen(v);
+    ssize_t __w = write(__fd, v, __l);
+    int __e = errno; close(__fd);
+    if (__w < 0)
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+}|}
+          name n name name n name name name name name
+      | t ->
+        let c_type, fmt = match t with
+          | IRU8 | IRU16 | IRU32 -> "uint32_t", "%u"
+          | IRU64 -> "uint64_t", "%llu"
+          | IRI8 | IRI16 | IRI32 -> "int32_t", "%d"
+          | IRI64 -> "int64_t", "%lld"
+          | IRBool -> "int", "%d"
+          | _ ->
+            failwith
+              (sprintf "sysctl variable '%s' has unsupported IR type" name)
+        in
+        sprintf {|static inline %s __ks_sysctl_%s_read(void) {
+    int __fd = open(__ks_sysctl_%s_path, O_RDONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        return 0;
+    }
+    char __buf[64];
+    ssize_t __n = read(__fd, __buf, sizeof(__buf) - 1);
+    int __e = errno; close(__fd);
+    if (__n < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+        return 0;
+    }
+    __buf[__n] = 0;
+    %s __v = 0;
+    sscanf(__buf, "%s", &__v);
+    return __v;
+}
+
+static inline void __ks_sysctl_%s_write(%s v) {
+    int __fd = open(__ks_sysctl_%s_path, O_WRONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        return;
+    }
+    char __buf[64];
+    int __n = snprintf(__buf, sizeof(__buf), "%s", v);
+    ssize_t __w = write(__fd, __buf, __n);
+    int __e = errno; close(__fd);
+    if (__w < 0)
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+}|}
+          c_type name name name name c_type fmt name c_type name name fmt name
+    in
+    Some (path_const ^ "\n\n" ^ body)
+
 (** Generate ALL declarations in original source order for userspace - complete implementation *)
 let generate_declarations_in_source_order_userspace ir_multi_prog =
   let declarations = ref [] in
@@ -1255,9 +1346,12 @@ let generate_declarations_in_source_order_userspace ir_multi_prog =
         (* Skip configs in userspace - they're handled separately *)
         ()
     
-    | Ir.IRDeclGlobalVarDef _global_var ->
-        (* Skip global variables in userspace - they're handled separately *)
-        ()
+    | Ir.IRDeclGlobalVarDef global_var ->
+        (* Sysctl globals get inline accessors emitted here.
+           Other globals are handled by the eBPF skeleton infrastructure. *)
+        (match generate_sysctl_accessors_userspace global_var with
+         | Some accessors -> declarations := accessors :: !declarations
+         | None -> ())
     
     | Ir.IRDeclFunctionDef _func_def ->
         (* Skip functions in userspace - they're handled separately *)
