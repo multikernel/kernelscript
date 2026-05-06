@@ -135,6 +135,44 @@ let test_accept_int_bool_str () =
 fn main() -> i32 { return 0 }
 |})
 
+let test_reject_sysctl_in_xdp () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@xdp fn f(ctx: *xdp_md) -> xdp_action {
+  var x = somaxconn
+  return 2
+}
+fn main() -> i32 { return 0 }
+|}
+
+let test_reject_sysctl_in_helper () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@helper fn h() -> u32 { return somaxconn }
+@xdp fn f(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 { return 0 }
+|}
+
+let test_reject_sysctl_in_kfunc () =
+  expect_typecheck_error ~fragment:"sysctl"
+    {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@kfunc fn k() -> u32 { return somaxconn }
+fn main() -> i32 { return 0 }
+|}
+
+let test_allow_sysctl_in_userspace () =
+  ignore (typecheck_string {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+fn read_it() -> u32 { return somaxconn }
+fn main() -> i32 {
+  somaxconn = 4096
+  return 0
+}
+|})
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
@@ -149,5 +187,9 @@ let () =
       Alcotest.test_case "reject initializer" `Quick test_reject_initializer;
       Alcotest.test_case "reject pin combination" `Quick test_reject_pin_combination;
       Alcotest.test_case "accept int/bool/str" `Quick test_accept_int_bool_str;
+      Alcotest.test_case "reject access from @xdp" `Quick test_reject_sysctl_in_xdp;
+      Alcotest.test_case "reject access from @helper" `Quick test_reject_sysctl_in_helper;
+      Alcotest.test_case "reject access from @kfunc" `Quick test_reject_sysctl_in_kfunc;
+      Alcotest.test_case "allow access from userspace" `Quick test_allow_sysctl_in_userspace;
     ];
   ]

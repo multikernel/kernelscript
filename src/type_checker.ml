@@ -35,6 +35,7 @@ type context = {
   function_scopes: (string, Ast.function_scope) Hashtbl.t;
   helper_functions: (string, unit) Hashtbl.t; (* Track @helper functions *)
   test_functions: (string, unit) Hashtbl.t; (* Track @test functions *)
+  sysctl_globals: (string, unit) Hashtbl.t; (* Track @sysctl global vars by name *)
   maps: (string, Ir.ir_map_def) Hashtbl.t;
   configs: (string, Ast.config_declaration) Hashtbl.t;
   attributed_functions: (string, unit) Hashtbl.t; (* Track attributed functions that cannot be called directly *)
@@ -144,6 +145,7 @@ let create_context symbol_table ast =
   let function_scopes = Hashtbl.create 16 in
   let helper_functions = Hashtbl.create 16 in
   let test_functions = Hashtbl.create 16 in
+  let sysctl_globals = Hashtbl.create 8 in
   let attributed_functions = Hashtbl.create 16 in
   let types = Hashtbl.create 16 in
   let maps = Hashtbl.create 16 in
@@ -183,6 +185,7 @@ let create_context symbol_table ast =
     function_scopes = function_scopes;
     helper_functions = helper_functions;
     test_functions = test_functions;
+    sysctl_globals = sysctl_globals;
     attributed_functions = attributed_functions;
     types = types;
     maps = maps;
@@ -432,6 +435,25 @@ let validate_sysctl_decl gv =
          "' cannot also be 'pin'")
         gv.global_var_pos
 
+(** Reject access to a @sysctl global from eBPF or kernel-scope (kfunc/helper) contexts.
+    sysctl handles are userspace-only because they perform /proc/sys file I/O. *)
+let check_sysctl_context_access ctx name pos =
+  if Hashtbl.mem ctx.sysctl_globals name then begin
+    let in_ebpf = ctx.current_program_type <> None in
+    let in_kernel_fn = match ctx.current_function with
+      | Some f ->
+        (match Hashtbl.find_opt ctx.function_scopes f with
+         | Some Ast.Kernel -> true
+         | _ -> false)
+      | None -> false
+    in
+    if in_ebpf || in_kernel_fn then
+      type_error
+        ("sysctl variable '" ^ name ^
+         "' can only be accessed from userspace functions, not from eBPF or kfunc contexts")
+        pos
+  end
+
 (** Check if we can assign from_type to to_type (for variable declarations) *)
 let can_assign to_type from_type =
   match unify_types to_type from_type with
@@ -611,6 +633,7 @@ let type_check_identifier ctx name pos =
   else
     try
       let typ = Hashtbl.find ctx.variables name in
+      check_sysctl_context_access ctx name pos;
       { texpr_desc = TIdentifier name; texpr_type = typ; texpr_pos = pos }
     with Not_found ->
       (* Check if it's a function that could be used as a reference *)
@@ -1621,6 +1644,8 @@ and type_check_statement ctx stmt =
   
     | Assignment (name, expr) ->
       let typed_expr = type_check_expression ctx expr in
+      (* Reject sysctl writes from eBPF/kernel contexts *)
+      check_sysctl_context_access ctx name stmt.stmt_pos;
       (* Check if the variable is const by looking it up in the symbol table *)
       (match Symbol_table.lookup_symbol ctx.symbol_table name with
        | Some symbol when Symbol_table.is_const_variable symbol ->
@@ -1641,6 +1666,7 @@ and type_check_statement ctx stmt =
   
   | CompoundAssignment (name, op, expr) ->
       let typed_expr = type_check_expression ctx expr in
+      check_sysctl_context_access ctx name stmt.stmt_pos;
       (* Check if the variable is const by looking it up in the symbol table *)
       (match Symbol_table.lookup_symbol ctx.symbol_table name with
        | Some symbol when Symbol_table.is_const_variable symbol ->
@@ -2535,6 +2561,12 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
     | GlobalVarDecl global_var_decl ->
         (* Validate @sysctl declarations *)
         validate_sysctl_decl global_var_decl;
+        (* Register sysctl globals for usage-site context checks *)
+        if List.exists (function
+             | AttributeWithArg ("sysctl", _) -> true
+             | _ -> false) global_var_decl.global_var_attributes
+        then
+          Hashtbl.replace ctx.sysctl_globals global_var_decl.global_var_name ();
         (* Validate pinning rules: cannot pin local variables *)
         if global_var_decl.is_pinned && global_var_decl.is_local then
           type_error "Cannot pin local variables - only shared variables can be pinned" global_var_decl.global_var_pos;
@@ -2898,6 +2930,12 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
     | GlobalVarDecl global_var_decl ->
         (* Validate @sysctl declarations *)
         validate_sysctl_decl global_var_decl;
+        (* Register sysctl globals for usage-site context checks *)
+        if List.exists (function
+             | AttributeWithArg ("sysctl", _) -> true
+             | _ -> false) global_var_decl.global_var_attributes
+        then
+          Hashtbl.replace ctx.sysctl_globals global_var_decl.global_var_name ();
         (* Validate pinning rules: cannot pin local variables *)
         if global_var_decl.is_pinned && global_var_decl.is_local then
           type_error "Cannot pin local variables - only shared variables can be pinned" global_var_decl.global_var_pos;
