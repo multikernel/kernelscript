@@ -2997,7 +2997,9 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog ~_btf_path _
     
     | Ir.IRDeclGlobalVarDef global_var ->
         (* Skip variables that shadow map definitions *)
-        if not (List.mem global_var.global_var_name map_names) then (
+        (* Skip sysctl globals — they are userspace-only, never emitted in eBPF *)
+        if global_var.sysctl_path = None
+           && not (List.mem global_var.global_var_name map_names) then (
           (* Emit __hidden macro once before the first local variable *)
           if global_var.is_local && not !hidden_macro_emitted then (
             hidden_macro_emitted := true;

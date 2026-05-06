@@ -208,6 +208,23 @@ fn main() -> i32 { return 0 }
       globals in
   Alcotest.(check bool) "plain global has sysctl_path = None" true found
 
+let ebpf_c_of src =
+  let ir = ir_of src in
+  Kernelscript.Ebpf_c_codegen.generate_c_multi_program ir
+
+let mentions s c =
+  try ignore (Str.search_forward (Str.regexp_string s) c 0); true
+  with Not_found -> false
+
+let test_ebpf_codegen_omits_sysctl_globals () =
+  let c = ebpf_c_of {|
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@xdp fn f(ctx: *xdp_md) -> xdp_action { return 2 }
+fn main() -> i32 { return 0 }
+|} in
+  Alcotest.(check bool) "no sysctl global in eBPF" false (mentions "somaxconn" c);
+  Alcotest.(check bool) "no /proc/sys reference"  false (mentions "/proc/sys" c)
+
 let () =
   Alcotest.run "sysctl" [
     "parse", [
@@ -230,5 +247,8 @@ let () =
     "ir", [
       Alcotest.test_case "IR carries sysctl path" `Quick test_ir_carries_sysctl_path;
       Alcotest.test_case "plain global has no sysctl path" `Quick test_ir_no_path_for_plain_global;
+    ];
+    "codegen", [
+      Alcotest.test_case "eBPF codegen omits sysctl globals" `Quick test_ebpf_codegen_omits_sysctl_globals;
     ];
   ]
