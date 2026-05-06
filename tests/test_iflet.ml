@@ -219,8 +219,13 @@ var counters : hash<u32, u64>(1024)
 }
 |} in
   let c = codegen_ebpf source in
+  (* The IfLet binding is alpha-renamed to a fresh synthetic name during IR
+     lowering (see `subst_ident_stmts` in ir_generator.ml) so that an outer
+     variable of the same name is not silently clobbered when the backend
+     hoists declarations to function scope. The synthetic name has the
+     form `__iflet_<orig>_<N>`. *)
   check bool "scalar binding declared as value, not pointer" true
-    (contains_substr c "__u64 c =");
+    (contains_substr c "__u64 __iflet_c_");
   check bool "binding init uses the dereffed value statement-expression" true
     (contains_substr c "__val = *(");
   check bool "presence check on the underlying lookup pointer" true
@@ -259,12 +264,54 @@ var stats : hash<u32, Stats>(1024)
 }
 |} in
   let c = codegen_ebpf source in
+  (* Binding is alpha-renamed to `__iflet_s_<N>` — see the comment on
+     `test_codegen_scalar_value_binding` for why. *)
   check bool "binding declared with value type, not pointer" true
-    (contains_substr c "struct Stats s =");
+    (contains_substr c "struct Stats __iflet_s_");
   check bool "value-typed binding uses deref-load init" true
     (contains_substr c "struct Stats __val");
   check bool "field write goes through the underlying lookup pointer" true
     (contains_substr c "->count =")
+
+(** 11. Codegen (shadowing): an outer binding of the same name as the IfLet
+       binding must survive both branches and remain referenceable after the
+       if. The branch-local invariant the frontend enforces (binding visible
+       only inside the then-branch) has to be preserved end-to-end through
+       IR lowering — i.e., the inner binding cannot collapse onto the outer
+       name in the generated C. *)
+let test_codegen_shadow_outer_binding () =
+  let source = {|
+var counters : hash<u32, u64>(1024)
+
+@xdp fn probe(ctx: *xdp_md) -> xdp_action {
+  var c : u64 = 100
+  if (var c = counters[1]) {
+    return XDP_DROP
+  }
+  if (c == 100) {
+    return XDP_PASS
+  }
+  return XDP_DROP
+}
+|} in
+  let c = codegen_ebpf source in
+  (* The outer `c = 100` declaration must remain literally — the inner binding
+     must not reuse the name. *)
+  check bool "outer c declared with literal value" true
+    (contains_substr c "__u64 c = 100");
+  (* The outer `c` must NOT be reassigned by the IfLet's lowering. The bug
+     symptom was a statement-expression assignment `c = ({ ... });` that
+     clobbered the outer binding with the lookup result (or zero on miss).
+     A bare `c = ({` (no `__u64` prefix) is the giveaway. *)
+  let outer_clobber =
+    try let _ = Str.search_forward
+                  (Str.regexp "[^_a-zA-Z0-9]c = ({") c 0 in true
+    with Not_found -> false in
+  check bool "outer c not clobbered by iflet init" false outer_clobber;
+  (* The post-if comparison `c == 100` must reference the outer `c`, not be
+     rewritten into another fresh map deref. *)
+  check bool "post-if uses outer c by name" true
+    (contains_substr c "(c == 100)")
 
 let suite = [
   "parse_iflet_no_else",              `Quick, test_parse_iflet_no_else;
@@ -277,6 +324,7 @@ let suite = [
   "codegen_struct_in_place",          `Quick, test_codegen_struct_in_place;
   "codegen_scalar_value_binding",     `Quick, test_codegen_scalar_value_binding;
   "codegen_struct_value_binding_shape", `Quick, test_codegen_struct_value_binding_shape;
+  "codegen_shadow_outer_binding",     `Quick, test_codegen_shadow_outer_binding;
 ]
 
 let () =

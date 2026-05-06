@@ -465,7 +465,12 @@ var stats : hash<u32, Stats>(1024)
   let contains s =
     try let _ = Str.search_forward (Str.regexp_string s) c 0 in true
     with Not_found -> false in
-  (* (a) pointer-typed synthetic binding initialised from the lookup pointer *)
+  (* (a) pointer-typed synthetic binding initialised from the lookup pointer.
+     The Phase 2 desugaring emits a plain `var __cidx_field_<N> = m[k]`
+     (the synthetic name is fresh by construction, so the IfLet alpha-
+     rename machinery is not needed and is bypassed). The codegen then
+     produces `struct Stats* __cidx_field_<N> = __map_lookup_<M>` via the
+     pointer-from-map-access path in IRVariableDecl. *)
   check bool "synthetic binding declared as a struct pointer" true
     (contains "struct Stats* __cidx_field_");
   let bad_value_init = contains
