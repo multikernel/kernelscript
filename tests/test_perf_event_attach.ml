@@ -262,7 +262,9 @@ let test_perf_read_count_function_generated () =
   check bool "read error message present" true
     (contains_substr code "ks_read_perf_count: read failed on perf_fd");
   check bool "short read diagnostic present" true
-    (contains_substr code "short read")
+    (contains_substr code "short read");
+  check bool "ks_perf_read reads perf_fd under the lock" true
+    (contains_substr code "Read perf_fd under the lock")
 
 let test_perf_attach_event_function_generated () =
   (* attach(prog, perf_options{...}, 0) must generate ks_attach_perf_event which
@@ -285,7 +287,11 @@ let test_perf_attach_event_function_generated () =
   check bool "no snprintf perf_fd string hack" false
     (contains_substr code "snprintf(%s, sizeof(%s),");
   check bool "find_prog_by_fd helper used for program lookup" true
-    (contains_substr code "find_prog_by_fd")
+    (contains_substr code "find_prog_by_fd");
+  check bool "perf attach rejects wrong program type at runtime" true
+    (contains_substr code "is not a @perf_event program");
+  check bool "add_attachment performs atomic duplicate check" true
+    (contains_substr code "Reject duplicate insertions atomically")
 
 (* ── Type-checking regression tests ───────────────────────────────────── *)
 

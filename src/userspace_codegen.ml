@@ -3776,7 +3776,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
   (* For header generation, use all global maps if there are pinned maps, otherwise use the filtered list *)
   let maps_for_headers = if has_any_pinned_maps then global_maps else used_global_maps_with_exec in
   
-  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach in
+  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach || all_usage.uses_attach_perf in
   let base_includes = generate_headers_for_maps ~uses_bpf_functions maps_for_headers in
   let bpf_attach_includes = if uses_bpf_functions then
     "#include <sys/ioctl.h>\n"
@@ -4061,38 +4061,8 @@ struct attachment_entry {
 static struct attachment_entry *attached_programs = NULL;
 static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Helper function to find attachment entry
-static struct attachment_entry *find_attachment(int prog_fd) {
-    pthread_mutex_lock(&attachment_mutex);
-    struct attachment_entry *current = attached_programs;
-    while (current) {
-        if (current->prog_fd == prog_fd) {
-            pthread_mutex_unlock(&attachment_mutex);
-            return current;
-        }
-        current = current->next;
-    }
-    pthread_mutex_unlock(&attachment_mutex);
-    return NULL;
-}
-
-// Helper function to remove attachment entry
-static void remove_attachment(int prog_fd) {
-    pthread_mutex_lock(&attachment_mutex);
-    struct attachment_entry **current = &attached_programs;
-    while (*current) {
-        if ((*current)->prog_fd == prog_fd) {
-            struct attachment_entry *to_remove = *current;
-            *current = (*current)->next;
-            free(to_remove);
-            break;
-        }
-        current = &(*current)->next;
-    }
-    pthread_mutex_unlock(&attachment_mutex);
-}
-
-// Helper function to add attachment entry
+// Helper function to add attachment entry.
+// Duplicate check is performed atomically under the same lock as insertion.
 static int add_attachment(int prog_fd, const char *target, uint32_t flags, 
              struct bpf_link *link, int ifindex, int perf_fd,
              enum bpf_prog_type type) {
@@ -4112,6 +4082,17 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
     entry->type = type;
     
     pthread_mutex_lock(&attachment_mutex);
+    /* Reject duplicate insertions atomically */
+    struct attachment_entry *existing = attached_programs;
+    while (existing) {
+        if (existing->prog_fd == prog_fd) {
+            pthread_mutex_unlock(&attachment_mutex);
+            free(entry);
+            fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
+            return -1;
+        }
+        existing = existing->next;
+    }
     entry->next = attached_programs;
     attached_programs = entry;
     pthread_mutex_unlock(&attachment_mutex);
@@ -4138,12 +4119,6 @@ static struct bpf_program *find_prog_by_fd(int prog_fd) {
       {|int attach_bpf_program_by_fd(int prog_fd, const char *target, int flags) {
     if (prog_fd < 0) {
         fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);
-        return -1;
-    }
-    
-    // Check if program is already attached
-    if (find_attachment(prog_fd)) {
-        fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
         return -1;
     }
     
@@ -4353,8 +4328,21 @@ static struct bpf_program *find_prog_by_fd(int prog_fd) {
         return;
     }
     
-    // Find the attachment entry
-    struct attachment_entry *entry = find_attachment(prog_fd);
+    /* Atomically extract the entry from the list so concurrent detach/perf_read
+     * cannot dereference a freed pointer. */
+    pthread_mutex_lock(&attachment_mutex);
+    struct attachment_entry *entry = NULL;
+    struct attachment_entry **cur = &attached_programs;
+    while (*cur) {
+        if ((*cur)->prog_fd == prog_fd) {
+            entry = *cur;
+            *cur = entry->next;
+            break;
+        }
+        cur = &(*cur)->next;
+    }
+    pthread_mutex_unlock(&attachment_mutex);
+
     if (!entry) {
         fprintf(stderr, "No active attachment found for program fd %%d\n", prog_fd);
         return;
@@ -4412,8 +4400,7 @@ static struct bpf_program *find_prog_by_fd(int prog_fd) {
             break;
     }
     
-    // Remove from tracking
-    remove_attachment(prog_fd);
+    free(entry);
 }|} detach_perf_case
     else "" in
     
@@ -4619,8 +4606,13 @@ int ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags) {
         fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);
         return -1;
     }
-    if (find_attachment(prog_fd)) {
-        fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
+    /* Verify the program is actually a @perf_event program */
+    struct bpf_prog_info prog_info = {};
+    uint32_t info_len = sizeof(prog_info);
+    if (bpf_obj_get_info_by_fd(prog_fd, &prog_info, &info_len) == 0 &&
+        prog_info.type != BPF_PROG_TYPE_PERF_EVENT) {
+        fprintf(stderr, "ks_attach_perf_event: fd %d is not a @perf_event program (type=%u)\n",
+                prog_fd, prog_info.type);
         return -1;
     }
 
@@ -4693,16 +4685,29 @@ int64_t ks_read_perf_count(int perf_fd) {
 /* Read the counter for the perf_event program bound to prog_fd.
  * Looks up the perf_fd from the attachment table and calls ks_read_perf_count. */
 int64_t ks_perf_read(int prog_fd) {
-    struct attachment_entry *entry = find_attachment(prog_fd);
-    if (!entry) {
+    /* Read perf_fd under the lock so the entry cannot be freed concurrently */
+    pthread_mutex_lock(&attachment_mutex);
+    int found = 0;
+    int perf_fd = -1;
+    struct attachment_entry *cur = attached_programs;
+    while (cur) {
+        if (cur->prog_fd == prog_fd) {
+            found = 1;
+            perf_fd = cur->perf_fd;
+            break;
+        }
+        cur = cur->next;
+    }
+    pthread_mutex_unlock(&attachment_mutex);
+    if (!found) {
         fprintf(stderr, "ks_perf_read: no active attachment for program fd %d\n", prog_fd);
         return -1;
     }
-    if (entry->perf_fd < 0) {
+    if (perf_fd < 0) {
         fprintf(stderr, "ks_perf_read: program fd %d is not a perf_event program\n", prog_fd);
         return -1;
     }
-    return ks_read_perf_count(entry->perf_fd);
+    return ks_read_perf_count(perf_fd);
 }
 
 /* Print the current counter value for a named event to stdout.
