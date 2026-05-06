@@ -366,6 +366,66 @@ fn main() -> i32 {
 
 ---
 
+### 7. Sysctl Access (Escape Hatch)
+
+These two helpers exist for cases that don't fit the typed `@sysctl` global handle: dynamic paths chosen at runtime, or sysctls that hold multi-valued strings (e.g. `kernel.printk` = `"4 4 1 7"`). For static, single-valued sysctls prefer the typed handle (see `SPEC.md` §3.3.7) — it's safer.
+
+#### `sysctl_read_str(path, out, out_len)`
+**Signature:** `sysctl_read_str(path: str(256), out: *u8, out_len: u32) -> i32`
+**Variadic:** No
+**Context:** Userspace only
+
+**Description:** Read a sysctl as a raw string. The path is given in dotted form (e.g. `"net.core.somaxconn"`); the helper rewrites it to `/proc/sys/...` internally. The trailing newline that `/proc/sys` files include is stripped.
+
+**Parameters:**
+- `path`: dotted sysctl path
+- `out`: destination byte buffer
+- `out_len`: capacity of `out` (must be > 1 to leave room for the trailing NUL)
+
+**Return Value:**
+- `0` on success
+- Negative errno on failure (`-EACCES`, `-ENOENT`, `-ERANGE` if the buffer was too small, ...)
+
+**Example:**
+```kernelscript
+fn main() -> i32 {
+    var buf: u8[64]
+    var rc = sysctl_read_str("kernel.ostype", &buf, 64)
+    if (rc == 0) print("ostype=", buf)
+    return rc
+}
+```
+
+#### `sysctl_write_str(path, value)`
+**Signature:** `sysctl_write_str(path: str(256), value: str(256)) -> i32`
+**Variadic:** No
+**Context:** Userspace only
+
+**Description:** Write a string value to a sysctl. The path is given in dotted form. Useful for multi-valued sysctls or when the path is dynamic.
+
+**Parameters:**
+- `path`: dotted sysctl path
+- `value`: string value to write (newline not required)
+
+**Return Value:**
+- `0` on success
+- Negative errno on failure (`-EACCES`, `-EINVAL`, ...)
+
+**Example:**
+```kernelscript
+fn main() -> i32 {
+    var rc = sysctl_write_str("kernel.printk", "4 4 1 7")
+    return rc
+}
+```
+
+**Context-specific implementations (both helpers):**
+- **eBPF:** Not available
+- **Userspace:** Generated as `static inline` C functions that perform `open` / `read` / `write` / `close` against `/proc/sys/...`
+- **Kernel Module:** Not available
+
+---
+
 ## Context Availability Summary
 
 | Function | eBPF | Userspace | Kernel Module | Notes |
@@ -379,6 +439,8 @@ fn main() -> i32 {
 | `dispatch()` | ❌ | ✅ | ❌ | Event processing only |
 | `daemon()` | ❌ | ✅ | ❌ | Process management only |
 | `exec()` | ❌ | ✅ | ❌ | Process replacement only |
+| `sysctl_read_str()` | ❌ | ✅ | ❌ | Sysctl escape hatch |
+| `sysctl_write_str()` | ❌ | ✅ | ❌ | Sysctl escape hatch |
 
 ## Related Concepts
 

@@ -877,6 +877,69 @@ fn main() -> i32 {
 | **Scoping** | Shared or local | Always shared | Always shared | Always shared |
 | **Persistence** | No | Yes (filesystem) | Optional (if pinned) | No |
 
+#### 3.3.7 Sysctl Variables
+
+The `@sysctl` attribute turns a userspace global into a typed handle for a `/proc/sys/...` knob. Reading the variable opens and parses the corresponding `/proc/sys` file; writing it formats the value and writes the file. Userspace code controls when each access happens — there is no auto-apply or auto-restore.
+
+**Syntax:**
+
+```kernelscript
+@sysctl("net.core.somaxconn") var somaxconn: u32
+@sysctl("net.ipv4.ip_forward") var ip_forward: bool
+@sysctl("kernel.hostname") var hostname: str(64)
+```
+
+The attribute argument is the dotted path under `/proc/sys`. The declared type is the wire type after parsing the file's text contents.
+
+**Constraints (enforced at compile time):**
+
+- Allowed types: `u8/u16/u32/u64`, `i8/i16/i32/i64`, `bool` (rendered as `0`/`1`), `str(N)`. Struct, array, and map types are rejected.
+- The path must be a non-empty dotted string with no `/` and no `..`.
+- No initializer — values come from the kernel.
+- Cannot be combined with `pin` or `local`.
+- **Userspace only.** A sysctl handle referenced from `@xdp`, `@tc`, `@probe`, `@tracepoint`, `@helper`, or `@kfunc` is a compile-time error. Those contexts have no filesystem access.
+
+**Semantics:**
+
+- Reads happen on every access; writes happen on every assignment. There is no caching.
+- Failures (`EACCES`, `EINVAL`, `ENOENT`, ...) are reported via the standard error path.
+- The eBPF and kernel-module outputs do not contain sysctl globals — they exist only in the userspace binary.
+
+**Examples:**
+
+Tuning a knob the eBPF program needs:
+
+```kernelscript
+@sysctl("net.core.bpf_jit_enable") var bpf_jit: bool
+
+@xdp fn filter(ctx: *xdp_md) -> xdp_action { return XDP_PASS }
+
+fn main() -> i32 {
+    if (!bpf_jit) {
+        bpf_jit = true
+    }
+    var prog = load(filter)
+    attach(prog, "eth0", 0)
+    return 0
+}
+```
+
+Save and restore around an experiment:
+
+```kernelscript
+@sysctl("net.core.somaxconn") var somaxconn: u32
+
+fn main() -> i32 {
+    var saved = somaxconn
+    somaxconn = 65535
+    run_experiment()
+    somaxconn = saved
+    return 0
+}
+```
+
+**Escape hatch:** for dynamic paths or sysctls that don't fit the typed-handle shape (multi-valued sysctls like `kernel.printk`), use the stdlib helpers `sysctl_read_str` and `sysctl_write_str` documented in `BUILTINS.md`.
+
 ### 3.4 Kernel-Userspace Scoping Model
 
 KernelScript uses a simple and intuitive scoping model:
