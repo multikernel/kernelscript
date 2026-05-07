@@ -383,6 +383,7 @@ type function_usage = {
   mutable uses_load: bool;
   mutable uses_attach: bool;
   mutable uses_attach_perf: bool;
+  mutable uses_perf_read: bool;
   mutable uses_detach: bool;
   mutable uses_map_operations: bool;
   mutable uses_daemon: bool;
@@ -395,6 +396,7 @@ let create_function_usage () = {
   uses_load = false;
   uses_attach = false;
   uses_attach_perf = false;
+  uses_perf_read = false;
   uses_detach = false;
   uses_map_operations = false;
   uses_daemon = false;
@@ -711,8 +713,8 @@ let track_function_usage ctx instr =
                      ctx.function_usage.uses_attach_perf <- true
                  | _ ->
                      ctx.function_usage.uses_attach <- true)
-            | "perf_read" | "perf_print" ->
-                ctx.function_usage.uses_attach_perf <- true
+            | "perf_read" ->
+              ctx.function_usage.uses_perf_read <- true
             | "detach" -> ctx.function_usage.uses_detach <- true
             | "daemon" -> ctx.function_usage.uses_daemon <- true
             | "exec" -> 
@@ -1105,48 +1107,97 @@ let build_single_format_expr ir_type =
   | IRI64 -> "\"%\" PRId64 \"\\n\""
   | t     -> sprintf "\"%s\\n\"" (get_printf_format_specifier t)
 
-(** Fix format specifiers in a format string based on argument types *)
+(** Normalize explicit printf arguments so their C types match our canonical
+    format specifiers on LP64/LLP64 targets. *)
+let normalize_printf_arg ir_type arg_expr =
+  match ir_type with
+  | IRU64 -> sprintf "(unsigned long long)(%s)" arg_expr
+  | IRI64 -> sprintf "(long long)(%s)" arg_expr
+  | _ -> arg_expr
+
+(** Fix format specifiers in a format string based on argument types.
+    For 64-bit integer types (IRI64 / IRU64) only the length modifier is
+    updated to "ll"; flags, width, precision and the conversion character
+    are kept as-is.  For every other type the existing specifier is left
+    completely unchanged.  Arguments that have no corresponding specifier
+    in the format string get a canonical specifier appended at the end. *)
 let fix_format_specifiers format_string arg_types =
-  (* Count existing format specifiers in the string *)
-  let count_format_specs str =
-    let rec count chars spec_count =
-      match chars with
-      | [] -> spec_count
-      | '%' :: '%' :: rest -> count rest spec_count  (* Skip escaped %% *)
-      | '%' :: rest ->
-          (* Find the end of this format specifier *)
-          let rec find_spec_end spec_chars =
-            match spec_chars with
-            | [] -> rest
-            | ('d' | 'i' | 'u' | 'o' | 'x' | 'X' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'c' | 's' | 'p' | 'n') :: remaining ->
-                remaining
-            | _ :: remaining ->
-                find_spec_end remaining
-          in
-          let remaining = find_spec_end rest in
-          count remaining (spec_count + 1)
-      | _ :: rest -> count rest spec_count
+  (* Parse one complete printf specifier starting AFTER the leading '%'.
+     Returns Some (flags, width, prec_opt, length_mod, conv_char, remaining)
+     or None if the input is malformed. *)
+  let parse_spec chars =
+    let rec take_flags cs acc =
+      match cs with
+      | ('-'|'+'|' '|'#'|'0') as c :: rest -> take_flags rest (acc ^ String.make 1 c)
+      | _ -> (acc, cs)
     in
-    count (String.to_seq str |> List.of_seq) 0
+    let rec take_width cs acc =
+      match cs with
+      | ('0'..'9'|'*') as c :: rest -> take_width rest (acc ^ String.make 1 c)
+      | _ -> (acc, cs)
+    in
+    let take_prec cs =
+      match cs with
+      | '.' :: rest ->
+          let rec digits cs acc =
+            match cs with
+            | ('0'..'9'|'*') as c :: r -> digits r (acc ^ String.make 1 c)
+            | _ -> (Some acc, cs)
+          in
+          digits rest ""
+      | _ -> (None, cs)
+    in
+    let take_length cs =
+      match cs with
+      | 'h' :: 'h' :: rest -> ("hh", rest)
+      | 'l' :: 'l' :: rest -> ("ll", rest)
+      | ('h'|'l'|'L'|'j'|'z'|'t') as c :: rest -> (String.make 1 c, rest)
+      | _ -> ("", cs)
+    in
+    let is_conv = function
+      | 'd'|'i'|'u'|'o'|'x'|'X'|'f'|'F'|'e'|'E'|'g'|'G'|'c'|'s'|'p'|'n' -> true
+      | _ -> false
+    in
+    let (flags, cs) = take_flags chars "" in
+    let (width, cs) = take_width cs "" in
+    let (prec,  cs) = take_prec cs in
+    let (lmod,  cs) = take_length cs in
+    match cs with
+    | c :: rest when is_conv c -> Some (flags, width, prec, lmod, c, rest)
+    | _ -> None
   in
-  
-  let existing_specs = count_format_specs format_string in
-  let needed_specs = List.length arg_types in
-  
-  if existing_specs >= needed_specs then
-    (* Already has enough format specifiers - don't add more *)
-    format_string
-  else
-    (* Need to add format specifiers for missing arguments *)
-    let missing_count = needed_specs - existing_specs in
-    let missing_types = 
-      let rec take n lst = match n, lst with
-        | 0, _ | _, [] -> []
-        | n, x :: xs -> x :: take (n - 1) xs
-      in
-      List.rev (take missing_count (List.rev arg_types)) in
-    let missing_specs = List.map get_printf_format_specifier missing_types in
-    format_string ^ String.concat "" missing_specs
+  let is_int64 = function IRU64 | IRI64 -> true | _ -> false in
+  let rebuild flags width prec lmod conv =
+    let prec_s = match prec with None -> "" | Some p -> "." ^ p in
+    sprintf "%%%s%s%s%s%c" flags width prec_s lmod conv
+  in
+  let rec rewrite chars remaining_types acc =
+    match chars with
+    | [] ->
+        let rebuilt = String.concat "" (List.rev acc) in
+        let missing = List.map get_printf_format_specifier remaining_types |> String.concat "" in
+        rebuilt ^ missing
+    | '%' :: '%' :: rest -> rewrite rest remaining_types ("%%" :: acc)
+    | '%' :: rest ->
+        (match remaining_types with
+         | arg_type :: rest_types ->
+             (match parse_spec rest with
+              | Some (flags, width, prec, lmod, conv, remaining_chars) ->
+                  let effective_lmod = if is_int64 arg_type then "ll" else lmod in
+                  rewrite remaining_chars rest_types (rebuild flags width prec effective_lmod conv :: acc)
+              | None ->
+                  (* malformed specifier – leave percent and continue *)
+                  rewrite rest remaining_types ("%" :: acc))
+         | [] ->
+             (* extra specifier with no matching arg – preserve as written *)
+             (match parse_spec rest with
+              | Some (flags, width, prec, lmod, conv, remaining_chars) ->
+                  rewrite remaining_chars [] (rebuild flags width prec lmod conv :: acc)
+              | None ->
+                  rewrite rest [] ("%" :: acc)))
+    | c :: rest -> rewrite rest remaining_types ((String.make 1 c) :: acc)
+  in
+  rewrite (String.to_seq format_string |> List.of_seq) arg_types []
 
 
 
@@ -1886,6 +1937,9 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       (* Extract the format string and fix format specifiers based on argument types *)
                       let format_str = format_arg in
                       let arg_types = List.map (fun ir_val -> ir_val.val_type) rest_ir_args in
+                      let normalized_rest_args =
+                        List.map2 normalize_printf_arg arg_types rest_args
+                      in
                       let fixed_format = match format_str with
                         | str when String.length str >= 2 && String.get str 0 = '"' && String.get str (String.length str - 1) = '"' ->
                             (* Remove quotes, fix format specifiers, add newline, add quotes back *)
@@ -1897,7 +1951,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                             let fixed_str = fix_format_specifiers str arg_types in
                             sprintf "\"%s\\n\"" fixed_str
                       in
-                      (userspace_impl, fixed_format :: rest_args)
+                        (userspace_impl, fixed_format :: normalized_rest_args)
                   | args, _ -> (userspace_impl, args @ ["\"\\n\""]))
              | "load" ->
                  (* Special handling for load: now lightweight - just get program handle from skeleton *)
@@ -1965,15 +2019,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
                       (userspace_impl, c_args)
                   | _ -> failwith "exec() expects exactly one argument")
              | "perf_read" ->
-                 ctx.function_usage.uses_attach_perf <- true;
+                 ctx.function_usage.uses_perf_read <- true;
                  (match c_args with
                   | [program_handle] -> ("ks_perf_read", [program_handle])
                   | _ -> failwith "perf_read expects exactly one argument")
-             | "perf_print" ->
-                 ctx.function_usage.uses_attach_perf <- true;
-                 (match c_args with
-                  | [program_handle; label] -> ("ks_perf_print", [program_handle; label])
-                  | _ -> failwith "perf_print expects exactly two arguments")
              | _ -> (userspace_impl, c_args))
         | None ->
             (* Regular function call *)
@@ -3741,6 +3790,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
       uses_load = acc_usage.uses_load || func_usage.uses_load;
       uses_attach = acc_usage.uses_attach || func_usage.uses_attach;
       uses_attach_perf = acc_usage.uses_attach_perf || func_usage.uses_attach_perf;
+      uses_perf_read = acc_usage.uses_perf_read || func_usage.uses_perf_read;
       uses_detach = acc_usage.uses_detach || func_usage.uses_detach;
       uses_map_operations = acc_usage.uses_map_operations || func_usage.uses_map_operations;
       uses_daemon = acc_usage.uses_daemon || func_usage.uses_daemon;
@@ -3776,7 +3826,7 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
   (* For header generation, use all global maps if there are pinned maps, otherwise use the filtered list *)
   let maps_for_headers = if has_any_pinned_maps then global_maps else used_global_maps_with_exec in
   
-  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach || all_usage.uses_attach_perf in
+  let uses_bpf_functions = all_usage.uses_load || all_usage.uses_attach || all_usage.uses_detach || all_usage.uses_attach_perf || all_usage.uses_perf_read in
   let base_includes = generate_headers_for_maps ~uses_bpf_functions maps_for_headers in
   let bpf_attach_includes = if uses_bpf_functions then
     "#include <sys/ioctl.h>\n"
@@ -3821,24 +3871,39 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
 
-/* KernelScript perf_event types */
+/* KernelScript perf_event type tags */
 typedef enum {
-    cpu_cycles = 0,
-    instructions = 1,
-    cache_references = 2,
-    cache_misses = 3,
-    branch_instructions = 4,
-    branch_misses = 5,
-    page_faults = 6,
-    context_switches = 7,
-    cpu_migrations = 8
-} perf_counter;
+  perf_type_hardware = PERF_TYPE_HARDWARE,
+  perf_type_software = PERF_TYPE_SOFTWARE,
+  perf_type_tracepoint = PERF_TYPE_TRACEPOINT,
+  perf_type_hw_cache = PERF_TYPE_HW_CACHE,
+  perf_type_raw = PERF_TYPE_RAW,
+  perf_type_breakpoint = PERF_TYPE_BREAKPOINT
+} perf_type;
+
+/* Common config values for PERF_TYPE_HARDWARE */
+typedef enum {
+  cpu_cycles = PERF_COUNT_HW_CPU_CYCLES,
+  instructions = PERF_COUNT_HW_INSTRUCTIONS,
+  cache_references = PERF_COUNT_HW_CACHE_REFERENCES,
+  cache_misses = PERF_COUNT_HW_CACHE_MISSES,
+  branch_instructions = PERF_COUNT_HW_BRANCH_INSTRUCTIONS,
+  branch_misses = PERF_COUNT_HW_BRANCH_MISSES
+} perf_hw_config;
+
+/* Common config values for PERF_TYPE_SOFTWARE */
+typedef enum {
+  page_faults = PERF_COUNT_SW_PAGE_FAULTS,
+  context_switches = PERF_COUNT_SW_CONTEXT_SWITCHES,
+  cpu_migrations = PERF_COUNT_SW_CPU_MIGRATIONS
+} perf_sw_config;
 
 /* ks_perf_options holds all KernelScript perf_options fields plus the inner
  * kernel perf_event_attr (from linux/perf_event.h) that ks_open_perf_event fills. */
 typedef struct {
     struct perf_event_attr attr;  /* kernel perf_event_attr filled by ks_open_perf_event */
-    int32_t counter;              /* KernelScript perf_counter enum value */
+  int32_t perf_type;            /* perf_event_attr.type tag */
+  uint64_t perf_config;         /* perf_event_attr.config value for the chosen type */
     int32_t pid;                  /* process ID (-1 = all processes, default) */
     int32_t cpu;                  /* CPU number (0 = CPU 0, default) */
     uint64_t period;              /* sampling period (default 1 000 000) */
@@ -4044,10 +4109,10 @@ void cleanup_bpf_maps(void) {
     
     let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies (Ir.get_global_variables ir_multi_prog) in
     
-    (* Global attachment storage (generated when attach/detach/attach_perf are used) *)
-    let attachment_storage = if all_usage.uses_attach || all_usage.uses_detach || all_usage.uses_attach_perf then
+    (* Global attachment storage (generated when attach/detach/perf attach/perf read are used) *)
+    let attachment_storage = if all_usage.uses_attach || all_usage.uses_detach || all_usage.uses_attach_perf || all_usage.uses_perf_read then
       {|// Global attachment storage for tracking active program attachments
-struct attachment_entry {
+  struct attachment_entry {
     int prog_fd;
     char target[128];
     uint32_t flags;
@@ -4057,20 +4122,20 @@ struct attachment_entry {
     int detaching;            // Non-zero while teardown is in progress
     enum bpf_prog_type type;
     struct attachment_entry *next;
-};
+  };
 
-static struct attachment_entry *attached_programs = NULL;
-static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
+  static struct attachment_entry *attached_programs = NULL;
+  static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Helper function to add attachment entry.
-// Duplicate check is performed atomically under the same lock as insertion.
-static int add_attachment(int prog_fd, const char *target, uint32_t flags, 
-             struct bpf_link *link, int ifindex, int perf_fd,
-             enum bpf_prog_type type) {
+  // Helper function to add attachment entry.
+  // Duplicate check is performed atomically under the same lock as insertion.
+  static int add_attachment(int prog_fd, const char *target, uint32_t flags, 
+         struct bpf_link *link, int ifindex, int perf_fd,
+         enum bpf_prog_type type) {
     struct attachment_entry *entry = malloc(sizeof(struct attachment_entry));
     if (!entry) {
-        fprintf(stderr, "Failed to allocate memory for attachment entry\n");
-        return -1;
+      fprintf(stderr, "Failed to allocate memory for attachment entry\n");
+      return -1;
     }
     
     entry->prog_fd = prog_fd;
@@ -4089,34 +4154,34 @@ static int add_attachment(int prog_fd, const char *target, uint32_t flags,
      * a new attach can succeed while the old detach is still running. */
     struct attachment_entry *existing = attached_programs;
     while (existing) {
-        if (existing->prog_fd == prog_fd && !existing->detaching) {
-            pthread_mutex_unlock(&attachment_mutex);
-            free(entry);
-            fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
-            return -1;
-        }
-        existing = existing->next;
+      if (existing->prog_fd == prog_fd && !existing->detaching) {
+        pthread_mutex_unlock(&attachment_mutex);
+        free(entry);
+        fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
+        return -1;
+      }
+      existing = existing->next;
     }
     entry->next = attached_programs;
     attached_programs = entry;
     pthread_mutex_unlock(&attachment_mutex);
     
     return 0;
-}
+  }
 
-/* Helper: find the bpf_program in the skeleton object for a given fd.
- * Returns NULL if the skeleton is not loaded or no program matches. */
-static struct bpf_program *find_prog_by_fd(int prog_fd) {
+  /* Helper: find the bpf_program in the skeleton object for a given fd.
+   * Returns NULL if the skeleton is not loaded or no program matches. */
+  static struct bpf_program *find_prog_by_fd(int prog_fd) {
     if (!obj) return NULL;
     struct bpf_program *prog = NULL;
     bpf_object__for_each_program(prog, obj->obj) {
-        if (bpf_program__fd(prog) == prog_fd) {
-            return prog;
-        }
+      if (bpf_program__fd(prog) == prog_fd) {
+        return prog;
+      }
     }
     return NULL;
-}
-|}
+  }
+  |}
     else "" in
 
     let attach_function = if all_usage.uses_attach then
@@ -4333,7 +4398,7 @@ static struct bpf_program *find_prog_by_fd(int prog_fd) {
     }
     
     /* Phase 1: mark the entry as detaching under the lock so concurrent
-     * perf_read skips it and a concurrent add_attachment can proceed. */
+     * add_attachment can proceed without treating this entry as active. */
     pthread_mutex_lock(&attachment_mutex);
     struct attachment_entry *entry = attached_programs;
     while (entry) {
@@ -4528,56 +4593,11 @@ static int ensure_bpf_dir(const char *path) {
     else "" in
 
     let perf_attach_function = if all_usage.uses_attach_perf then
-      {|int ks_open_perf_event(ks_perf_options ks_attr) {
-    /* Map KernelScript perf_counter enum to PERF_TYPE_* and PERF_COUNT_* */
-    __u32 perf_type;
-    __u64 perf_config;
-    switch (ks_attr.counter) {
-        case 0: /* cpu_cycles */
-            perf_type = PERF_TYPE_HARDWARE;
-            perf_config = PERF_COUNT_HW_CPU_CYCLES;
-            break;
-        case 1: /* instructions */
-            perf_type = PERF_TYPE_HARDWARE;
-            perf_config = PERF_COUNT_HW_INSTRUCTIONS;
-            break;
-        case 2: /* cache_references */
-            perf_type = PERF_TYPE_HARDWARE;
-            perf_config = PERF_COUNT_HW_CACHE_REFERENCES;
-            break;
-        case 3: /* cache_misses */
-            perf_type = PERF_TYPE_HARDWARE;
-            perf_config = PERF_COUNT_HW_CACHE_MISSES;
-            break;
-        case 4: /* branch_instructions */
-            perf_type = PERF_TYPE_HARDWARE;
-            perf_config = PERF_COUNT_HW_BRANCH_INSTRUCTIONS;
-            break;
-        case 5: /* branch_misses */
-            perf_type = PERF_TYPE_HARDWARE;
-            perf_config = PERF_COUNT_HW_BRANCH_MISSES;
-            break;
-        case 6: /* page_faults */
-            perf_type = PERF_TYPE_SOFTWARE;
-            perf_config = PERF_COUNT_SW_PAGE_FAULTS;
-            break;
-        case 7: /* context_switches */
-            perf_type = PERF_TYPE_SOFTWARE;
-            perf_config = PERF_COUNT_SW_CONTEXT_SWITCHES;
-            break;
-        case 8: /* cpu_migrations */
-            perf_type = PERF_TYPE_SOFTWARE;
-            perf_config = PERF_COUNT_SW_CPU_MIGRATIONS;
-            break;
-        default:
-            fprintf(stderr, "ks_open_perf_event: unknown counter value %d\n", ks_attr.counter);
-            return -1;
-    }
-
+        {|int ks_open_perf_event(ks_perf_options ks_attr) {
     /* Fill the BTF-derived struct perf_event_attr from KernelScript fields */
-    ks_attr.attr.type = perf_type;
+      ks_attr.attr.type = (__u32)ks_attr.perf_type;
     ks_attr.attr.size = sizeof(struct perf_event_attr);
-    ks_attr.attr.config = perf_config;
+      ks_attr.attr.config = (__u64)ks_attr.perf_config;
     ks_attr.attr.sample_type = 0;
     ks_attr.attr.sample_period = ks_attr.period > 0 ? ks_attr.period : 1000000;
     ks_attr.attr.wakeup_events = ks_attr.wakeup > 0 ? ks_attr.wakeup : 1;
@@ -4670,78 +4690,66 @@ int ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags) {
     printf("Perf event program attached\n");
     return 0;
 }
+|}
+    else "" in
 
-/* Read the current hardware counter value from an open perf_fd.
- * Returns the raw 64-bit count, or -1 on error.
- * The counter accumulates from the last IOC_RESET, so call this
- * any time after attach to observe real counting progress. */
+    let perf_read_function = if all_usage.uses_perf_read then
+      {|/* Read the current hardware counter value from an open perf_fd.
+ * Returns the raw 64-bit count, or -1 on error. */
 int64_t ks_read_perf_count(int perf_fd) {
-    if (perf_fd < 0) {
-        fprintf(stderr, "ks_read_perf_count: invalid perf_fd %d\n", perf_fd);
-        return -1;
-    }
-    uint64_t count = 0;
-    ssize_t n = read(perf_fd, &count, sizeof(count));
-    if (n < 0) {
-        fprintf(stderr, "ks_read_perf_count: read failed on perf_fd %d: %s\n",
-                perf_fd, strerror(errno));
-        return -1;
-    }
-    if (n != sizeof(count)) {
-        fprintf(stderr, "ks_read_perf_count: short read (%zd bytes) on perf_fd %d\n",
-                n, perf_fd);
-        return -1;
-    }
-    return (int64_t)count;
+  if (perf_fd < 0) {
+    fprintf(stderr, "ks_read_perf_count: invalid perf_fd %d\n", perf_fd);
+    return -1;
+  }
+  uint64_t count = 0;
+  ssize_t n = read(perf_fd, &count, sizeof(count));
+  if (n < 0) {
+    fprintf(stderr, "ks_read_perf_count: read failed on perf_fd %d: %s\n",
+        perf_fd, strerror(errno));
+    return -1;
+  }
+  if (n != sizeof(count)) {
+    fprintf(stderr, "ks_read_perf_count: short read (%zd bytes) on perf_fd %d\n",
+        n, perf_fd);
+    return -1;
+  }
+  return (int64_t)count;
 }
 
 /* Read the counter for the perf_event program bound to prog_fd.
  * Looks up the perf_fd from the attachment table and calls ks_read_perf_count. */
 int64_t ks_perf_read(int prog_fd) {
-    /* Dup perf_fd under the lock so a concurrent detach closing the original fd
-     * cannot affect the fd we read from.  Skip entries marked detaching. */
-    pthread_mutex_lock(&attachment_mutex);
-    int found = 0;
-    int dup_fd = -1;
-    struct attachment_entry *cur = attached_programs;
-    while (cur) {
-        if (cur->prog_fd == prog_fd) {
-            if (!cur->detaching && cur->perf_fd >= 0) {
-                found = 1;
-                dup_fd = dup(cur->perf_fd);
-            }
-            break;
-        }
-        cur = cur->next;
+  pthread_mutex_lock(&attachment_mutex);
+  int found = 0;
+  int dup_fd = -1;
+  struct attachment_entry *cur = attached_programs;
+  while (cur) {
+    if (cur->prog_fd == prog_fd) {
+      if (!cur->detaching && cur->perf_fd >= 0) {
+        found = 1;
+        dup_fd = dup(cur->perf_fd);
+      }
+      break;
     }
-    pthread_mutex_unlock(&attachment_mutex);
-    if (!found) {
-        fprintf(stderr, "ks_perf_read: no active attachment for program fd %d\n", prog_fd);
-        return -1;
-    }
-    if (dup_fd < 0) {
-        fprintf(stderr, "ks_perf_read: program fd %d is not a perf_event program\n", prog_fd);
-        return -1;
-    }
-    int64_t result = ks_read_perf_count(dup_fd);
-    close(dup_fd);
-    return result;
+    cur = cur->next;
+  }
+  pthread_mutex_unlock(&attachment_mutex);
+  if (!found) {
+    fprintf(stderr, "ks_perf_read: no active attachment for program fd %d\n", prog_fd);
+    return -1;
+  }
+  if (dup_fd < 0) {
+    fprintf(stderr, "ks_perf_read: dup(perf_fd) failed for program fd %d: %s\n", prog_fd, strerror(errno));
+    return -1;
+  }
+  int64_t result = ks_read_perf_count(dup_fd);
+  close(dup_fd);
+  return result;
 }
-
-/* Print the current counter value for a named event to stdout.
- * Convenience wrapper around ks_perf_read for quick diagnostics. */
-void ks_perf_print(int prog_fd, const char *event_name) {
-    int64_t count = ks_perf_read(prog_fd);
-    if (count < 0) {
-        fprintf(stderr, "ks_perf_print: failed to read counter '%s'\n",
-                event_name ? event_name : "<unknown>");
-        return;
-    }
-    printf("[perf] %s: %" PRId64 "\n", event_name ? event_name : "count", count);
-}|}
+|}
     else "" in
 
-    let functions_list = List.filter (fun s -> s <> "") [mkdir_helper_function; attachment_storage; load_function; attach_function; detach_function; perf_attach_function; daemon_function; exec_function] in
+    let functions_list = List.filter (fun s -> s <> "") [mkdir_helper_function; attachment_storage; load_function; attach_function; detach_function; perf_attach_function; perf_read_function; daemon_function; exec_function] in
     if functions_list = [] && bpf_obj_decl = "" then ""
     else
       sprintf "\n/* BPF Helper Functions (generated only when used) */\n%s\n\n%s" 

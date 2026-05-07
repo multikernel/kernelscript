@@ -460,20 +460,21 @@ The context type is always `*bpf_perf_event_data` (from `vmlinux.h`).
 fn main() -> i32 {
     var prog = load(my_handler)
 
-    // Only counter is required; all other fields use language-level defaults:
+    // Only perf_type + perf_config are required; all other fields use language-level defaults:
     // pid=-1, cpu=0, period=1_000_000, wakeup=1, inherit/exclude_*=false
-    attach(prog, perf_options { counter: branch_misses }, 0)
+    attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
 
     // Override specific fields as needed:
     attach(prog, perf_options {
-        counter: cache_misses,
+        perf_type: perf_type_hardware,
+        perf_config: cache_misses,
         cpu: 2,
         period: 500000,
         exclude_kernel: true,
     }, 0)
 
-    var count = perf_read(prog)   // read counter value via program handle
-    print(count)
+    var count = perf_read(prog)
+    print("count: %lld", count)
 
     detach(prog)   // IOC_DISABLE → bpf_link__destroy → close(perf_fd)
     return 0
@@ -484,7 +485,8 @@ fn main() -> i32 {
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `counter` | `perf_counter` | *(required)* | Hardware/software counter |
+| `perf_type` | `perf_type` | *(required)* | `perf_event_attr.type` tag |
+| `perf_config` | `u64` | *(required)* | `perf_event_attr.config` value for that type |
 | `pid` | `i32` | `-1` | -1 = all processes; ≥0 = specific PID |
 | `cpu` | `i32` | `0` | ≥0 = specific CPU; -1 = any CPU (pid must be ≥0) |
 | `period` | `u64` | `1000000` | Sample after this many events |
@@ -502,19 +504,32 @@ fn main() -> i32 {
 | -1 | ≥ 0 | All processes on specific CPU (system-wide) |
 | -1 | -1 | **Invalid** — rejected with error |
 
-**`perf_counter` enum:**
+**`perf_type` enum:**
 
 | Value | Linux constant |
 |---|---|
-| `cpu_cycles` | `PERF_COUNT_HW_CPU_CYCLES` |
-| `instructions` | `PERF_COUNT_HW_INSTRUCTIONS` |
-| `cache_references` | `PERF_COUNT_HW_CACHE_REFERENCES` |
-| `cache_misses` | `PERF_COUNT_HW_CACHE_MISSES` |
-| `branch_instructions` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
-| `branch_misses` | `PERF_COUNT_HW_BRANCH_MISSES` |
-| `page_faults` | `PERF_COUNT_SW_PAGE_FAULTS` |
-| `context_switches` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
-| `cpu_migrations` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
+| `perf_type_hardware` | `PERF_TYPE_HARDWARE` |
+| `perf_type_software` | `PERF_TYPE_SOFTWARE` |
+| `perf_type_tracepoint` | `PERF_TYPE_TRACEPOINT` |
+| `perf_type_hw_cache` | `PERF_TYPE_HW_CACHE` |
+| `perf_type_raw` | `PERF_TYPE_RAW` |
+| `perf_type_breakpoint` | `PERF_TYPE_BREAKPOINT` |
+
+**Common `perf_config` constants:**
+
+| Value | Intended `perf_type` | Linux constant |
+|---|---|---|
+| `cpu_cycles` | `perf_type_hardware` | `PERF_COUNT_HW_CPU_CYCLES` |
+| `instructions` | `perf_type_hardware` | `PERF_COUNT_HW_INSTRUCTIONS` |
+| `cache_references` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_REFERENCES` |
+| `cache_misses` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_MISSES` |
+| `branch_instructions` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
+| `branch_misses` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_MISSES` |
+| `page_faults` | `perf_type_software` | `PERF_COUNT_SW_PAGE_FAULTS` |
+| `context_switches` | `perf_type_software` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
+| `cpu_migrations` | `perf_type_software` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
+
+For event families with a richer config space, such as `perf_type_hw_cache`, provide the encoded kernel `perf_config` value directly instead of relying on a flattened enum.
 
 **Generated C helpers (emitted when `attach(prog, perf_options{...}, flags)` is used):**
 
@@ -524,7 +539,6 @@ fn main() -> i32 {
 | `ks_attach_perf_event` | `int (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
 | `ks_read_perf_count` | `int64_t (int perf_fd)` | Reads current 64-bit counter via `read()` |
 | `ks_perf_read` | `int64_t (int prog_fd)` | High-level read via program handle |
-| `ks_perf_print` | `void (int prog_fd, const char*)` | Prints `[perf] <name>: <count>` to stdout |
 
 **Attach sequence (compiler-generated, inside `ks_attach_perf_event`):**
 1. `ks_attr.attr.disabled = 1` — open counter without starting it  

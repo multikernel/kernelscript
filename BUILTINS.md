@@ -98,7 +98,7 @@ fn main() -> i32 {
     - `flags`: Attachment flags (context-dependent)
 - Perf event form:
     - `handle`: Program handle returned from `load()`
-    - `opts`: `perf_options` value — only `counter` is required; all other fields have defaults
+    - `opts`: `perf_options` value — only `perf_type` and `perf_config` are required; all other fields have defaults
     - `flags`: Reserved (pass `0`)
 
 **Return Value:**
@@ -113,11 +113,10 @@ if (result != 0) {
     print("Failed to attach program")
 }
 
-// Minimal perf attach — all non-counter fields use defaults:
+// Minimal perf attach — all non-perf_type/perf_config fields use defaults:
 // pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1, flags=false
 var perf_prog = load(on_branch_miss)
-attach(perf_prog, perf_options { counter: branch_misses }, 0)
-var count = perf_read(perf_prog)
+attach(perf_prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
 detach(perf_prog)
 ```
 

@@ -270,7 +270,7 @@ fn main() -> i32 {
 
 ### Hardware Performance Counter Programs
 
-Use `@perf_event` to attach eBPF programs to hardware or software performance counters. Only `counter` is required in the `perf_options` struct; all other fields have sensible defaults. Call `attach(prog, perf_options { ... }, 0)` and read back the counter with `perf_read(prog)`:
+Use `@perf_event` to attach eBPF programs to hardware or software performance counters. `perf_options` keeps the kernel's tagged `perf_type + perf_config` model, so adding new perf event families does not require flattening everything into one enum. Only `perf_type` and `perf_config` are required; all other fields have sensible defaults. If you need the current count in userspace, call `perf_read(prog)` after `attach(...)`:
 
 ```kernelscript
 // eBPF program fires on every hardware branch-miss sample
@@ -284,29 +284,41 @@ fn main() -> i32 {
 
     // Minimal form — defaults: pid=-1 (all procs), cpu=0,
     // period=1_000_000, wakeup=1, all flags=false
-    attach(prog, perf_options { counter: branch_misses }, 0)
-
-    var count = perf_read(prog)   // read counter via program handle
-    print(count)
+    attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    var count = perf_read(prog)
+    print("branch misses: %lld", count)
 
     detach(prog)   // disables counter, destroys BPF link, closes fd
     return 0
 }
 ```
 
-**Available `perf_counter` values:**
+**Available `perf_type` values:**
 
 | Enum value | Hardware/software event |
 |---|---|
-| `cpu_cycles` | `PERF_COUNT_HW_CPU_CYCLES` |
-| `instructions` | `PERF_COUNT_HW_INSTRUCTIONS` |
-| `cache_references` | `PERF_COUNT_HW_CACHE_REFERENCES` |
-| `cache_misses` | `PERF_COUNT_HW_CACHE_MISSES` |
-| `branch_instructions` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
-| `branch_misses` | `PERF_COUNT_HW_BRANCH_MISSES` |
-| `page_faults` | `PERF_COUNT_SW_PAGE_FAULTS` |
-| `context_switches` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
-| `cpu_migrations` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
+| `perf_type_hardware` | `PERF_TYPE_HARDWARE` |
+| `perf_type_software` | `PERF_TYPE_SOFTWARE` |
+| `perf_type_tracepoint` | `PERF_TYPE_TRACEPOINT` |
+| `perf_type_hw_cache` | `PERF_TYPE_HW_CACHE` |
+| `perf_type_raw` | `PERF_TYPE_RAW` |
+| `perf_type_breakpoint` | `PERF_TYPE_BREAKPOINT` |
+
+**Common `perf_config` constants:**
+
+| Constant | Intended `perf_type` | Linux config |
+|---|---|---|
+| `cpu_cycles` | `perf_type_hardware` | `PERF_COUNT_HW_CPU_CYCLES` |
+| `instructions` | `perf_type_hardware` | `PERF_COUNT_HW_INSTRUCTIONS` |
+| `cache_references` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_REFERENCES` |
+| `cache_misses` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_MISSES` |
+| `branch_instructions` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
+| `branch_misses` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_MISSES` |
+| `page_faults` | `perf_type_software` | `PERF_COUNT_SW_PAGE_FAULTS` |
+| `context_switches` | `perf_type_software` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
+| `cpu_migrations` | `perf_type_software` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
+
+For newer families such as `perf_type_hw_cache`, pass the kernel-compatible encoded `perf_config` value directly.
 
 📖 **For detailed language specification, syntax reference, and advanced features, please read [`SPEC.md`](SPEC.md).**
 

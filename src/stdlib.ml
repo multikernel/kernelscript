@@ -233,18 +233,6 @@ let builtin_functions = [
     kernel_impl = "";
     validate = None;
   };
-  {
-    name = "perf_print";
-    param_types = [ProgramHandle; Str 128];
-    return_type = Void;
-    description = "Print the current counter value for a perf_event program with a label";
-    is_variadic = false;
-    ebpf_impl = ""; (* Not available in eBPF context *)
-    userspace_impl = "ks_perf_print";
-    kernel_impl = "";
-    validate = None;
-  };
-
 ]
 
 (** Get built-in function definition by name *)
@@ -309,23 +297,38 @@ let builtin_types = [
     ("TC_ACT_TRAP", Some (Ast.Signed64 8L));
   ], builtin_pos));
 
-  (* perf_counter enum: KernelScript abstraction for hardware/software performance counters *)
-  TypeDef (EnumDef ("perf_counter", [
+  (* perf_type mirrors perf_event_attr.type so config stays a tagged 2D space. *)
+  TypeDef (EnumDef ("perf_type", [
+    ("perf_type_hardware",   Some (Ast.Signed64 0L));
+    ("perf_type_software",   Some (Ast.Signed64 1L));
+    ("perf_type_tracepoint", Some (Ast.Signed64 2L));
+    ("perf_type_hw_cache",   Some (Ast.Signed64 3L));
+    ("perf_type_raw",        Some (Ast.Signed64 4L));
+    ("perf_type_breakpoint", Some (Ast.Signed64 5L));
+  ], builtin_pos));
+
+  (* Common config values for PERF_TYPE_HARDWARE. *)
+  TypeDef (EnumDef ("perf_hw_config", [
     ("cpu_cycles",           Some (Ast.Signed64 0L));
     ("instructions",         Some (Ast.Signed64 1L));
     ("cache_references",     Some (Ast.Signed64 2L));
     ("cache_misses",         Some (Ast.Signed64 3L));
     ("branch_instructions",  Some (Ast.Signed64 4L));
     ("branch_misses",        Some (Ast.Signed64 5L));
-    ("page_faults",          Some (Ast.Signed64 6L));
-    ("context_switches",     Some (Ast.Signed64 7L));
-    ("cpu_migrations",       Some (Ast.Signed64 8L));
+  ], builtin_pos));
+
+  (* Common config values for PERF_TYPE_SOFTWARE. *)
+  TypeDef (EnumDef ("perf_sw_config", [
+    ("page_faults",          Some (Ast.Signed64 2L));
+    ("context_switches",     Some (Ast.Signed64 3L));
+    ("cpu_migrations",       Some (Ast.Signed64 4L));
   ], builtin_pos));
 
   (* perf_options: configuration bag for @perf_event programs.
-     Only 'counter' is required; all other fields have language-level defaults. *)
+     Only 'perf_type' and 'perf_config' are required; all other fields have language-level defaults. *)
   TypeDef (StructDef ("perf_options", [
-    ("counter",        Enum "perf_counter");
+    ("perf_type",      Enum "perf_type");
+    ("perf_config",    U64);
     ("pid",            I32);
     ("cpu",            I32);
     ("period",         U64);
@@ -338,7 +341,7 @@ let builtin_types = [
 
 (** Default field values for structs that support partial initialisation.
     Returns [(field_name, default_literal)] for optional fields only.
-    Required fields (e.g. counter in perf_options) are absent from the list,
+  Required fields (e.g. perf_type/perf_config in perf_options) are absent from the list,
     so the type checker will still error if they are omitted. *)
 let get_struct_field_defaults = function
   | "perf_options" ->

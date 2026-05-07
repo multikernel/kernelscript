@@ -521,11 +521,8 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
 fn main() -> i32 {
     var prog = load(%s)
 
-    // Only counter is required; all other fields default to sensible values.
-    attach(prog, perf_options { counter: branch_misses }, 0)
-
-    var count = perf_read(prog)
-    print(count)
+    // perf_type + perf_config are required; all other fields default to sensible values.
+    attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
 
     detach(prog)
 

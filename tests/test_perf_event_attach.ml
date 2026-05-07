@@ -35,16 +35,26 @@ let uint64_value value =
 let bool_value value =
   make_ir_value (IRLiteral (BoolLit value)) IRBool test_pos
 
-let perf_counter_value name raw_value =
+let int64_value value =
+  make_ir_value (IRLiteral (IntLit (Signed64 value, None))) IRI64 test_pos
+
+let perf_type_value name raw_value =
   make_ir_value
-    (IREnumConstant ("perf_counter", name, Signed64 raw_value))
-    (IREnum ("perf_counter", []))
+    (IREnumConstant ("perf_type", name, Signed64 raw_value))
+    (IREnum ("perf_type", []))
+    test_pos
+
+let perf_config_value enum_name name raw_value =
+  make_ir_value
+    (IREnumConstant (enum_name, name, Signed64 raw_value))
+    (IREnum (enum_name, []))
     test_pos
 
 let perf_attr_expr ~pid ~cpu =
   make_ir_expr
     (IRStructLiteral ("perf_options", [
-      ("counter", perf_counter_value "branch_misses" 5L);
+      ("perf_type", perf_type_value "perf_type_hardware" 0L);
+      ("perf_config", perf_config_value "perf_hw_config" "branch_misses" 5L);
       ("pid", int32_value pid);
       ("cpu", int32_value cpu);
       ("period", uint64_value 1000000L);
@@ -126,7 +136,8 @@ let appears_before str a b =
 let perf_attr_expr_with ~period ~wakeup =
   make_ir_expr
     (IRStructLiteral ("perf_options", [
-      ("counter", perf_counter_value "branch_misses" 5L);
+      ("perf_type", perf_type_value "perf_type_hardware" 0L);
+      ("perf_config", perf_config_value "perf_hw_config" "branch_misses" 5L);
       ("pid",     int32_value 1234L);
       ("cpu",     int32_value 0L);
       ("period",  uint64_value period);
@@ -231,51 +242,47 @@ let test_standard_attach_uses_libbpf_error_checks () =
   check bool "tc reports libbpf error string" true
     (contains_substr generated_code "Failed to attach TC program to interface '%s': %s")
 
-let test_perf_read_count_function_generated () =
-  (* Any program that uses attach(prog, opts, 0) must also get the read/print helpers
-     so userspace code can observe real counting progress. *)
+let test_perf_read_helpers_not_generated () =
+  (* perf_event attach alone should not emit read helpers when they are unused. *)
   let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
 
-  (* ks_read_perf_count is the low-level fd-level reader *)
-  check bool "ks_read_perf_count function generated" true
+  check bool "ks_read_perf_count helper omitted" false
     (contains_substr code "ks_read_perf_count");
-  check bool "read() syscall used to fetch count from perf_fd" true
-    (contains_substr code "read(perf_fd, &count, sizeof(count))");
-  check bool "returns int64_t count value" true
-    (contains_substr code "return (int64_t)count;");
-
-  (* ks_perf_read is the high-level program-handle reader (new API) *)
-  check bool "ks_perf_read function generated" true
+  check bool "ks_perf_read helper omitted" false
     (contains_substr code "ks_perf_read");
-  check bool "ks_perf_read looks up attachment for prog_fd" true
-    (contains_substr code "ks_perf_read: no active attachment");
+  check bool "perf counter read syscall omitted" false
+    (contains_substr code "read(perf_fd, &count, sizeof(count))")
 
-  (* ks_perf_print wraps ks_perf_read for quick diagnostics *)
-  check bool "ks_perf_print function generated" true
-    (contains_substr code "ks_perf_print");
-  check bool "prints counter with PRId64 format" true
-    (contains_substr code "PRId64");
-  check bool "prints [perf] prefix for easy log grepping" true
-    (contains_substr code "[perf]");
-
-  (* Error path: short or failed read must be diagnosed *)
-  check bool "read error message present" true
-    (contains_substr code "ks_read_perf_count: read failed on perf_fd");
-  check bool "short read diagnostic present" true
-    (contains_substr code "short read");
-  check bool "ks_perf_read dups perf_fd under the lock" true
-    (contains_substr code "Dup perf_fd under the lock")
-
-let test_perf_read_detach_concurrent_window () =
-  (* When detach runs concurrently with perf_read, perf_read must dup the fd
-   * under the lock so that close(perf_fd) in detach cannot affect the read. *)
-  let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
-  check bool "ks_perf_read dups perf_fd under the lock" true
+let test_perf_read_helpers_generated_when_used () =
+  let prog_handle = make_ir_value (IRVariable "prog") IRI32 test_pos in
+  let attr_value  = make_ir_value (IRVariable "attr") (IRStruct ("perf_options", [])) test_pos in
+  let flags_value = uint32_value 0L in
+  let count_value = make_ir_value (IRVariable "count") IRI64 test_pos in
+  let attr_decl =
+    make_ir_instruction
+      (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
+                       Some (perf_attr_expr_with ~period:1000000L ~wakeup:1L)))
+      test_pos
+  in
+  let attach_call =
+    make_ir_instruction
+      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], None))
+      test_pos
+  in
+  let read_call =
+    make_ir_instruction
+      (IRCall (DirectCall "perf_read", [prog_handle], Some count_value))
+      test_pos
+  in
+  let code = make_generated_code [attr_decl; attach_call; read_call] in
+  check bool "ks_read_perf_count helper generated when perf_read is used" true
+    (contains_substr code "ks_read_perf_count");
+  check bool "ks_perf_read helper generated when perf_read is used" true
+    (contains_substr code "ks_perf_read");
+  check bool "perf_read duplicates perf fd under the lock" true
     (contains_substr code "dup_fd = dup(cur->perf_fd)");
-  check bool "ks_perf_read closes dup'd fd after reading" true
-    (contains_substr code "close(dup_fd)");
-  check bool "ks_perf_read skips detaching entries" true
-    (contains_substr code "!cur->detaching && cur->perf_fd >= 0")
+  check bool "perf_read closes duplicate fd after reading" true
+    (contains_substr code "close(dup_fd)")
 
 let test_perf_attach_event_function_generated () =
   (* attach(prog, perf_options{...}, 0) must generate ks_attach_perf_event which
@@ -297,6 +304,12 @@ let test_perf_attach_event_function_generated () =
     (contains_substr code "__PERF_RAW_EMIT__");
   check bool "no snprintf perf_fd string hack" false
     (contains_substr code "snprintf(%s, sizeof(%s),");
+  check bool "perf attr type copied directly from perf_options" true
+    (contains_substr code "ks_attr.attr.type = (__u32)ks_attr.perf_type;");
+  check bool "perf attr config copied directly from perf_options" true
+    (contains_substr code "ks_attr.attr.config = (__u64)ks_attr.perf_config;");
+  check bool "old perf_counter switch removed" false
+    (contains_substr code "switch (ks_attr.counter)");
   check bool "find_prog_by_fd helper used for program lookup" true
     (contains_substr code "find_prog_by_fd");
   check bool "perf attach rejects wrong program type at runtime" true
@@ -386,9 +399,9 @@ let tests = [
   test_case "perf_event_counting_starts_correctly"      `Quick test_perf_event_counting_starts_correctly;
   test_case "perf_event_period_and_wakeup_defaults"     `Quick test_perf_event_period_and_wakeup_defaults;
   test_case "perf_event_period_and_wakeup_custom"       `Quick test_perf_event_period_and_wakeup_custom;
-  test_case "perf_read_count_function_generated"        `Quick test_perf_read_count_function_generated;
+  test_case "perf_read_helpers_not_generated"           `Quick test_perf_read_helpers_not_generated;
+  test_case "perf_read_helpers_generated_when_used"     `Quick test_perf_read_helpers_generated_when_used;
   test_case "perf_attach_event_function_generated"      `Quick test_perf_attach_event_function_generated;
-  test_case "perf_read_detach_concurrent_window"        `Quick test_perf_read_detach_concurrent_window;
   test_case "detach_attach_concurrent_window"           `Quick test_detach_attach_concurrent_window;
   test_case "standard_attach_uses_libbpf_error_checks"  `Quick test_standard_attach_uses_libbpf_error_checks;
 ]
