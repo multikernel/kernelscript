@@ -557,7 +557,7 @@ let test_enum_array_index () =
     fn test_enum_index() -> u32 {
       var proto = TCP
       var count = protocol_stats[proto]
-      if (count != none) {
+      if (count != null) {
         return count
       } else {
         return 0

@@ -44,15 +44,14 @@ fn get_timestamp() -> u64 {
 @xdp fn network_monitor(ctx: *xdp_md) -> xdp_action {
   var key: u32 = 0
   var stat = stats[key]
-  if (stat == none) {
+  if (stat == null) {
     var init_stat = Stats { events_submitted: 0, events_dropped: 0, buffer_full_count: 0 }
     stats[key] = init_stat
     stat = stats[key]
   }
   
   // Try to reserve space in ring buffer
-  var reserved = network_events.reserve()
-  if (reserved != null) {
+  if (var reserved = network_events.reserve()) {
     // Successfully reserved space - populate event data inline
     reserved->timestamp = get_timestamp()
     reserved->event_type = 1  // PACKET_RECEIVED
@@ -77,8 +76,7 @@ fn get_timestamp() -> u64 {
 // Security monitoring program
 @probe("sys_openat")
 fn security_monitor(dfd: i32, filename: *u8, flags: i32, mode: u16) -> i32 {
-  var reserved = security_events.reserve()
-  if (reserved != null) {
+  if (var reserved = security_events.reserve()) {
     // Successfully reserved space - populate security event inline
     reserved->timestamp = get_timestamp()
     reserved->severity = 2  // Medium severity

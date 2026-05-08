@@ -46,7 +46,7 @@
 %token <string> STRING IDENTIFIER
 %token <char> CHAR_LIT
 %token <bool> BOOL_LIT
-%token NULL NONE
+%token NULL
 
 /* Keywords */
 %token FN EXTERN INCLUDE PIN TYPE STRUCT ENUM IMPL
@@ -126,6 +126,7 @@
 %type <Ast.statement> assignment_or_expression_statement
 %type <Ast.statement> compound_assignment_statement
 %type <Ast.statement> compound_index_assignment_statement
+%type <Ast.statement> compound_field_index_assignment_statement
 %type <Ast.statement> field_assignment_statement
 %type <Ast.statement> arrow_assignment_statement
 %type <Ast.statement> index_assignment_statement
@@ -313,6 +314,7 @@ statement:
   | index_assignment_statement { $1 }
   | compound_assignment_statement { $1 }
   | compound_index_assignment_statement { $1 }
+  | compound_field_index_assignment_statement { $1 }
   | assignment_or_expression_statement { $1 }
   | return_statement { $1 }
   | if_statement { $1 }
@@ -380,6 +382,18 @@ compound_index_assignment_statement:
   | expression LBRACKET expression RBRACKET MODULO_ASSIGN expression
     { make_stmt (CompoundIndexAssignment ($1, $3, Mod, $6)) (make_pos ()) }
 
+compound_field_index_assignment_statement:
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER PLUS_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Add, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER MINUS_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Sub, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER MULTIPLY_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Mul, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER DIVIDE_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Div, $8)) (make_pos ()) }
+  | expression LBRACKET expression RBRACKET DOT IDENTIFIER MODULO_ASSIGN expression
+    { make_stmt (CompoundFieldIndexAssignment ($1, $3, $6, Mod, $8)) (make_pos ()) }
+
 return_statement:
   | RETURN { make_stmt (Return None) (make_pos ()) }
   | RETURN expression { make_stmt (Return (Some $2)) (make_pos ()) }
@@ -391,6 +405,12 @@ if_statement:
     { make_stmt (If ($3, $6, Some $10)) (make_pos ()) }
   | IF LPAREN expression RPAREN LBRACE statement_list RBRACE ELSE if_statement
     { make_stmt (If ($3, $6, Some [$9])) (make_pos ()) }
+  | IF LPAREN VAR IDENTIFIER ASSIGN expression RPAREN LBRACE statement_list RBRACE
+    { make_stmt (IfLet ($4, $6, $9, None)) (make_pos ()) }
+  | IF LPAREN VAR IDENTIFIER ASSIGN expression RPAREN LBRACE statement_list RBRACE ELSE LBRACE statement_list RBRACE
+    { make_stmt (IfLet ($4, $6, $9, Some $13)) (make_pos ()) }
+  | IF LPAREN VAR IDENTIFIER ASSIGN expression RPAREN LBRACE statement_list RBRACE ELSE if_statement
+    { make_stmt (IfLet ($4, $6, $9, Some [$12])) (make_pos ()) }
 
 while_statement:
   | WHILE LPAREN expression RPAREN LBRACE statement_list RBRACE
@@ -496,7 +516,6 @@ literal:
   | CHAR_LIT { CharLit $1 }
   | BOOL_LIT { BoolLit $1 }
   | NULL { NullLit }
-  | NONE { NoneLit }
   | LBRACKET array_init_expr RBRACKET { ArrayLit $2 }
 
 array_init_expr:

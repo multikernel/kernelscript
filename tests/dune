@@ -91,6 +91,11 @@
  (libraries kernelscript alcotest test_utils str))
 
 (executable
+ (name test_iflet)
+ (modules test_iflet)
+ (libraries kernelscript alcotest test_utils str))
+
+(executable
  (name test_dynptr_bridge)
  (modules test_dynptr_bridge)
  (libraries kernelscript alcotest))
@@ -454,6 +459,7 @@
   test_map_operations.exe
   test_evaluator.exe
   test_compound_index_assignment.exe
+  test_iflet.exe
   test_dynptr_bridge.exe
   test_global_var_ordering.exe
   test_string_to_array_unification.exe
@@ -589,6 +595,10 @@
 (rule
  (alias runtest)
  (action (run ./test_compound_index_assignment.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_iflet.exe)))
 
 (rule
  (alias runtest)

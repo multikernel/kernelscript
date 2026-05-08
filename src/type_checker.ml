@@ -94,6 +94,8 @@ and typed_stmt_desc =
   | TAssignment of string * typed_expr
   | TCompoundAssignment of string * binary_op * typed_expr  (* var op= expr *)
   | TCompoundIndexAssignment of typed_expr * typed_expr * binary_op * typed_expr  (* map[key] op= expr *)
+  | TCompoundFieldIndexAssignment of typed_expr * typed_expr * string * binary_op * typed_expr
+      (* map[key].field op= expr *)
   | TFieldAssignment of typed_expr * string * typed_expr  (* object, field, value *)
   | TArrowAssignment of typed_expr * string * typed_expr  (* pointer, field, value *)
   | TIndexAssignment of typed_expr * typed_expr * typed_expr
@@ -101,6 +103,8 @@ and typed_stmt_desc =
   | TConstDeclaration of string * bpf_type * typed_expr
   | TReturn of typed_expr option
   | TIf of typed_expr * typed_statement list * typed_statement list option
+  | TIfLet of string * bpf_type * typed_expr * typed_statement list * typed_statement list option
+      (* name, bound_type (type of `name` inside then-branch), source expr, then, else *)
   | TFor of string * typed_expr * typed_expr * typed_statement list
   | TForIter of string * string * typed_expr * typed_statement list
   | TWhile of typed_expr * typed_statement list
@@ -404,7 +408,6 @@ let get_literal_type lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
-  | NoneLit -> NoneType
   | ArrayLit _ -> U32  (* Nested arrays default to u32 *)
 
 (** Helper function to check type equality for array literals *)
@@ -431,7 +434,6 @@ let type_check_literal lit pos =
     | CharLit _ -> Char
     | BoolLit _ -> Bool
     | NullLit -> Null  (* null literal - can unify with any pointer or function type *)
-    | NoneLit -> NoneType  (* none literal represents missing/absent values *)
     | ArrayLit init_style ->
         (* Handle enhanced array literal type checking *)
         (match init_style with
@@ -484,7 +486,6 @@ let type_of_literal lit =
   | CharLit _ -> Char
   | BoolLit _ -> Bool
   | NullLit -> Pointer U32
-  | NoneLit -> NoneType
   | ArrayLit init_style ->
       (* Handle enhanced array literal type checking *)
       (match init_style with
@@ -697,6 +698,16 @@ let rec extract_block_return_type stmts arm_pos =
     | TIf (_, _, None) ->
         (* If without else - this doesn't work as a return value *)
         type_error "If statement without else cannot be used as return value in match arm" arm_pos
+    | TIfLet (_, _, _, then_stmts, Some else_stmts) ->
+        let then_type = extract_block_return_type then_stmts arm_pos in
+        let else_type = extract_block_return_type else_stmts arm_pos in
+        (match unify_types then_type else_type with
+         | Some unified_type -> unified_type
+         | None -> type_error ("If-let branches have incompatible types: " ^
+                               string_of_bpf_type then_type ^ " vs " ^
+                               string_of_bpf_type else_type) arm_pos)
+    | TIfLet (_, _, _, _, None) ->
+        type_error "If-let without else cannot be used as return value in match arm" arm_pos
     | _ -> 
         type_error "Block arms must end with a return statement, expression, or if-else statement" arm_pos
   in
@@ -1082,29 +1093,6 @@ and type_check_binary_op ctx left op right pos =
          (* Null comparisons - any type can be compared with null *)
          | Null, _ | _, Null -> Bool  (* Direct null comparisons *)
          | _, Pointer _ | Pointer _, _ -> Bool  (* Pointer comparisons (legacy) *)
-         (* None comparisons - allow with map access expressions or variables that could contain map results *)
-         | NoneType, _ | _, NoneType -> 
-             (* Check if at least one operand is a map access or could reasonably be a map result *)
-             let has_map_related_value = 
-               (match left.expr_desc with
-                | ArrayAccess (map_expr, _) -> 
-                    (match map_expr.expr_desc with
-                     | Identifier map_name -> Hashtbl.mem ctx.maps map_name
-                     | _ -> false)
-                | Identifier _ -> true  (* Variables can contain map lookup results *)
-                | _ -> false) ||
-               (match right.expr_desc with
-                | ArrayAccess (map_expr, _) -> 
-                    (match map_expr.expr_desc with
-                     | Identifier map_name -> Hashtbl.mem ctx.maps map_name
-                     | _ -> false)
-                | Identifier _ -> true  (* Variables can contain map lookup results *)
-                | _ -> false)
-             in
-             if has_map_related_value then
-               Bool
-             else
-               type_error "'none' can only be compared with map access expressions or variables that may contain map results" pos
          | _ ->
              (match unify_types resolved_left_type resolved_right_type with
               | Some _ -> Bool
@@ -1557,10 +1545,6 @@ and type_check_statement ctx stmt =
   
     | Assignment (name, expr) ->
       let typed_expr = type_check_expression ctx expr in
-      (* Check if trying to assign none to a variable *)
-      (match typed_expr.texpr_type with
-       | NoneType -> type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
-       | _ -> ());
       (* Check if the variable is const by looking it up in the symbol table *)
       (match Symbol_table.lookup_symbol ctx.symbol_table name with
        | Some symbol when Symbol_table.is_const_variable symbol ->
@@ -1808,7 +1792,57 @@ and type_check_statement ctx stmt =
                      type_error ("Operator " ^ string_of_binary_op op ^ 
                                 " not supported for type " ^ string_of_bpf_type element_type) stmt.stmt_pos)
             | _ -> type_error ("Compound index assignment can only be used on maps or arrays") stmt.stmt_pos))
-  
+
+  | CompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+      let typed_key = type_check_expression ctx key_expr in
+      let typed_value = type_check_expression ctx value_expr in
+      let map_name = match map_expr.expr_desc with
+        | Identifier name when Hashtbl.mem ctx.maps name -> name
+        | _ -> type_error "Compound field-index assignment requires a map identifier" stmt.stmt_pos
+      in
+      let map_decl = Hashtbl.find ctx.maps map_name in
+      (* Key type *)
+      let resolved_key_type = resolve_user_type ctx map_decl.ast_key_type in
+      let resolved_typed_key_type = resolve_user_type ctx typed_key.texpr_type in
+      (match unify_types resolved_key_type resolved_typed_key_type with
+       | Some _ -> ()
+       | None -> type_error "Map key type mismatch" stmt.stmt_pos);
+      (* Resolve the map's value type to a struct *)
+      let resolved_value_type = resolve_user_type ctx map_decl.ast_value_type in
+      let struct_name = match resolved_value_type with
+        | Struct n | UserType n -> n
+        | _ -> type_error "map[k].field op= rhs requires the map's value type to be a struct" stmt.stmt_pos
+      in
+      let fields =
+        try
+          (match Hashtbl.find ctx.types struct_name with
+           | StructDef (_, fs, _) -> fs
+           | _ -> type_error (struct_name ^ " is not a struct") stmt.stmt_pos)
+        with Not_found -> type_error ("Undefined struct: " ^ struct_name) stmt.stmt_pos
+      in
+      let field_type =
+        try List.assoc field fields
+        with Not_found ->
+          type_error ("Field not found: " ^ field ^ " in struct " ^ struct_name) stmt.stmt_pos
+      in
+      (* rhs must match field type *)
+      let resolved_field_type = resolve_user_type ctx field_type in
+      let resolved_typed_value_type = resolve_user_type ctx typed_value.texpr_type in
+      (match unify_types resolved_field_type resolved_typed_value_type with
+       | Some _ -> ()
+       | None -> type_error ("Field value type mismatch for " ^ field) stmt.stmt_pos);
+      (* op must be valid for the field type *)
+      (match op, resolved_field_type with
+       | (Add | Sub | Mul | Div | Mod), (U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64) ->
+           let typed_map = { texpr_desc = TIdentifier map_name;
+                             texpr_type = Map (map_decl.ast_key_type, map_decl.ast_value_type, map_decl.ast_map_type, map_decl.max_entries);
+                             texpr_pos = map_expr.expr_pos } in
+           { tstmt_desc = TCompoundFieldIndexAssignment (typed_map, typed_key, field, op, typed_value);
+             tstmt_pos = stmt.stmt_pos }
+       | _, _ ->
+           type_error ("Operator " ^ string_of_binary_op op ^
+                      " not supported for field type " ^ string_of_bpf_type resolved_field_type) stmt.stmt_pos)
+
   | Declaration (name, type_opt, expr_opt) ->
       let typed_expr_opt = Option.map (type_check_expression ctx) expr_opt in
       
@@ -1816,12 +1850,6 @@ and type_check_statement ctx stmt =
       (match typed_expr_opt with
        | Some typed_expr when (match typed_expr.texpr_type with Map (_, _, _, _) -> true | _ -> false) ->
            type_error ("Maps cannot be assigned to variables") stmt.stmt_pos
-       | _ -> ());
-      
-      (* Check if trying to assign none to a variable *)
-      (match typed_expr_opt with
-       | Some typed_expr when (match typed_expr.texpr_type with NoneType -> true | _ -> false) ->
-           type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
        | _ -> ());
       
       let var_type = match type_opt with
@@ -1855,11 +1883,6 @@ and type_check_statement ctx stmt =
       (* Check if trying to assign a map to a const *)
       (match typed_expr.texpr_type with
        | Map (_, _, _, _) -> type_error ("Maps cannot be assigned to const variables") stmt.stmt_pos
-       | _ -> ());
-      
-      (* Check if trying to assign none to a const *)
-      (match typed_expr.texpr_type with
-       | NoneType -> type_error ("'none' cannot be assigned to variables. It can only be used in comparisons with map lookup results.") stmt.stmt_pos
        | _ -> ());
       
       (* Validate that the expression is a compile-time constant (literals and negated literals) *)
@@ -2028,6 +2051,49 @@ and type_check_statement ctx stmt =
       let typed_then = List.map (type_check_statement ctx) then_stmts in
       let typed_else = Option.map (List.map (type_check_statement ctx)) else_opt in
       { tstmt_desc = TIf (typed_cond, typed_then, typed_else); tstmt_pos = stmt.stmt_pos }
+
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      (* `if (var name = expr) { ... }` — bind `name` only inside then-branch.
+         The bound type matches what `var name = expr` would normally
+         produce: the value type for map access (auto-deref via
+         IRMapAccess), and the pointer type for raw pointer expressions.
+         We restrict the RHS to "presence-producing" expressions, since
+         the construct's truthiness is defined as "expr produced a present
+         value" — i.e., a map hit or a non-null pointer. Allowing arbitrary
+         scalar / struct RHS would let the codegen emit `x != NULL`
+         against a non-pointer value (clang -Wpointer-integer-compare,
+         invalid C for struct types) and would let the evaluator's general
+         truthy-falsy rule diverge from the codegen's pointer presence
+         check. The legal shapes are:
+           - `m[k]` where `m` is a known map (auto-deref'd value type at
+             this layer, but underlying-pointer-checked at codegen)
+           - any expression of pointer type. *)
+      let typed_expr = type_check_expression ctx expr in
+      let bound_type = typed_expr.texpr_type in
+      let is_map_access_rhs = match expr.expr_desc with
+        | ArrayAccess ({ expr_desc = Identifier mn; _ }, _) ->
+            Hashtbl.mem ctx.maps mn
+        | _ -> false
+      in
+      let is_pointer_rhs = match bound_type with
+        | Pointer _ -> true
+        | _ -> false
+      in
+      if not (is_map_access_rhs || is_pointer_rhs) then
+        type_error
+          ("`if (var " ^ name ^ " = expr)` requires expr to be a map access " ^
+           "(`m[k]`) or a pointer-typed expression; got " ^
+           string_of_bpf_type bound_type)
+          stmt.stmt_pos;
+      let saved = Hashtbl.find_opt ctx.variables name in
+      Hashtbl.replace ctx.variables name bound_type;
+      let typed_then = List.map (type_check_statement ctx) then_stmts in
+      (match saved with
+       | Some t -> Hashtbl.replace ctx.variables name t
+       | None -> Hashtbl.remove ctx.variables name);
+      let typed_else = Option.map (List.map (type_check_statement ctx)) else_opt in
+      { tstmt_desc = TIfLet (name, bound_type, typed_expr, typed_then, typed_else);
+        tstmt_pos = stmt.stmt_pos }
   
   | For (var, start, end_, body) ->
       if !loop_depth > 0 then
@@ -2570,6 +2636,8 @@ and typed_stmt_to_stmt tstmt =
     | TCompoundAssignment (name, op, expr) -> CompoundAssignment (name, op, typed_expr_to_expr expr)
     | TCompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
         CompoundIndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, op, typed_expr_to_expr value_expr)
+    | TCompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+        CompoundFieldIndexAssignment (typed_expr_to_expr map_expr, typed_expr_to_expr key_expr, field, op, typed_expr_to_expr value_expr)
     | TFieldAssignment (obj_expr, field, value_expr) ->
         FieldAssignment (typed_expr_to_expr obj_expr, field, typed_expr_to_expr value_expr)
     | TArrowAssignment (obj_expr, field, value_expr) ->
@@ -2579,10 +2647,15 @@ and typed_stmt_to_stmt tstmt =
     | TDeclaration (name, typ, expr_opt) -> Declaration (name, Some typ, Option.map typed_expr_to_expr expr_opt)
   | TConstDeclaration (name, typ, expr) -> ConstDeclaration (name, Some typ, typed_expr_to_expr expr)
     | TReturn expr_opt -> Return (Option.map typed_expr_to_expr expr_opt)
-    | TIf (cond, then_stmts, else_opt) -> 
-        If (typed_expr_to_expr cond, 
+    | TIf (cond, then_stmts, else_opt) ->
+        If (typed_expr_to_expr cond,
             List.map typed_stmt_to_stmt then_stmts,
             Option.map (List.map typed_stmt_to_stmt) else_opt)
+    | TIfLet (name, _bound_type, expr, then_stmts, else_opt) ->
+        IfLet (name,
+               typed_expr_to_expr expr,
+               List.map typed_stmt_to_stmt then_stmts,
+               Option.map (List.map typed_stmt_to_stmt) else_opt)
     | TFor (var, start, end_, body) ->
         For (var, typed_expr_to_expr start, typed_expr_to_expr end_, List.map typed_stmt_to_stmt body)
     | TForIter (index_var, value_var, iterable, body) ->
@@ -3237,6 +3310,13 @@ and populate_multi_program_context ast multi_prog_analysis =
         (match map_expr.program_context with
          | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
          | None -> ())
+    | CompoundFieldIndexAssignment (map_expr, key_expr, _, _, value_expr) ->
+        enhance_expr prog_type map_expr;
+        enhance_expr prog_type key_expr;
+        enhance_expr prog_type value_expr;
+        (match map_expr.program_context with
+         | Some ctx -> map_expr.program_context <- Some { ctx with data_flow_direction = Some Write }
+         | None -> ())
     | FieldAssignment (obj_expr, _, value_expr) ->
         enhance_expr prog_type obj_expr;
         enhance_expr prog_type value_expr
@@ -3262,6 +3342,12 @@ and populate_multi_program_context ast multi_prog_analysis =
         enhance_expr prog_type expr
     | If (cond_expr, then_stmts, else_stmts_opt) ->
         enhance_expr prog_type cond_expr;
+        List.iter (enhance_stmt prog_type) then_stmts;
+        (match else_stmts_opt with
+         | Some else_stmts -> List.iter (enhance_stmt prog_type) else_stmts
+         | None -> ())
+    | IfLet (_, expr, then_stmts, else_stmts_opt) ->
+        enhance_expr prog_type expr;
         List.iter (enhance_stmt prog_type) then_stmts;
         (match else_stmts_opt with
          | Some else_stmts -> List.iter (enhance_stmt prog_type) else_stmts
@@ -3336,6 +3422,10 @@ and populate_multi_program_context ast multi_prog_analysis =
           enhance_userspace_expr map_expr;
           enhance_userspace_expr key_expr;
           enhance_userspace_expr value_expr
+      | CompoundFieldIndexAssignment (map_expr, key_expr, _, _, value_expr) ->
+          enhance_userspace_expr map_expr;
+          enhance_userspace_expr key_expr;
+          enhance_userspace_expr value_expr
       | FieldAssignment (obj_expr, _, value_expr) ->
           enhance_userspace_expr obj_expr;
           enhance_userspace_expr value_expr
@@ -3356,6 +3446,12 @@ and populate_multi_program_context ast multi_prog_analysis =
           enhance_userspace_expr expr
       | If (cond_expr, then_stmts, else_stmts_opt) ->
           enhance_userspace_expr cond_expr;
+          List.iter enhance_userspace_stmt_inner then_stmts;
+          (match else_stmts_opt with
+           | Some else_stmts -> List.iter enhance_userspace_stmt_inner else_stmts
+           | None -> ())
+      | IfLet (_, expr, then_stmts, else_stmts_opt) ->
+          enhance_userspace_expr expr;
           List.iter enhance_userspace_stmt_inner then_stmts;
           (match else_stmts_opt with
            | Some else_stmts -> List.iter enhance_userspace_stmt_inner else_stmts

@@ -96,6 +96,8 @@ let validate_ast ast =
     | CompoundAssignment (_, _, expr) -> validate_expr expr
     | CompoundIndexAssignment (map_expr, key_expr, _, value_expr) ->
         validate_expr map_expr && validate_expr key_expr && validate_expr value_expr
+    | CompoundFieldIndexAssignment (map_expr, key_expr, _, _, value_expr) ->
+        validate_expr map_expr && validate_expr key_expr && validate_expr value_expr
     | FieldAssignment (obj_expr, _, value_expr) ->
         validate_expr obj_expr && validate_expr value_expr
     | ArrowAssignment (obj_expr, _, value_expr) ->
@@ -110,7 +112,11 @@ let validate_ast ast =
     | Return None -> true
     | Return (Some expr) -> validate_expr expr
     | If (cond, then_stmts, else_opt) ->
-        validate_expr cond && 
+        validate_expr cond &&
+        List.for_all validate_stmt then_stmts &&
+        (match else_opt with None -> true | Some stmts -> List.for_all validate_stmt stmts)
+    | IfLet (_, expr, then_stmts, else_opt) ->
+        validate_expr expr &&
         List.for_all validate_stmt then_stmts &&
         (match else_opt with None -> true | Some stmts -> List.for_all validate_stmt stmts)
     | For (_, start, end_, body) ->

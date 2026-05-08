@@ -1230,8 +1230,7 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
   | IRLiteral (BoolLit b) -> if b then "1" else "0"
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (NullLit) -> "NULL"
-  | IRLiteral (NoneLit) -> "0"
-  | IRLiteral (StringLit s) -> 
+  | IRLiteral (StringLit s) ->
       (* Generate string literal as struct initialization *)
       (match ir_val.val_type with
        | IRStr size ->
@@ -1263,7 +1262,6 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" (escape_c_string s)
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "0"
              | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
            in
            "{" ^ fill_str ^ "}"
@@ -1275,7 +1273,6 @@ let rec generate_c_value ?(auto_deref_map_access=false) ctx ir_val =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" (escape_c_string s)
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "0"
              | Ast.ArrayLit _ -> "{0}"  (* Nested arrays simplified *)
            ) elements in
            if List.length elements = 0 then
@@ -1433,29 +1430,43 @@ let generate_c_expression ctx ir_expr =
            let index_str = generate_c_value ctx right in
            sprintf "%s.data[%s]" array_str index_str
        | _ ->
-           (* Check for none comparisons first *)
+           (* `null` comparisons against a map-access lower to a presence
+              check against the underlying lookup pointer (or against the
+              value directly when it is already a pointer), so
+              `if (var x = map[k])` and `entry != null` produce correct C
+              without an extra dereference. *)
+           let is_absence_lit = function
+             | IRLiteral (Ast.NullLit) -> true
+             | _ -> false
+           in
            (match left.value_desc, op, right.value_desc with
-            | _, IREq, IRLiteral (Ast.NoneLit) 
-            | IRLiteral (Ast.NoneLit), IREq, _ ->
-                (* Comparison with none: check if pointer is NULL *)
-                let non_none_val = if left.value_desc = IRLiteral (Ast.NoneLit) then right else left in
-                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
-                let val_str = (match non_none_val.value_desc with
+            | _, IREq, _ when is_absence_lit right.value_desc ->
+                let val_str = (match left.value_desc with
                   | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
-                      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = non_none_val.val_pos } in
+                      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = left.val_pos } in
                       generate_c_value ~auto_deref_map_access:false ctx underlying_val
-                  | _ -> generate_c_value ctx non_none_val) in
+                  | _ -> generate_c_value ctx left) in
                 sprintf "(%s == NULL)" val_str
-            | _, IRNe, IRLiteral (Ast.NoneLit)
-            | IRLiteral (Ast.NoneLit), IRNe, _ ->
-                (* Not-equal comparison with none: check if pointer is not NULL *)
-                let non_none_val = if left.value_desc = IRLiteral (Ast.NoneLit) then right else left in
-                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
-                let val_str = (match non_none_val.value_desc with
+            | _, IREq, _ when is_absence_lit left.value_desc ->
+                let val_str = (match right.value_desc with
                   | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
-                      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = non_none_val.val_pos } in
+                      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = right.val_pos } in
                       generate_c_value ~auto_deref_map_access:false ctx underlying_val
-                  | _ -> generate_c_value ctx non_none_val) in
+                  | _ -> generate_c_value ctx right) in
+                sprintf "(%s == NULL)" val_str
+            | _, IRNe, _ when is_absence_lit right.value_desc ->
+                let val_str = (match left.value_desc with
+                  | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
+                      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = left.val_pos } in
+                      generate_c_value ~auto_deref_map_access:false ctx underlying_val
+                  | _ -> generate_c_value ctx left) in
+                sprintf "(%s != NULL)" val_str
+            | _, IRNe, _ when is_absence_lit left.value_desc ->
+                let val_str = (match right.value_desc with
+                  | IRMapAccess (_, _, (underlying_desc, underlying_type)) ->
+                      let underlying_val = { value_desc = underlying_desc; val_type = underlying_type; stack_offset = None; bounds_checked = false; val_pos = right.val_pos } in
+                      generate_c_value ~auto_deref_map_access:false ctx underlying_val
+                  | _ -> generate_c_value ctx right) in
                 sprintf "(%s != NULL)" val_str
             | _ ->
                 (* Regular binary operation - auto-dereference map access for operands *)
@@ -1935,6 +1946,10 @@ and generate_c_instruction ctx ir_instr =
               | IRStr _, _ ->
                   (* Other string expressions (concatenation, etc.) *)
                   let init_str = generate_c_expression ctx init_expr in
+                  emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
+              | IRPointer _, IRValue src_val when (match src_val.value_desc with IRMapAccess _ -> true | _ -> false) ->
+                  (* Pointer-typed variable initialized from a map lookup: keep the pointer. *)
+                  let init_str = generate_c_value ~auto_deref_map_access:false ctx src_val in
                   emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str)
               | _ ->
                   (* Regular non-string assignment *)

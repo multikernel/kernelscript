@@ -81,8 +81,6 @@ type bpf_type =
   (* Ring buffer reference type - represents a ring buffer for dispatch *)
   | RingbufRef of bpf_type (* value type *)
   | Ringbuf of bpf_type * int (* value_type, size - ring buffer object *)
-  (* None type - represents missing/absent values *)
-  | NoneType
   (* Null type - represents null pointers, compatible with any pointer type *)
   | Null
 
@@ -187,7 +185,6 @@ type literal =
   | BoolLit of bool
   | ArrayLit of array_init_style   (* Enhanced array initialization *)
   | NullLit
-  | NoneLit
 
 (** Array initialization styles *)
 and array_init_style =
@@ -285,6 +282,8 @@ and stmt_desc =
   | Assignment of string * expr
   | CompoundAssignment of string * binary_op * expr  (* var op= expr *)
   | CompoundIndexAssignment of expr * expr * binary_op * expr  (* map[key] op= expr *)
+  | CompoundFieldIndexAssignment of expr * expr * string * binary_op * expr
+      (* map[key].field op= expr *)
   | FieldAssignment of expr * string * expr  (* object.field = value *)
   | ArrowAssignment of expr * string * expr  (* pointer->field = value *)
   | IndexAssignment of expr * expr * expr  (* map[key] = value *)
@@ -292,6 +291,10 @@ and stmt_desc =
   | ConstDeclaration of string * bpf_type option * expr  (* const name : type = value *)
   | Return of expr option
   | If of expr * statement list * statement list option
+  | IfLet of string * expr * statement list * statement list option
+      (* if (var name = expr) { then_stmts } else { else_stmts }
+         Truthy iff expr is "present": map hit, non-null pointer return, etc.
+         `name` is bound only inside then_stmts. *)
   | For of string * expr * expr * statement list
   | ForIter of string * string * expr * statement list  (* for (index, value) in expr.iter() { ... } *)
   | While of expr * statement list
@@ -710,7 +713,6 @@ let rec string_of_bpf_type = function
   | ProgramHandle -> "ProgramHandle"
   | RingbufRef value_type -> Printf.sprintf "ringbuf_ref<%s>" (string_of_bpf_type value_type)
   | Ringbuf (value_type, size) -> Printf.sprintf "ringbuf<%s>(%d)" (string_of_bpf_type value_type) size
-  | NoneType -> "none"
   | Null -> "null"
 
 let rec string_of_literal = function
@@ -726,7 +728,6 @@ let rec string_of_literal = function
       Printf.sprintf "[%s]" (String.concat ", " (List.map string_of_literal literals))
   | ArrayLit (ZeroArray) -> "[]"
   | NullLit -> "null"
-  | NoneLit -> "none"
 
 let string_of_binary_op = function
   | Add -> "+"
@@ -814,6 +815,10 @@ and string_of_stmt stmt =
       Printf.sprintf "%s %s= %s;" name (string_of_binary_op op) (string_of_expr expr)
   | CompoundIndexAssignment (map_expr, key_expr, op, value_expr) ->
       Printf.sprintf "%s[%s] %s= %s;" (string_of_expr map_expr) (string_of_expr key_expr) (string_of_binary_op op) (string_of_expr value_expr)
+  | CompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+      Printf.sprintf "%s[%s].%s %s= %s;"
+        (string_of_expr map_expr) (string_of_expr key_expr) field
+        (string_of_binary_op op) (string_of_expr value_expr)
   | FieldAssignment (obj_expr, field, value_expr) ->
       Printf.sprintf "%s.%s = %s;" (string_of_expr obj_expr) field (string_of_expr value_expr)
   | ArrowAssignment (obj_expr, field, value_expr) ->
@@ -842,10 +847,18 @@ and string_of_stmt stmt =
       let then_str = String.concat " " (List.map string_of_stmt then_stmts) in
       let else_str = match else_opt with
         | None -> ""
-        | Some else_stmts -> 
+        | Some else_stmts ->
             " else { " ^ String.concat " " (List.map string_of_stmt else_stmts) ^ " }"
       in
       Printf.sprintf "if (%s) { %s }%s" (string_of_expr cond) then_str else_str
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      let then_str = String.concat " " (List.map string_of_stmt then_stmts) in
+      let else_str = match else_opt with
+        | None -> ""
+        | Some else_stmts ->
+            " else { " ^ String.concat " " (List.map string_of_stmt else_stmts) ^ " }"
+      in
+      Printf.sprintf "if (var %s = %s) { %s }%s" name (string_of_expr expr) then_str else_str
   | For (var, start, end_, body) ->
       let body_str = String.concat " " (List.map string_of_stmt body) in
       Printf.sprintf "for (%s in %s..%s) { %s }" 

@@ -187,6 +187,10 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         analyze_expr_for_maps prog_name map_expr;
         analyze_expr_for_maps prog_name key_expr;
         analyze_expr_for_maps prog_name value_expr
+    | CompoundFieldIndexAssignment (map_expr, key_expr, _, _, value_expr) ->
+        analyze_expr_for_maps prog_name map_expr;
+        analyze_expr_for_maps prog_name key_expr;
+        analyze_expr_for_maps prog_name value_expr
     | FieldAssignment (obj_expr, _, value_expr) ->
         analyze_expr_for_maps prog_name obj_expr;
         analyze_expr_for_maps prog_name value_expr
@@ -207,6 +211,12 @@ let analyze_map_usage (programs: program_def list) (global_maps: map_declaration
         analyze_expr_for_maps prog_name expr
     | If (cond_expr, then_stmts, else_stmts_opt) ->
         analyze_expr_for_maps prog_name cond_expr;
+        List.iter (analyze_stmt_for_maps prog_name) then_stmts;
+        (match else_stmts_opt with
+         | Some else_stmts -> List.iter (analyze_stmt_for_maps prog_name) else_stmts
+         | None -> ())
+    | IfLet (_, expr, then_stmts, else_stmts_opt) ->
+        analyze_expr_for_maps prog_name expr;
         List.iter (analyze_stmt_for_maps prog_name) then_stmts;
         (match else_stmts_opt with
          | Some else_stmts -> List.iter (analyze_stmt_for_maps prog_name) else_stmts

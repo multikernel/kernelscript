@@ -1476,8 +1476,7 @@ fn ddos_protection(ctx: *xdp_md) -> xdp_action {
 
 @tc("ingress")
 fn connection_tracker(ctx: *__sk_buff) -> i32 {
-    var tcp_info = extract_tcp_info(ctx)  // Reuse same helper
-    if (tcp_info != null) {
+    if (var tcp_info = extract_tcp_info(ctx)) {  // Reuse same helper
         track_connection(tcp_info.src_port, tcp_info.dst_port)
     }
     return 0  // TC_ACT_OK
@@ -2357,9 +2356,9 @@ fn ebpf_pointer_usage(ctx: *xdp_md) -> xdp_action {
         }
     }
     
-    // Dynptr-backed pointers (transparent to user)
-    var log_buffer: *u8 = event_log.reserve(256)  // Returns dynptr-backed pointer
-    if (log_buffer != null) {
+    // Dynptr-backed pointers (transparent to user) — `log_buffer` is the
+    // *u8 returned by reserve(), in scope only inside the truthy branch.
+    if (var log_buffer = event_log.reserve(256)) {
         // Regular pointer operations - compiler uses dynptr API internally
         log_buffer[0] = EVENT_TYPE_PACKET
         write_packet_summary(log_buffer + 1, packet_data, 255)
@@ -2428,15 +2427,14 @@ var flow_map : hash<FlowKey, FlowData>(1024)
 
 @helper
 fn map_pointer_operations(flow_key: FlowKey) {
-    // Map lookup returns pointer to value
-    var flow_data = flow_map[flow_key]
-    
-    if (flow_data != none) {
+    // Declaration-as-condition: a single map lookup; `flow_data` is the
+    // returned pointer, in scope only inside the truthy branch.
+    if (var flow_data = flow_map[flow_key]) {
         // Direct modification through pointer
         flow_data->packet_count += 1
         flow_data->byte_count += packet_size
         flow_data->last_seen = bpf_ktime_get_ns()
-        
+
         // Compiler tracks map value lifetime
         // flow_data becomes invalid after certain map operations
     }
@@ -2605,9 +2603,8 @@ fn egress_monitor(ctx: *__sk_buff) -> i32 {
 fn security_analyzer(ctx: LsmContext) -> i32 {
     var flow_key = extract_flow_key_from_socket(ctx)?
     
-    // Check global flow statistics
-    if (global_flows[flow_key] != null) {
-        var flow_stats = global_flows[flow_key]
+    // Check global flow statistics — single lookup via IfLet
+    if (var flow_stats = global_flows[flow_key]) {
         if (flow_stats.is_suspicious()) {
             security_events.submit(SecurityEvent {
                 event_type: EVENT_TYPE_SUSPICIOUS_CONNECTION,
@@ -2617,7 +2614,7 @@ fn security_analyzer(ctx: LsmContext) -> i32 {
             return -EPERM  // Block connection
         }
     }
-    
+
     return 0  // Allow connection
 }
 ```
@@ -2769,12 +2766,10 @@ var flow_stats : hash<u32, FlowStats>(1024)
 
 @helper
 fn update_flow_stats(flow_id: u32, packet_size: u32) {
-    var stats = flow_stats[flow_id]
-    if (stats != null) {
-        stats.packet_count += 1
-        stats.total_bytes += packet_size
-        stats.avg_packet_size = stats.total_bytes / stats.packet_count
-    }
+    // Compound assignment on a struct-field of a map value emits a single
+    // presence-checked map lookup and mutates in place; see §6.2.5.
+    flow_stats[flow_id].packet_count += 1
+    flow_stats[flow_id].total_bytes  += packet_size
 }
 ```
 
@@ -2825,7 +2820,73 @@ fn main() -> i32 {
 }
 ```
 
-#### 6.2.5 Performance and Code Generation
+#### 6.2.5 Compound Assignment with Map Indexing
+
+KernelScript extends compound assignment to map index expressions, so a
+counter update against a map value can be written without an intermediate
+variable or an explicit write-back.
+
+##### 6.2.5.1 Scalar map values
+
+When the map's value type is an integer, `m[k] op= rhs` reads the current
+entry, applies `op`, and writes the result back. If the entry is absent
+the read yields zero, so the operation creates the entry on first use.
+
+```kernelscript
+var packet_counts : hash<u32, u64>(1024)
+
+@xdp
+fn rate_limiter(ctx: *xdp_md) -> xdp_action {
+    var src_ip = extract_src_ip(ctx)
+    packet_counts[src_ip] += 1   // read-modify-write; creates entry if absent
+    return XDP_PASS
+}
+```
+
+The supported operators are `+=`, `-=`, `*=`, `/=`, `%=`. The map's value
+type must be one of the integer primitives.
+
+##### 6.2.5.2 Struct-field map values
+
+When the map's value type is a struct, `m[k].field op= rhs` mutates a
+single field of an existing entry in place. The compiler lowers the form
+to a presence-checked pointer mutation:
+
+```kernelscript
+struct PacketStats {
+    count: u64,
+    total_bytes: u64,
+}
+
+var ip_stats : hash<u32, PacketStats>(1024)
+
+@xdp
+fn observe(ctx: *xdp_md) -> xdp_action {
+    var ip = extract_src_ip(ctx)
+    var len = packet_len(ctx)
+    ip_stats[ip].count       += 1
+    ip_stats[ip].total_bytes += len
+    return XDP_PASS
+}
+```
+
+Semantics:
+
+- **Map identifier required.** The left-hand side must be `IDENT[expr].field op= rhs`;
+  arbitrary LHS expressions are not allowed.
+- **Value type must be a struct.** `field` is resolved against the map's value
+  struct definition; an unknown field is a compile-time error.
+- **Field type drives `op`.** The named field must be one of the integer
+  primitives; the right-hand side must be assignment-compatible with the field type.
+- **Presence check, no creation.** If the entry is absent the statement is a
+  no-op — unlike scalar `m[k] op= rhs`, the struct-field form does *not*
+  create a default entry. To handle the missing case, pair it with an
+  explicit `else` using the declaration-as-condition form (see §7.5.1).
+- **Single map lookup.** Generated code performs one `bpf_map_lookup_elem`,
+  guards on the returned pointer, and writes through it
+  (`if (p) { p->field = p->field op rhs; }`); there is no separate write-back.
+
+#### 6.2.6 Performance and Code Generation
 
 Compound assignments generate efficient code in both contexts:
 
@@ -2952,7 +3013,7 @@ fn packet_filter(ctx: *xdp_md) -> action: xdp_action {
 
 // Userspace functions with named returns
 fn lookup_counter(ip: u32) -> counter_ptr: *u64 {
-    if (counters[ip] == none) {
+    if (counters[ip] == null) {
         counters[ip] = 0
     }
     counter_ptr = &counters[ip]
@@ -3220,6 +3281,13 @@ fn main(args: Args) -> i32 {
 ### 7.5 Control Flow Statements
 
 #### 7.5.1 Conditional Statements
+
+KernelScript provides two `if` forms: a standard expression-condition
+form and a *declaration-as-condition* form that combines a single-use
+binding with a presence check.
+
+##### 7.5.1.1 Expression-condition form
+
 ```kernelscript
 // Conditional statements
 if (condition) {
@@ -3230,6 +3298,48 @@ if (condition) {
     // statements
 }
 ```
+
+##### 7.5.1.2 Declaration-as-condition form (`if (var name = expr)`)
+
+```kernelscript
+if (var name = expr) {
+    // then-branch: `name` is in scope and bound to `expr`'s value
+} else {
+    // else-branch: `name` is *not* in scope
+}
+```
+
+The branch is taken iff `expr` produces a *present* value:
+
+- **Map index** (`m[k]`): present iff the entry exists. The bound name is
+  the lookup pointer, so field access auto-derefs and field assignments
+  mutate the underlying map entry in place — no explicit write-back is
+  needed:
+
+  ```kernelscript
+  if (var stats = ip_stats[ip]) {
+      stats.count = stats.count + 1   // writes through the lookup pointer
+  } else {
+      ip_stats[ip] = PacketStats { count: 1, total_bytes: 0 }
+  }
+  ```
+
+- **Pointer-returning expression**: present iff non-null. Useful with
+  helpers and kfuncs that may return `null`.
+
+Semantics:
+
+- **Single evaluation.** `expr` is evaluated exactly once; its presence
+  test guards both branches.
+- **Scoping.** `name` is in scope only inside the then-branch. Referencing
+  it from the else-branch (or after the `if`) is a compile-time error.
+- **No reassignment.** `name` shadows nothing visible to the else-branch
+  and may shadow an outer binding only inside the then-branch.
+- **Else is optional.** As with the expression-condition form, the
+  `else` branch may be omitted.
+- **Lowering.** The form lowers to a single `bpf_map_lookup_elem` (or the
+  underlying pointer-returning call), a null check, and the chosen
+  branch — there is no second lookup.
 
 #### 7.5.2 Match Expressions
 
@@ -3623,9 +3733,8 @@ pin var global_config : array<ConfigKey, ConfigValue>(64)
 fn security_filter(ctx: LsmContext) -> i32 {
     var flow_key = extract_flow_key_from_socket(ctx)
         
-    // Check global flow statistics for threat detection
-    if (global_flows[flow_key] != none) {
-        var flow_stats = global_flows[flow_key]
+    // Check global flow statistics for threat detection — single lookup
+    if (var flow_stats = global_flows[flow_key]) {
         if (flow_stats.is_suspicious()) {
             global_events.submit(EVENT_THREAT_DETECTED { flow_key })
             return -EPERM  // Block connection
@@ -3666,8 +3775,7 @@ fn start_coordinator() -> i32 {
 
 fn process_events(coordinator: *SystemCoordinator) {
     // Process events from all programs
-    var event = coordinator->global_events.read()
-    if (event != null) {
+    if (var event = coordinator->global_events.read()) {
         if (event.event_type == EVENT_PACKET_PROCESSED) {
             print("Processed packet for flow: ", event.flow_key)
         } else if (event.event_type == EVENT_THREAT_DETECTED) {
@@ -3818,17 +3926,17 @@ var event_log : hash<u32, Event>(1024)
 
 @helper
 fn transparent_dynptr_usage(event_data: *u8, data_len: u32) {
-    // User writes simple pointer code
-    var log_entry: *u8 = event_log.reserve(data_len + 16)  // Dynptr-backed pointer
-    if (log_entry != null) {
+    // User writes simple pointer code — IfLet binds the *u8 returned by
+    // reserve() only inside the truthy branch.
+    if (var log_entry = event_log.reserve(data_len + 16)) {
         // Regular pointer operations - compiler uses dynptr API internally
         var header = log_entry as *EventHeader
         header->timestamp = bpf_ktime_get_ns()
         header->data_len = data_len
-        
+
         // Memory copy using pointer arithmetic
         memory_copy(event_data, log_entry + 16, data_len)
-        
+
         event_log.submit(log_entry)  // Compiler ensures proper cleanup
     }
 }
@@ -3915,15 +4023,14 @@ var cache_map : hash<u32, DataCache>(1024)
 
 @helper
 fn map_lifetime_safety(key: u32) {
-    var cache_entry = cache_map[key]
-    if (cache_entry != none) {
+    if (var cache_entry = cache_map[key]) {
         // Compiler tracks that cache_entry is valid here
         cache_entry->access_count += 1
         cache_entry->last_access = bpf_ktime_get_ns()
-        
+
         // Compiler warns/errors if cache_entry used after invalidating operations
         cache_map[other_key] = other_value  // Invalidates cache_entry
-        
+
         // ❌ Compiler error: "Use of potentially invalidated map value pointer"
         // cache_entry->access_count += 1
     }
@@ -3971,12 +4078,11 @@ fn kernel_side_processing(ctx: *xdp_md) -> xdp_action {
     var packet_data = ctx->data()
     
     // Shared memory through maps - safe across contexts
-    var shared_buffer = shared_map[0]
-    if (shared_buffer != none) {
+    if (var shared_buffer = shared_map[0]) {
         shared_buffer->kernel_processed_count += 1
         memory_copy(packet_data, shared_buffer->data, min(packet_len, 64))
     }
-    
+
     return XDP_PASS
 }
 
@@ -3984,14 +4090,13 @@ fn kernel_side_processing(ctx: *xdp_md) -> xdp_action {
 fn userspace_processing() -> i32 {
     // ❌ Cannot access kernel context pointers directly
     // var packet_data = some_kernel_context.data()  // Compilation error
-    
+
     // ✅ Access through shared maps
-    var shared_buffer = shared_map[0]
-    if (shared_buffer != none) {
+    if (var shared_buffer = shared_map[0]) {
         shared_buffer->userspace_processed_count += 1
         process_shared_data(shared_buffer->data)
     }
-    
+
     return 0
 }
 ```
@@ -4303,14 +4408,47 @@ statement = expression_statement | assignment_statement | declaration_statement 
             try_statement | throw_statement | defer_statement 
 
 expression_statement = expression 
-assignment_statement = identifier assignment_operator expression 
-assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%=" 
+
+assignment_statement   = simple_assignment | compound_assignment | field_assignment |
+                         arrow_assignment  | index_assignment    | compound_index_assignment |
+                         compound_field_index_assignment 
+
+simple_assignment              = identifier "=" expression                              (* x = e *)
+compound_assignment            = identifier compound_operator expression                (* x op= e *)
+field_assignment               = primary_expression "." identifier "=" expression       (* o.field = e *)
+arrow_assignment               = primary_expression "->" identifier "=" expression      (* p->field = e *)
+index_assignment               = expression "[" expression "]" "=" expression           (* m[k] = e *)
+compound_index_assignment      = expression "[" expression "]" compound_operator expression
+                                                                                         (* m[k] op= e:
+                                                                                            scalar map values; reads, applies op, writes back;
+                                                                                            absent entries read as 0, so the form creates an
+                                                                                            entry on first use. See §6.2.5.1. *)
+compound_field_index_assignment = identifier "[" expression "]" "." identifier compound_operator expression
+                                                                                         (* m[k].field op= e:
+                                                                                            struct-valued map; lowers to a single
+                                                                                            bpf_map_lookup_elem + null-checked
+                                                                                            ptr->field op= e; absent entries are a no-op
+                                                                                            (no entry is created). See §6.2.5.2. *)
+
+assignment_operator = "=" | compound_operator
+compound_operator   = "+=" | "-=" | "*=" | "/=" | "%=" 
 
 declaration_statement = "var" identifier [ ":" type_annotation ] "=" expression 
 
-if_statement = "if" "(" expression ")" "{" statement_list "}" 
-               { "else" "if" "(" expression ")" "{" statement_list "}" }
-               [ "else" "{" statement_list "}" ] 
+if_statement = expression_if | iflet_if 
+
+expression_if = "if" "(" expression ")" "{" statement_list "}" 
+                { "else" "if" "(" expression ")" "{" statement_list "}" }
+                [ "else" "{" statement_list "}" ]
+
+iflet_if = "if" "(" "var" identifier "=" expression ")" "{" statement_list "}"
+           [ "else" ( "{" statement_list "}" | iflet_if | expression_if ) ]
+           (* Declaration-as-condition: the right-hand side is evaluated once;
+              the then-branch is taken iff the value is *present* (a map hit
+              or a non-null pointer). `identifier` is bound only inside the
+              then-branch. For map-index right-hand sides the binding is the
+              lookup pointer (field access auto-derefs, field writes mutate
+              the underlying entry in place). See §7.5.1.2. *) 
 
 for_statement = "for" "(" identifier "in" expression ".." expression ")" "{" statement_list "}" |
                 "for" "(" identifier "," identifier ")" "in" expression "{" statement_list "}" 

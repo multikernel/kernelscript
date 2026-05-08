@@ -1219,7 +1219,6 @@ let determine_global_var_section (global_var : ir_global_variable) =
          | IRLiteral (Ast.IntLit (Ast.Signed64 0L, _)) -> "bss"      (* Zero-initialized integers go to .bss *)
   | IRLiteral (Ast.BoolLit false) -> "bss"      (* False booleans go to .bss *)
   | IRLiteral (Ast.NullLit) -> "bss"            (* Null pointers go to .bss *)
-  | IRLiteral (Ast.NoneLit) -> "bss"            (* None values go to .bss *)
   | IRLiteral (Ast.IntLit (_, _)) -> "data"     (* Non-zero integers go to .data *)
   | IRLiteral (Ast.BoolLit true) -> "data"      (* True booleans go to .data *)
   | IRLiteral (Ast.StringLit _) -> "data"       (* String literals go to .data *)
@@ -1277,8 +1276,7 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
   | IRLiteral (CharLit c) -> sprintf "'%c'" c
   | IRLiteral (BoolLit b) -> if b then "true" else "false"
   | IRLiteral (NullLit) -> "NULL"
-  | IRLiteral (NoneLit) -> "/* none */"
-  | IRLiteral (StringLit s) -> 
+  | IRLiteral (StringLit s) ->
       (* Generate simple string literal for userspace *)
       sprintf "\"%s\"" s
   | IRLiteral (ArrayLit init_style) -> 
@@ -1292,7 +1290,6 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
              | Ast.CharLit c -> sprintf "'%c'" c
              | Ast.StringLit s -> sprintf "\"%s\"" s
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "/* none */"
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            in
            sprintf "{%s}" fill_str
@@ -1303,7 +1300,6 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
              | Ast.BoolLit b -> if b then "true" else "false"
              | Ast.StringLit s -> sprintf "\"%s\"" s
              | Ast.NullLit -> "NULL"
-             | Ast.NoneLit -> "/* none */"
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            ) elems in
            sprintf "{%s}" (String.concat ", " elem_strs))
@@ -1406,26 +1402,27 @@ let generate_c_expression_from_ir ctx ir_expr =
            let index_str = generate_c_value_from_ir ctx right_val in
            sprintf "%s[%s]" array_str index_str
        | _ ->
-           (* Check for none comparisons first *)
+           (* `null` comparisons against a map-access lower to a presence
+              check against the underlying lookup pointer (or the pointer
+              value directly), avoiding an extra dereference. *)
+           let is_absence_lit = function
+             | IRLiteral (Ast.NullLit) -> true
+             | _ -> false
+           in
+           let pointer_str v =
+             match v.value_desc with
+             | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx v
+             | _ -> generate_c_value_from_ir ctx v
+           in
            (match left_val.value_desc, op, right_val.value_desc with
-            | _, IREq, IRLiteral (Ast.NoneLit) 
-            | IRLiteral (Ast.NoneLit), IREq, _ ->
-                (* Comparison with none: check if pointer is NULL *)
-                let non_none_val = if left_val.value_desc = IRLiteral (Ast.NoneLit) then right_val else left_val in
-                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
-                let val_str = (match non_none_val.value_desc with
-                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx non_none_val
-                  | _ -> generate_c_value_from_ir ctx non_none_val) in
-                sprintf "(%s == NULL)" val_str
-            | _, IRNe, IRLiteral (Ast.NoneLit)
-            | IRLiteral (Ast.NoneLit), IRNe, _ ->
-                (* Not-equal comparison with none: check if pointer is not NULL *)
-                let non_none_val = if left_val.value_desc = IRLiteral (Ast.NoneLit) then right_val else left_val in
-                (* For IRMapAccess, use the underlying pointer directly for NULL check *)
-                let val_str = (match non_none_val.value_desc with
-                  | IRMapAccess (_, _, _) -> generate_c_value_from_ir ~auto_deref_map_access:false ctx non_none_val
-                  | _ -> generate_c_value_from_ir ctx non_none_val) in
-                sprintf "(%s != NULL)" val_str
+            | _, IREq, _ when is_absence_lit right_val.value_desc ->
+                sprintf "(%s == NULL)" (pointer_str left_val)
+            | _, IREq, _ when is_absence_lit left_val.value_desc ->
+                sprintf "(%s == NULL)" (pointer_str right_val)
+            | _, IRNe, _ when is_absence_lit right_val.value_desc ->
+                sprintf "(%s != NULL)" (pointer_str left_val)
+            | _, IRNe, _ when is_absence_lit left_val.value_desc ->
+                sprintf "(%s != NULL)" (pointer_str right_val)
             | _ ->
                 (* Regular binary operation - auto-dereference map access for operands *)
                 let left_str = (match left_val.value_desc with
@@ -1817,7 +1814,15 @@ let rec generate_c_instruction_from_ir ctx instruction =
            let decl_str = generate_c_declaration typ c_var_name in
            (match init_expr_opt with
             | Some init_expr ->
-                let init_str = generate_c_expression_from_ir ctx init_expr in
+                let init_str =
+                  (match typ, init_expr.expr_desc with
+                   | IRPointer _, IRValue src_val
+                       when (match src_val.value_desc with IRMapAccess _ -> true | _ -> false) ->
+                       (* Pointer-typed variable initialized from a map lookup: keep the pointer. *)
+                       generate_c_value_from_ir ~auto_deref_map_access:false ctx src_val
+                   | _ ->
+                       generate_c_expression_from_ir ctx init_expr)
+                in
                 sprintf "%s = %s;" decl_str init_str
             | None ->
                 sprintf "%s;" decl_str))

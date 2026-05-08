@@ -70,28 +70,21 @@ fn get_timestamp() -> u64 {
   var cpu_id = get_cpu_id()
   cpu_counters[cpu_id] = cpu_counters[cpu_id] + 1
   
-  // Update IP statistics - elegant truthy/falsy pattern
-  var stats = ip_stats[src_ip]
-  if (stats != none) {
-    // stats is truthy - entry exists, update it
+  // Update IP statistics - in-place mutation when entry exists
+  if (var stats = ip_stats[src_ip]) {
     stats.count = stats.count + 1
     stats.total_bytes = stats.total_bytes + packet_len
     stats.last_seen = get_timestamp()
-    ip_stats[src_ip] = stats
   } else {
-    // stats is falsy - no entry, create new one
-    var new_stats = PacketStats {
+    ip_stats[src_ip] = PacketStats {
       count: 1,
       total_bytes: packet_len,
       last_seen: get_timestamp()
     }
-    ip_stats[src_ip] = new_stats
   }
-  
-  // Check recent connections
-  var recent = recent_connections[src_ip]
-  if (recent != none) {
-    // Log repeated connection
+
+  // Log repeated connections
+  if (recent_connections[src_ip] != null) {
     event_log[0] = 1
   }
   

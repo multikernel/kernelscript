@@ -21,7 +21,7 @@ var conn_tracker : hash<u32, *ConnStats>(1024)
     // Look up existing connection stats
     var stats = conn_tracker[src_ip]
     
-    if (stats == none) {
+    if (stats == null) {
         // First packet from this IP - allocate new stats object
         stats = new ConnStats()
         if (stats == null) {

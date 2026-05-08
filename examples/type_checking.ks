@@ -66,9 +66,7 @@ fn classify_protocol(proto: u8) -> ProtocolType {
 @helper
 fn update_statistics(header: PacketHeader) {
   // Type checker validates map operations and key/value types
-  var current_count = connection_stats[header.src_ip]
-  
-  if (current_count != null) {
+  if (var current_count = connection_stats[header.src_ip]) {
     // Type checker ensures arithmetic on compatible types
     connection_stats[header.src_ip] = current_count + 1
   } else {

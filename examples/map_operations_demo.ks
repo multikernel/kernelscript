@@ -58,7 +58,7 @@ struct ArrayElement {
     
     // Safe concurrent read access - multiple programs can read simultaneously
     var counter = global_counter[key]
-    if (counter != none) {
+    if (counter != null) {
         // High-frequency lookup pattern - will generate optimization suggestions
         for (i in 0..100) {
             var _ = global_counter[key + i]
@@ -70,16 +70,13 @@ struct ArrayElement {
     
     // Per-CPU access for maximum performance
     var cpu_id = 0
-    var data = percpu_data[cpu_id]
-    if (data != none) {
+    if (var data = percpu_data[cpu_id]) {
         data.local_counter = data.local_counter + 1
-        percpu_data[cpu_id] = data
     } else {
-        var new_data = PerCpuData {
+        percpu_data[cpu_id] = PerCpuData {
             local_counter: 1,
             temp_storage: [0],
         }
-        percpu_data[cpu_id] = new_data
     }
     
     return XDP_PASS
@@ -92,7 +89,7 @@ fn stats_updater(ctx: *__sk_buff) -> i32 {
     
     // Potential write conflict with other programs
     var stats = shared_stats[ifindex]
-    if (stats == none) {
+    if (stats == null) {
         stats = Statistics {
             packet_count: 0,
             byte_count: 0,
@@ -116,10 +113,8 @@ fn stats_updater(ctx: *__sk_buff) -> i32 {
     // Batch operation pattern - will be detected as batch access
     for (i in 0..20) {
         var batch_key = ifindex + i
-        var entry = shared_stats[batch_key]
-        if (entry != null) {
+        if (var entry = shared_stats[batch_key]) {
             entry.packet_count = entry.packet_count + 1
-            shared_stats[batch_key] = entry
         }
     }
     
@@ -132,8 +127,7 @@ fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
     // Ring buffer output - single writer recommended
     try {
         // Reserve space in the ring buffer
-        var reserved = event_stream.reserve()
-        if (reserved != null) {
+        if (var reserved = event_stream.reserve()) {
             // Successfully reserved space - populate event data inline
             reserved->timestamp = 123456  // Fake timestamp
             reserved->event_type = ctx->id  // Use syscall ID from sys_enter context
@@ -157,19 +151,16 @@ fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
 fn data_processor(file: *file, buf: *u8, count: size_t, pos: *i64) -> i32 {
     // Sequential access pattern - will be detected and optimized
     for (i in 0..32) {
-        var element = sequential_data[i]
-        if (element != none) {
+        if (var element = sequential_data[i]) {
             if (!element.processed) {
                 element.value = element.value * 2
                 element.processed = true
-                sequential_data[i] = element
             }
         } else {
-            var new_element = ArrayElement {
+            sequential_data[i] = ArrayElement {
                 value: i,
                 processed: false,
             }
-            sequential_data[i] = new_element
         }
     }
     

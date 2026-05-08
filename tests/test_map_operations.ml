@@ -78,7 +78,7 @@ let test_map_origin_conditional_assignments () =
     @xdp fn test_conditional(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
       var stats = user_stats[user_id]
-      if (stats != none) {
+      if (stats != null) {
         var local_stats = stats
         print("Stats: {}", local_stats)
       }
@@ -113,7 +113,7 @@ let test_address_of_map_values () =
     @xdp fn test_address_of(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
       var stats = user_stats[user_id]
-      if (stats != none) {
+      if (stats != null) {
         var ptr = &stats
         print("Stats pointer: {}", ptr)
       }
@@ -148,7 +148,7 @@ let test_address_of_type_checking () =
     @xdp fn test_address_of_types(ctx: *xdp_md) -> xdp_action {
       var user_id: u32 = 123
       var stats = user_stats[user_id]
-      if (stats != none) {
+      if (stats != null) {
         var ptr: *u64 = &stats
         print("Stats value: {}", *ptr)
       }
@@ -170,7 +170,7 @@ let test_address_of_contexts () =
       var user_id: u32 = 123
       var stats = user_stats[user_id]
       
-      if (stats != none) {
+      if (stats != null) {
         // Address-of in if statement
         var ptr1 = &stats
         
@@ -200,7 +200,7 @@ let test_none_comparison_map_values () =
       var user_id: u32 = 123
       var stats = user_stats[user_id]
       
-      if (stats != none) {
+      if (stats != null) {
         print("Stats found: {}", stats)
       } else {
         print("Stats not found")
@@ -226,17 +226,17 @@ let test_none_comparison_different_map_types () =
       var user_id: u32 = 123
       
       var hash_stats = hash_map[user_id]
-      if (hash_stats != none) {
+      if (hash_stats != null) {
         print("Hash stats: {}", hash_stats)
       }
       
       var lru_stats = lru_map[user_id]
-      if (lru_stats != none) {
+      if (lru_stats != null) {
         print("LRU stats: {}", lru_stats)
       }
       
       var percpu_stats = percpu_map[user_id]
-      if (percpu_stats != none) {
+      if (percpu_stats != null) {
         print("PerCPU stats: {}", percpu_stats)
       }
       
@@ -259,13 +259,13 @@ let test_none_comparison_conditional_statements () =
       var stats = user_stats[user_id]
       
       // Test in if statement
-      if (stats != none) {
+      if (stats != null) {
         var local_stats = stats
         print("Found stats: {}", local_stats)
       }
       
       // Test in while statement
-      while (stats != none) {
+      while (stats != null) {
         print("Processing stats: {}", stats)
         break
       }
@@ -290,17 +290,17 @@ let test_none_comparison_different_value_types () =
       var key: u32 = 123
       
       var u32_val = u32_map[key]
-      if (u32_val != none) {
+      if (u32_val != null) {
         print("U32 value: {}", u32_val)
       }
       
       var u64_val = u64_map[key]
-      if (u64_val != none) {
+      if (u64_val != null) {
         print("U64 value: {}", u64_val)
       }
       
       var bool_val = bool_map[key]
-      if (bool_val != none) {
+      if (bool_val != null) {
         print("Bool value: {}", bool_val)
       }
       
@@ -324,7 +324,7 @@ let test_complex_map_value_scenarios () =
       var stats = user_stats[user_id]
       var counts = user_counts[user_id]
       
-      if (stats != none && counts != none) {
+      if (stats != null && counts != null) {
         var stats_ptr = &stats
         var counts_ptr = &counts
         
@@ -356,7 +356,7 @@ let test_nested_map_value_access () =
         var current_id = user_id + i
         var stats = user_stats[current_id]
         
-        if (stats != none) {
+        if (stats != null) {
           var local_stats = stats
           var stats_ptr = &local_stats
           
@@ -382,11 +382,12 @@ let test_nested_map_value_access () =
 
 (** Test error cases for map value operations *)
 let test_map_value_error_cases () =
-  (* Test 1: Invalid none comparison with non-map values *)
+  (* Test 1: comparing a regular variable against `null` parses fine
+     (the type-checker accepts any pointer-coercible comparison). *)
   let test_program1 = {|
-    @xdp fn test_invalid_none(ctx: *xdp_md) -> xdp_action {
+    @xdp fn test_null_compare(ctx: *xdp_md) -> xdp_action {
       var regular_var: u32 = 42
-      if (regular_var != none) {  // This should be an error
+      if (regular_var != null) {
         print("Regular var: {}", regular_var)
       }
       return 0

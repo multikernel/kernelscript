@@ -37,7 +37,6 @@ type runtime_value =
   | ContextValue of string * (string * runtime_value) list
   | NullValue  (* Simple null value representation *)
   | UnitValue
-  | None  (* Sentinel value for map lookup failures and missing values *)
 
 (** Additional exceptions that depend on runtime_value *)
 exception Return_value of runtime_value
@@ -54,7 +53,6 @@ let rec runtime_values_equal v1 v2 =
   | EnumValue (name1, val1), EnumValue (name2, val2) -> name1 = name2 && val1 = val2
   | NullValue, NullValue -> true
   | UnitValue, UnitValue -> true
-  | None, None -> true
   | PointerValue addr1, PointerValue addr2 -> addr1 = addr2
   | MapHandle name1, MapHandle name2 -> name1 = name2
   | ArrayValue arr1, ArrayValue arr2 -> 
@@ -326,7 +324,6 @@ let rec string_of_runtime_value = function
           name ^ " = " ^ string_of_runtime_value value) fields))
   | NullValue -> "null"
   | UnitValue -> "()"
-  | None -> "none"
 
 (** Convert literal to runtime value *)
 let runtime_value_of_literal = function
@@ -335,7 +332,6 @@ let runtime_value_of_literal = function
   | CharLit c -> CharValue c
   | BoolLit b -> BoolValue b
   | NullLit -> NullValue  (* null is represented as simple null value *)
-  | NoneLit -> None      (* none is represented as none sentinel value *)
   | ArrayLit _literals -> 
       (* TODO: Implement array literal evaluation *)
       failwith "Array literal evaluation not implemented yet"
@@ -359,7 +355,6 @@ let is_truthy_value rv =
   | ContextValue (_, _) -> true                   (* context values are always truthy *)
   | NullValue -> false                            (* null is always falsy *)
   | UnitValue -> false                            (* unit value is falsy *)
-  | None -> false                                 (* none is always falsy *)
   | ArrayValue _ -> failwith "Arrays cannot be used in boolean context"
   | StructValue _ -> failwith "Structs cannot be used in boolean context"
 
@@ -405,15 +400,7 @@ let eval_binary_op left_val op right_val pos =
   | Ne, NullValue, _ -> BoolValue true
   | Eq, _, NullValue -> BoolValue false
   | Ne, _, NullValue -> BoolValue true
-  
-  (* None comparisons *)
-  | Eq, None, None -> BoolValue true
-  | Ne, None, None -> BoolValue false
-  | Eq, None, _ -> BoolValue false
-  | Ne, None, _ -> BoolValue true
-  | Eq, _, None -> BoolValue false
-  | Ne, _, None -> BoolValue true
-  
+
   (* Logical operations *)
   | And, BoolValue l, BoolValue r -> BoolValue (l && r)
   | Or, BoolValue l, BoolValue r -> BoolValue (l || r)
@@ -575,8 +562,8 @@ and eval_array_access ctx arr_expr idx_expr pos =
        (try
           Hashtbl.find map_store key_str
         with Not_found ->
-          (* For map access, return sentinel value for missing keys *)
-          None)
+          (* For map access, missing keys evaluate to null *)
+          NullValue)
    | _ ->
        (* Regular array access *)
        let arr_val = eval_expression ctx arr_expr in
@@ -804,6 +791,11 @@ and eval_statement ctx stmt =
       in
       let result = eval_binary_op current_val op value_val stmt.stmt_pos in
       Hashtbl.replace map_store key_str result
+
+  | CompoundFieldIndexAssignment (_, _, _, _, _) ->
+      (* The interpreter is used for compile-time evaluation only;
+         struct-field compound assignment on map values is a runtime construct. *)
+      eval_error "map[key].field op= rhs is not supported in the interpreter" stmt.stmt_pos
   
   | FieldAssignment (obj_expr, _field, value_expr) ->
       (* For evaluation purposes, treat config field assignment as no-op *)
@@ -875,6 +867,21 @@ and eval_statement ctx stmt =
       if cond_bool then
         eval_statements ctx then_stmts
       else
+        (match else_opt with
+         | Some else_stmts -> eval_statements ctx else_stmts
+         | None -> ())
+
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      let v = eval_expression ctx expr in
+      let present = is_truthy_value v in
+      if present then begin
+        let old = try Some (Hashtbl.find ctx.variables name) with Not_found -> None in
+        Hashtbl.replace ctx.variables name v;
+        eval_statements ctx then_stmts;
+        (match old with
+         | Some o -> Hashtbl.replace ctx.variables name o
+         | None -> Hashtbl.remove ctx.variables name)
+      end else
         (match else_opt with
          | Some else_stmts -> eval_statements ctx else_stmts
          | None -> ())

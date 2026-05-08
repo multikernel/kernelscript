@@ -1223,7 +1223,7 @@ var packet_filter : lru_hash<PacketInfo, u32>(512)             // Struct key
       var count2 = protocol_stats[proto]       // Enum as key  
       var result = packet_filter[info]         // Struct as key
       
-      if (count1 != none && count2 != none && result != none) {
+      if (count1 != null && count2 != null && result != null) {
         return count1 + count2 + result
       } else {
         return 0

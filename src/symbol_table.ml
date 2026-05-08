@@ -688,6 +688,10 @@ and process_statement table stmt =
       process_expression table map_expr;
       process_expression table key_expr;
       process_expression table value_expr
+  | CompoundFieldIndexAssignment (map_expr, key_expr, _field, _, value_expr) ->
+      process_expression table map_expr;
+      process_expression table key_expr;
+      process_expression table value_expr
   | FieldAssignment (obj_expr, _field, value_expr) ->
       process_expression table obj_expr;
       process_expression table value_expr
@@ -712,6 +716,21 @@ and process_statement table stmt =
   | If (cond, then_stmts, else_opt) ->
       process_expression table cond;
       let table_with_block = enter_scope table BlockScope in
+      List.iter (process_statement table_with_block) then_stmts;
+      let _ = exit_scope table_with_block in
+      (match else_opt with
+       | Some else_stmts ->
+           let table_with_else = enter_scope table BlockScope in
+           List.iter (process_statement table_with_else) else_stmts;
+           let _ = exit_scope table_with_else in ()
+       | None -> ())
+
+  | IfLet (name, expr, then_stmts, else_opt) ->
+      process_expression table expr;
+      let table_with_block = enter_scope table BlockScope in
+      (* Bind `name` only inside the truthy branch.
+         Type is unknown at this stage; type checker fills the precise type. *)
+      add_variable table_with_block name U32 stmt.stmt_pos;
       List.iter (process_statement table_with_block) then_stmts;
       let _ = exit_scope table_with_block in
       (match else_opt with

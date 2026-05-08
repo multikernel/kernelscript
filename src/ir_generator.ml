@@ -67,6 +67,12 @@ type ir_context = {
   map_origin_variables: (string, (string * ir_value * (ir_value_desc * ir_type))) Hashtbl.t; (* var_name -> (map_name, key, underlying_info) *)
   (* Track inferred variable types for proper lookups *)
   variable_types: (string, ir_type) Hashtbl.t; (* var_name -> ir_type *)
+  (* Active IfLet bindings: source name -> synthetic IR name, for the duration
+     of the then-branch. Reads, simple assignments, and compound assignments
+     of the source name are rewritten to the synthetic name; the synthetic
+     name is what was actually declared in IR, so an outer variable of the
+     same name is never clobbered when the backend hoists declarations. *)
+  iflet_aliases: (string, string) Hashtbl.t;
   mutable current_program_type: program_type option;
 }
 
@@ -92,6 +98,7 @@ let create_context ?(global_variables = []) ?(helper_functions = []) symbol_tabl
                      tbl);
   map_origin_variables = Hashtbl.create 32;
   variable_types = Hashtbl.create 32;
+  iflet_aliases = Hashtbl.create 4;
   current_program_type = None;
   helper_functions = (let tbl = Hashtbl.create 16 in
                      List.iter (fun helper_name -> Hashtbl.add tbl helper_name ()) helper_functions;
@@ -234,11 +241,10 @@ let lower_literal lit pos =
     | StringLit s -> IRStr (max 1 (String.length s))  (* String literals get IRStr type *)
     | CharLit _ -> IRChar
     | BoolLit _ -> IRBool
-    | NullLit -> 
+    | NullLit ->
         let bounds = make_bounds_info ~nullable:true () in
         IRPointer (IRU32, bounds)  (* null literal as nullable pointer to u32 *)
-    | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
-    | ArrayLit init_style -> 
+    | ArrayLit init_style ->
         (* Handle enhanced array literal lowering *)
         (match init_style with
          | ZeroArray ->
@@ -251,10 +257,9 @@ let lower_literal lit pos =
                | BoolLit _ -> IRBool
                | CharLit _ -> IRChar
                | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
-               | NullLit -> 
+               | NullLit ->
                    let bounds = make_bounds_info ~nullable:true () in
                    IRPointer (IRU32, bounds)
-               | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
                | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
              in
              IRArray (element_ir_type, 0, make_bounds_info ())  (* Size resolved during type unification *)
@@ -271,10 +276,9 @@ let lower_literal lit pos =
                  | CharLit _ -> IRChar
                  | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
                  | ArrayLit _ -> IRU32  (* Nested arrays default to u32 *)
-                 | NullLit -> 
+                 | NullLit ->
                      let bounds = make_bounds_info ~nullable:true () in
                      IRPointer (IRU32, bounds)
-                 | NoneLit -> IRU32  (* none literal as sentinel u32 value *)
                in
                let bounds_info = make_bounds_info ~min_size:element_count ~max_size:element_count () in
                IRArray (element_ir_type, element_count, bounds_info))
@@ -314,7 +318,6 @@ let literal_to_ir_type = function
   | CharLit _ -> IRChar
   | StringLit _ -> IRPointer (IRU8, make_bounds_info ~nullable:false ())
   | NullLit -> IRPointer (IRU32, make_bounds_info ~nullable:true ())
-  | NoneLit -> IRU32
   | ArrayLit _ -> IRU32  (* Default for arrays *)
 
 (** Unified AST to IR type conversion for basic types *)
@@ -561,6 +564,14 @@ let expand_map_operation ctx map_name operation key_val value_val_opt pos =
 
   | _ -> failwith ("Unknown map operation: " ^ operation)
 
+(** Resolve a source-level identifier to its current IR-level name.
+    Returns the synthetic name if the identifier is currently bound by an
+    enclosing IfLet, otherwise the name unchanged. *)
+let resolve_iflet_alias ctx name =
+  match Hashtbl.find_opt ctx.iflet_aliases name with
+  | Some synth -> synth
+  | None -> name
+
 (** Lower AST expressions to IR values *)
 let rec lower_expression ctx (expr : Ast.expr) =
   match expr.expr_desc with
@@ -568,6 +579,7 @@ let rec lower_expression ctx (expr : Ast.expr) =
       lower_literal lit expr.expr_pos
       
   | Ast.Identifier name ->
+      let name = resolve_iflet_alias ctx name in
       (* Check if this is a map identifier *)
       if Hashtbl.mem ctx.maps name then
         (* For map identifiers, create a map reference *)
@@ -1454,6 +1466,7 @@ and lower_statement ctx stmt =
            ())
       
   | Ast.Assignment (name, expr) ->
+      let name = resolve_iflet_alias ctx name in
       let value = lower_expression ctx expr in
       
       (* Track if this assignment is from a map access *)
@@ -1505,6 +1518,7 @@ and lower_statement ctx stmt =
         emit_instruction ctx assign_instr
   
   | Ast.CompoundAssignment (name, op, expr) ->
+      let name = resolve_iflet_alias ctx name in
       let value = lower_expression ctx expr in
       
       (* Check if this is a global variable assignment *)
@@ -2039,11 +2053,108 @@ and lower_statement ctx stmt =
         in
         
         (* Generate IRIf instruction *)
-        let if_instr = make_ir_instruction 
+        let if_instr = make_ir_instruction
           (IRIf (cond_val, !then_instructions, else_instrs_opt))
           stmt.stmt_pos in
         emit_instruction ctx if_instr
-      
+
+  | Ast.CompoundFieldIndexAssignment (map_expr, key_expr, field, op, value_expr) ->
+      (* Desugar `map[k].field op= rhs` to:
+           var __cidx_field_N = map[k]
+           if (__cidx_field_N != null) {
+             __cidx_field_N.field = __cidx_field_N.field op rhs
+           }
+         The synthetic name is fresh, so it cannot collide with any user
+         variable — we go straight to a plain Declaration + If rather than
+         routing through `Ast.IfLet` (whose alpha-rename machinery is only
+         needed when the binding name comes from user source). The
+         field-store lowers to a pointer-checked `ptr->field = ...` via
+         IRStructFieldAssignment. We look up the field's AST type from the
+         map's value-struct definition so the synthesized FieldAccess /
+         BinaryOp get the correct expr_type — without this the IR generator
+         defaults to IRU32, mis-sizing wider fields. *)
+      let pos = stmt.stmt_pos in
+      let synth_name = generate_temp_variable ctx "cidx_field" in
+      let map_name = match map_expr.expr_desc with
+        | Ast.Identifier mn -> mn
+        | _ -> failwith "Compound field-index assignment requires a map identifier"
+      in
+      let map_def = Hashtbl.find ctx.maps map_name in
+      let field_ast_type =
+        let rec resolve_struct_name = function
+          | Ast.Struct n | Ast.UserType n -> Some n
+          | _ -> None
+        and resolve t =
+          match resolve_struct_name t with
+          | Some n ->
+              (match Symbol_table.lookup_symbol ctx.symbol_table n with
+               | Some { kind = Symbol_table.TypeDef (Ast.StructDef (_, fs, _)); _ } ->
+                   (try Some (List.assoc field fs) with Not_found -> None)
+               | _ -> None)
+          | None -> None
+        in
+        resolve map_def.ast_value_type
+      in
+      let mk_expr ?ty d =
+        { Ast.expr_desc = d; expr_pos = pos; expr_type = ty;
+          type_checked = false; program_context = None; map_scope = None } in
+      let access = mk_expr (Ast.ArrayAccess (map_expr, key_expr)) in
+      let tmp_id = mk_expr (Ast.Identifier synth_name) in
+      let cur_field = mk_expr ?ty:field_ast_type (Ast.FieldAccess (tmp_id, field)) in
+      let bin = mk_expr ?ty:field_ast_type (Ast.BinaryOp (cur_field, op, value_expr)) in
+      let store =
+        { Ast.stmt_desc = Ast.FieldAssignment (tmp_id, field, bin); stmt_pos = pos } in
+      let cond =
+        mk_expr ~ty:Ast.Bool
+          (Ast.BinaryOp (tmp_id, Ast.Ne, mk_expr (Ast.Literal Ast.NullLit))) in
+      lower_statement ctx
+        { Ast.stmt_desc = Ast.Declaration (synth_name, None, Some access);
+          stmt_pos = pos };
+      lower_statement ctx
+        { Ast.stmt_desc = Ast.If (cond, [store], None); stmt_pos = pos }
+
+  | Ast.IfLet (name, expr, then_stmts, else_opt) ->
+      (* Desugar `if (var name = expr) { T } else { E }` into:
+           var __iflet_<name>_<N> = expr
+           if (__iflet_<name>_<N> != null) { T } else { E }
+         The synthetic name is what the IR actually declares, so an outer
+         variable of the same name is never clobbered when the backend
+         hoists declarations to function scope. References to `name` inside
+         `T` are redirected to the synthetic name through
+         `ctx.iflet_aliases`, which is set up only around the lowering of
+         the then-branch — the else-branch sees the un-aliased name. The
+         codegen rule for `IRMapAccess <op> NullLit` (and the symmetric
+         form for raw pointers) emits a pointer presence check, so this
+         lowers correctly without an extra dereference. *)
+      let pos = stmt.stmt_pos in
+      let synth = generate_temp_variable ctx ("iflet_" ^ name) in
+      let mk_expr ?ty d =
+        { Ast.expr_desc = d; expr_pos = pos; expr_type = ty;
+          type_checked = false; program_context = None; map_scope = None } in
+      lower_statement ctx
+        { Ast.stmt_desc = Ast.Declaration (synth, None, Some expr); stmt_pos = pos };
+      let cond_val = lower_expression ctx (mk_expr ~ty:Ast.Bool
+        (Ast.BinaryOp
+           (mk_expr ?ty:expr.Ast.expr_type (Ast.Identifier synth),
+            Ast.Ne,
+            mk_expr (Ast.Literal Ast.NullLit)))) in
+      let collect_block stmts =
+        let saved = ctx.current_block in
+        ctx.current_block <- [];
+        List.iter (lower_statement ctx) stmts;
+        let instrs = List.rev ctx.current_block in
+        ctx.current_block <- saved;
+        instrs in
+      let prev_alias = Hashtbl.find_opt ctx.iflet_aliases name in
+      Hashtbl.replace ctx.iflet_aliases name synth;
+      let then_instrs = collect_block then_stmts in
+      (match prev_alias with
+       | Some p -> Hashtbl.replace ctx.iflet_aliases name p
+       | None -> Hashtbl.remove ctx.iflet_aliases name);
+      let else_instrs_opt = Option.map collect_block else_opt in
+      emit_instruction ctx
+        (make_ir_instruction (IRIf (cond_val, then_instrs, else_instrs_opt)) pos)
+
   | Ast.For (var, start_expr, end_expr, body_stmts) ->
       (* Analyze the loop to determine if it's bounded or unbounded *)
       let loop_analysis = 
