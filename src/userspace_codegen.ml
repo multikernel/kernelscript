@@ -2959,30 +2959,16 @@ int detach_struct_ops_%s(void) {
     ) (Ir.get_struct_ops_instances ir_multi_program) in
     String.concat "\n" attach_functions
 
-let generate_skeleton_cleanup_helper base_name ir_multi_program needs_skeleton =
+let generate_skeleton_cleanup_helper base_name needs_skeleton =
   if not needs_skeleton then
     ""
   else
-    let struct_ops_instances = Ir.get_struct_ops_instances ir_multi_program in
-    let cleanup_lines =
-      struct_ops_instances
-      |> List.map (fun struct_ops_inst ->
-           let instance_name = struct_ops_inst.ir_instance_name in
-           sprintf {|    if (%s_link) {
-        bpf_link__destroy(%s_link);
-        %s_link = NULL;
-    }|} instance_name instance_name instance_name)
-      |> String.concat "\n\n"
-    in
-    let cleanup_prefix =
-      if cleanup_lines = "" then "" else cleanup_lines ^ "\n\n"
-    in
     sprintf {|static void cleanup_%s(void) {
-%s    if (obj) {
+    if (obj) {
         %s_ebpf__destroy(obj);
         obj = NULL;
     }
-}|} base_name cleanup_prefix base_name
+}|} base_name base_name
 
 let generate_struct_ops_runtime_helpers base_name ir_multi_program =
   let struct_ops_instances = Ir.get_struct_ops_instances ir_multi_program in
@@ -4874,7 +4860,7 @@ static void handle_signal(int sig) {
 |}
   else "" in
 
-  let skeleton_cleanup_helper = generate_skeleton_cleanup_helper base_name ir_multi_prog needs_skeleton in
+  let skeleton_cleanup_helper = generate_skeleton_cleanup_helper base_name needs_skeleton in
   let struct_ops_runtime_helpers = generate_struct_ops_runtime_helpers base_name ir_multi_prog in
 
   (* Generate struct_ops attach functions *)
