@@ -321,6 +321,11 @@ let rec unify_types t1 t2 =
       (match unify_types t1 t2 with
        | Some unified -> Some (Pointer unified)
        | None -> None)
+
+  (* Named structs and user types unify when they refer to the same type name. *)
+  | Struct name1, UserType name2
+  | UserType name1, Struct name2 when name1 = name2 ->
+      Some (Struct name1)
   
   (* Result types *)
   | Result (ok1, err1), Result (ok2, err2) ->
@@ -393,6 +398,17 @@ let can_assign to_type from_type =
            (match integer_promotion to_type from_type with
             | Some _ -> true
             | None -> false))
+
+let builtin_return_type_for_call name arg_types default_return_type =
+  match name, arg_types with
+  | "attach", [ProgramHandle; (Struct "perf_options" | UserType "perf_options"); _] ->
+      Struct "PerfAttachment"
+  | "detach", _ ->
+      Void
+  | "read", _ ->
+      I64
+  | _ ->
+      default_return_type
 
 
 
@@ -642,7 +658,8 @@ let type_check_builtin_call ctx name typed_args arg_types pos =
               | None -> type_error ("Validation failed for function: " ^ name) pos)
            else
              (* Validation passed - accept any number of arguments *)
-             Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+             let actual_return_type = builtin_return_type_for_call name arg_types return_type in
+             Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = actual_return_type; texpr_pos = pos }
          | Some _ ->
              (* Check if this function has custom validation *)
              let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types ctx.ast_context pos in
@@ -655,11 +672,13 @@ let type_check_builtin_call ctx name typed_args arg_types pos =
                 (* Skip standard type checking if param_types is empty (custom validation handles it) *)
                 if List.length expected_params = 0 then
                   (* Custom validation handled type checking *)
-                  Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+                  let actual_return_type = builtin_return_type_for_call name arg_types return_type in
+                  Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = actual_return_type; texpr_pos = pos }
                 else if List.length expected_params = List.length arg_types then
                   let unified = List.map2 unify_types expected_params arg_types in
                   if List.for_all (function Some _ -> true | None -> false) unified then
-                    Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+                    let actual_return_type = builtin_return_type_for_call name arg_types return_type in
+                    Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = actual_return_type; texpr_pos = pos }
                   else
                     type_error ("Type mismatch in function call: " ^ name) pos
                 else
@@ -3461,6 +3480,5 @@ and populate_multi_program_context ast multi_prog_analysis =
 
     |       other_decl -> other_decl
           ) ast
-
 
 

@@ -148,12 +148,50 @@ let test_stdlib_integration () =
       check bool "attach return type is U32" true (return_type = Kernelscript.Ast.U32)
   | None -> check bool "attach function signature should exist" false true);
 
+  (match Kernelscript.Stdlib.get_builtin_function_signature "read" with
+  | Some (params, return_type) ->
+      check int "read parameter count" 0 (List.length params);
+      check bool "read return type is I64" true (return_type = Kernelscript.Ast.I64)
+  | None -> check bool "read function signature should exist" false true);
+
   (* Verify that the custom validation function is wired up on the attach entry *)
   (match Kernelscript.Stdlib.get_builtin_function "attach" with
   | Some func ->
       check bool "attach has custom validation wired up" true
         (match func.validate with Some _ -> true | None -> false)
   | None -> check bool "attach builtin should exist" false true)
+
+(** Test perf attach returns an attachment value that can be read/detached. *)
+let test_perf_attachment_value_flow () =
+  let program_text = {|
+@perf_event fn on_cache_miss(ctx: *bpf_perf_event_data) -> i32 {
+  return 0
+}
+
+fn main() -> i32 {
+  var prog = load(on_cache_miss)
+  var att = attach(prog, perf_options {
+    perf_type: perf_type_hardware,
+    perf_config: cache_misses,
+    period: 1000000,
+  }, 0)
+  var count = read(att)
+  detach(att)
+  print("count=%lld", count)
+  return 0
+}
+|} in
+  try
+    let ast = parse_string program_text in
+    let symbol_table =
+      Kernelscript.Symbol_table.build_symbol_table
+        ~builtin_asts:[Kernelscript.Stdlib.get_builtin_types ()]
+        ast
+    in
+    let (typed_ast, _) = Kernelscript.Type_checker.type_check_and_annotate_ast ~symbol_table:(Some symbol_table) ast in
+    check bool "perf attachment value flow should type check" true (List.length typed_ast > 0)
+  with
+  | e -> fail ("perf attachment value flow failed: " ^ Printexc.to_string e)
 
 (** Test that calling attach without load fails *)
 let test_attach_without_load_fails () =
@@ -246,6 +284,7 @@ let program_ref_tests = [
   "attach_without_load_fails", `Quick, test_attach_without_load_fails;
   "multiple_program_handles", `Quick, test_multiple_program_handles;
   "program_handle_naming", `Quick, test_program_handle_naming;
+  "perf_attachment_value_flow", `Quick, test_perf_attachment_value_flow;
 ]
 
 let () =

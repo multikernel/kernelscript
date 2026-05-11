@@ -14,7 +14,7 @@ fn main() -> i32 {
     // pid: 0 = current process, cpu: -1 = any CPU (standard per-process monitoring).
     // page_faults (PERF_COUNT_SW_PAGE_FAULTS) is the most reliable software event:
     // every heap/stack allocation triggers minor page faults, no scheduler dependency.
-    attach(prog, perf_options { perf_type: perf_type_software, perf_config: page_faults, pid: 0, cpu: -1, period: 1 }, 0)
+    var att = attach(prog, perf_options { perf_type: perf_type_software, perf_config: page_faults, pid: 0, cpu: -1, period: 1 }, 0)
     print("Page-fault perf_event demo attached")
 
     // Repeatedly increment a counter; stack/heap activity will generate page faults.
@@ -23,10 +23,11 @@ fn main() -> i32 {
         x = x + 1
     }
 
-    var count = perf_read(prog)
+    var count = read(att)
     print("Page-fault count: %lld", count)
 
-    detach(prog)
+    detach(att)
     print("Page-fault perf_event demo detached")
+    detach(prog)
     return 0
 }

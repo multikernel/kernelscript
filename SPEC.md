@@ -462,10 +462,10 @@ fn main() -> i32 {
 
     // Only perf_type + perf_config are required; all other fields use language-level defaults:
     // pid=-1, cpu=0, period=1_000_000, wakeup=1, inherit/exclude_*=false
-    attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    var misses = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
 
     // Override specific fields as needed:
-    attach(prog, perf_options {
+    var cache = attach(prog, perf_options {
         perf_type: perf_type_hardware,
         perf_config: cache_misses,
         cpu: 2,
@@ -473,10 +473,11 @@ fn main() -> i32 {
         exclude_kernel: true,
     }, 0)
 
-    var count = perf_read(prog)
-    print("count: %lld", count)
+    print("misses=%lld cache=%lld", read(misses), read(cache))
 
-    detach(prog)   // IOC_DISABLE → bpf_link__destroy → close(perf_fd)
+    detach(cache)  // IOC_DISABLE → bpf_link__destroy → close(perf_fd)
+    detach(misses)
+    detach(prog)
     return 0
 }
 ```
@@ -536,9 +537,9 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 | Function | Signature | Description |
 |---|---|---|
 | `ks_open_perf_event` | `int (ks_perf_options)` | Calls `perf_event_open(2)`, returns fd |
-| `ks_attach_perf_event` | `int (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
+| `ks_attach_perf_event` | `PerfAttachment (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
 | `ks_read_perf_count` | `int64_t (int perf_fd)` | Reads current 64-bit counter via `read()` |
-| `ks_perf_read` | `int64_t (int prog_fd)` | High-level read via program handle |
+| `ks_perf_attachment_read` | `int64_t (PerfAttachment)` | High-level read via attachment value |
 
 **Attach sequence (compiler-generated, inside `ks_attach_perf_event`):**
 1. `ks_attr.attr.disabled = 1` — open counter without starting it  
@@ -554,6 +555,7 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 
 **Compiler implementation:**
 - Detects `attach(prog, perf_options_value, flags)` (three-argument form with `perf_options` second arg) and routes to `ks_attach_perf_event`
+- Returns a first-class `PerfAttachment` value for perf attaches so one program can hold multiple live counters
 - Exposes omitted `perf_options` fields as language-level defaults (partial struct literal)
 - Validates `pid ≥ -1`, `cpu ≥ -1`, and rejects `pid == -1 && cpu == -1` at runtime
 - Emits `PERF_FLAG_FD_CLOEXEC` for safe fd inheritance

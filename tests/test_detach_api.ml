@@ -39,11 +39,7 @@ let test_detach_in_stdlib () =
   (* Test function signature *)
   match get_builtin_function_signature "detach" with
   | Some (params, return_type) ->
-      check int "detach parameter count" 1 (List.length params);
-      check bool "detach first param is ProgramHandle" true 
-        (match params with
-         | [ProgramHandle] -> true
-         | _ -> false);
+      check int "detach parameter count" 0 (List.length params);
       check bool "detach return type is Void" true (return_type = Void)
   | None -> (fail "detach function signature should exist" : unit);
   

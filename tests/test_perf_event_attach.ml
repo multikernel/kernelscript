@@ -112,14 +112,14 @@ let test_perf_event_codegen_enforces_pid_cpu_rules () =
   (* Attach success detection *)
   check bool "perf attach emits IOC_ENABLE on success" true
     (contains_substr generated_code "PERF_EVENT_IOC_ENABLE");
-  check bool "perf attach prints success message" true
-    (contains_substr generated_code "Perf event program attached");
-  (* Detach success detection *)
-  check bool "perf detach prints success message" true
-    (contains_substr generated_code "Perf event program detached");
-  (* Duplicate attach protection and invalid fd guard *)
-  check bool "perf attach rejects duplicate prog_fd" true
-    (contains_substr generated_code "already attached. Use detach() first.");
+	  check bool "perf attach prints success message" true
+	    (contains_substr generated_code "Perf event program attached: id=%d prog_fd=%d perf_fd=%d target=%s");
+	  check bool "perf attach labels event configuration" true
+	    (contains_substr generated_code "perf_event:type=%d config=%llu period=%llu");
+	  (* Detach success detection *)
+	  check bool "perf detach prints success message" true
+	    (contains_substr generated_code "Perf event attachment detached: id=%d prog_fd=%d perf_fd=%d target=%s");
+  (* Invalid fd guard *)
   check bool "perf attach rejects invalid prog_fd" true
     (contains_substr generated_code "Invalid program file descriptor:")
 
@@ -154,6 +154,12 @@ let make_perf_code_with ~period ~wakeup =
   let prog_handle = make_ir_value (IRVariable "prog") IRI32 test_pos in
   let attr_value  = make_ir_value (IRVariable "attr") (IRStruct ("perf_options", [])) test_pos in
   let flags_value = uint32_value 0L in
+  let attachment_value =
+    make_ir_value
+      (IRVariable "att")
+      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32)]))
+      test_pos
+  in
   let attr_decl =
     make_ir_instruction
       (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
@@ -162,7 +168,7 @@ let make_perf_code_with ~period ~wakeup =
   in
   let attach_call =
     make_ir_instruction
-      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], None))
+      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], Some attachment_value))
       test_pos
   in
   make_generated_code [attr_decl; attach_call]
@@ -248,15 +254,21 @@ let test_perf_read_helpers_not_generated () =
 
   check bool "ks_read_perf_count helper omitted" false
     (contains_substr code "ks_read_perf_count");
-  check bool "ks_perf_read helper omitted" false
-    (contains_substr code "ks_perf_read");
+  check bool "ks_perf_attachment_read helper omitted" false
+    (contains_substr code "ks_perf_attachment_read");
   check bool "perf counter read syscall omitted" false
     (contains_substr code "read(perf_fd, &count, sizeof(count))")
 
-let test_perf_read_helpers_generated_when_used () =
+let test_read_helpers_generated_when_used () =
   let prog_handle = make_ir_value (IRVariable "prog") IRI32 test_pos in
   let attr_value  = make_ir_value (IRVariable "attr") (IRStruct ("perf_options", [])) test_pos in
   let flags_value = uint32_value 0L in
+  let attachment_value =
+    make_ir_value
+      (IRVariable "att")
+      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32)]))
+      test_pos
+  in
   let count_value = make_ir_value (IRVariable "count") IRI64 test_pos in
   let attr_decl =
     make_ir_instruction
@@ -266,22 +278,22 @@ let test_perf_read_helpers_generated_when_used () =
   in
   let attach_call =
     make_ir_instruction
-      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], None))
+      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], Some attachment_value))
       test_pos
   in
   let read_call =
     make_ir_instruction
-      (IRCall (DirectCall "perf_read", [prog_handle], Some count_value))
+      (IRCall (DirectCall "read", [attachment_value], Some count_value))
       test_pos
   in
   let code = make_generated_code [attr_decl; attach_call; read_call] in
-  check bool "ks_read_perf_count helper generated when perf_read is used" true
+  check bool "ks_read_perf_count helper generated when read is used" true
     (contains_substr code "ks_read_perf_count");
-  check bool "ks_perf_read helper generated when perf_read is used" true
-    (contains_substr code "ks_perf_read");
-  check bool "perf_read duplicates perf fd under the lock" true
+  check bool "ks_perf_attachment_read helper generated when read is used" true
+    (contains_substr code "ks_perf_attachment_read");
+  check bool "read duplicates perf fd under the lock" true
     (contains_substr code "dup_fd = dup(cur->perf_fd)");
-  check bool "perf_read closes duplicate fd after reading" true
+  check bool "read closes duplicate fd after reading" true
     (contains_substr code "close(dup_fd)")
 
 let test_perf_attach_event_function_generated () =
@@ -314,8 +326,10 @@ let test_perf_attach_event_function_generated () =
     (contains_substr code "find_prog_by_fd");
   check bool "perf attach rejects wrong program type at runtime" true
     (contains_substr code "is not a @perf_event program");
-  check bool "add_attachment performs atomic duplicate check" true
-    (contains_substr code "Reject duplicate insertions atomically")
+  check bool "perf attach returns PerfAttachment" true
+    (contains_substr code "PerfAttachment ks_attach_perf_event");
+  check bool "attachment struct typedef emitted" true
+    (contains_substr code "typedef struct PerfAttachment")
 
 let test_detach_attach_concurrent_window () =
   (* During a detach, the entry stays in the list but is marked detaching=1.
@@ -329,7 +343,9 @@ let test_detach_attach_concurrent_window () =
   check bool "detach marks entry as detaching before teardown" true
     (contains_substr code "entry->detaching = 1");
   check bool "detach re-locks to unlink and free entry after teardown" true
-    (contains_substr code "Phase 2: teardown is complete")
+    (contains_substr code "Phase 2: teardown is complete");
+  check bool "perf attachments get unique attachment ids" true
+    (contains_substr code "entry->attachment_id = next_attachment_id++")
 
 (* ── Type-checking regression tests ───────────────────────────────────── *)
 
@@ -400,7 +416,7 @@ let tests = [
   test_case "perf_event_period_and_wakeup_defaults"     `Quick test_perf_event_period_and_wakeup_defaults;
   test_case "perf_event_period_and_wakeup_custom"       `Quick test_perf_event_period_and_wakeup_custom;
   test_case "perf_read_helpers_not_generated"           `Quick test_perf_read_helpers_not_generated;
-  test_case "perf_read_helpers_generated_when_used"     `Quick test_perf_read_helpers_generated_when_used;
+  test_case "read_helpers_generated_when_used"          `Quick test_read_helpers_generated_when_used;
   test_case "perf_attach_event_function_generated"      `Quick test_perf_attach_event_function_generated;
   test_case "detach_attach_concurrent_window"           `Quick test_detach_attach_concurrent_window;
   test_case "standard_attach_uses_libbpf_error_checks"  `Quick test_standard_attach_uses_libbpf_error_checks;

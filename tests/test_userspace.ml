@@ -658,17 +658,25 @@ let test_map_loading_code_generation () =
         check bool "user main function exists" true 
           (try ignore (Str.search_forward (Str.regexp "int main(void)") content 0); true with Not_found -> false);
         
-        (* Verify load call is present *)
-  check bool "load call present" true 
-          (try ignore (Str.search_forward (Str.regexp "get_bpf_program_handle.*test") content 0); true with Not_found -> false);
-        
-        (* Verify BPF skeleton function is correct *)
-        check bool "correct eBPF skeleton function" true 
-          (try ignore (Str.search_forward (Str.regexp "test_ebpf__open_and_load") content 0); true with Not_found -> false);
-        
-        (* Verify map file descriptor declarations are NOT present (maps not used in userspace) *)
-        check bool "packet_stats_fd declaration not generated (not used)" false 
-          (try ignore (Str.search_forward (Str.regexp "int packet_stats_fd = -1") content 0); true with Not_found -> false);
+	        (* Verify load call is present *)
+	        check bool "load call present" true 
+	          (try ignore (Str.search_forward (Str.regexp "get_bpf_program_handle.*test") content 0); true with Not_found -> false);
+	        
+	        (* Verify BPF skeleton function is correct *)
+	        check bool "correct eBPF skeleton function" true 
+	          (try ignore (Str.search_forward (Str.regexp "test_ebpf__open_and_load") content 0); true with Not_found -> false);
+
+	        check bool "skeleton cleanup helper destroys object" true
+	          (try ignore (Str.search_forward (Str.regexp "static void cleanup_test") content 0);
+	               ignore (Str.search_forward (Str.regexp "test_ebpf__destroy(obj)") content 0);
+	               true with Not_found -> false);
+
+	        check bool "main registers skeleton cleanup" true
+	          (try ignore (Str.search_forward (Str.regexp "atexit(cleanup_test)") content 0); true with Not_found -> false);
+	        
+	        (* Verify map file descriptor declarations are NOT present (maps not used in userspace) *)
+	        check bool "packet_stats_fd declaration not generated (not used)" false 
+	          (try ignore (Str.search_forward (Str.regexp "int packet_stats_fd = -1") content 0); true with Not_found -> false);
         
         (* Verify config map fd declarations are present (config field is updated) *)
         check bool "network_config_map_fd declaration" true 

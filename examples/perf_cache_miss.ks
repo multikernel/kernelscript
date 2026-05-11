@@ -14,12 +14,17 @@ fn main() -> i32 {
     // Only perf_type + perf_config are required; pid, cpu, period, wakeup and flag fields
     // default to: pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1,
     // inherit/exclude_kernel/exclude_user=false.
-    attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: cache_misses, period: 10000000, inherit: true }, 0)
-    print("Cache-miss perf_event demo attached")
-    var count = perf_read(prog)
-    print("Cache-miss count: %lld", count)
+    var cache = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: cache_misses, period: 10000000, inherit: true }, 0)
+    var branch = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses, period: 10000000, inherit: true }, 0)
+    print("Cache-miss and branch-miss perf_event demo attached")
+    var cache_count = read(cache)
+    print("Cache-miss count: %lld", cache_count)
+    var branch_count = read(branch)
+    print("Branch-miss count: %lld", branch_count)
 
+    detach(cache)
+    detach(branch)
     detach(prog)
-    print("Cache-miss perf_event demo detached")
+    print("Cache-miss and branch-miss perf_event demo detached")
     return 0
 }

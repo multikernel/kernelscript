@@ -121,6 +121,24 @@ let validate_attach_function arg_types _ast_context _pos =
   | _ ->
       (false, Some "attach() requires (handle, target, flags) — target is a string or perf_options { ... }")
 
+(** Validation function for read() - currently only accepts perf attachment values *)
+let validate_read_function arg_types _ast_context _pos =
+  match arg_types with
+  | [Struct "PerfAttachment"] | [UserType "PerfAttachment"] ->
+      (true, None)
+  | _ ->
+      (false, Some "read() currently requires a PerfAttachment")
+
+(** Validation function for detach() - accepts program handles and perf attachments *)
+let validate_detach_function arg_types _ast_context _pos =
+  match arg_types with
+  | [ProgramHandle]
+  | [Struct "PerfAttachment"]
+  | [UserType "PerfAttachment"] ->
+      (true, None)
+  | _ ->
+      (false, Some "detach() requires a ProgramHandle or PerfAttachment")
+
 (** Standard library built-in functions *)
 let builtin_functions = [
   {
@@ -158,14 +176,14 @@ let builtin_functions = [
   };
   {
     name = "detach";
-    param_types = [ProgramHandle]; (* program handle only *)
+    param_types = []; (* Custom validation handles program handles and perf attachments *)
     return_type = Void; (* void - no return value *)
-    description = "Detach a loaded eBPF program from its current attachment";
+    description = "Detach a loaded eBPF program or perf attachment from its current attachment";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
     userspace_impl = "detach_bpf_program_by_fd";
     kernel_impl = "";
-    validate = None;
+    validate = Some validate_detach_function;
   };
   {
     name = "register";
@@ -223,15 +241,15 @@ let builtin_functions = [
     validate = Some validate_exec_function;
   };
   {
-    name = "perf_read";
-    param_types = [ProgramHandle];
+    name = "read";
+    param_types = []; (* Custom validation handles attachment-aware overloads *)
     return_type = I64; (* Raw counter value, or -1 on error *)
-    description = "Read the current hardware/software counter value for a perf_event program";
+    description = "Read the current hardware/software counter value for a perf attachment";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
-    userspace_impl = "ks_perf_read";
+    userspace_impl = "ks_perf_attachment_read";
     kernel_impl = "";
-    validate = None;
+    validate = Some validate_read_function;
   };
 ]
 
@@ -336,6 +354,13 @@ let builtin_types = [
     ("inherit",        Bool);
     ("exclude_kernel", Bool);
     ("exclude_user",   Bool);
+  ], builtin_pos));
+
+  (* PerfAttachment: first-class userspace handle returned by perf_event attach(). *)
+  TypeDef (StructDef ("PerfAttachment", [
+    ("perf_fd", I32);
+    ("link_id", I32);
+    ("prog_fd", I32);
   ], builtin_pos));
 ]
 

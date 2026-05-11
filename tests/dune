@@ -249,7 +249,7 @@
 (executable
  (name test_program_ref)
  (modules test_program_ref)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_function_pointers)

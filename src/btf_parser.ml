@@ -522,8 +522,9 @@ fn main() -> i32 {
     var prog = load(%s)
 
     // perf_type + perf_config are required; all other fields default to sensible values.
-    attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    var att = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
 
+    detach(att)
     detach(prog)
 
     return 0
