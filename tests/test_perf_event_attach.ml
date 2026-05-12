@@ -157,7 +157,7 @@ let make_perf_code_with ~period ~wakeup =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32)]))
+      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
   let attr_decl =
@@ -266,7 +266,7 @@ let test_read_helpers_generated_when_used () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32)]))
+      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
   let count_value = make_ir_value (IRVariable "count") IRI64 test_pos in
@@ -291,10 +291,16 @@ let test_read_helpers_generated_when_used () =
     (contains_substr code "ks_read_perf_count");
   check bool "ks_perf_attachment_read helper generated when read is used" true
     (contains_substr code "ks_perf_attachment_read");
-  check bool "read duplicates perf fd under the lock" true
+  check bool "read uses direct perf fd" true
+    (contains_substr code "ks_read_perf_count(attachment.perf_fd)");
+  check bool "read begins with O(1) stale-handle guard" true
+    (contains_substr code "perf_attachment_begin_read(attachment)");
+  check bool "read does not duplicate perf fd" false
     (contains_substr code "dup_fd = dup(cur->perf_fd)");
-  check bool "read closes duplicate fd after reading" true
-    (contains_substr code "close(dup_fd)")
+  check bool "read does not close duplicate fd" false
+    (contains_substr code "close(dup_fd)");
+  check bool "read no longer walks attachment list by link id" false
+    (contains_substr code "struct attachment_entry *cur = find_attachment_by_id_locked(attachment.link_id)")
 
 let test_perf_attach_event_function_generated () =
   (* attach(prog, perf_options{...}, 0) must generate ks_attach_perf_event which
@@ -329,7 +335,13 @@ let test_perf_attach_event_function_generated () =
   check bool "perf attach returns PerfAttachment" true
     (contains_substr code "PerfAttachment ks_attach_perf_event");
   check bool "attachment struct typedef emitted" true
-    (contains_substr code "typedef struct PerfAttachment")
+    (contains_substr code "typedef struct PerfAttachment");
+  check bool "PerfAttachment carries stale-handle generation" true
+    (contains_substr code "uint64_t generation;");
+  check bool "perf attach gets id directly from add_attachment" true
+    (contains_substr code "BPF_PROG_TYPE_PERF_EVENT, &attachment_id, &generation");
+  check bool "perf attach no longer scans table after add_attachment" false
+    (contains_substr code "entry->perf_fd == perf_fd")
 
 let test_detach_attach_concurrent_window () =
   (* During a detach, the entry stays in the list but is marked detaching=1.
@@ -345,7 +357,9 @@ let test_detach_attach_concurrent_window () =
   check bool "detach re-locks to unlink and free entry after teardown" true
     (contains_substr code "Phase 2: teardown is complete");
   check bool "perf attachments get unique attachment ids" true
-    (contains_substr code "entry->attachment_id = next_attachment_id++")
+    (contains_substr code "entry->attachment_id = next_attachment_id++");
+  check bool "detach invalidates stale perf attachment handles before close" true
+    (contains_substr code "invalidate_perf_attachment_state_locked(entry)")
 
 (* ── Type-checking regression tests ───────────────────────────────────── *)
 

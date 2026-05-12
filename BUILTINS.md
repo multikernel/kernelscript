@@ -103,7 +103,7 @@ fn main() -> i32 {
 
 **Return Value:**
 - Standard form returns `0` on success and an error code on failure
-- Perf event form returns a `PerfAttachment` value with the open counter/link identity
+- Perf event form returns a `PerfAttachment` value with the open counter/link identity and an internal stale-handle token
 
 **Examples:**
 ```kernelscript
@@ -170,7 +170,8 @@ detach(prog)  // Clean up
 
 **Return Value:**
 - Returns the raw 64-bit counter value on success
-- Returns `-1` on error
+- Returns `-1` on invalid/stale attachment or read failure
+- Reads use the attachment's `perf_fd` directly; the internal token detects copied handles used after detach.
 
 ---
 

@@ -3830,7 +3830,9 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
 #include <getopt.h>
 #include <fcntl.h>
 #include <net/if.h>
+#include <sched.h>
 #include <setjmp.h>
+#include <stdatomic.h>
 #include <linux/bpf.h>
 #include <sys/resource.h>
 #include <pthread.h>
@@ -4109,6 +4111,7 @@ typedef struct PerfAttachment {
   int perf_fd;
   int link_id;
   int prog_fd;
+  uint64_t generation;
 } PerfAttachment;
 
   struct attachment_entry {
@@ -4120,19 +4123,137 @@ typedef struct PerfAttachment {
     int ifindex;              // For XDP programs (0 for kprobe/tracepoint)
     int perf_fd;              // For perf_event programs (-1 otherwise)
     int detaching;            // Non-zero while teardown is in progress
+    uint64_t generation;      // PerfAttachment stale-handle token
     enum bpf_prog_type type;
     struct attachment_entry *next;
   };
 
+  struct perf_attachment_state {
+    _Atomic uint64_t generation;
+    _Atomic int perf_fd;
+    _Atomic unsigned int readers;
+  };
+
   static struct attachment_entry *attached_programs = NULL;
+  static _Atomic(struct perf_attachment_state *) perf_attachment_states = NULL;
+  static _Atomic size_t perf_attachment_state_capacity = 0;
   static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
   static int next_attachment_id = 1;
+  static uint64_t next_perf_attachment_generation = 1;
+
+  static int ensure_perf_attachment_state_capacity_locked(int perf_fd) {
+    if (perf_fd < 0) {
+      return -1;
+    }
+
+    size_t capacity = atomic_load_explicit(&perf_attachment_state_capacity, memory_order_acquire);
+    if ((size_t)perf_fd < capacity) {
+      return 0;
+    }
+
+    if (capacity > 0) {
+      fprintf(stderr, "perf fd %d exceeds perf attachment state table capacity %zu\n",
+              perf_fd, capacity);
+      return -1;
+    }
+
+    struct rlimit limit;
+    capacity = 1024;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0 &&
+        limit.rlim_cur != RLIM_INFINITY &&
+        limit.rlim_cur > 0) {
+      capacity = (size_t)limit.rlim_cur;
+    } else {
+      long open_max = sysconf(_SC_OPEN_MAX);
+      if (open_max > 0) {
+        capacity = (size_t)open_max;
+      }
+    }
+    if ((size_t)perf_fd >= capacity) {
+      capacity = (size_t)perf_fd + 1;
+    }
+
+    struct perf_attachment_state *states =
+      malloc(capacity * sizeof(struct perf_attachment_state));
+    if (!states) {
+      fprintf(stderr, "Failed to allocate perf attachment state table\n");
+      return -1;
+    }
+
+    for (size_t i = 0; i < capacity; i++) {
+      atomic_init(&states[i].generation, 0);
+      atomic_init(&states[i].perf_fd, -1);
+      atomic_init(&states[i].readers, 0);
+    }
+
+    atomic_store_explicit(&perf_attachment_states, states, memory_order_release);
+    atomic_store_explicit(&perf_attachment_state_capacity, capacity, memory_order_release);
+    return 0;
+  }
+
+  static void invalidate_perf_attachment_state_locked(struct attachment_entry *entry) {
+    if (!entry ||
+        entry->type != BPF_PROG_TYPE_PERF_EVENT ||
+        entry->perf_fd < 0 ||
+        entry->generation == 0) {
+      return;
+    }
+
+    size_t capacity = atomic_load_explicit(&perf_attachment_state_capacity, memory_order_acquire);
+    struct perf_attachment_state *states =
+      atomic_load_explicit(&perf_attachment_states, memory_order_acquire);
+    if ((size_t)entry->perf_fd < capacity && states) {
+      struct perf_attachment_state *state = &states[entry->perf_fd];
+      atomic_store_explicit(&state->perf_fd, -1, memory_order_release);
+      atomic_store_explicit(&state->generation, 0, memory_order_release);
+      while (atomic_load_explicit(&state->readers, memory_order_acquire) != 0) {
+        sched_yield();
+      }
+    }
+    entry->generation = 0;
+  }
+
+  static struct perf_attachment_state *perf_attachment_begin_read(PerfAttachment attachment) {
+    if (attachment.perf_fd < 0 || attachment.link_id <= 0 || attachment.generation == 0) {
+      return NULL;
+    }
+
+    size_t capacity = atomic_load_explicit(&perf_attachment_state_capacity, memory_order_acquire);
+    struct perf_attachment_state *states =
+      atomic_load_explicit(&perf_attachment_states, memory_order_acquire);
+    if (!states || (size_t)attachment.perf_fd >= capacity) {
+      return NULL;
+    }
+
+    struct perf_attachment_state *state = &states[attachment.perf_fd];
+    uint64_t generation =
+      atomic_load_explicit(&state->generation, memory_order_acquire);
+    int perf_fd =
+      atomic_load_explicit(&state->perf_fd, memory_order_acquire);
+    if (generation != attachment.generation || perf_fd != attachment.perf_fd) {
+      return NULL;
+    }
+
+    atomic_fetch_add_explicit(&state->readers, 1, memory_order_acquire);
+    generation = atomic_load_explicit(&state->generation, memory_order_acquire);
+    perf_fd = atomic_load_explicit(&state->perf_fd, memory_order_acquire);
+    if (generation != attachment.generation || perf_fd != attachment.perf_fd) {
+      atomic_fetch_sub_explicit(&state->readers, 1, memory_order_release);
+      return NULL;
+    }
+    return state;
+  }
+
+  static void perf_attachment_end_read(struct perf_attachment_state *state) {
+    atomic_fetch_sub_explicit(&state->readers, 1, memory_order_release);
+  }
 
   // Helper function to add attachment entry.
   // Duplicate check is performed atomically under the same lock as insertion.
   static int add_attachment(int prog_fd, const char *target, uint32_t flags,
          struct bpf_link *link, int ifindex, int perf_fd,
-         enum bpf_prog_type type) {
+         enum bpf_prog_type type, int *attachment_id_out,
+         uint64_t *generation_out) {
     struct attachment_entry *entry = malloc(sizeof(struct attachment_entry));
     if (!entry) {
       fprintf(stderr, "Failed to allocate memory for attachment entry\n");
@@ -4150,6 +4271,7 @@ typedef struct PerfAttachment {
     entry->type = type;
     
     entry->detaching = 0;
+    entry->generation = 0;
     pthread_mutex_lock(&attachment_mutex);
     /* Reject duplicate insertions atomically.
      * Skip entries that are currently being torn down (detaching != 0) so that
@@ -4167,8 +4289,29 @@ typedef struct PerfAttachment {
       existing = existing->next;
     }
     entry->attachment_id = next_attachment_id++;
+    if (type == BPF_PROG_TYPE_PERF_EVENT && perf_fd >= 0) {
+      if (ensure_perf_attachment_state_capacity_locked(perf_fd) != 0) {
+        pthread_mutex_unlock(&attachment_mutex);
+        free(entry);
+        return -1;
+      }
+      entry->generation = next_perf_attachment_generation++;
+      if (next_perf_attachment_generation == 0) {
+        next_perf_attachment_generation = 1;
+      }
+      struct perf_attachment_state *states =
+        atomic_load_explicit(&perf_attachment_states, memory_order_acquire);
+      atomic_store_explicit(&states[perf_fd].perf_fd, perf_fd, memory_order_release);
+      atomic_store_explicit(&states[perf_fd].generation, entry->generation, memory_order_release);
+    }
     entry->next = attached_programs;
     attached_programs = entry;
+    if (attachment_id_out) {
+      *attachment_id_out = entry->attachment_id;
+    }
+    if (generation_out) {
+      *generation_out = entry->generation;
+    }
     pthread_mutex_unlock(&attachment_mutex);
     
     return 0;
@@ -4232,7 +4375,7 @@ typedef struct PerfAttachment {
             }
             
             // Store XDP attachment (no bpf_link for XDP)
-            if (add_attachment(prog_fd, target, flags, NULL, ifindex, -1, BPF_PROG_TYPE_XDP) != 0) {
+            if (add_attachment(prog_fd, target, flags, NULL, ifindex, -1, BPF_PROG_TYPE_XDP, NULL, NULL) != 0) {
                 // If storage fails, detach and return error
                 bpf_xdp_detach(ifindex, flags, NULL);
                 return -1;
@@ -4262,7 +4405,7 @@ typedef struct PerfAttachment {
             printf("Kprobe attached to function: %s\n", target);
             
             // Store probe attachment for later cleanup
-            if (add_attachment(prog_fd, target, flags, link, 0, -1, BPF_PROG_TYPE_KPROBE) != 0) {
+            if (add_attachment(prog_fd, target, flags, link, 0, -1, BPF_PROG_TYPE_KPROBE, NULL, NULL) != 0) {
                 // If storage fails, destroy link and return error
                 bpf_link__destroy(link);
                 return -1;
@@ -4291,7 +4434,7 @@ typedef struct PerfAttachment {
             printf("Fentry/fexit program attached to function: %s\n", target);
             
             // Store tracing attachment for later cleanup
-            if (add_attachment(prog_fd, target, flags, link, 0, -1, BPF_PROG_TYPE_TRACING) != 0) {
+            if (add_attachment(prog_fd, target, flags, link, 0, -1, BPF_PROG_TYPE_TRACING, NULL, NULL) != 0) {
                 // If storage fails, destroy link and return error
                 bpf_link__destroy(link);
                 return -1;
@@ -4335,7 +4478,7 @@ typedef struct PerfAttachment {
             }
             
             // Store tracepoint attachment for later cleanup
-            if (add_attachment(prog_fd, target, flags, link, 0, -1, BPF_PROG_TYPE_TRACEPOINT) != 0) {
+            if (add_attachment(prog_fd, target, flags, link, 0, -1, BPF_PROG_TYPE_TRACEPOINT, NULL, NULL) != 0) {
                 // If storage fails, destroy link and return error
                 bpf_link__destroy(link);
                 return -1;
@@ -4372,7 +4515,7 @@ typedef struct PerfAttachment {
             }
             
             // Store TC attachment for later cleanup (flags no longer needed for direction)
-            if (add_attachment(prog_fd, target, 0, link, ifindex, -1, BPF_PROG_TYPE_SCHED_CLS) != 0) {
+            if (add_attachment(prog_fd, target, 0, link, ifindex, -1, BPF_PROG_TYPE_SCHED_CLS, NULL, NULL) != 0) {
                 // If storage fails, destroy link and return error
                 bpf_link__destroy(link);
                 return -1;
@@ -4480,6 +4623,7 @@ void detach_bpf_program_by_fd(int prog_fd) {
         while (entry) {
             if (entry->prog_fd == prog_fd && !entry->detaching) {
                 entry->detaching = 1;
+                invalidate_perf_attachment_state_locked(entry);
                 break;
             }
             entry = entry->next;
@@ -4517,6 +4661,7 @@ void ks_detach_perf_attachment(PerfAttachment attachment) {
     struct attachment_entry *entry = find_attachment_by_id_locked(attachment.link_id);
     if (entry && !entry->detaching) {
         entry->detaching = 1;
+        invalidate_perf_attachment_state_locked(entry);
     } else {
         entry = NULL;
     }
@@ -4753,35 +4898,27 @@ PerfAttachment ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags
              (unsigned long long)opts.perf_config,
              (unsigned long long)opts.period);
 
-    if (add_attachment(prog_fd, perf_target, (uint32_t)flags, link, 0, perf_fd, BPF_PROG_TYPE_PERF_EVENT) != 0) {
+    int attachment_id = -1;
+    uint64_t generation = 0;
+    if (add_attachment(prog_fd, perf_target, (uint32_t)flags, link, 0, perf_fd,
+                       BPF_PROG_TYPE_PERF_EVENT, &attachment_id, &generation) != 0) {
         ioctl(perf_fd, PERF_EVENT_IOC_DISABLE, 0);
         bpf_link__destroy(link);
         close(perf_fd);
         return attachment;
     }
 
-    pthread_mutex_lock(&attachment_mutex);
-    struct attachment_entry *entry = attached_programs;
-    while (entry) {
-      if (entry->prog_fd == prog_fd &&
-          entry->perf_fd == perf_fd &&
-          entry->type == BPF_PROG_TYPE_PERF_EVENT &&
-          !entry->detaching) {
-        attachment.perf_fd = perf_fd;
-        attachment.link_id = entry->attachment_id;
-        break;
-      }
-      entry = entry->next;
-    }
-    pthread_mutex_unlock(&attachment_mutex);
-
-    if (attachment.link_id <= 0) {
+    if (attachment_id <= 0 || generation == 0) {
         fprintf(stderr, "Failed to record perf_event attachment for program fd %d\n", prog_fd);
         ioctl(perf_fd, PERF_EVENT_IOC_DISABLE, 0);
         bpf_link__destroy(link);
         close(perf_fd);
         return attachment;
     }
+
+    attachment.perf_fd = perf_fd;
+    attachment.link_id = attachment_id;
+    attachment.generation = generation;
 
     printf("Perf event program attached: id=%d prog_fd=%d perf_fd=%d target=%s\n",
            attachment.link_id, attachment.prog_fd, attachment.perf_fd, perf_target);
@@ -4815,28 +4952,13 @@ int64_t ks_read_perf_count(int perf_fd) {
 
 /* Read the counter for a first-class perf attachment value. */
 int64_t ks_perf_attachment_read(PerfAttachment attachment) {
-  pthread_mutex_lock(&attachment_mutex);
-  int found = 0;
-  int dup_fd = -1;
-  struct attachment_entry *cur = find_attachment_by_id_locked(attachment.link_id);
-  if (cur &&
-      !cur->detaching &&
-      cur->perf_fd >= 0 &&
-      cur->type == BPF_PROG_TYPE_PERF_EVENT) {
-    found = 1;
-    dup_fd = dup(cur->perf_fd);
-  }
-  pthread_mutex_unlock(&attachment_mutex);
-  if (!found) {
-    fprintf(stderr, "ks_perf_attachment_read: no active perf attachment for link id %d\n", attachment.link_id);
+  struct perf_attachment_state *state = perf_attachment_begin_read(attachment);
+  if (!state) {
+    fprintf(stderr, "ks_perf_attachment_read: invalid or stale perf attachment\n");
     return -1;
   }
-  if (dup_fd < 0) {
-    fprintf(stderr, "ks_perf_attachment_read: dup(perf_fd) failed for link id %d: %s\n", attachment.link_id, strerror(errno));
-    return -1;
-  }
-  int64_t result = ks_read_perf_count(dup_fd);
-  close(dup_fd);
+  int64_t result = ks_read_perf_count(attachment.perf_fd);
+  perf_attachment_end_read(state);
   return result;
 }
 |}

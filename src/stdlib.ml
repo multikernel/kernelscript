@@ -361,6 +361,7 @@ let builtin_types = [
     ("perf_fd", I32);
     ("link_id", I32);
     ("prog_fd", I32);
+    ("generation", U64);
   ], builtin_pos));
 ]
 

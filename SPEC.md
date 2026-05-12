@@ -539,7 +539,7 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 | `ks_open_perf_event` | `int (ks_perf_options)` | Calls `perf_event_open(2)`, returns fd |
 | `ks_attach_perf_event` | `PerfAttachment (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
 | `ks_read_perf_count` | `int64_t (int perf_fd)` | Reads current 64-bit counter via `read()` |
-| `ks_perf_attachment_read` | `int64_t (PerfAttachment)` | High-level read via attachment value |
+| `ks_perf_attachment_read` | `int64_t (PerfAttachment)` | Direct fd read through the attachment value with stale-handle detection |
 
 **Attach sequence (compiler-generated, inside `ks_attach_perf_event`):**
 1. `ks_attr.attr.disabled = 1` — open counter without starting it  
@@ -556,6 +556,7 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 **Compiler implementation:**
 - Detects `attach(prog, perf_options_value, flags)` (three-argument form with `perf_options` second arg) and routes to `ks_attach_perf_event`
 - Returns a first-class `PerfAttachment` value for perf attaches so one program can hold multiple live counters
+- `PerfAttachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
 - Exposes omitted `perf_options` fields as language-level defaults (partial struct literal)
 - Validates `pid ≥ -1`, `cpu ≥ -1`, and rejects `pid == -1 && cpu == -1` at runtime
 - Emits `PERF_FLAG_FD_CLOEXEC` for safe fd inheritance
