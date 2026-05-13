@@ -4110,30 +4110,18 @@ void cleanup_bpf_maps(void) {
     let load_function = generate_load_function_with_tail_calls base_name all_usage tail_call_analysis all_setup_code kfunc_dependencies (Ir.get_global_variables ir_multi_prog) in
     
     (* Global attachment storage (generated when attach/detach/perf attach/perf read are used) *)
-    let attachment_storage = if all_usage.uses_attach || all_usage.uses_detach || all_usage.uses_attach_perf || all_usage.uses_perf_read then
-      {|// Global attachment storage for tracking active program attachments
-typedef struct PerfAttachment {
+    let uses_perf_state = all_usage.uses_attach_perf || all_usage.uses_perf_read in
+    let perf_typedef = if uses_perf_state then
+      {|typedef struct PerfAttachment {
   int perf_fd;
   int link_id;
   int prog_fd;
   uint64_t generation;
 } PerfAttachment;
-
-  struct attachment_entry {
-    int attachment_id;
-    int prog_fd;
-    char target[128];
-    uint32_t flags;
-    struct bpf_link *link;    // For kprobe/tracepoint programs (NULL for XDP)
-    int ifindex;              // For XDP programs (0 for kprobe/tracepoint)
-    int perf_fd;              // For perf_event programs (-1 otherwise)
-    int detaching;            // Non-zero while teardown is in progress
-    uint64_t generation;      // PerfAttachment stale-handle token
-    enum bpf_prog_type type;
-    struct attachment_entry *next;
-  };
-
-  struct perf_attachment_state {
+|}
+    else "" in
+    let perf_state_decls = if uses_perf_state then
+      {|  struct perf_attachment_state {
     _Atomic uint64_t generation;
     _Atomic int perf_fd;
     _Atomic unsigned int readers;
@@ -4151,13 +4139,12 @@ typedef struct PerfAttachment {
   #define KS_PERF_STATE_CHUNK_MASK (KS_PERF_STATE_CHUNK_SIZE - 1u)
   #define KS_PERF_STATE_MAX_CHUNKS 4096u
 
-  static struct attachment_entry *attached_programs = NULL;
   static _Atomic(struct perf_attachment_state *) perf_state_chunks[KS_PERF_STATE_MAX_CHUNKS];
-  static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
-  static int next_attachment_id = 1;
   static uint64_t next_perf_attachment_generation = 1;
-
-  static struct perf_attachment_state *perf_state_slot_lookup(int perf_fd) {
+|}
+    else "" in
+    let perf_helpers = if uses_perf_state then
+      {|  static struct perf_attachment_state *perf_state_slot_lookup(int perf_fd) {
     if (perf_fd < 0) {
       return NULL;
     }
@@ -4254,49 +4241,10 @@ typedef struct PerfAttachment {
   static void perf_attachment_end_read(struct perf_attachment_state *state) {
     atomic_fetch_sub_explicit(&state->readers, 1, memory_order_release);
   }
-
-  // Helper function to add attachment entry.
-  // Duplicate check is performed atomically under the same lock as insertion.
-  static int add_attachment(int prog_fd, const char *target, uint32_t flags,
-         struct bpf_link *link, int ifindex, int perf_fd,
-         enum bpf_prog_type type, int *attachment_id_out,
-         uint64_t *generation_out) {
-    struct attachment_entry *entry = malloc(sizeof(struct attachment_entry));
-    if (!entry) {
-      fprintf(stderr, "Failed to allocate memory for attachment entry\n");
-      return -1;
-    }
-    
-    entry->prog_fd = prog_fd;
-    entry->attachment_id = 0;
-    strncpy(entry->target, target, sizeof(entry->target) - 1);
-    entry->target[sizeof(entry->target) - 1] = '\0';
-    entry->flags = flags;
-    entry->link = link;
-    entry->ifindex = ifindex;
-    entry->perf_fd = perf_fd;
-    entry->type = type;
-    
-    entry->detaching = 0;
-    entry->generation = 0;
-    pthread_mutex_lock(&attachment_mutex);
-    /* Reject duplicate insertions atomically.
-     * Skip entries that are currently being torn down (detaching != 0) so that
-     * a new attach can succeed while the old detach is still running. */
-    struct attachment_entry *existing = attached_programs;
-    while (existing) {
-      if (existing->prog_fd == prog_fd &&
-          existing->type != BPF_PROG_TYPE_PERF_EVENT &&
-          !existing->detaching) {
-        pthread_mutex_unlock(&attachment_mutex);
-        free(entry);
-        fprintf(stderr, "Program with fd %d is already attached. Use detach() first.\n", prog_fd);
-        return -1;
-      }
-      existing = existing->next;
-    }
-    entry->attachment_id = next_attachment_id++;
-    if (type == BPF_PROG_TYPE_PERF_EVENT && perf_fd >= 0) {
+|}
+    else "" in
+    let add_attachment_perf_branch = if uses_perf_state then
+      {|    if (type == BPF_PROG_TYPE_PERF_EVENT && perf_fd >= 0) {
       struct perf_attachment_state *state = ensure_perf_attachment_state_locked(perf_fd);
       if (!state) {
         pthread_mutex_unlock(&attachment_mutex);
@@ -4310,20 +4258,10 @@ typedef struct PerfAttachment {
       atomic_store_explicit(&state->perf_fd, perf_fd, memory_order_release);
       atomic_store_explicit(&state->generation, entry->generation, memory_order_release);
     }
-    entry->next = attached_programs;
-    attached_programs = entry;
-    if (attachment_id_out) {
-      *attachment_id_out = entry->attachment_id;
-    }
-    if (generation_out) {
-      *generation_out = entry->generation;
-    }
-    pthread_mutex_unlock(&attachment_mutex);
-    
-    return 0;
-  }
-
-  static struct attachment_entry *find_attachment_by_id_locked(int attachment_id) {
+|}
+    else "" in
+    let perf_find_by_id = if uses_perf_state then
+      {|  static struct attachment_entry *find_attachment_by_id_locked(int attachment_id) {
     struct attachment_entry *entry = attached_programs;
     while (entry) {
       if (entry->attachment_id == attachment_id) {
@@ -4333,7 +4271,85 @@ typedef struct PerfAttachment {
     }
     return NULL;
   }
+|}
+    else "" in
+    let attachment_storage = if all_usage.uses_attach || all_usage.uses_detach || uses_perf_state then
+      sprintf {|// Global attachment storage for tracking active program attachments
+%s
+  struct attachment_entry {
+    int attachment_id;
+    int prog_fd;
+    char target[128];
+    uint32_t flags;
+    struct bpf_link *link;    // For kprobe/tracepoint programs (NULL for XDP)
+    int ifindex;              // For XDP programs (0 for kprobe/tracepoint)
+    int perf_fd;              // For perf_event programs (-1 otherwise)
+    int detaching;            // Non-zero while teardown is in progress
+    uint64_t generation;      // PerfAttachment stale-handle token
+    enum bpf_prog_type type;
+    struct attachment_entry *next;
+  };
 
+%s  static struct attachment_entry *attached_programs = NULL;
+  static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
+  static int next_attachment_id = 1;
+
+%s
+  // Helper function to add attachment entry.
+  // Duplicate check is performed atomically under the same lock as insertion.
+  static int add_attachment(int prog_fd, const char *target, uint32_t flags,
+         struct bpf_link *link, int ifindex, int perf_fd,
+         enum bpf_prog_type type, int *attachment_id_out,
+         uint64_t *generation_out) {
+    struct attachment_entry *entry = malloc(sizeof(struct attachment_entry));
+    if (!entry) {
+      fprintf(stderr, "Failed to allocate memory for attachment entry\n");
+      return -1;
+    }
+
+    entry->prog_fd = prog_fd;
+    entry->attachment_id = 0;
+    strncpy(entry->target, target, sizeof(entry->target) - 1);
+    entry->target[sizeof(entry->target) - 1] = '\0';
+    entry->flags = flags;
+    entry->link = link;
+    entry->ifindex = ifindex;
+    entry->perf_fd = perf_fd;
+    entry->type = type;
+
+    entry->detaching = 0;
+    entry->generation = 0;
+    pthread_mutex_lock(&attachment_mutex);
+    /* Reject duplicate insertions atomically.
+     * Skip entries that are currently being torn down (detaching != 0) so that
+     * a new attach can succeed while the old detach is still running. */
+    struct attachment_entry *existing = attached_programs;
+    while (existing) {
+      if (existing->prog_fd == prog_fd &&
+          existing->type != BPF_PROG_TYPE_PERF_EVENT &&
+          !existing->detaching) {
+        pthread_mutex_unlock(&attachment_mutex);
+        free(entry);
+        fprintf(stderr, "Program with fd %%d is already attached. Use detach() first.\n", prog_fd);
+        return -1;
+      }
+      existing = existing->next;
+    }
+    entry->attachment_id = next_attachment_id++;
+%s    entry->next = attached_programs;
+    attached_programs = entry;
+    if (attachment_id_out) {
+      *attachment_id_out = entry->attachment_id;
+    }
+    if (generation_out) {
+      *generation_out = entry->generation;
+    }
+    pthread_mutex_unlock(&attachment_mutex);
+
+    return 0;
+  }
+
+%s
   /* Helper: find the bpf_program in the skeleton object for a given fd.
    * Returns NULL if the skeleton is not loaded or no program matches. */
   static struct bpf_program *find_prog_by_fd(int prog_fd) {
@@ -4346,7 +4362,7 @@ typedef struct PerfAttachment {
     }
     return NULL;
   }
-  |}
+  |} perf_typedef perf_state_decls perf_helpers add_attachment_perf_branch perf_find_by_id
     else "" in
 
     let attach_function = if all_usage.uses_attach then
@@ -4556,7 +4572,10 @@ typedef struct PerfAttachment {
             break;
         }|}
     else "" in
-    let detach_function = if all_usage.uses_detach || all_usage.uses_attach_perf then
+    let invalidate_call_line = if uses_perf_state then
+      "                invalidate_perf_attachment_state_locked(entry);\n"
+    else "" in
+    let detach_entry_dispatch = if all_usage.uses_detach || all_usage.uses_attach_perf then
       sprintf {|static void ks_detach_attachment_entry(struct attachment_entry *entry, int identifier_for_logs) {
     if (!entry) {
         return;
@@ -4613,9 +4632,10 @@ typedef struct PerfAttachment {
             fprintf(stderr, "Unsupported program type for detachment: %%d\n", entry->type);
             break;
     }
-}
-
-void detach_bpf_program_by_fd(int prog_fd) {
+}|} detach_perf_case
+    else "" in
+    let std_detach_function = if all_usage.uses_detach then
+      sprintf {|void detach_bpf_program_by_fd(int prog_fd) {
     if (prog_fd < 0) {
         fprintf(stderr, "Invalid program file descriptor: %%d\n", prog_fd);
         return;
@@ -4629,8 +4649,7 @@ void detach_bpf_program_by_fd(int prog_fd) {
         while (entry) {
             if (entry->prog_fd == prog_fd && !entry->detaching) {
                 entry->detaching = 1;
-                invalidate_perf_attachment_state_locked(entry);
-                break;
+%s                break;
             }
             entry = entry->next;
         }
@@ -4655,11 +4674,12 @@ void detach_bpf_program_by_fd(int prog_fd) {
         pthread_mutex_unlock(&attachment_mutex);
         free(entry);
     }
-}
-
-void ks_detach_perf_attachment(PerfAttachment attachment) {
+}|} invalidate_call_line
+    else "" in
+    let perf_detach_function = if all_usage.uses_attach_perf then
+      {|void ks_detach_perf_attachment(PerfAttachment attachment) {
     if (attachment.link_id <= 0) {
-        fprintf(stderr, "Invalid perf attachment link id: %%d\n", attachment.link_id);
+        fprintf(stderr, "Invalid perf attachment link id: %d\n", attachment.link_id);
         return;
     }
 
@@ -4674,7 +4694,7 @@ void ks_detach_perf_attachment(PerfAttachment attachment) {
     pthread_mutex_unlock(&attachment_mutex);
 
     if (!entry) {
-        fprintf(stderr, "No active perf attachment found for link id %%d\n", attachment.link_id);
+        fprintf(stderr, "No active perf attachment found for link id %d\n", attachment.link_id);
         return;
     }
 
@@ -4691,8 +4711,13 @@ void ks_detach_perf_attachment(PerfAttachment attachment) {
     }
     pthread_mutex_unlock(&attachment_mutex);
     free(entry);
-}|} detach_perf_case
+}|}
     else "" in
+    let detach_function =
+      [detach_entry_dispatch; std_detach_function; perf_detach_function]
+      |> List.filter (fun s -> s <> "")
+      |> String.concat "\n\n"
+    in
     
     let bpf_obj_decl = "" in  (* Skeleton now handles the BPF object *)
     

@@ -350,8 +350,36 @@ let test_perf_attach_event_function_generated () =
 let test_detach_attach_concurrent_window () =
   (* During a detach, the entry stays in the list but is marked detaching=1.
    * A concurrent attach for the same prog_fd must succeed (not be blocked by
-   * the still-present but detaching entry). *)
-  let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
+   * the still-present but detaching entry).
+   * We exercise BOTH detach paths here (std detach via detach(prog) and perf
+   * detach via the perf attach machinery), since each path is only emitted
+   * when actually used. *)
+  let prog_handle = make_ir_value (IRVariable "prog") IRI32 test_pos in
+  let attr_value  = make_ir_value (IRVariable "attr") (IRStruct ("perf_options", [])) test_pos in
+  let flags_value = uint32_value 0L in
+  let attachment_value =
+    make_ir_value
+      (IRVariable "att")
+      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      test_pos
+  in
+  let attr_decl =
+    make_ir_instruction
+      (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
+                       Some (perf_attr_expr_with ~period:1000000L ~wakeup:1L)))
+      test_pos
+  in
+  let attach_call =
+    make_ir_instruction
+      (IRCall (DirectCall "attach", [prog_handle; attr_value; flags_value], Some attachment_value))
+      test_pos
+  in
+  let detach_call =
+    make_ir_instruction
+      (IRCall (DirectCall "detach", [prog_handle], None))
+      test_pos
+  in
+  let code = make_generated_code [attr_decl; attach_call; detach_call] in
   check bool "attachment_entry has detaching field" true
     (contains_substr code "int detaching;");
   check bool "add_attachment skips detaching entries in duplicate check" true
