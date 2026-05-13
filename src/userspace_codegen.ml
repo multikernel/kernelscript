@@ -4139,61 +4139,69 @@ typedef struct PerfAttachment {
     _Atomic unsigned int readers;
   };
 
+  /* Lazy chunked perf_attachment_state lookup table.
+   * Top-level is a fixed array of chunk pointers; chunks are malloc'd on demand
+   * the first time a perf_fd in that range is attached, and never freed.
+   * Chunks never move once allocated, so reader pointers into a slot stay valid
+   * for the lifetime of the process without any resize/quiescence handshake.
+   * The fd-space ceiling is CHUNK_SIZE * MAX_CHUNKS, which covers any plausible
+   * RLIMIT_NOFILE on Linux (kernel fs.nr_open caps well under this). */
+  #define KS_PERF_STATE_CHUNK_BITS 10u
+  #define KS_PERF_STATE_CHUNK_SIZE (1u << KS_PERF_STATE_CHUNK_BITS)
+  #define KS_PERF_STATE_CHUNK_MASK (KS_PERF_STATE_CHUNK_SIZE - 1u)
+  #define KS_PERF_STATE_MAX_CHUNKS 4096u
+
   static struct attachment_entry *attached_programs = NULL;
-  static _Atomic(struct perf_attachment_state *) perf_attachment_states = NULL;
-  static _Atomic size_t perf_attachment_state_capacity = 0;
+  static _Atomic(struct perf_attachment_state *) perf_state_chunks[KS_PERF_STATE_MAX_CHUNKS];
   static pthread_mutex_t attachment_mutex = PTHREAD_MUTEX_INITIALIZER;
   static int next_attachment_id = 1;
   static uint64_t next_perf_attachment_generation = 1;
 
-  static int ensure_perf_attachment_state_capacity_locked(int perf_fd) {
+  static struct perf_attachment_state *perf_state_slot_lookup(int perf_fd) {
     if (perf_fd < 0) {
-      return -1;
+      return NULL;
     }
-
-    size_t capacity = atomic_load_explicit(&perf_attachment_state_capacity, memory_order_acquire);
-    if ((size_t)perf_fd < capacity) {
-      return 0;
+    size_t chunk_idx = (size_t)perf_fd >> KS_PERF_STATE_CHUNK_BITS;
+    if (chunk_idx >= KS_PERF_STATE_MAX_CHUNKS) {
+      return NULL;
     }
-
-    if (capacity > 0) {
-      fprintf(stderr, "perf fd %d exceeds perf attachment state table capacity %zu\n",
-              perf_fd, capacity);
-      return -1;
+    struct perf_attachment_state *chunk =
+      atomic_load_explicit(&perf_state_chunks[chunk_idx], memory_order_acquire);
+    if (!chunk) {
+      return NULL;
     }
+    return &chunk[(size_t)perf_fd & KS_PERF_STATE_CHUNK_MASK];
+  }
 
-    struct rlimit limit;
-    capacity = 1024;
-    if (getrlimit(RLIMIT_NOFILE, &limit) == 0 &&
-        limit.rlim_cur != RLIM_INFINITY &&
-        limit.rlim_cur > 0) {
-      capacity = (size_t)limit.rlim_cur;
-    } else {
-      long open_max = sysconf(_SC_OPEN_MAX);
-      if (open_max > 0) {
-        capacity = (size_t)open_max;
+  /* Caller must hold attachment_mutex. Allocates the chunk containing perf_fd's
+   * slot if not yet present, and returns a pointer to the slot. */
+  static struct perf_attachment_state *ensure_perf_attachment_state_locked(int perf_fd) {
+    if (perf_fd < 0) {
+      return NULL;
+    }
+    size_t chunk_idx = (size_t)perf_fd >> KS_PERF_STATE_CHUNK_BITS;
+    if (chunk_idx >= KS_PERF_STATE_MAX_CHUNKS) {
+      fprintf(stderr,
+              "perf fd %d exceeds supported perf attachment range (max %u)\n",
+              perf_fd, KS_PERF_STATE_MAX_CHUNKS * KS_PERF_STATE_CHUNK_SIZE);
+      return NULL;
+    }
+    struct perf_attachment_state *chunk =
+      atomic_load_explicit(&perf_state_chunks[chunk_idx], memory_order_acquire);
+    if (!chunk) {
+      chunk = malloc(KS_PERF_STATE_CHUNK_SIZE * sizeof(*chunk));
+      if (!chunk) {
+        fprintf(stderr, "Failed to allocate perf attachment state chunk\n");
+        return NULL;
       }
+      for (size_t i = 0; i < KS_PERF_STATE_CHUNK_SIZE; i++) {
+        atomic_init(&chunk[i].generation, 0);
+        atomic_init(&chunk[i].perf_fd, -1);
+        atomic_init(&chunk[i].readers, 0);
+      }
+      atomic_store_explicit(&perf_state_chunks[chunk_idx], chunk, memory_order_release);
     }
-    if ((size_t)perf_fd >= capacity) {
-      capacity = (size_t)perf_fd + 1;
-    }
-
-    struct perf_attachment_state *states =
-      malloc(capacity * sizeof(struct perf_attachment_state));
-    if (!states) {
-      fprintf(stderr, "Failed to allocate perf attachment state table\n");
-      return -1;
-    }
-
-    for (size_t i = 0; i < capacity; i++) {
-      atomic_init(&states[i].generation, 0);
-      atomic_init(&states[i].perf_fd, -1);
-      atomic_init(&states[i].readers, 0);
-    }
-
-    atomic_store_explicit(&perf_attachment_states, states, memory_order_release);
-    atomic_store_explicit(&perf_attachment_state_capacity, capacity, memory_order_release);
-    return 0;
+    return &chunk[(size_t)perf_fd & KS_PERF_STATE_CHUNK_MASK];
   }
 
   static void invalidate_perf_attachment_state_locked(struct attachment_entry *entry) {
@@ -4204,11 +4212,8 @@ typedef struct PerfAttachment {
       return;
     }
 
-    size_t capacity = atomic_load_explicit(&perf_attachment_state_capacity, memory_order_acquire);
-    struct perf_attachment_state *states =
-      atomic_load_explicit(&perf_attachment_states, memory_order_acquire);
-    if ((size_t)entry->perf_fd < capacity && states) {
-      struct perf_attachment_state *state = &states[entry->perf_fd];
+    struct perf_attachment_state *state = perf_state_slot_lookup(entry->perf_fd);
+    if (state) {
       atomic_store_explicit(&state->perf_fd, -1, memory_order_release);
       atomic_store_explicit(&state->generation, 0, memory_order_release);
       while (atomic_load_explicit(&state->readers, memory_order_acquire) != 0) {
@@ -4223,14 +4228,11 @@ typedef struct PerfAttachment {
       return NULL;
     }
 
-    size_t capacity = atomic_load_explicit(&perf_attachment_state_capacity, memory_order_acquire);
-    struct perf_attachment_state *states =
-      atomic_load_explicit(&perf_attachment_states, memory_order_acquire);
-    if (!states || (size_t)attachment.perf_fd >= capacity) {
+    struct perf_attachment_state *state = perf_state_slot_lookup(attachment.perf_fd);
+    if (!state) {
       return NULL;
     }
 
-    struct perf_attachment_state *state = &states[attachment.perf_fd];
     uint64_t generation =
       atomic_load_explicit(&state->generation, memory_order_acquire);
     int perf_fd =
@@ -4295,7 +4297,8 @@ typedef struct PerfAttachment {
     }
     entry->attachment_id = next_attachment_id++;
     if (type == BPF_PROG_TYPE_PERF_EVENT && perf_fd >= 0) {
-      if (ensure_perf_attachment_state_capacity_locked(perf_fd) != 0) {
+      struct perf_attachment_state *state = ensure_perf_attachment_state_locked(perf_fd);
+      if (!state) {
         pthread_mutex_unlock(&attachment_mutex);
         free(entry);
         return -1;
@@ -4304,10 +4307,8 @@ typedef struct PerfAttachment {
       if (next_perf_attachment_generation == 0) {
         next_perf_attachment_generation = 1;
       }
-      struct perf_attachment_state *states =
-        atomic_load_explicit(&perf_attachment_states, memory_order_acquire);
-      atomic_store_explicit(&states[perf_fd].perf_fd, perf_fd, memory_order_release);
-      atomic_store_explicit(&states[perf_fd].generation, entry->generation, memory_order_release);
+      atomic_store_explicit(&state->perf_fd, perf_fd, memory_order_release);
+      atomic_store_explicit(&state->generation, entry->generation, memory_order_release);
     }
     entry->next = attached_programs;
     attached_programs = entry;
