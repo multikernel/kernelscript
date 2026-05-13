@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Release tag must look like vX.Y.Z, got: $tag" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          project_version="$(sed -n 's/^(version \([^)]*\)).*/\1/p' dune-project)"
+          if [ "$project_version" != "$version" ]; then
+            echo "Tag $tag does not match dune-project version $project_version" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbpf-dev libelf-dev zlib1g-dev pkg-config
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.2
+
+      - name: Install OCaml dependencies
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build and test
+        run: |
+          opam exec -- dune build
+          opam exec -- dune runtest
+
+      - name: Build package archive
+        run: opam exec -- dune build @install
+
+      - name: Prepare release artifacts
+        run: |
+          set -eu
+          version="${{ steps.version.outputs.version }}"
+          staging="kernelscript-$version"
+          mkdir -p "dist/$staging"
+          git archive --format=tar --prefix="$staging/" HEAD | tar -x -C dist
+          cp _build/default/src/main.exe "dist/kernelscript-linux-x86_64"
+          tar -C dist -czf "dist/$staging-source.tar.gz" "$staging"
+          (cd dist && sha256sum "$staging-source.tar.gz" kernelscript-linux-x86_64 > "SHA256SUMS")
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          version="${{ steps.version.outputs.version }}"
+          gh release create "$tag" \
+            --title "KernelScript $version" \
+            --generate-notes \
+            "dist/kernelscript-$version-source.tar.gz" \
+            "dist/kernelscript-linux-x86_64" \
+            "dist/SHA256SUMS"
