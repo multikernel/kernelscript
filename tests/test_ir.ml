@@ -32,6 +32,7 @@ module Program_type = struct
     | Probe Kprobe -> Format.fprintf fmt "Kprobe"
     | Probe Fprobe -> Format.fprintf fmt "Fprobe"
     | StructOps -> Format.fprintf fmt "StructOps"
+    | PerfEvent -> Format.fprintf fmt "PerfEvent"
 end
 
 (** Helper functions for creating test AST nodes *)

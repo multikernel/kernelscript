@@ -83,21 +83,27 @@ fn main() -> i32 {
 
 ---
 
-#### `attach(handle, target, flags)`
+#### `attach(handle, target, flags)` / `attach(handle, opts, flags)`
 **Signature:** `attach(handle: ProgramHandle, target: str(128), flags: u32) -> u32`
+**Signature:** `attach(handle: ProgramHandle, opts: perf_options, flags: u32) -> PerfAttachment`
 **Variadic:** No
 **Context:** Userspace only
 
-**Description:** Attach a loaded eBPF program to a target interface or attachment point.
+**Description:** Attach a loaded eBPF program to a target interface or attachment point, or to a perf event counter described by `perf_options`. Both forms take three arguments, keeping a uniform call shape across all program types.
 
 **Parameters:**
-- `handle`: Program handle returned from `load()`
-- `target`: Target interface name (e.g., "eth0", "lo") or attachment point
-- `flags`: Attachment flags (context-dependent)
+- Standard form:
+    - `handle`: Program handle returned from `load()`
+    - `target`: Target interface name (e.g., "eth0", "lo") or attachment point
+    - `flags`: Attachment flags (context-dependent)
+- Perf event form:
+    - `handle`: Program handle returned from `load()`
+    - `opts`: `perf_options` value — only `perf_type` and `perf_config` are required; all other fields have defaults
+    - `flags`: Reserved (pass `0`)
 
 **Return Value:**
-- Returns `0` on success
-- Returns error code on failure
+- Standard form returns `0` on success and an error code on failure
+- Perf event form returns a `PerfAttachment` value with the open counter/link identity and an internal stale-handle token
 
 **Examples:**
 ```kernelscript
@@ -106,24 +112,33 @@ var result = attach(prog, "eth0", 0)
 if (result != 0) {
     print("Failed to attach program")
 }
+
+// Minimal perf attach — all non-perf_type/perf_config fields use defaults:
+// pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1, flags=false
+var perf_prog = load(on_branch_miss)
+var perf_att = attach(perf_prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+var count = read(perf_att)
+detach(perf_att)
+detach(perf_prog)
 ```
 
 **Context-specific implementations:**
 - **eBPF:** Not available
-- **Userspace:** Uses `bpf_prog_attach` system call
+- **Userspace:** Uses `attach_bpf_program_by_fd` for standard targets and `ks_attach_perf_event` for perf events
 - **Kernel Module:** Not available
 
 ---
 
 #### `detach(handle)`
 **Signature:** `detach(handle: ProgramHandle) -> void`
+**Signature:** `detach(handle: PerfAttachment) -> void`
 **Variadic:** No
 **Context:** Userspace only
 
-**Description:** Detach a loaded eBPF program from its current attachment point.
+**Description:** Detach a loaded eBPF program from its current attachment point, or tear down one perf attachment.
 
 **Parameters:**
-- `handle`: Program handle returned from `load()`
+- `handle`: Program handle returned from `load()`, or a `PerfAttachment` returned from perf `attach()`
 
 **Return Value:**
 - No return value (void)
@@ -138,8 +153,25 @@ detach(prog)  // Clean up
 
 **Context-specific implementations:**
 - **eBPF:** Not available
-- **Userspace:** Uses `detach_bpf_program_by_fd` function
+- **Userspace:** Uses `detach_bpf_program_by_fd` for program handles and `ks_detach_perf_attachment` for perf attachments
 - **Kernel Module:** Not available
+
+---
+
+#### `read(handle)`
+**Signature:** `read(handle: PerfAttachment) -> i64`
+**Variadic:** No
+**Context:** Userspace only
+
+**Description:** Read the current hardware/software counter value from a perf attachment.
+
+**Parameters:**
+- `handle`: Perf attachment returned from `attach(handle, perf_options, flags)`
+
+**Return Value:**
+- Returns the raw 64-bit counter value on success
+- Returns `-1` on invalid/stale attachment or read failure
+- Reads use the attachment's `perf_fd` directly; the internal token detects copied handles used after detach.
 
 ---
 
@@ -340,7 +372,7 @@ fn main() -> i32 {
 |----------|------|-----------|---------------|-------|
 | `print()` | ✅ | ✅ | ✅ | Different output destinations |
 | `load()` | ❌ | ✅ | ❌ | Program management only |
-| `attach()` | ❌ | ✅ | ❌ | Program management only |
+| `attach()` | ❌ | ✅ | ❌ | Standard attach and perf_options attach |
 | `detach()` | ❌ | ✅ | ❌ | Program management only |
 | `register()` | ❌ | ✅ | ❌ | struct_ops registration |
 | `test()` | ❌ | ✅ | ❌ | Testing framework only |

@@ -257,7 +257,8 @@ let initialize_context_generators () =
   Kernelscript_context.Tc_codegen.register ();
   Kernelscript_context.Kprobe_codegen.register ();
   Kernelscript_context.Tracepoint_codegen.register ();
-  Kernelscript_context.Fprobe_codegen.register ()
+  Kernelscript_context.Fprobe_codegen.register ();
+  Kernelscript_context.Perf_event_codegen.register ()
 
 (** Emit all pending string literal declarations *)
 let emit_pending_string_literals ctx =
@@ -1770,6 +1771,7 @@ let rec generate_c_function ctx ir_func =
             (match probe_type with
              | Ast.Kprobe -> Some "kprobe"  (* Only kprobe uses pt_regs context *)
              | Ast.Fprobe -> None)  (* Fprobe uses direct parameters *)
+     | Some Ast.PerfEvent -> Some "perf_event"
      | _ ->
          (* Fall back to parameter-based detection *)
          (match ir_func.parameters with
@@ -1779,13 +1781,16 @@ let rec generate_c_function ctx ir_func =
           | (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc"  (* Handle __sk_buff as TC context *)
           | (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"    (* Handle xdp_md as XDP context *)
           | (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"  (* Handle pt_regs as kprobe context *)
+          | (_, IRPointer (IRStruct ("bpf_perf_event_data", _), _)) :: _ -> Some "perf_event"  (* Handle bpf_perf_event_data *)
           | (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"  (* Handle tracepoint context *)
           | _ -> None));
   
   let return_type_str = 
-    (* Special handling for kprobe functions: always use int return type for eBPF compatibility *)
+    (* Special handling for probe functions: always use int return type for eBPF compatibility *)
     match ir_func.func_program_type with
+    | Some (Ast.Probe Ast.Fprobe) -> "__s32"  (* eBPF fprobe programs must return int *)
     | Some (Ast.Probe _) -> "__s32"  (* eBPF probe programs must return int *)
+    | Some Ast.PerfEvent -> "__s32"  (* eBPF perf_event programs must return int *)
     | _ ->
         match ir_func.return_type with
         | Some ret_type -> ebpf_type_from_ir_type ret_type
@@ -1826,6 +1831,7 @@ let rec generate_c_function ctx ir_func =
             | Some (Ast.Probe Ast.Fprobe), _ -> Some "fprobe"
             | Some (Ast.Probe Ast.Kprobe), _ -> Some "kprobe"
             | Some Ast.Tracepoint, _ -> Some "tracepoint"
+            | Some Ast.PerfEvent, _ -> Some "perf_event"
             (* Fall back to parameter-based detection for context functions *)
             | _, (_, IRStruct ("xdp_md", _)) :: _ -> Some "xdp"
             | _, (_, IRStruct ("__sk_buff", _)) :: _ -> Some "tc"
@@ -1834,6 +1840,7 @@ let rec generate_c_function ctx ir_func =
             | _, (_, IRPointer (IRStruct ("xdp_md", _), _)) :: _ -> Some "xdp"
             | _, (_, IRPointer (IRStruct ("__sk_buff", _), _)) :: _ -> Some "tc" (* Handle __sk_buff as TC context *)
             | _, (_, IRPointer (IRStruct ("pt_regs", _), _)) :: _ -> Some "kprobe"
+            | _, (_, IRPointer (IRStruct ("bpf_perf_event_data", _), _)) :: _ -> Some "perf_event"
             | _, (_, IRPointer (IRStruct (struct_name, _), _)) :: _ when String.starts_with struct_name ~prefix:"trace_event_raw_" -> Some "tracepoint"
             | _, [] -> None (* Parameterless function *)
             | _, _ -> None (* Other context types *)
@@ -1854,6 +1861,7 @@ let rec generate_c_function ctx ir_func =
     | Some (Ast.Probe Ast.Fprobe) -> Some "fprobe"
     | Some (Ast.Probe Ast.Kprobe) -> Some "kprobe"
     | Some Ast.Tracepoint -> Some "tracepoint"
+    | Some Ast.PerfEvent -> Some "perf_event"
     | _ -> None
   in
   

@@ -47,8 +47,14 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | Some (Ast.Probe _) -> true
     | _ -> false
   in
+
+  (* Check if this is a perf_event function *)
+  let is_perf_event_function = match ir_func.func_program_type with
+    | Some Ast.PerfEvent -> true
+    | _ -> false
+  in
   
-  if ir_func.is_main && not is_struct_ops_function && not is_kprobe_function then (
+  if ir_func.is_main && not is_struct_ops_function && not is_kprobe_function && not is_perf_event_function then (
     if param_count <> 1 then
       errors := "Main function must have exactly one parameter (context)" :: !errors;
     match ir_func.parameters with
@@ -90,6 +96,22 @@ let validate_function_signature (ir_func : ir_function) : signature_info =
     | Some (IRVoid) -> () (* Allow void return type for some kprobes *)
     | Some _ -> errors := "Kprobe programs must return int (i32), u32, or void" :: !errors;
     | None -> errors := "Kprobe functions must have a return type" :: !errors
+  );
+
+  (* Validation for perf_event functions *)
+  if ir_func.is_main && is_perf_event_function then (
+    if param_count <> 1 then
+      errors := "perf_event functions must have exactly one parameter (context)" :: !errors;
+    (* Validate context type *)
+    (match ir_func.parameters with
+     | [(_, IRPointer (IRStruct ("bpf_perf_event_data", _), _))] -> ()
+     | [(_, IRStruct ("bpf_perf_event_data", _))] -> ()
+     | _ -> errors := "perf_event context must be *bpf_perf_event_data" :: !errors);
+    (* Validate return type *)
+    match ir_func.return_type with
+    | Some (IRI32) -> ()
+    | Some _ -> errors := "perf_event programs must return i32" :: !errors
+    | None -> errors := "perf_event functions must have a return type" :: !errors
   );
   
   (* For struct_ops functions, we have different validation rules *)

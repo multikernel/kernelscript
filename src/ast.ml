@@ -40,7 +40,7 @@ type probe_type =
 
 (** Program types supported by KernelScript *)
 type program_type = 
-  | Xdp | Tc | Probe of probe_type | Tracepoint | StructOps
+  | Xdp | Tc | Probe of probe_type | Tracepoint | StructOps | PerfEvent
 
 (** Map types for eBPF maps *)
 type map_type =
@@ -661,6 +661,7 @@ let string_of_program_type = function
   | Probe Kprobe -> "kprobe"
   | Tracepoint -> "tracepoint"
   | StructOps -> "struct_ops"
+  | PerfEvent -> "perf_event"
 
 let string_of_map_type = function
   | Hash -> "hash"

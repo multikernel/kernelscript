@@ -202,7 +202,7 @@ let init_project prog_type_or_struct_ops project_name btf_path extract_kfuncs =
   in
   
   (* Check if this is a struct_ops or a regular program type *)
-  let valid_program_types = ["xdp"; "tc"; "probe"; "tracepoint"] in
+  let valid_program_types = ["xdp"; "tc"; "probe"; "tracepoint"; "perf_event"] in
   let is_struct_ops = Struct_ops_registry.is_known_struct_ops prog_type in
   let is_program_type = List.mem prog_type valid_program_types in
   
@@ -347,6 +347,7 @@ During compilation, the definition is verified against BTF to ensure compatibili
             (match target_function with
              | Some category_event -> sprintf "Tracepoint programs provide static tracing points in the kernel. This program traces the '%s' tracepoint." category_event
              | None -> "Tracepoint programs provide static tracing points in the kernel.")
+        | "perf_event" -> "Perf event programs run on hardware/software performance events (branch misses, CPU cycles, etc.) and can profile kernel and userspace workloads."
         | _ -> "eBPF program for kernel-level processing."
       in
       sprintf {|# %s

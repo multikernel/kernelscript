@@ -325,6 +325,11 @@ let rec unify_types t1 t2 =
       (match unify_types t1 t2 with
        | Some unified -> Some (Pointer unified)
        | None -> None)
+
+  (* Named structs and user types unify when they refer to the same type name. *)
+  | Struct name1, UserType name2
+  | UserType name1, Struct name2 when name1 = name2 ->
+      Some (Struct name1)
   
   (* Result types *)
   | Result (ok1, err1), Result (ok2, err2) ->
@@ -397,6 +402,17 @@ let can_assign to_type from_type =
            (match integer_promotion to_type from_type with
             | Some _ -> true
             | None -> false))
+
+let builtin_return_type_for_call name arg_types default_return_type =
+  match name, arg_types with
+  | "attach", [ProgramHandle; (Struct "perf_options" | UserType "perf_options"); _] ->
+      Struct "PerfAttachment"
+  | "detach", _ ->
+      Void
+  | "read", _ ->
+      I64
+  | _ ->
+      default_return_type
 
 
 
@@ -643,7 +659,8 @@ let type_check_builtin_call ctx name typed_args arg_types pos =
               | None -> type_error ("Validation failed for function: " ^ name) pos)
            else
              (* Validation passed - accept any number of arguments *)
-             Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+             let actual_return_type = builtin_return_type_for_call name arg_types return_type in
+             Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = actual_return_type; texpr_pos = pos }
          | Some _ ->
              (* Check if this function has custom validation *)
              let (validation_ok, validation_error) = Stdlib.validate_builtin_call name arg_types ctx.ast_context pos in
@@ -656,11 +673,13 @@ let type_check_builtin_call ctx name typed_args arg_types pos =
                 (* Skip standard type checking if param_types is empty (custom validation handles it) *)
                 if List.length expected_params = 0 then
                   (* Custom validation handled type checking *)
-                  Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+                  let actual_return_type = builtin_return_type_for_call name arg_types return_type in
+                  Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = actual_return_type; texpr_pos = pos }
                 else if List.length expected_params = List.length arg_types then
                   let unified = List.map2 unify_types expected_params arg_types in
                   if List.for_all (function Some _ -> true | None -> false) unified then
-                    Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = return_type; texpr_pos = pos }
+                    let actual_return_type = builtin_return_type_for_call name arg_types return_type in
+                    Some { texpr_desc = TCall (make_typed_identifier name pos, typed_args); texpr_type = actual_return_type; texpr_pos = pos }
                   else
                     type_error ("Type mismatch in function call: " ^ name) pos
                 else
@@ -1165,6 +1184,17 @@ and type_check_struct_literal ctx struct_name field_assignments pos =
     let type_def = Hashtbl.find ctx.types struct_name in
     match type_def with
     | StructDef (_, struct_fields, _) ->
+        (* Fill in optional fields from language-level defaults before type-checking.
+           Required fields (absent from the defaults table) still cause an error if omitted. *)
+        let field_assignments =
+          match Stdlib.get_struct_field_defaults struct_name with
+          | None -> field_assignments
+          | Some defaults ->
+              List.fold_left (fun acc (field_name, default_lit) ->
+                if List.mem_assoc field_name acc then acc
+                else acc @ [(field_name, make_expr (Literal default_lit) pos)]
+              ) field_assignments defaults
+        in
         (* Type check each field assignment *)
         let typed_field_assignments = List.map (fun (field_name, field_expr) ->
           let typed_field_expr = type_check_expression ctx field_expr in
@@ -2542,6 +2572,7 @@ let type_check_ast ?symbol_table:(provided_symbol_table=None) ast =
                | "tc" -> Some Tc  
 
                | "tracepoint" -> Some Tracepoint
+               | "perf_event" -> Some PerfEvent
                | "kfunc" -> None  (* kfuncs don't have program types *)
                | "private" -> None  (* private functions don't have program types *)
                | "helper" -> None  (* helper functions don't have program types *)
@@ -3083,6 +3114,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
                | "tracepoint" -> 
                    (* Reject old format: @tracepoint without category/event *)
                    type_error ("@tracepoint requires category/event specification. Use @tracepoint(\"category/event\") instead.") attr_func.attr_pos
+               | "perf_event" -> (Some PerfEvent, None)
                | "kfunc" -> (None, None)  (* kfuncs don't have program types *)
                | "private" -> (None, None)  (* private functions don't have program types *)
                | "helper" -> (None, None)  (* helper functions don't have program types *)
@@ -3191,6 +3223,26 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
              
              if not valid_return_type then
                type_error (sprintf "@%s attributed function must return i32" probe_type_name) attr_func.attr_pos
+           | Some PerfEvent ->
+             (* @perf_event: must have exactly one param *bpf_perf_event_data and return i32 *)
+             let params = attr_func.attr_function.func_params in
+             let resolved_return_type = match get_return_type attr_func.attr_function.func_return_type with
+               | Some ret_type -> Some (resolve_user_type ctx ret_type)
+               | None -> None in
+             if List.length params <> 1 then
+               type_error "@perf_event attributed function must have exactly one parameter (ctx: *bpf_perf_event_data)" attr_func.attr_pos;
+             (match params with
+              | [(_, param_type)] ->
+                  let resolved_param_type = resolve_user_type ctx param_type in
+                  (match resolved_param_type with
+                   | Pointer (Struct "bpf_perf_event_data") -> ()
+                   | Pointer (UserType "bpf_perf_event_data") -> ()
+                   | _ ->
+                       type_error "@perf_event attributed function parameter must be ctx: *bpf_perf_event_data" attr_func.attr_pos)
+              | _ -> ());
+             (match resolved_return_type with
+              | Some I32 -> ()
+              | _ -> type_error "@perf_event attributed function must return i32" attr_func.attr_pos)
            | Some _ -> () (* Other program types - validation can be added later *)
            | None -> type_error ("Invalid or unsupported attribute") attr_func.attr_pos);
         
@@ -3498,6 +3550,7 @@ and populate_multi_program_context ast multi_prog_analysis =
               (match prog_type_str with
                | "xdp" -> Some Xdp
                | "tracepoint" -> Some Tracepoint
+               | "perf_event" -> Some PerfEvent
                | _ -> None)
           | AttributeWithArg (attr_name, _) :: _ ->
               (match attr_name with
@@ -3523,6 +3576,5 @@ and populate_multi_program_context ast multi_prog_analysis =
 
     |       other_decl -> other_decl
           ) ast
-
 
 

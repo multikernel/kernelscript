@@ -254,7 +254,7 @@
 (executable
  (name test_program_ref)
  (modules test_program_ref)
- (libraries kernelscript alcotest))
+ (libraries kernelscript alcotest test_utils))
 
 (executable
  (name test_function_pointers)
@@ -417,6 +417,11 @@
  (libraries kernelscript alcotest test_utils str))
 
 (executable
+ (name test_perf_event_attach)
+ (modules test_perf_event_attach)
+ (libraries kernelscript alcotest str))
+
+(executable
  (name test_tc)
  (modules test_tc)
  (libraries kernelscript alcotest unix str))
@@ -522,6 +527,7 @@
   test_tracepoint.exe
   test_probe.exe
   test_detach_api.exe
+  test_perf_event_attach.exe
   test_tc.exe
   test_exec.exe
   test_void_functions.exe
@@ -847,6 +853,10 @@
 (rule
  (alias runtest)
  (action (run ./test_detach_api.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_perf_event_attach.exe)))
 
 (rule
  (alias runtest)
