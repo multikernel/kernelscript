@@ -4850,7 +4850,11 @@ PerfAttachment ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags
         .link_id = -1,
         .prog_fd = prog_fd,
     };
-    (void)flags;  /* reserved for future use */
+
+    if (flags != 0) {
+        fprintf(stderr, "ks_attach_perf_event: perf attach flags must be 0, got %d\n", flags);
+        return attachment;
+    }
 
     if (prog_fd < 0) {
         fprintf(stderr, "Invalid program file descriptor: %d\n", prog_fd);

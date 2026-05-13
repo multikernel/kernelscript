@@ -307,7 +307,7 @@ fn main() -> i32 {
     var prog = load(on_branch_miss)
 
     // Minimal form — defaults: pid=-1 (all procs), cpu=0,
-    // period=1_000_000, wakeup=1, all flags=false
+    // period=1_000_000, wakeup=1; perf attach flags must be 0
     var att = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
     var count = read(att)
     print("branch misses: %lld", count)

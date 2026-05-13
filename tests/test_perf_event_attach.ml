@@ -332,6 +332,10 @@ let test_perf_attach_event_function_generated () =
     (contains_substr code "find_prog_by_fd");
   check bool "perf attach rejects wrong program type at runtime" true
     (contains_substr code "is not a @perf_event program");
+  check bool "perf attach rejects nonzero flags" true
+    (contains_substr code "perf attach flags must be 0");
+  check bool "perf attach no longer ignores flags" false
+    (contains_substr code "(void)flags");
   check bool "perf attach returns PerfAttachment" true
     (contains_substr code "PerfAttachment ks_attach_perf_event");
   check bool "attachment struct typedef emitted" true

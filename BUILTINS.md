@@ -99,7 +99,7 @@ fn main() -> i32 {
 - Perf event form:
     - `handle`: Program handle returned from `load()`
     - `opts`: `perf_options` value — only `perf_type` and `perf_config` are required; all other fields have defaults
-    - `flags`: Reserved (pass `0`)
+    - `flags`: Must be `0` for perf attaches; nonzero values are rejected
 
 **Return Value:**
 - Standard form returns `0` on success and an error code on failure
@@ -114,7 +114,7 @@ if (result != 0) {
 }
 
 // Minimal perf attach — all non-perf_type/perf_config fields use defaults:
-// pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1, flags=false
+// pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1; perf attach flags must be 0
 var perf_prog = load(on_branch_miss)
 var perf_att = attach(perf_prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
 var count = read(perf_att)

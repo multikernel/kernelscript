@@ -555,6 +555,7 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 
 **Compiler implementation:**
 - Detects `attach(prog, perf_options_value, flags)` (three-argument form with `perf_options` second arg) and routes to `ks_attach_perf_event`
+- Requires perf attach `flags` to be `0`; nonzero values are rejected instead of being silently ignored
 - Returns a first-class `PerfAttachment` value for perf attaches so one program can hold multiple live counters
 - `PerfAttachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
 - Exposes omitted `perf_options` fields as language-level defaults (partial struct literal)
