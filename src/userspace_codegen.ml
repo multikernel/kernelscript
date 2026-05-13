@@ -1297,7 +1297,10 @@ static inline void __ks_sysctl_%s_write(const char *v) {
     }
     __buf[__n] = 0;
     %s __v = 0;
-    sscanf(__buf, "%s", &__v);
+    if (sscanf(__buf, "%s", &__v) != 1) {
+        fprintf(stderr, "sysctl read %%s: parse failed (unexpected format)\n", __ks_sysctl_%s_path);
+        return 0;
+    }
     return __v;
 }
 
@@ -1314,7 +1317,7 @@ static inline void __ks_sysctl_%s_write(%s v) {
     if (__w < 0)
         fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
 }|}
-          c_type name name name name c_type fmt name c_type name name fmt name
+          c_type name name name name c_type fmt name name c_type name name fmt name
     in
     Some (path_const ^ "\n\n" ^ body)
 
