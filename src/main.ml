@@ -1025,7 +1025,12 @@ BPF_CC = clang
 CC = gcc
 
 # BPF compilation flags
-BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g
+# -fno-builtin: eBPF objects never link libc, but clang still recognises libc
+# names (exit, abort, ...) as builtins and applies their attributes. A struct_ops
+# method named after such a builtin (e.g. sched_ext_ops.exit, which clang treats
+# as noreturn) would otherwise be miscompiled to an empty section. eBPF C relies
+# only on __builtin_* intrinsics, which -fno-builtin does not affect.
+BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g -fno-builtin
 BPF_INCLUDES = -I.
 
 # Userspace compilation flags
