@@ -284,6 +284,16 @@ let escape_c_string s =
 
 let ebpf_type_from_ir_type = Codegen_common.ir_type_to_c Codegen_common.EbpfKernel
 
+(** Type conversion for kfunc signatures. Unlike ebpf_type_from_ir_type, this keeps
+    [IRBool] as C [bool] rather than collapsing it to [__u8], so the emitted prototype
+    matches the kernel's actual kfunc signature (kfunc/extern type matching is strict). *)
+let rec kfunc_signature_type_to_c = function
+  | Ir.IRU8 -> "__u8" | Ir.IRU16 -> "__u16" | Ir.IRU32 -> "__u32" | Ir.IRU64 -> "__u64"
+  | Ir.IRI8 -> "__s8" | Ir.IRI16 -> "__s16" | Ir.IRI32 -> "__s32" | Ir.IRI64 -> "__s64"
+  | Ir.IRBool -> "bool" | Ir.IRChar -> "char" | Ir.IRVoid -> "void"
+  | Ir.IRPointer (inner_type, _) -> sprintf "%s*" (kfunc_signature_type_to_c inner_type)
+  | other -> ebpf_type_from_ir_type other
+
 (** Generate proper C declaration for eBPF, handling function pointers correctly *)
 let generate_ebpf_c_declaration = Codegen_common.c_declaration Codegen_common.EbpfKernel
 
@@ -3036,6 +3046,27 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog ~_btf_path _
         (* Generate struct_ops instance *)
         emit_line ctx (sprintf "/* eBPF struct_ops instance: %s */" struct_ops_instance.ir_instance_name);
         emit_blank_line ctx
+
+    | Ir.IRDeclKfuncDecl kfunc_decl ->
+        (* Emit a function-signature declaration so eBPF programs can call the kfunc.
+           Kernel-provided kfuncs need `extern ... __ksym;`; locally-defined @kfunc
+           functions just need a forward prototype. *)
+        let params_str = match kfunc_decl.Ir.ikfunc_params with
+          | [] -> "void"
+          | params -> String.concat ", " (List.map (fun (name, ir_type) ->
+              sprintf "%s %s" (kfunc_signature_type_to_c ir_type) name
+            ) params)
+        in
+        let return_type_str = kfunc_signature_type_to_c kfunc_decl.Ir.ikfunc_return_type in
+        if kfunc_decl.Ir.ikfunc_is_extern then
+          emit_line ctx (sprintf "extern %s %s(%s) __ksym;"
+            return_type_str kfunc_decl.Ir.ikfunc_name params_str)
+        else (
+          emit_line ctx "/* kfunc declaration */";
+          emit_line ctx (sprintf "%s %s(%s);"
+            return_type_str kfunc_decl.Ir.ikfunc_name params_str)
+        );
+        emit_blank_line ctx
   ) ir_multi_prog.Ir.source_declarations;
   
   (* Emit callbacks at the end if no functions were found (fallback) *)
@@ -3241,7 +3272,7 @@ let collect_callback_dependencies ir_multi_prog =
 
 (** Compile multi-program IR to eBPF C code with automatic tail call detection *)
 let compile_multi_to_c_with_tail_calls
-    ?(kfunc_declarations=[]) ?(tail_call_analysis=None) ?(btf_path=None)
+    ?(tail_call_analysis=None) ?(btf_path=None)
     (ir_multi_prog : Ir.ir_multi_program) =
   
   let ctx = create_c_context () in
@@ -3260,30 +3291,10 @@ let compile_multi_to_c_with_tail_calls
   let uses_dynptr = check_dynptr_usage ir_multi_prog in
   if uses_dynptr then generate_dynptr_macros ctx;
   
-  (* Generate kfunc declarations *)
-  let rec ast_type_to_c_type ast_type =
-    match ast_type with
-    | Ast.U8 -> "__u8" | Ast.U16 -> "__u16" | Ast.U32 -> "__u32" | Ast.U64 -> "__u64"
-    | Ast.I8 -> "__s8" | Ast.I16 -> "__s16" | Ast.I32 -> "__s32" | Ast.I64 -> "__s64"
-    | Ast.Bool -> "bool" | Ast.Char -> "char" | Ast.Void -> "void"
-    | Ast.Pointer inner_type -> sprintf "%s*" (ast_type_to_c_type inner_type)
-    | _ -> "void"
-  in
-  List.iter (fun kfunc ->
-    let params_str = String.concat ", " (List.map (fun (name, param_type) ->
-      let c_type = ast_type_to_c_type param_type in
-      sprintf "%s %s" c_type name
-    ) kfunc.Ast.func_params) in
-    let return_type_str = match Ast.get_return_type kfunc.Ast.func_return_type with
-      | Some ret_type -> ast_type_to_c_type ret_type
-      | None -> "void"
-    in
-    emit_line ctx (sprintf "/* kfunc declaration */");
-    emit_line ctx (sprintf "%s %s(%s);" return_type_str kfunc.Ast.func_name params_str);
-  ) kfunc_declarations;
-  
-  if kfunc_declarations <> [] then emit_blank_line ctx;
-  
+  (* Kfunc declarations (both kernel-provided `extern` kfuncs and locally-defined
+     @kfunc prototypes) are carried in the IR as IRDeclKfuncDecl and emitted in
+     source order by generate_declarations_in_source_order_unified. *)
+
   (* Generate string type definitions *)
   generate_string_typedefs ctx ir_multi_prog;
   
@@ -3316,16 +3327,16 @@ let compile_multi_to_c_with_tail_calls
   (final_output, final_tail_call_analysis)
 
 (** Multi-program compilation entry point that returns both code and tail call analysis *)
-let compile_multi_to_c ?(kfunc_declarations=[]) ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
+let compile_multi_to_c ?(tail_call_analysis=None) ?(btf_path=None) ir_multi_program =
   compile_multi_to_c_with_tail_calls
-    ~kfunc_declarations ~tail_call_analysis ~btf_path ir_multi_program
+    ~tail_call_analysis ~btf_path ir_multi_program
 
 (** Alias for backward compatibility with existing code *)
 let compile_multi_to_c_with_analysis = compile_multi_to_c
 
 (** Generate complete C program from multiple IR programs - main interface *)
-let generate_c_multi_program ?(kfunc_declarations=[]) ?(btf_path=None) ir_multi_prog =
-  let (c_code, _) = compile_multi_to_c ~kfunc_declarations ~btf_path ir_multi_prog in
+let generate_c_multi_program ?(btf_path=None) ir_multi_prog =
+  let (c_code, _) = compile_multi_to_c ~btf_path ir_multi_prog in
   c_code
 
 (** Generate complete C program from IR *)

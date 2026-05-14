@@ -155,6 +155,42 @@ let test_extern_kfunc_string_representation () =
   check bool "Contains bpf_ktime_get_ns extern" true contains_bpf_ktime;
   check bool "Contains bpf_trace_printk extern" true contains_bpf_trace
 
+(** Test extern kfunc declarations are emitted into generated eBPF C with __ksym *)
+let test_extern_kfunc_ebpf_codegen () =
+  let program = {|
+    extern bpf_ktime_get_ns() -> u64
+    extern scx_bpf_dsq_insert(p: *u8, dsq_id: u64, slice: u64, enq_flags: u64) -> void
+
+    @xdp
+    fn test_program(ctx: *xdp_md) -> xdp_action {
+        var ts = bpf_ktime_get_ns()
+        scx_bpf_dsq_insert(null, 0, ts, 0)
+        return 2
+    }
+
+    fn main() -> i32 {
+        return 0
+    }
+  |} in
+
+  let ast = Parse.parse_string program in
+  let symbol_table = Symbol_table.build_symbol_table ast in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+
+  (* Extern kfunc declarations are lowered into the IR; codegen needs no side-channel *)
+  let (generated_code, _) =
+    Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+
+  let contains substr =
+    try ignore (Str.search_forward (Str.regexp_string substr) generated_code 0); true
+    with Not_found -> false
+  in
+  check bool "Contains bpf_ktime_get_ns __ksym extern" true
+    (contains "extern __u64 bpf_ktime_get_ns(void) __ksym;");
+  check bool "Contains scx_bpf_dsq_insert __ksym extern" true
+    (contains "extern void scx_bpf_dsq_insert(__u8* p, __u64 dsq_id, __u64 slice, __u64 enq_flags) __ksym;")
+
 (** Test extern keyword cannot be used in function definitions *)
 let test_extern_in_function_definition_fails () =
   let program = {|
@@ -233,6 +269,7 @@ let tests = [
   "extern kfunc type checking", `Quick, test_extern_kfunc_type_checking;
   "extern kfunc userspace restriction", `Quick, test_extern_kfunc_userspace_restriction;
   "extern kfunc string representation", `Quick, test_extern_kfunc_string_representation;
+  "extern kfunc ebpf codegen", `Quick, test_extern_kfunc_ebpf_codegen;
   "extern in function definition fails", `Quick, test_extern_in_function_definition_fails;
   "extern with body fails", `Quick, test_extern_with_body_fails;
   "extern mixed keywords fails", `Quick, test_extern_mixed_keywords_fails;

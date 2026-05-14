@@ -148,18 +148,9 @@ let test_ebpf_kfunc_declarations () =
   (* Use the full multi-program type checker for proper expression typing *)
   let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
   let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
-  
-  (* Extract kfunc declarations *)
-  let kfunc_declarations = List.filter_map (function
-    | Ast.AttributedFunction attr_func ->
-        (match attr_func.attr_list with
-         | SimpleAttribute "kfunc" :: _ -> Some attr_func.attr_function
-         | _ -> None)
-    | _ -> None
-  ) typed_ast in
-  
-  (* Generate eBPF C code *)
-  let (generated_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ~kfunc_declarations ir in
+
+  (* @kfunc declarations are lowered into the IR; codegen needs no side-channel *)
+  let (generated_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
   
   (* Check that kfunc declarations are generated *)
   check bool "Contains kfunc declaration" true

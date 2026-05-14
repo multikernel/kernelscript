@@ -107,6 +107,7 @@ let get_declaration_name = function
   | IRDeclProgramDef program -> program.entry_function.func_name
   | IRDeclStructOpsDef struct_ops -> struct_ops.ir_struct_ops_name
   | IRDeclStructOpsInstance instance -> instance.ir_instance_name
+  | IRDeclKfuncDecl kfunc_decl -> kfunc_decl.ikfunc_name
 
 (** Test type alias order preservation *)
 let test_type_alias_order () =
