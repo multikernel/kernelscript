@@ -3050,23 +3050,29 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog ~_btf_path _
     | Ir.IRDeclKfuncDecl kfunc_decl ->
         (* Emit a function-signature declaration so eBPF programs can call the kfunc.
            Kernel-provided kfuncs need `extern ... __ksym;`; locally-defined @kfunc
-           functions just need a forward prototype. *)
-        let params_str = match kfunc_decl.Ir.ikfunc_params with
-          | [] -> "void"
-          | params -> String.concat ", " (List.map (fun (name, ir_type) ->
-              sprintf "%s %s" (kfunc_signature_type_to_c ir_type) name
-            ) params)
-        in
-        let return_type_str = kfunc_signature_type_to_c kfunc_decl.Ir.ikfunc_return_type in
-        if kfunc_decl.Ir.ikfunc_is_extern then
-          emit_line ctx (sprintf "extern %s %s(%s) __ksym;"
-            return_type_str kfunc_decl.Ir.ikfunc_name params_str)
+           functions just need a forward prototype. Standard BPF helpers are skipped
+           entirely - libbpf's bpf_helpers.h already declares them, and a __ksym
+           extern would clash with that declaration. *)
+        let name = kfunc_decl.Ir.ikfunc_name in
+        if kfunc_decl.Ir.ikfunc_is_extern && Bpf_helpers.is_bpf_helper name then
+          ()
         else (
-          emit_line ctx "/* kfunc declaration */";
-          emit_line ctx (sprintf "%s %s(%s);"
-            return_type_str kfunc_decl.Ir.ikfunc_name params_str)
-        );
-        emit_blank_line ctx
+          let params_str = match kfunc_decl.Ir.ikfunc_params with
+            | [] -> "void"
+            | params -> String.concat ", " (List.map (fun (pname, ir_type) ->
+                sprintf "%s %s" (kfunc_signature_type_to_c ir_type) pname
+              ) params)
+          in
+          let return_type_str = kfunc_signature_type_to_c kfunc_decl.Ir.ikfunc_return_type in
+          if kfunc_decl.Ir.ikfunc_is_extern then
+            emit_line ctx (sprintf "extern %s %s(%s) __ksym;"
+              return_type_str name params_str)
+          else (
+            emit_line ctx "/* kfunc declaration */";
+            emit_line ctx (sprintf "%s %s(%s);" return_type_str name params_str)
+          );
+          emit_blank_line ctx
+        )
   ) ir_multi_prog.Ir.source_declarations;
   
   (* Emit callbacks at the end if no functions were found (fallback) *)
