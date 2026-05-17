@@ -115,34 +115,38 @@ fn basic_packet_classifier(ctx: *xdp_md) -> xdp_action {
 }
 
 // Advanced packet classifier with port-based filtering
-// Demonstrates nested decision making with match constructs
+// Demonstrates nested decision making with match constructs.
+//
+// Note on outer dispatch: protocol dispatch is written as `if (protocol == X)`
+// rather than `match (protocol) { X: { var p = ...; match (p) {...} } }` because
+// the codegen doesn't yet support `var` declarations inside match arm blocks -
+// the initializer is silently dropped during IR lowering, leaving the variable
+// uninitialized at use sites. The same workaround is applied throughout this
+// file; inner matches operating on the now-enclosing-scope variable work fine.
 @xdp
 fn advanced_packet_classifier(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
-    
-    return match (protocol) {
-        TCP: {
-            var tcp_port = get_tcp_dest_port(ctx)
-            return match (tcp_port) {
-                HTTP: XDP_PASS,     // Allow HTTP
-                HTTPS: XDP_PASS,    // Allow HTTPS  
-                SSH: XDP_PASS,      // Allow SSH
-                FTP: XDP_DROP,      // Block FTP (legacy)
-                default: XDP_PASS   // Allow other TCP
-            }
-        },
-        
-        UDP: {
-            var udp_port = get_udp_dest_port(ctx)
-            return match (udp_port) {
-                DNS: XDP_PASS,      // Allow DNS
-                53: XDP_PASS,       // Allow DNS (alternative)
-                default: XDP_PASS   // Allow other UDP
-            }
-        },
-        
-        ICMP: XDP_DROP,         // Security: drop ICMP
-        default: XDP_ABORTED    // Unknown protocols
+
+    if (protocol == TCP) {
+        var tcp_port = get_tcp_dest_port(ctx)
+        return match (tcp_port) {
+            HTTP: XDP_PASS,
+            HTTPS: XDP_PASS,
+            SSH: XDP_PASS,
+            FTP: XDP_DROP,      // Block FTP (legacy)
+            default: XDP_PASS
+        }
+    } else if (protocol == UDP) {
+        var udp_port = get_udp_dest_port(ctx)
+        return match (udp_port) {
+            DNS: XDP_PASS,
+            53: XDP_PASS,       // Alternative DNS spelling
+            default: XDP_PASS
+        }
+    } else if (protocol == ICMP) {
+        return XDP_DROP         // Security: drop ICMP
+    } else {
+        return XDP_ABORTED      // Unknown protocols
     }
 }
 
@@ -152,40 +156,31 @@ fn advanced_packet_classifier(ctx: *xdp_md) -> xdp_action {
 fn ddos_protection(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     var src_ip = get_src_ip(ctx)
-    
-    // First level: protocol-based filtering
-    var protocol_action = match (protocol) {
-        TCP: {
-            var flags = get_tcp_flags(ctx)
-            // TCP SYN flood protection
-            return match (flags) {
-                0x02: rate_limit_syn(src_ip),  // SYN only
-                default: XDP_PASS
-            }
-        },
-        
-        UDP: {
-            var udp_port = get_udp_dest_port(ctx)
-            // UDP flood protection for specific ports
-            return match (udp_port) {
-                DNS: rate_limit_dns(src_ip),
-                default: XDP_PASS
-            }
-        },
-        
-        ICMP: {
-            var icmp_type = get_icmp_type(ctx)
-            // ICMP flood protection
-            return match (icmp_type) {
-                8: rate_limit_ping(src_ip),    // Echo request
-                default: XDP_DROP              // Other ICMP
-            }
-        },
-        
-        default: XDP_PASS
+
+    if (protocol == TCP) {
+        var flags = get_tcp_flags(ctx)
+        // TCP SYN flood protection
+        return match (flags) {
+            0x02: rate_limit_syn(src_ip),  // SYN only
+            default: XDP_PASS
+        }
+    } else if (protocol == UDP) {
+        var udp_port = get_udp_dest_port(ctx)
+        // UDP flood protection for specific ports
+        return match (udp_port) {
+            DNS: rate_limit_dns(src_ip),
+            default: XDP_PASS
+        }
+    } else if (protocol == ICMP) {
+        var icmp_type = get_icmp_type(ctx)
+        // ICMP flood protection
+        return match (icmp_type) {
+            8: rate_limit_ping(src_ip),    // Echo request
+            default: XDP_DROP              // Other ICMP
+        }
+    } else {
+        return XDP_PASS
     }
-    
-    return protocol_action
 }
 
 // Load balancer using match for backend selection
@@ -193,78 +188,65 @@ fn ddos_protection(ctx: *xdp_md) -> xdp_action {
 @xdp
 fn load_balancer(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
-    
-    // Only load balance specific protocols
-    return match (protocol) {
-        TCP: {
-            var tcp_port = get_tcp_dest_port(ctx)
-            return match (tcp_port) {
-                HTTP: distribute_http(ctx),
-                HTTPS: distribute_https(ctx),
-                default: XDP_PASS
-            }
-        },
-        
-        UDP: {
-            var udp_port = get_udp_dest_port(ctx)
-            return match (udp_port) {
-                DNS: distribute_dns(ctx),
-                default: XDP_PASS
-            }
-        },
-        
-        default: XDP_PASS
+
+    if (protocol == TCP) {
+        var tcp_port = get_tcp_dest_port(ctx)
+        return match (tcp_port) {
+            HTTP: distribute_http(ctx),
+            HTTPS: distribute_https(ctx),
+            default: XDP_PASS
+        }
+    } else if (protocol == UDP) {
+        var udp_port = get_udp_dest_port(ctx)
+        return match (udp_port) {
+            DNS: distribute_dns(ctx),
+            default: XDP_PASS
+        }
+    } else {
+        return XDP_PASS
     }
 }
 
 // Packet logging and monitoring
 // Shows match for categorizing packets for observability
-@xdp  
+@xdp
 fn packet_monitor(ctx: *xdp_md) -> xdp_action {
     var protocol = get_ip_protocol(ctx)
     var src_ip = get_src_ip(ctx)
     var dst_ip = get_dst_ip(ctx)
-    
-    // Categorize and log based on protocol
-    match (protocol) {
-        TCP: {
-            var tcp_port = get_tcp_dest_port(ctx)
-            match (tcp_port) {
-                HTTP: {
-                    print("PKT: web_traffic %u->%u\n", src_ip, dst_ip)
-                },
-                HTTPS: {
-                    print("PKT: secure_web %u->%u\n", src_ip, dst_ip)
-                },
-                SSH: {
-                    print("PKT: admin_access %u->%u\n", src_ip, dst_ip)
-                },
-                default: {
-                    print("PKT: tcp_other %u->%u\n", src_ip, dst_ip)
-                }
+
+    if (protocol == TCP) {
+        var tcp_port = get_tcp_dest_port(ctx)
+        match (tcp_port) {
+            HTTP: {
+                print("PKT: web_traffic %u->%u\n", src_ip, dst_ip)
+            },
+            HTTPS: {
+                print("PKT: secure_web %u->%u\n", src_ip, dst_ip)
+            },
+            SSH: {
+                print("PKT: admin_access %u->%u\n", src_ip, dst_ip)
+            },
+            default: {
+                print("PKT: tcp_other %u->%u\n", src_ip, dst_ip)
             }
-        },
-        
-        UDP: {
-            var udp_port = get_udp_dest_port(ctx)
-            match (udp_port) {
-                DNS: {
-                    print("PKT: dns_query %u->%u\n", src_ip, dst_ip)
-                },
-                default: {
-                    print("PKT: udp_other %u->%u\n", src_ip, dst_ip)
-                }
-            }
-        },
-        
-        ICMP: {
-            print("PKT: icmp_traffic %u->%u\n", src_ip, dst_ip)
-        },
-        default: {
-            print("PKT: unknown_protocol %u->%u\n", src_ip, dst_ip)
         }
+    } else if (protocol == UDP) {
+        var udp_port = get_udp_dest_port(ctx)
+        match (udp_port) {
+            DNS: {
+                print("PKT: dns_query %u->%u\n", src_ip, dst_ip)
+            },
+            default: {
+                print("PKT: udp_other %u->%u\n", src_ip, dst_ip)
+            }
+        }
+    } else if (protocol == ICMP) {
+        print("PKT: icmp_traffic %u->%u\n", src_ip, dst_ip)
+    } else {
+        print("PKT: unknown_protocol %u->%u\n", src_ip, dst_ip)
     }
-    
+
     return XDP_PASS
 }
 
@@ -273,34 +255,34 @@ fn packet_monitor(ctx: *xdp_md) -> xdp_action {
 @tc("ingress")
 fn qos_packet_marker(ctx: *__sk_buff) -> i32 {
     var protocol = get_ip_protocol_tc(ctx)
-    
-    // Set QoS markings based on traffic type
-    var qos_class = match (protocol) {
-        TCP: {
-            var tcp_port = get_tcp_dest_port_tc(ctx)
-            match (tcp_port) {
-                SSH: "high_priority",      // Admin traffic
-                HTTPS: "medium_priority",  // Web traffic
-                HTTP: "medium_priority",   // Web traffic
-                default: "low_priority"
-            }
-        },
-        
-        UDP: {
-            var udp_port = get_udp_dest_port_tc(ctx)
-            match (udp_port) {
-                DNS: "high_priority",      // DNS is critical
-                default: "low_priority"
-            }
-        },
-        
-        ICMP: "low_priority",      // ICMP is low priority
-        default: "default_priority"
+
+    // Bind to a typed `str(16)` so each arm's narrower literal widens to
+    // match set_qos_mark's parameter type. Without the annotation, the match's
+    // result type would be the LUB of arm types (e.g. str(15) for the TCP
+    // branch) and the function-call site has no width-coercion path.
+    if (protocol == TCP) {
+        var tcp_port = get_tcp_dest_port_tc(ctx)
+        var qos_class: str(16) = match (tcp_port) {
+            SSH: "high_priority",      // Admin traffic
+            HTTPS: "medium_priority",  // Web traffic
+            HTTP: "medium_priority",   // Web traffic
+            default: "low_priority"
+        }
+        set_qos_mark(ctx, qos_class)
+    } else if (protocol == UDP) {
+        var udp_port = get_udp_dest_port_tc(ctx)
+        var qos_class: str(16) = match (udp_port) {
+            DNS: "high_priority",      // DNS is critical
+            default: "low_priority"
+        }
+        set_qos_mark(ctx, qos_class)
+    } else if (protocol == ICMP) {
+        var qos_class: str(16) = "low_priority"
+        set_qos_mark(ctx, qos_class)
+    } else {
+        set_qos_mark(ctx, "default_priority")
     }
-    
-    // Apply QoS marking (implementation depends on system)
-    set_qos_mark(ctx, qos_class)
-    
+
     return 0  // TC_ACT_OK
 }
 
@@ -316,54 +298,55 @@ fn firewall_engine(ctx: *xdp_md) -> xdp_action {
         return XDP_DROP
     }
     
-    // Protocol-based firewall rules
-    return match (protocol) {
-        TCP: {
-            var tcp_port = get_tcp_dest_port(ctx)
-            var tcp_flags = get_tcp_flags(ctx)
-            
-            return match (tcp_port) {
-                22: {  // SSH port
-                    // Allow SSH but check source
-                    return match (is_admin_network(src_ip)) {
-                        true: XDP_PASS,
-                        false: XDP_DROP
-                    }
-                },
-                
-                80: XDP_PASS,           // Allow HTTP
-                443: XDP_PASS,          // Allow HTTPS
-                25: XDP_DROP,           // Block SMTP
-                23: XDP_DROP,           // Block Telnet
-                default: {
-                    // For unknown ports, check if it's a SYN flood
-                    return match (tcp_flags) {
-                        0x02: rate_limit_unknown_syn(src_ip),
-                        default: XDP_PASS
-                    }
-                }
+    if (protocol == TCP) {
+        var tcp_port = get_tcp_dest_port(ctx)
+        var tcp_flags = get_tcp_flags(ctx)
+
+        // Match arms with block bodies (containing if/else or nested matches that
+        // need to gate on outer-arm-locals) hit the codegen limitation noted on
+        // advanced_packet_classifier above - the inner control flow gets lifted
+        // out of its arm. Fan the port dispatch out into if/else here too, so
+        // each branch's body sits in an `if` block (where local control flow
+        // works) instead of a match arm block.
+        if (tcp_port == 22) {
+            // Allow SSH but check source. is_admin_network is a function call,
+            // so this inner match has no block arms and lowers cleanly.
+            return match (is_admin_network(src_ip)) {
+                true: XDP_PASS,
+                false: XDP_DROP
             }
-        },
-        
-        UDP: {
-            var udp_port = get_udp_dest_port(ctx)
-            return match (udp_port) {
-                53: XDP_PASS,           // Allow DNS
-                123: XDP_PASS,          // Allow NTP
-                161: XDP_DROP,          // Block SNMP
-                default: XDP_PASS
+        } else if (tcp_port == 80) {
+            return XDP_PASS         // Allow HTTP
+        } else if (tcp_port == 443) {
+            return XDP_PASS         // Allow HTTPS
+        } else if (tcp_port == 25) {
+            return XDP_DROP         // Block SMTP
+        } else if (tcp_port == 23) {
+            return XDP_DROP         // Block Telnet
+        } else {
+            // For unknown ports, check if it's a SYN flood.
+            if (tcp_flags == 0x02) {
+                return rate_limit_unknown_syn(src_ip)
+            } else {
+                return XDP_PASS
             }
-        },
-        
-        ICMP: {
-            var icmp_type_val = get_icmp_type(ctx)
-            return match (icmp_type_val) {
-                8: rate_limit_ping(src_ip),     // Rate limit ping
-                default: XDP_DROP               // Drop other ICMP
-            }
-        },
-        
-        default: XDP_DROP  // Deny unknown protocols
+        }
+    } else if (protocol == UDP) {
+        var udp_port = get_udp_dest_port(ctx)
+        return match (udp_port) {
+            53: XDP_PASS,           // Allow DNS
+            123: XDP_PASS,          // Allow NTP
+            161: XDP_DROP,          // Block SNMP
+            default: XDP_PASS
+        }
+    } else if (protocol == ICMP) {
+        var icmp_type_val = get_icmp_type(ctx)
+        return match (icmp_type_val) {
+            8: rate_limit_ping(src_ip),     // Rate limit ping
+            default: XDP_DROP               // Drop other ICMP
+        }
+    } else {
+        return XDP_DROP  // Deny unknown protocols
     }
 }
 
