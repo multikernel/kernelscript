@@ -284,7 +284,7 @@
 (executable
  (name test_match)
  (modules test_match)
- (libraries kernelscript alcotest test_utils))
+ (libraries kernelscript alcotest test_utils str))
 
 (executable
  (name test_pinned_globals)

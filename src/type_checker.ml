@@ -1484,29 +1484,28 @@ and type_check_expression ctx expr =
         { tarm_pattern = arm.arm_pattern; tarm_body = typed_arm_body; tarm_pos = arm.arm_pos }
       ) arms in
       
-      (* Determine the result type - all arms must have compatible types *)
+      (* Result type is the least upper bound of all arm types under the language's
+         subtyping relation (e.g. str(N) ⊔ str(M) = str(max N M)). unify_types
+         already implements this LUB; the match checker must use the unified type
+         it returns rather than discard it - otherwise a narrower first arm forces
+         the whole expression to be too narrow for later arms. *)
+      let extract_arm_type arm =
+        match arm.tarm_body with
+        | TSingleExpr expr -> expr.texpr_type
+        | TBlock stmts -> extract_block_return_type stmts arm.tarm_pos
+      in
       let result_type = match typed_arms with
         | [] -> type_error "Match expression must have at least one arm" expr.expr_pos
         | first_arm :: rest_arms ->
-            let first_type = match first_arm.tarm_body with
-              | TSingleExpr expr -> expr.texpr_type
-              | TBlock stmts -> 
-                  extract_block_return_type stmts first_arm.tarm_pos
-            in
-            List.iter (fun arm ->
-              let arm_type = match arm.tarm_body with
-                | TSingleExpr expr -> expr.texpr_type
-                | TBlock stmts -> 
-                    extract_block_return_type stmts arm.tarm_pos
-              in
-              match unify_types first_type arm_type with
-              | Some _ -> () (* Compatible *)
-              | None -> 
-                  type_error ("All match arms must return compatible types. Expected " ^ 
-                             string_of_bpf_type first_type ^ " but got " ^ 
+            List.fold_left (fun acc arm ->
+              let arm_type = extract_arm_type arm in
+              match unify_types acc arm_type with
+              | Some unified -> unified
+              | None ->
+                  type_error ("All match arms must return compatible types. Expected " ^
+                             string_of_bpf_type acc ^ " but got " ^
                              string_of_bpf_type arm_type) arm.tarm_pos
-            ) rest_arms;
-            first_type
+            ) (extract_arm_type first_arm) rest_arms
       in
       
       { texpr_desc = TMatch (typed_matched_expr, typed_arms); texpr_type = result_type; texpr_pos = expr.expr_pos }

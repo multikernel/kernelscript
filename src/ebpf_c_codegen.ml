@@ -260,6 +260,17 @@ let initialize_context_generators () =
   Kernelscript_context.Fprobe_codegen.register ();
   Kernelscript_context.Perf_event_codegen.register ()
 
+(** Emit a safe str_N_t to str_M_t copy. The naive
+    `__builtin_memcpy(&dst, &src, sizeof(src))` is wrong whenever the two
+    str_N_t types have different sizes: layouts diverge, so the source's
+    `.len` field gets memcpy'd into the destination's `.data[]` array and the
+    destination's `.len` is left uninitialized (or filled with garbage past
+    the end of src). Field-level copy respects the length-prefixed semantics
+    regardless of either side's declared capacity. *)
+let emit_str_copy ctx ~dest ~src =
+  emit_line ctx (sprintf "%s.len = %s.len;" dest src);
+  emit_line ctx (sprintf "__builtin_memcpy(%s.data, %s.data, %s.len);" dest src src)
+
 (** Emit all pending string literal declarations *)
 let emit_pending_string_literals ctx =
   List.iter (fun (var_name, content, size) ->
@@ -1720,28 +1731,46 @@ let generate_c_expression ctx ir_expr =
           (* Generate regular if-else chain with temporary variable for complex cases *)
           let temp_var = fresh_var ctx "match_result" in
           let result_type = ebpf_type_from_ir_type ir_expr.expr_type in
-          
+          let result_str_size = match ir_expr.expr_type with IRStr n -> Some n | _ -> None in
+
           (* Generate temporary variable for the result *)
           emit_line ctx (sprintf "%s %s;" result_type temp_var);
-          
-          (* Defer string literals during match arm value generation *)
-          ctx.defer_string_literals <- true;
-          let arm_values = List.map (fun arm ->
-            (arm, generate_c_value ctx arm.ir_arm_value)
-          ) arms in
-          ctx.defer_string_literals <- false;
-          
-          (* Emit collected string literals before if-else chain *)
-          emit_pending_string_literals ctx;
-          
+
+          (* For str-typed results, the type checker has widened the match's type
+             to the LUB of all arm types (str(max N)). Emit each arm value directly
+             into the result-typed slot - literals as compound literals at the result
+             size, runtime values via field-level copy that respects .len. This
+             avoids the unsafe `memcpy(&dst, &src, sizeof(src))` across different
+             str_N_t layouts, which used to write src's .len bytes into dst's .data.
+             For non-str results, keep the existing deferred-literal flow. *)
+          let arm_values = match result_str_size with
+            | Some _ -> List.map (fun arm -> (arm, "")) arms
+            | None ->
+                ctx.defer_string_literals <- true;
+                let vals = List.map (fun arm ->
+                  (arm, generate_c_value ctx arm.ir_arm_value)
+                ) arms in
+                ctx.defer_string_literals <- false;
+                emit_pending_string_literals ctx;
+                vals
+          in
+
           (* Generate if-else chain *)
-          let needs_memcpy = match ir_expr.expr_type with IRStr _ -> true | _ -> false in
           let generate_match_arm is_first (arm, arm_val_str) =
             let emit_assignment () =
-              if needs_memcpy then
-                emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" temp_var arm_val_str arm_val_str)
-              else
-                emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str)
+              match result_str_size with
+              | Some result_size ->
+                  (match arm.ir_arm_value.value_desc with
+                   | IRLiteral (Ast.StringLit s) ->
+                       let len = min (String.length s) result_size in
+                       let truncated = if len < String.length s then String.sub s 0 len else s in
+                       emit_line ctx (sprintf "%s = (str_%d_t){ .data = \"%s\", .len = %d };"
+                         temp_var result_size (String.escaped truncated) len)
+                   | _ ->
+                       let val_str = generate_c_value ctx arm.ir_arm_value in
+                       emit_str_copy ctx ~dest:temp_var ~src:val_str)
+              | None ->
+                  emit_line ctx (sprintf "%s = %s;" temp_var arm_val_str)
             in
             match arm.ir_arm_pattern with
             | IRConstantPattern const_val ->
@@ -1759,14 +1788,14 @@ let generate_c_expression ctx ir_expr =
                 decrease_indent ctx;
                 emit_line ctx "}"
           in
-          
+
           (* Generate all arms *)
           (match arm_values with
            | [] -> () (* No arms - should not happen *)
            | first_arm :: rest_arms ->
                generate_match_arm true first_arm;
                List.iter (generate_match_arm false) rest_arms);
-          
+
           (* Return the temporary variable *)
           temp_var
 
@@ -1931,11 +1960,21 @@ and generate_c_instruction ctx ir_instr =
       (* Check if variable is already declared (e.g., in callback functions) *)
       let var_hash = Hashtbl.hash var_name in
       if Hashtbl.mem ctx.declared_registers var_hash then
-        (* Variable already declared, just generate assignment if there's an initializer *)
+        (* Variable already declared (typically hoisted to function top), emit
+           the initializer's assignment at the original position. Cross-size
+           str-to-str needs length-respecting field copy; see emit_str_copy. *)
         (match init_expr_opt with
          | Some init_expr ->
+             let cross_size_str = match typ, init_expr.expr_desc with
+               | IRStr d, IRValue src_val ->
+                   (match src_val.val_type with IRStr s -> s <> d | _ -> false)
+               | _ -> false
+             in
              let init_str = generate_c_expression ctx init_expr in
-             emit_line ctx (sprintf "%s = %s;" var_name init_str)
+             if cross_size_str then
+               emit_str_copy ctx ~dest:var_name ~src:init_str
+             else
+               emit_line ctx (sprintf "%s = %s;" var_name init_str)
          | None -> (* No initializer, no need to emit anything *) ())
       else
         (* Variable not declared yet, generate full declaration *)
@@ -1945,10 +1984,10 @@ and generate_c_instruction ctx ir_instr =
              (* Check if this is a string assignment that needs special handling *)
              (match typ, init_expr.expr_desc with
               | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
-                  (* String to string assignment with compatible sizes - regenerate src with dest size *)
+                  (* String to string with compatible sizes. *)
                   (match src_val.value_desc with
                     | IRLiteral (StringLit s) ->
-                        (* Generate direct struct assignment for string literals *)
+                        (* Literal: emit at the destination type via designated initializer. *)
                         let len = String.length s in
                         let max_content_len = dest_size in
                         let actual_len = min len max_content_len in
@@ -1957,10 +1996,17 @@ and generate_c_instruction ctx ir_instr =
                         emit_line ctx (sprintf "    .data = \"%s\"," (String.escaped truncated_s));
                         emit_line ctx (sprintf "    .len = %d" actual_len);
                         emit_line ctx "};"
-                    | _ -> 
-                        (* For non-literal strings, use regular assignment *)
-                        let init_str = generate_c_expression ctx init_expr in
-                        emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
+                    | _ ->
+                        let src_size = match src_val.val_type with IRStr s -> s | _ -> dest_size in
+                        if src_size = dest_size then
+                          (* Same type: plain struct assignment. *)
+                          (let init_str = generate_c_expression ctx init_expr in
+                           emit_line ctx (sprintf "%s %s = %s;" type_str var_name init_str))
+                        else
+                          (* Cross-size: declare-then-field-copy (see emit_str_copy). *)
+                          (emit_line ctx (sprintf "%s %s;" type_str var_name);
+                           let src_str = generate_c_expression ctx init_expr in
+                           emit_str_copy ctx ~dest:var_name ~src:src_str))
               | IRStr _, _ ->
                   (* Other string expressions (concatenation, etc.) *)
                   let init_str = generate_c_expression ctx init_expr in
@@ -2570,13 +2616,14 @@ and generate_assignment ctx dest_val expr is_const =
                | None -> ())
           | _ -> ());
 
-         (* Use memcpy for cross-size string assignments *)
-         let use_memcpy = match dest_val.val_type, expr.expr_desc with
+         (* Cross-size string assignments need length-respecting field copy
+            (see emit_str_copy). Same-size stays as plain struct assignment. *)
+         let cross_size_str = match dest_val.val_type, expr.expr_desc with
            | IRStr d, IRValue src_val -> (match src_val.val_type with IRStr s -> s <> d | _ -> false)
            | _ -> false
          in
-         if use_memcpy then
-           emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" dest_str expr_str expr_str)
+         if cross_size_str then
+           emit_str_copy ctx ~dest:dest_str ~src:expr_str
          else
            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
        )
@@ -2596,12 +2643,14 @@ and generate_assignment ctx dest_val expr is_const =
        (* Check if this is a string assignment *)
        (match dest_val.val_type, expr.expr_desc with
         | IRStr dest_size, IRValue src_val when (match src_val.val_type with IRStr src_size -> src_size <= dest_size | _ -> false) ->
-            (* String to string assignment - use memcpy for cross-size compatibility *)
+            (* String to string assignment - length-respecting field copy for
+               cross-size cases (see emit_str_copy); plain struct assignment when
+               sizes match. *)
             let dest_str = generate_c_value ctx dest_val in
             let src_str = generate_c_value ctx src_val in
             (match src_val.val_type with
              | IRStr src_size when src_size <> dest_size ->
-                 emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" dest_str src_str src_str)
+                 emit_str_copy ctx ~dest:dest_str ~src:src_str
              | _ ->
                  emit_line ctx (sprintf "%s = %s;" dest_str src_str))
         | IRStr _, _ ->
@@ -3119,13 +3168,14 @@ let generate_assignment ctx dest_val expr is_const =
                | None -> ())
           | _ -> ());
 
-         (* Use memcpy for cross-size string assignments *)
-         let use_memcpy = match dest_val.val_type, expr.expr_desc with
+         (* Cross-size string assignments need length-respecting field copy
+            (see emit_str_copy). Same-size stays as plain struct assignment. *)
+         let cross_size_str = match dest_val.val_type, expr.expr_desc with
            | IRStr d, IRValue src_val -> (match src_val.val_type with IRStr s -> s <> d | _ -> false)
            | _ -> false
          in
-         if use_memcpy then
-           emit_line ctx (sprintf "__builtin_memcpy(&%s, &%s, sizeof(%s));" dest_str expr_str expr_str)
+         if cross_size_str then
+           emit_str_copy ctx ~dest:dest_str ~src:expr_str
          else
            emit_line ctx (sprintf "%s%s = %s;" assignment_prefix dest_str expr_str)
        )

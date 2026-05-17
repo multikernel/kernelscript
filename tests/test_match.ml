@@ -634,6 +634,47 @@ let test_enum_constant_resolution_in_match () =
      should be resolved to their actual values, not hardcoded to 0 *)
   ()
 
+(** Mixed-length string match arms: the result type is the least upper bound
+    str(max N_i) of all arm types, and codegen does length-respecting field
+    copies. The unsafe `memcpy(&dst, &src, sizeof(src))` pattern (which writes
+    src.len into dst.data on cross-size str_N_t copies) must not appear. *)
+let test_match_mixed_length_string_arms () =
+  let input = {|
+    @helper fn use_label(s: str(20)) -> u32 { return 0 }
+
+    @xdp fn classify(ctx: *xdp_md) -> xdp_action {
+      var n: u32 = 1
+      var label = match (n) {
+        1: "short",
+        2: "medium_str",
+        default: "longer_default_str"
+      }
+      var _ = use_label(label)
+      return 2
+    }
+
+    fn main() -> i32 { return 0 }
+  |} in
+  let ast = Parse.parse_string input in
+  let symbol_table = Symbol_table.build_symbol_table ast in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  let (generated_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+  let contains substr =
+    try ignore (Str.search_forward (Str.regexp_string substr) generated_code 0); true
+    with Not_found -> false
+  in
+  (* Widest arm is "longer_default_str" (18). With type-checker LUB widening,
+     the result temp must be at least str_18_t (or wider if propagated from
+     the use_label parameter type). *)
+  check bool "match result widened to a wide-enough str type" true
+    (contains "str_18_t" || contains "str_20_t");
+  (* Cross-size struct memcpy with sizeof(src) corrupts the destination - the
+     match codegen must not emit it. Field copies (`.len = ...` + memcpy of
+     `.data` with `.len` bytes) are safe. *)
+  check bool "no unsafe struct-memcpy for str match arms" false
+    (contains "memcpy(&__match_result")
+
 let suite = [
   "test_basic_match_parsing", `Quick, test_basic_match_parsing;
   "test_match_with_enums", `Quick, test_match_with_enums;
@@ -646,6 +687,7 @@ let suite = [
   "test_nested_match_structures", `Quick, test_nested_match_structures;
   "test_match_block_implicit_returns", `Quick, test_match_block_implicit_returns;
   "test_enum_constant_resolution_in_match", `Quick, test_enum_constant_resolution_in_match;
+  "test_match_mixed_length_string_arms", `Quick, test_match_mixed_length_string_arms;
 ]
 
 let () = run "Match Construct Tests" [
