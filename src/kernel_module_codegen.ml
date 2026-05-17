@@ -110,18 +110,6 @@ let generate_function_prototype func_def =
   let params_str = if params = [] then "void" else String.concat ", " params in
   sprintf "static %s %s(%s);" return_type func_def.func_name params_str
 
-(** Generate function prototype for kfunc kernel module functions with proper annotations *)
-let generate_kfunc_prototype func_def =
-  let return_type = match get_return_type func_def.func_return_type with
-    | Some ret_type -> kernelscript_type_to_c_type ret_type
-    | None -> "void"
-  in
-  let params = List.map (fun (param_name, param_type) ->
-    sprintf "%s %s" (kernelscript_type_to_c_type param_type) param_name
-  ) func_def.func_params in
-  let params_str = if params = [] then "void" else String.concat ", " params in
-  sprintf "__bpf_kfunc %s %s(%s);" return_type func_def.func_name params_str
-
 (** Generate statement translation *)
 let rec generate_statement_translation stmt =
   match stmt.stmt_desc with
@@ -293,20 +281,6 @@ let generate_kfunc_implementation func_def =
   let body = String.concat "\n" (List.map generate_statement_translation func_def.func_body) in
   sprintf "%s\n{\n%s\n}" signature body
 
-(** Generate BTF information for kfunc *)
-let generate_btf_info func_def =
-  let param_types = List.map (fun (_, param_type) ->
-    kernelscript_type_to_c_type param_type
-  ) func_def.func_params in
-  let return_type = match get_return_type func_def.func_return_type with
-    | Some ret_type -> kernelscript_type_to_c_type ret_type
-    | None -> "void"
-  in
-  sprintf "/* BTF info for %s: %s(%s) */" 
-    func_def.func_name 
-    return_type 
-    (String.concat ", " param_types)
-
 (** Generate complete kernel module *)
 let generate_kernel_module context =
   let header = sprintf {|/*
@@ -329,15 +303,15 @@ MODULE_VERSION("1.0");
 
 |} context.module_name context.module_name in
 
-  (* Generate function prototypes *)
-  let private_prototypes = String.concat "\n" (List.map generate_function_prototype context.private_functions) in
-  let kfunc_prototypes = String.concat "\n" (List.map generate_kfunc_prototype context.kfunc_functions) in
-  let function_prototypes = 
-    if private_prototypes = "" then kfunc_prototypes
-    else if kfunc_prototypes = "" then private_prototypes
-    else sprintf "%s\n%s" private_prototypes kfunc_prototypes
+  (* Forward prototypes for private helpers so kfuncs defined later can call them.
+     Kfuncs don't need their own prototypes - __bpf_kfunc_start_defs() suppresses
+     -Wmissing-prototypes, and upstream kfunc modules don't emit them either. *)
+  let prototypes_section =
+    if context.private_functions = [] then ""
+    else sprintf "/* Function prototypes */\n%s\n\n"
+      (String.concat "\n" (List.map generate_function_prototype context.private_functions))
   in
-  
+
   (* Generate private function implementations first (so kfuncs can call them) *)
   let private_implementations = String.concat "\n\n" (List.map generate_function_implementation context.private_functions) in
   
@@ -353,8 +327,6 @@ __bpf_kfunc_start_defs();
 /* End kfunc definitions */
 __bpf_kfunc_end_defs();
 |} (String.concat "\n\n" (List.map generate_kfunc_implementation context.kfunc_functions)) in
-  
-  let btf_declarations = String.concat "\n" (List.map generate_btf_info context.kfunc_functions) in
   
   let kfunc_btf_ids = String.concat "\n" (List.map (fun func_def ->
     sprintf "BTF_ID_FLAGS(func, %s)" func_def.func_name
@@ -409,12 +381,11 @@ module_exit(%s_exit);
     sprintf "%s\n\n%s" private_implementations kfunc_implementations
   in
   
-  sprintf "%s\n/* Function prototypes */\n%s\n\n%s\n\n%s\n\n%s\n\n%s" 
-    header 
-    function_prototypes
-    btf_declarations 
-    all_implementations 
-    btf_id_set 
+  sprintf "%s\n%s%s\n\n%s\n\n%s"
+    header
+    prototypes_section
+    all_implementations
+    btf_id_set
     init_function
 
 (** Extract kfunc functions from AST *)
