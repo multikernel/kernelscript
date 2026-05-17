@@ -3375,8 +3375,32 @@ let lower_multi_program ast symbol_table source_name =
                   add_source_declaration (IRDeclStructOpsDef ir_struct_ops_decl) struct_def.struct_pos
               | None -> ())
          | Ast.AttributedFunction attr_func ->
-             (* Insert program entry functions at source position *)
              let func_name = attr_func.attr_function.func_name in
+             let is_kfunc = List.exists (function
+               | Ast.SimpleAttribute "kfunc" -> true
+               | _ -> false
+             ) attr_func.attr_list in
+             if is_kfunc then (
+               (* Locally-defined @kfunc: emit a prototype declaration so eBPF programs
+                  can call it. The body itself goes into the separate kernel module. *)
+               let func = attr_func.attr_function in
+               let ir_params = List.map (fun (name, param_type) ->
+                 (name, ast_type_to_ir_type param_type)
+               ) func.func_params in
+               let ir_return_type = match Ast.get_return_type func.func_return_type with
+                 | Some ret_type -> ast_type_to_ir_type ret_type
+                 | None -> IRVoid
+               in
+               add_source_declaration
+                 (IRDeclKfuncDecl {
+                    ikfunc_name = func.func_name;
+                    ikfunc_params = ir_params;
+                    ikfunc_return_type = ir_return_type;
+                    ikfunc_is_extern = false;
+                    ikfunc_pos = func.func_pos;
+                  }) func.func_pos
+             ) else
+             (* Insert program entry functions at source position *)
              (match Hashtbl.find_opt program_table func_name with
               | Some (_prog_def, ir_program) ->
                   add_source_declaration (IRDeclProgramDef ir_program) ir_program.ir_pos
@@ -3406,6 +3430,23 @@ let lower_multi_program ast symbol_table source_name =
                     | None -> ())
                | Ast.ImplStaticField _ -> ()
              ) impl_block.impl_items
+         | Ast.ExternKfuncDecl extern_decl ->
+             (* Kernel-provided kfunc: emit an `extern ... __ksym;` declaration *)
+             let ir_params = List.map (fun (name, param_type) ->
+               (name, ast_type_to_ir_type param_type)
+             ) extern_decl.Ast.extern_params in
+             let ir_return_type = match extern_decl.Ast.extern_return_type with
+               | Some ret_type -> ast_type_to_ir_type ret_type
+               | None -> IRVoid
+             in
+             add_source_declaration
+               (IRDeclKfuncDecl {
+                  ikfunc_name = extern_decl.Ast.extern_name;
+                  ikfunc_params = ir_params;
+                  ikfunc_return_type = ir_return_type;
+                  ikfunc_is_extern = true;
+                  ikfunc_pos = extern_decl.Ast.extern_pos;
+                }) extern_decl.Ast.extern_pos
          | _ -> () )
   );
   

@@ -399,6 +399,18 @@ and ir_declaration_desc =
   | IRDeclProgramDef of ir_program
   | IRDeclStructOpsDef of ir_struct_ops_declaration
   | IRDeclStructOpsInstance of ir_struct_ops_instance
+  | IRDeclKfuncDecl of ir_kfunc_declaration
+
+(** Kfunc declaration - a function signature to declare at the top of the eBPF C file.
+    Covers both kernel-provided kfuncs (extern ... __ksym) and locally-defined @kfunc
+    prototypes. The full @kfunc body is emitted separately into the kernel module. *)
+and ir_kfunc_declaration = {
+  ikfunc_name: string;
+  ikfunc_params: (string * ir_type) list;
+  ikfunc_return_type: ir_type;
+  ikfunc_is_extern: bool; (* true: kernel-provided (extern __ksym); false: local @kfunc prototype *)
+  ikfunc_pos: ir_position;
+}
 
 (** Utility functions for creating IR nodes *)
 
@@ -535,6 +547,16 @@ let make_ir_struct_ops_def_decl struct_ops_def order =
 
 let make_ir_struct_ops_instance_decl struct_ops_instance order =
   make_ir_source_declaration (IRDeclStructOpsInstance struct_ops_instance) order struct_ops_instance.ir_instance_pos
+
+let make_ir_kfunc_decl name params return_type is_extern order pos =
+  make_ir_source_declaration
+    (IRDeclKfuncDecl {
+      ikfunc_name = name;
+      ikfunc_params = params;
+      ikfunc_return_type = return_type;
+      ikfunc_is_extern = is_extern;
+      ikfunc_pos = pos;
+    }) order pos
 
 let make_ir_multi_program source_name ?(source_declarations = [])
                           ?userspace_program ?(ring_buffer_registry = create_empty_ring_buffer_registry ())

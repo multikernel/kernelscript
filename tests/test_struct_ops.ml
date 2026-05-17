@@ -1255,6 +1255,54 @@ let test_sched_ext_ops_ebpf_codegen () =
   check bool "Instance has correct struct type" true
     (try ignore (Str.search_forward (Str.regexp "struct sched_ext_ops.*priority_scheduler") c_code 0); true with Not_found -> false)
 
+(** Test that a struct_ops method named after a clang builtin (e.g. sched_ext_ops
+    has an `exit` member) is emitted verbatim - same C symbol, SEC() suffix and
+    instance member. clang would otherwise treat `exit` as the `noreturn` builtin
+    and miscompile the body to an empty section; that is handled at build time by
+    `-fno-builtin` in the generated Makefile's BPF_CFLAGS, not by mangling the
+    name here. This test guards against the codegen reintroducing a rename. *)
+let test_struct_ops_builtin_method_name_emitted_verbatim () =
+  let program = {|
+    @struct_ops("sched_ext_ops")
+    impl builtin_name_sched {
+        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
+            return prev_cpu
+        }
+
+        fn init() -> i32 {
+            return 0
+        }
+
+        fn exit(info: *u8) -> void {
+            // cleanup
+        }
+
+        name: "builtin_sched",
+    }
+
+    fn main() -> i32 {
+        return register(builtin_name_sched)
+    }
+  |} in
+
+  let ast = Parse.parse_string program in
+  let ast_with_structs = ast @ Test_utils.StructOps.builtin_ast in
+  let symbol_table = Symbol_table.build_symbol_table ast_with_structs in
+  let (typed_ast, _) = Type_checker.type_check_and_annotate_ast ast_with_structs in
+  let ir = Ir_generator.generate_ir typed_ast symbol_table "test" in
+  let (c_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
+
+  (* The `exit` method is emitted verbatim - not renamed/mangled *)
+  check bool "exit method emitted as bare `void exit(`" true
+    (contains_substr c_code "void exit(");
+  check bool "SEC uses the verbatim member name" true
+    (contains_substr c_code "SEC(\"struct_ops/exit\")");
+  check bool "struct_ops instance wires .exit to the exit symbol" true
+    (contains_substr c_code ".exit = (void *)exit,");
+  (* Non-builtin names are likewise untouched *)
+  check bool "non-builtin method select_cpu unchanged" true
+    (contains_substr c_code "select_cpu(__u8* p")
+
 (** Test sched_ext_ops registry functionality *)
 let test_sched_ext_ops_registry () =
   (* Test that sched_ext_ops is known *)
@@ -1334,9 +1382,9 @@ let test_sched_ext_ops_btf_definition () =
 let test_struct_ops_can_call_kernel_functions () =
   let program = {|
     // Declare external kernel functions (kfuncs)
-    extern scx_bpf_select_cpu_dfl(p: *u8, prev_cpu: i32, wake_flags: u64, direct: *bool) -> i32
-    extern scx_bpf_dsq_insert(p: *u8, dsq_id: u64, slice: u64, enq_flags: u64) -> void
-    extern scx_bpf_consume(dsq_id: u64, cpu: i32, flags: u64) -> i32
+    extern scx_bpf_select_cpu_dfl(p: *task_struct, prev_cpu: i32, wake_flags: u64, is_idle: *bool) -> i32
+    extern scx_bpf_dsq_insert(p: *task_struct, dsq_id: u64, slice: u64, enq_flags: u64) -> void
+    extern scx_bpf_dsq_move_to_local(dsq_id: u64) -> bool
     
     // Kernel enum constants
     enum scx_dsq_id_flags {
@@ -1347,21 +1395,21 @@ let test_struct_ops_can_call_kernel_functions () =
     
     @struct_ops("sched_ext_ops")
     impl simple_scheduler {
-        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
-            var direct: bool = false
+        fn select_cpu(p: *task_struct, prev_cpu: i32, wake_flags: u64) -> i32 {
+            var is_idle: bool = false
             // This should be allowed - struct_ops functions run in kernel context
-            var cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &direct)
-            
-            if (direct == true) {
+            var cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle)
+
+            if (is_idle == true) {
                 scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0)
             }
-            
+
             return cpu
         }
-        
-        fn dispatch(cpu: i32, prev: *u8) -> void {
+
+        fn dispatch(cpu: i32, prev: *task_struct) -> void {
             // This should also be allowed - calling kernel function from struct_ops
-            if (scx_bpf_consume(SCX_DSQ_GLOBAL, cpu, 0) == 0) {
+            if (!scx_bpf_dsq_move_to_local(SCX_DSQ_GLOBAL)) {
                 // No tasks available
             }
         }
@@ -1422,6 +1470,7 @@ let tests = [
   "sched_ext_ops parsing", `Quick, test_sched_ext_ops_parsing;
   "sched_ext_ops IR generation", `Quick, test_sched_ext_ops_ir_generation;
   "sched_ext_ops eBPF codegen", `Quick, test_sched_ext_ops_ebpf_codegen;
+  "struct_ops builtin method name emitted verbatim", `Quick, test_struct_ops_builtin_method_name_emitted_verbatim;
   "sched_ext_ops registry", `Quick, test_sched_ext_ops_registry;
   "sched_ext_ops BTF extraction", `Quick, test_sched_ext_ops_btf_extraction;
   "sched_ext_ops BTF definition", `Quick, test_sched_ext_ops_btf_definition;

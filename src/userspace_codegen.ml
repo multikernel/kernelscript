@@ -1274,6 +1274,10 @@ let generate_declarations_in_source_order_userspace ir_multi_prog =
     | Ir.IRDeclStructOpsInstance _struct_ops_instance ->
         (* Skip struct_ops instances in userspace - they're handled separately *)
         ()
+
+    | Ir.IRDeclKfuncDecl _kfunc_decl ->
+        (* Skip kfunc declarations in userspace - they're eBPF-side only *)
+        ()
   ) ir_multi_prog.Ir.source_declarations;
   
   (* Return the declarations in the correct order (reverse since we prepended) *)

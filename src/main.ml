@@ -888,15 +888,6 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
     let _resource_plan = Multi_program_ir_optimizer.plan_system_resources (Ir.get_programs ir_with_ring_buffer_analysis) ir_with_ring_buffer_analysis in
     let _optimization_strategies = Multi_program_ir_optimizer.generate_optimization_strategies multi_prog_analysis in
 
-    (* Extract kfunc declarations from AST for eBPF C generation *)
-    let kfunc_declarations = List.filter_map (function
-      | Ast.AttributedFunction attr_func ->
-          (match attr_func.attr_list with
-           | SimpleAttribute "kfunc" :: _ -> Some attr_func.attr_function
-           | _ -> None)
-      | _ -> None
-    ) annotated_ast in
-
     (* Perform tail call analysis on AST *)
     let tail_call_analysis = Tail_call_analyzer.analyze_tail_calls annotated_ast in
 
@@ -915,9 +906,9 @@ let compile_source input_file output_dir _verbose generate_makefile btf_vmlinux_
       { ir_with_ring_buffer_analysis with source_declarations = updated_source_declarations }
     in
 
-    (* Generate eBPF C code (with updated IR and kfunc declarations) *)
+    (* Generate eBPF C code (kfunc declarations are carried in the IR) *)
     let (ebpf_c_code, _final_tail_call_analysis) = Ebpf_c_codegen.compile_multi_to_c_with_analysis
-      ~kfunc_declarations ~tail_call_analysis:(Some tail_call_analysis) ~btf_path:btf_vmlinux_path updated_optimized_ir in
+      ~tail_call_analysis:(Some tail_call_analysis) ~btf_path:btf_vmlinux_path updated_optimized_ir in
 
     (* Analyze kfunc dependencies for automatic kernel module loading *)
     let ir_functions = List.map (fun prog -> prog.Ir.entry_function) (Ir.get_programs ir_with_ring_buffer_analysis) in
@@ -1034,7 +1025,12 @@ BPF_CC = clang
 CC = gcc
 
 # BPF compilation flags
-BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g
+# -fno-builtin: eBPF objects never link libc, but clang still recognises libc
+# names (exit, abort, ...) as builtins and applies their attributes. A struct_ops
+# method named after such a builtin (e.g. sched_ext_ops.exit, which clang treats
+# as noreturn) would otherwise be miscompiled to an empty section. eBPF C relies
+# only on __builtin_* intrinsics, which -fno-builtin does not affect.
+BPF_CFLAGS = -target bpf -O2 -Wall -Wextra -g -fno-builtin
 BPF_INCLUDES = -I.
 
 # Userspace compilation flags
