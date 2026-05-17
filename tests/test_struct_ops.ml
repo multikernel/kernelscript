@@ -1382,9 +1382,9 @@ let test_sched_ext_ops_btf_definition () =
 let test_struct_ops_can_call_kernel_functions () =
   let program = {|
     // Declare external kernel functions (kfuncs)
-    extern scx_bpf_select_cpu_dfl(p: *u8, prev_cpu: i32, wake_flags: u64, direct: *bool) -> i32
-    extern scx_bpf_dsq_insert(p: *u8, dsq_id: u64, slice: u64, enq_flags: u64) -> void
-    extern scx_bpf_consume(dsq_id: u64, cpu: i32, flags: u64) -> i32
+    extern scx_bpf_select_cpu_dfl(p: *task_struct, prev_cpu: i32, wake_flags: u64, is_idle: *bool) -> i32
+    extern scx_bpf_dsq_insert(p: *task_struct, dsq_id: u64, slice: u64, enq_flags: u64) -> void
+    extern scx_bpf_dsq_move_to_local(dsq_id: u64) -> bool
     
     // Kernel enum constants
     enum scx_dsq_id_flags {
@@ -1395,21 +1395,21 @@ let test_struct_ops_can_call_kernel_functions () =
     
     @struct_ops("sched_ext_ops")
     impl simple_scheduler {
-        fn select_cpu(p: *u8, prev_cpu: i32, wake_flags: u64) -> i32 {
-            var direct: bool = false
+        fn select_cpu(p: *task_struct, prev_cpu: i32, wake_flags: u64) -> i32 {
+            var is_idle: bool = false
             // This should be allowed - struct_ops functions run in kernel context
-            var cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &direct)
-            
-            if (direct == true) {
+            var cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle)
+
+            if (is_idle == true) {
                 scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0)
             }
-            
+
             return cpu
         }
-        
-        fn dispatch(cpu: i32, prev: *u8) -> void {
+
+        fn dispatch(cpu: i32, prev: *task_struct) -> void {
             // This should also be allowed - calling kernel function from struct_ops
-            if (scx_bpf_consume(SCX_DSQ_GLOBAL, cpu, 0) == 0) {
+            if (!scx_bpf_dsq_move_to_local(SCX_DSQ_GLOBAL)) {
                 // No tasks available
             }
         }
