@@ -3048,11 +3048,14 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog ~_btf_path _
         emit_blank_line ctx
 
     | Ir.IRDeclKfuncDecl kfunc_decl ->
-        (* Emit a function-signature declaration so eBPF programs can call the kfunc.
-           Kernel-provided kfuncs need `extern ... __ksym;`; locally-defined @kfunc
-           functions just need a forward prototype. Standard BPF helpers are skipped
-           entirely - libbpf's bpf_helpers.h already declares them, and a __ksym
-           extern would clash with that declaration. *)
+        (* Emit `extern ... __ksym;` so libbpf resolves the symbol against the
+           kernel's BTF at load time. Both kinds of kfunc are external to the
+           eBPF object: kernel-provided ones live in vmlinux, and locally-defined
+           @kfunc bodies live in the sibling kernel module compiled alongside the
+           eBPF program. Without __ksym, bpftool's skeleton generator looks for
+           BTF inside the .o and fails. Standard BPF helpers are skipped entirely
+           - libbpf's bpf_helpers.h already declares them, and a __ksym extern
+           would clash with that declaration. *)
         let name = kfunc_decl.Ir.ikfunc_name in
         if kfunc_decl.Ir.ikfunc_is_extern && Bpf_helpers.is_bpf_helper name then
           ()
@@ -3064,13 +3067,8 @@ let generate_declarations_in_source_order_unified ctx ir_multi_prog ~_btf_path _
               ) params)
           in
           let return_type_str = kfunc_signature_type_to_c kfunc_decl.Ir.ikfunc_return_type in
-          if kfunc_decl.Ir.ikfunc_is_extern then
-            emit_line ctx (sprintf "extern %s %s(%s) __ksym;"
-              return_type_str name params_str)
-          else (
-            emit_line ctx "/* kfunc declaration */";
-            emit_line ctx (sprintf "%s %s(%s);" return_type_str name params_str)
-          );
+          emit_line ctx (sprintf "extern %s %s(%s) __ksym;"
+            return_type_str name params_str);
           emit_blank_line ctx
         )
   ) ir_multi_prog.Ir.source_declarations;

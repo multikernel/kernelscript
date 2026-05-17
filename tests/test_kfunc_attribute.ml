@@ -151,12 +151,18 @@ let test_ebpf_kfunc_declarations () =
 
   (* @kfunc declarations are lowered into the IR; codegen needs no side-channel *)
   let (generated_code, _) = Ebpf_c_codegen.compile_multi_to_c_with_analysis ir in
-  
-  (* Check that kfunc declarations are generated *)
-  check bool "Contains kfunc declaration" true
-    (try ignore (Str.search_forward (Str.regexp "bool security_check") generated_code 0); true with Not_found -> false);
-  check bool "Contains kfunc call" true
-    (try ignore (Str.search_forward (Str.regexp "security_check(") generated_code 0); true with Not_found -> false)
+
+  let contains substr =
+    try ignore (Str.search_forward (Str.regexp_string substr) generated_code 0); true
+    with Not_found -> false
+  in
+  (* Local @kfuncs are external to the eBPF object - they live in the sibling
+     kernel module - so they must be declared with __ksym, like vmlinux kfuncs.
+     Without __ksym, bpftool gen skeleton fails with "failed to find BTF for
+     extern" because libbpf looks for the symbol's BTF inside the .o file. *)
+  check bool "Local @kfunc declared as __ksym extern" true
+    (contains "extern bool security_check(__u64 addr) __ksym;");
+  check bool "Contains kfunc call" true (contains "security_check(")
 
 (** Test kernel module print function translation *)
 let test_kernel_print_translation () =
