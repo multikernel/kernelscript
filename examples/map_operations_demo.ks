@@ -1,8 +1,6 @@
 // Map Operations Semantics Demo for KernelScript
 // Demonstrates advanced map operation analysis, concurrent access safety,
 // and global map sharing validation capabilities
-//
-// NOTE: This file uses advanced language features not yet implemented in KernelScript.
 
 include "xdp.kh"
 include "tc.kh"
@@ -21,7 +19,6 @@ struct Statistics {
 
 struct PerCpuData {
     local_counter: u64,
-    temp_storage: u8[64],
 }
 
 // Global maps shared across multiple programs with the new simplified syntax
@@ -44,7 +41,6 @@ var sequential_data : array<u32, ArrayElement>(1024)
 struct Event {
     timestamp: u64,
     event_type: u32,
-    data: u8[32],
 }
 
 struct ArrayElement {
@@ -75,7 +71,6 @@ struct ArrayElement {
     } else {
         percpu_data[cpu_id] = PerCpuData {
             local_counter: 1,
-            temp_storage: [0],
         }
     }
     
@@ -131,7 +126,6 @@ fn event_logger(ctx: *trace_event_raw_sys_enter) -> i32 {
             // Successfully reserved space - populate event data inline
             reserved->timestamp = 123456  // Fake timestamp
             reserved->event_type = ctx->id  // Use syscall ID from sys_enter context
-            reserved->data = [0]  // Simplified data
 
             // Submit the populated event
             event_stream.submit(reserved)
