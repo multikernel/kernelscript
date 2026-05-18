@@ -1,7 +1,7 @@
 (lang dune 2.9)
 
 (name kernelscript)
-(version 0.1.0)
+(version 0.1.1)
 
 (use_standard_c_and_cxx_flags true)
 
