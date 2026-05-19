@@ -74,7 +74,8 @@ fn main() -> i32 {
     
     (* Should generate runtime length checking to avoid truncation warnings *)
     check bool "has strlen check" true (contains_pattern result "strlen.*__src_len");
-    check bool "has strcpy for safe case" true (contains_pattern result "strcpy.*var_.*\"Hello\"");
+    check bool "binds source literal" true (contains_pattern result "__src = \"Hello\"");
+    check bool "has strcpy for safe case" true (contains_pattern result "strcpy.*var_.*__src");
     check bool "has strncpy for truncation case" true (contains_pattern result "strncpy.*var_");
     check bool "has explicit null termination" true (contains_pattern result "\\[.*\\].*=.*'\\\\0'");
     
@@ -166,8 +167,8 @@ fn main() -> i32 {
       check bool "uses comparison variable in if" true (contains_pattern result "if.*(__binop_");
       
       (* Should have proper string assignments *)
-      check bool "has Alice assignment" true (contains_pattern result "strcpy.*var_.*\"Alice\"");
-      check bool "has Bob assignment" true (contains_pattern result "strcpy.*var_.*\"Bob\"");
+      check bool "has Alice assignment" true (contains_pattern result "__src = \"Alice\"");
+      check bool "has Bob assignment" true (contains_pattern result "__src = \"Bob\"");
     ) else (
       failwith "Failed to generate userspace code file"
     )
@@ -222,9 +223,9 @@ fn main() -> i32 {
     let result = generate_userspace_code_from_program program_text "test_string_truncation" in
     
     (* Should handle all cases safely *)
-    check bool "has strlen checks" true (contains_pattern result "strlen.*\"toolong\"");
-    check bool "has safe strcpy path" true (contains_pattern result "strcpy.*var_.*\"exact\"");
-    check bool "has truncation path" true (contains_pattern result "strncpy.*var_.*\"toolong\".*[0-9]+.*-.*1");
+    check bool "has strlen checks" true (contains_pattern result "__src = \"toolong\"");
+    check bool "has safe strcpy path" true (contains_pattern result "__src = \"exact\"");
+    check bool "has truncation path" true (contains_pattern result "strncpy.*var_.*__src.*[0-9]+.*-.*1");
     check bool "explicit null termination" true (contains_pattern result "var_.*\\[.*-.*1\\].*=.*'\\\\0'");
     
     (* Should have proper size checking - the runtime checks use the declared buffer size *)
@@ -291,13 +292,13 @@ fn main() -> i32 {
     let result = generate_userspace_code_from_program program_text "test_edge_strings" in
     
     (* Should handle small strings safely *)
-    check bool "handles single char" true (contains_pattern result "strlen.*\"A\"");
-    check bool "handles empty string" true (contains_pattern result "strlen.*\"\"");
+    check bool "handles single char" true (contains_pattern result "__src = \"A\"");
+    check bool "handles empty string" true (contains_pattern result "__src = \"\"");
     check bool "size check for single" true (contains_pattern result "__src_len.*<.*2");
     check bool "size check for empty buffer" true (contains_pattern result "__src_len.*<.*1");
     
     (* Should still use safe string handling *)
-    check bool "safe assignment for single" true (contains_pattern result "strcpy.*var_.*\"A\"");
+    check bool "safe assignment for single" true (contains_pattern result "__src = \"A\"");
   with
   | exn -> fail ("Empty and single char strings test failed: " ^ Printexc.to_string exn)
 

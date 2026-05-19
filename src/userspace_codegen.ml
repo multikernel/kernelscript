@@ -1227,6 +1227,100 @@ let generate_type_alias_definitions_userspace_from_ast type_aliases =
     "/* Type alias definitions */\n" ^ (String.concat "\n" type_alias_defs) ^ "\n\n"
   ) else ""
 
+(** Generate /proc/sys path constant and read/write accessors for a @sysctl global. *)
+let generate_sysctl_accessors_userspace (gv : ir_global_variable) =
+  match gv.sysctl_path with
+  | None -> None
+  | Some dot_path ->
+    let name = gv.global_var_name in
+    let proc_path =
+      "/proc/sys/" ^
+      String.map (fun c -> if c = '.' then '/' else c) dot_path
+    in
+    let path_const =
+      sprintf "static const char __ks_sysctl_%s_path[] = \"%s\";" name proc_path
+    in
+    let body = match gv.global_var_type with
+      | IRStr n ->
+        sprintf {|static inline void __ks_sysctl_%s_read(char out[%d]) {
+    int __fd = open(__ks_sysctl_%s_path, O_RDONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        out[0] = 0; return;
+    }
+    ssize_t __n = read(__fd, out, %d - 1);
+    int __e = errno; close(__fd);
+    if (__n < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+        out[0] = 0; return;
+    }
+    out[__n] = 0;
+    if (__n > 0 && out[__n - 1] == '\n') out[__n - 1] = 0;
+}
+
+static inline void __ks_sysctl_%s_write(const char *v) {
+    int __fd = open(__ks_sysctl_%s_path, O_WRONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        return;
+    }
+    size_t __l = strlen(v);
+    ssize_t __w = write(__fd, v, __l);
+    int __e = errno; close(__fd);
+    if (__w < 0)
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+}|}
+          name n name name n name name name name name
+      | t ->
+        let c_type, fmt = match t with
+          | IRU8 | IRU16 | IRU32 -> "uint32_t", "%u"
+          | IRU64 -> "uint64_t", "%llu"
+          | IRI8 | IRI16 | IRI32 -> "int32_t", "%d"
+          | IRI64 -> "int64_t", "%lld"
+          | IRBool -> "int", "%d"
+          | _ ->
+            failwith
+              (sprintf "sysctl variable '%s' has unsupported IR type" name)
+        in
+        sprintf {|static inline %s __ks_sysctl_%s_read(void) {
+    int __fd = open(__ks_sysctl_%s_path, O_RDONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        return 0;
+    }
+    char __buf[64];
+    ssize_t __n = read(__fd, __buf, sizeof(__buf) - 1);
+    int __e = errno; close(__fd);
+    if (__n < 0) {
+        fprintf(stderr, "sysctl read %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+        return 0;
+    }
+    __buf[__n] = 0;
+    %s __v = 0;
+    if (sscanf(__buf, "%s", &__v) != 1) {
+        fprintf(stderr, "sysctl read %%s: parse failed (unexpected format)\n", __ks_sysctl_%s_path);
+        return 0;
+    }
+    return __v;
+}
+
+static inline void __ks_sysctl_%s_write(%s v) {
+    int __fd = open(__ks_sysctl_%s_path, O_WRONLY);
+    if (__fd < 0) {
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(errno));
+        return;
+    }
+    char __buf[64];
+    int __n = snprintf(__buf, sizeof(__buf), "%s", v);
+    ssize_t __w = write(__fd, __buf, __n);
+    int __e = errno; close(__fd);
+    if (__w < 0)
+        fprintf(stderr, "sysctl write %%s: %%s\n", __ks_sysctl_%s_path, strerror(__e));
+}|}
+          c_type name name name name c_type fmt name name c_type name name fmt name
+    in
+    Some (path_const ^ "\n\n" ^ body)
+
 (** Generate ALL declarations in original source order for userspace - complete implementation *)
 let generate_declarations_in_source_order_userspace ir_multi_prog =
   let declarations = ref [] in
@@ -1255,9 +1349,12 @@ let generate_declarations_in_source_order_userspace ir_multi_prog =
         (* Skip configs in userspace - they're handled separately *)
         ()
     
-    | Ir.IRDeclGlobalVarDef _global_var ->
-        (* Skip global variables in userspace - they're handled separately *)
-        ()
+    | Ir.IRDeclGlobalVarDef global_var ->
+        (* Sysctl globals get inline accessors emitted here.
+           Other globals are handled by the eBPF skeleton infrastructure. *)
+        (match generate_sysctl_accessors_userspace global_var with
+         | Some accessors -> declarations := accessors :: !declarations
+         | None -> ())
     
     | Ir.IRDeclFunctionDef _func_def ->
         (* Skip functions in userspace - they're handled separately *)
@@ -1380,13 +1477,23 @@ let rec generate_c_value_from_ir ?(auto_deref_map_access=false) ctx ir_value =
              | Ast.ArrayLit _ -> "{...}" (* nested arrays simplified *)
            ) elems in
            sprintf "{%s}" (String.concat ", " elem_strs))
-  | IRVariable name -> 
+  | IRVariable name ->
       (* Check if this is a global variable that should be accessed through skeleton *)
       let is_global = List.exists (fun gv -> gv.global_var_name = name) ctx.global_variables in
       if is_global then
         (* Access global variable through skeleton *)
         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
-        if global_var.is_local then
+        if global_var.sysctl_path <> None then
+          (* sysctl reads call the typed accessor.
+             For str(N) we wrap in a stmt-expr backed by a static buffer
+             so the load expression has a usable lifetime. *)
+          (match global_var.global_var_type with
+           | IRStr n ->
+               sprintf "({ static char __ks_sb_%s[%d]; __ks_sysctl_%s_read(__ks_sb_%s); __ks_sb_%s; })"
+                 name n name name name
+           | _ ->
+               sprintf "__ks_sysctl_%s_read()" name)
+        else if global_var.is_local then
           (* Local global variables are not accessible from userspace *)
           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
         else if global_var.is_pinned then
@@ -1764,7 +1871,9 @@ let generate_variable_assignment ctx dest src is_const =
       if is_global then
         (* Global variable assignment - add null check to prevent segfault *)
         let global_var = List.find (fun gv -> gv.global_var_name = name) ctx.global_variables in
-        if global_var.is_local then
+        if global_var.sysctl_path <> None then
+          sprintf "%s__ks_sysctl_%s_write(%s);" assignment_prefix name src_str
+        else if global_var.is_local then
           (* Local global variables are not accessible from userspace *)
           failwith (Printf.sprintf "Local global variable '%s' is not accessible from userspace" name)
         else if global_var.is_pinned then
@@ -1780,7 +1889,7 @@ let generate_variable_assignment ctx dest src is_const =
         (* For string assignments, use safer approach to avoid truncation warnings *)
         let result = (match dest.val_type with
          | IRStr size -> 
-             sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+             sprintf "%s{ const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str dest_str size dest_str size
          | _ -> 
              sprintf "%s%s = %s;" assignment_prefix dest_str src_str) in
         
@@ -1801,7 +1910,7 @@ let generate_variable_assignment ctx dest src is_const =
       (* For string assignments, use safer approach to avoid truncation warnings *)
       let result = (match dest.val_type with
        | IRStr size -> 
-           sprintf "%s{ size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str src_str dest_str src_str size dest_str size
+           sprintf "%s{ const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" assignment_prefix src_str size dest_str dest_str size dest_str size
        | _ -> 
            sprintf "%s%s = %s;" assignment_prefix dest_str src_str) in
       
@@ -1870,10 +1979,10 @@ let rec generate_c_instruction_from_ir ctx instruction =
                 (match init_expr.expr_desc with
                  | IRValue (ir_val) when (match ir_val.value_desc with IRLiteral (StringLit _) -> true | _ -> false) ->
                      (* Simple string literal - use safe initialization with length checking *)
-                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name init_str c_var_name init_str size c_var_name size
+                     sprintf "%s;\n    { const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name c_var_name size c_var_name size
                  | _ ->
                      (* Complex expression (function call, concatenation, etc.) - use safe strcpy with length checking *)
-                     sprintf "%s;\n    { size_t __src_len = strlen(%s); if (__src_len < %d) { strcpy(%s, %s); } else { strncpy(%s, %s, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name init_str c_var_name init_str size c_var_name size)
+                     sprintf "%s;\n    { const char *__src = %s; size_t __src_len = strlen(__src); if (__src_len < %d) { strcpy(%s, __src); } else { strncpy(%s, __src, %d - 1); %s[%d - 1] = '\\0'; } }" string_decl init_str size c_var_name c_var_name size c_var_name size)
             | None ->
                 sprintf "%s;" string_decl)
        | IRArray (element_type, size, _) ->
