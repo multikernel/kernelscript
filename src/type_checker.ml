@@ -279,47 +279,64 @@ let perf_options_static_group_leader expr =
             | _ -> None))
   | _ -> None
 
-(* Software and tracepoint events don't occupy a hardware PMU counter, so they
-   never count against a group's PMU-slot budget. The event enum packs the
-   perf_event_attr.type tag in the high 32 bits; type 1 = software, 2 = tracepoint. *)
-let perf_event_consumes_pmu_slot expr =
-  let pmu_free_tag tag = tag = 1L || tag = 2L in
-  match expr.expr_desc with
-  | Identifier ("page_faults" | "context_switches" | "cpu_migrations") -> 0
-  | Literal (IntLit (Signed64 value, _))
-      when pmu_free_tag (Int64.shift_right_logical value 32) -> 0
-  | Literal (IntLit (Unsigned64 value, _))
-      when pmu_free_tag (Int64.shift_right_logical value 32) -> 0
-  | _ -> 1
+(* Resolve an enum-constant identifier to its declared value by searching the enum
+   definitions, without knowing which enum it belongs to. *)
+let resolve_enum_constant_value ctx name =
+  Hashtbl.fold (fun _ type_def acc ->
+    match acc with
+    | Some _ -> acc
+    | None ->
+        (match type_def with
+         | EnumDef (_, values, _) ->
+             (match List.assoc_opt name values with
+              | Some (Some (Signed64 v | Unsigned64 v)) -> Some v
+              | _ -> None)
+         | _ -> None)
+  ) ctx.types None
 
-let perf_options_pmu_slots expr =
+(* Statically resolve a perf_options `event` expression to its packed value, or None
+   if it isn't known at compile time. The bit layout lives entirely in stdlib. *)
+let static_perf_event_value ctx expr =
+  match expr.expr_desc with
+  | Literal (IntLit ((Signed64 v | Unsigned64 v), _)) -> Some v
+  | Identifier name -> resolve_enum_constant_value ctx name
+  | _ -> None
+
+(* How many hardware PMU counter slots this event needs. Events whose value isn't
+   statically known are conservatively counted as one slot; stdlib decides the rest. *)
+let perf_event_pmu_slots ctx expr =
+  match static_perf_event_value ctx expr with
+  | Some value -> if Stdlib.perf_event_consumes_pmu_slot value then 1 else 0
+  | None -> 1
+
+let perf_options_pmu_slots ctx expr =
   match expr.expr_desc with
   | StructLiteral ("perf_options", fields) ->
       (match List.assoc_opt "event" fields with
-       | Some event_expr -> perf_event_consumes_pmu_slot event_expr
+       | Some event_expr -> perf_event_pmu_slots ctx event_expr
        | None -> 1)
   | _ -> 1
 
-let perf_attach_decl_from_expr name expr pos =
+let perf_attach_decl_from_expr ctx name expr pos =
   match expr.expr_desc with
   | Call ({ expr_desc = Identifier "attach"; _ }, [_prog; opts; _flags])
       when is_attach_to_perf_options expr ->
       Some {
         perf_attach_name = name;
         perf_attach_leader = perf_options_static_group_leader opts;
-        perf_attach_pmu_slots = perf_options_pmu_slots opts;
+        perf_attach_pmu_slots = perf_options_pmu_slots ctx opts;
         perf_attach_pos = pos;
       }
   | _ -> None
 
-let validate_static_perf_event_groups_in_function func =
+let validate_static_perf_event_groups_in_function ctx func =
   let collect_expr acc _expr = acc in
   let rec collect_statement acc stmt =
     match stmt.stmt_desc with
     | Declaration (name, _, Some expr)
     | ConstDeclaration (name, _, expr) ->
         let acc =
-          match perf_attach_decl_from_expr name expr stmt.stmt_pos with
+          match perf_attach_decl_from_expr ctx name expr stmt.stmt_pos with
           | Some attach -> attach :: acc
           | None -> acc
         in
@@ -430,9 +447,9 @@ let validate_static_perf_event_groups_in_function func =
         pos
   ) member_counts
 
-let validate_static_perf_event_groups ast =
+let validate_static_perf_event_groups ctx ast =
   List.iter (function
-    | GlobalFunction func -> validate_static_perf_event_groups_in_function func
+    | GlobalFunction func -> validate_static_perf_event_groups_in_function ctx func
     | _ -> ()
   ) ast
 
@@ -3390,7 +3407,7 @@ let rec type_check_and_annotate_ast ?symbol_table:(provided_symbol_table=None) ?
         ()
   ) ast;
 
-  validate_static_perf_event_groups ast;
+  validate_static_perf_event_groups ctx ast;
   
   (* Second pass: type check attributed functions and global functions with multi-program awareness *)
   let (typed_attributed_functions, typed_userspace_functions) = List.fold_left (fun (attr_acc, userspace_acc) decl ->
