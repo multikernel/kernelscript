@@ -151,7 +151,7 @@ let test_stdlib_integration () =
   (match Kernelscript.Stdlib.get_builtin_function_signature "read" with
   | Some (params, return_type) ->
       check int "read parameter count" 0 (List.length params);
-      check bool "read return type is PerfRead" true (return_type = Kernelscript.Ast.Struct "PerfRead")
+      check bool "read return type is perf_read" true (return_type = Kernelscript.Ast.Struct "perf_read")
   | None -> check bool "read function signature should exist" false true);
 
   (* Verify that the custom validation function is wired up on the attach entry *)
@@ -171,8 +171,7 @@ let test_perf_attachment_value_flow () =
 fn main() -> i32 {
   var prog = load(on_cache_miss)
   var att = attach(prog, perf_options {
-    perf_type: perf_type_hardware,
-    perf_config: cache_misses,
+    event: cache_misses,
     period: 1000000,
   }, 0)
   var snapshot = read(att)

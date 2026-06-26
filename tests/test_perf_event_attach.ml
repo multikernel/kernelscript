@@ -38,26 +38,18 @@ let bool_value value =
 let int64_value value =
   make_ir_value (IRLiteral (IntLit (Signed64 value, None))) IRI64 test_pos
 
-let perf_type_value name raw_value =
+let perf_event_value name raw_value =
   make_ir_value
-    (IREnumConstant ("perf_type", name, Signed64 raw_value))
-    (IREnum ("perf_type", []))
-    test_pos
-
-let perf_config_value enum_name name raw_value =
-  make_ir_value
-    (IREnumConstant (enum_name, name, Signed64 raw_value))
-    (IREnum (enum_name, []))
+    (IREnumConstant ("perf_event", name, Signed64 raw_value))
+    (IREnum ("perf_event", []))
     test_pos
 
 let perf_attr_expr ~pid ~cpu =
   make_ir_expr
     (IRStructLiteral ("perf_options", [
-      ("perf_type", perf_type_value "perf_type_hardware" 0L);
-      ("perf_config", perf_config_value "perf_hw_config" "branch_misses" 5L);
+      ("event", perf_event_value "branch_misses" 0x5L);
       ("pid", int32_value pid);
       ("cpu", int32_value cpu);
-      ("group_fd", int32_value (-1L));
       ("period", uint64_value 1000000L);
       ("wakeup", uint32_value 1L);
       ("inherit", bool_value false);
@@ -150,11 +142,9 @@ let appears_before str a b =
 let perf_attr_expr_with ~period ~wakeup =
   make_ir_expr
     (IRStructLiteral ("perf_options", [
-      ("perf_type", perf_type_value "perf_type_hardware" 0L);
-      ("perf_config", perf_config_value "perf_hw_config" "branch_misses" 5L);
+      ("event", perf_event_value "branch_misses" 0x5L);
       ("pid",     int32_value 1234L);
       ("cpu",     int32_value 0L);
-      ("group_fd", int32_value (-1L));
       ("period",  uint64_value period);
       ("wakeup",  uint32_value wakeup);
       ("inherit",         bool_value false);
@@ -172,7 +162,7 @@ let make_perf_code_with ~period ~wakeup =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
   let attr_decl =
@@ -242,12 +232,10 @@ let test_perf_event_period_and_wakeup_custom () =
 
 let test_perf_event_group_fd_codegen () =
   let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
-  check bool "ks_perf_options carries group_fd" true
+  check bool "perf options carry no raw group_fd field" false
     (contains_substr code "int32_t group_fd;");
-  check bool "hand-built perf options default group_fd to -1" true
-    (contains_substr code ".group_fd = -1");
-  check bool "group_fd copied from options" true
-    (contains_substr code "int group_fd = ks_attr.group_fd;");
+  check bool "group leader fd defaults to no-group" true
+    (contains_substr code "int group_fd = -1;");
   check bool "invalid group_fd rejected" true
     (contains_substr code "if (group_fd < -1)");
   check bool "perf_event_open receives variable group_fd" true
@@ -323,10 +311,10 @@ let test_read_helpers_generated_when_used () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
-  let count_value = make_ir_value (IRVariable "count") (IRStruct ("PerfRead", [])) test_pos in
+  let count_value = make_ir_value (IRVariable "count") (IRStruct ("perf_read", [])) test_pos in
   let attr_decl =
     make_ir_instruction
       (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
@@ -364,10 +352,10 @@ let test_perf_read_helper_scales_multiplexed_counts () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
-  let count_value = make_ir_value (IRVariable "count") (IRStruct ("PerfRead", [])) test_pos in
+  let count_value = make_ir_value (IRVariable "count") (IRStruct ("perf_read", [])) test_pos in
   let attr_decl =
     make_ir_instruction
       (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
@@ -421,9 +409,9 @@ let test_perf_attach_event_function_generated () =
   check bool "no snprintf perf_fd string hack" false
     (contains_substr code "snprintf(%s, sizeof(%s),");
   check bool "perf attr type copied directly from perf_options" true
-    (contains_substr code "ks_attr.attr.type = (__u32)ks_attr.perf_type;");
+    (contains_substr code "ks_attr.attr.type = KS_PERF_EVENT_TYPE(ks_attr.event);");
   check bool "perf attr config copied directly from perf_options" true
-    (contains_substr code "ks_attr.attr.config = (__u64)ks_attr.perf_config;");
+    (contains_substr code "ks_attr.attr.config = KS_PERF_EVENT_CONFIG(ks_attr.event);");
   check bool "old perf_counter switch removed" false
     (contains_substr code "switch (ks_attr.counter)");
   check bool "find_prog_by_fd helper used for program lookup" true
@@ -434,11 +422,11 @@ let test_perf_attach_event_function_generated () =
     (contains_substr code "perf attach flags must be 0");
   check bool "perf attach no longer ignores flags" false
     (contains_substr code "(void)flags");
-  check bool "perf attach returns PerfAttachment" true
-    (contains_substr code "PerfAttachment ks_attach_perf_event");
+  check bool "perf attach returns perf_attachment" true
+    (contains_substr code "perf_attachment ks_attach_perf_event");
   check bool "attachment struct typedef emitted" true
-    (contains_substr code "typedef struct PerfAttachment");
-  check bool "PerfAttachment carries stale-handle generation" true
+    (contains_substr code "typedef struct perf_attachment");
+  check bool "perf_attachment carries stale-handle generation" true
     (contains_substr code "uint64_t generation;");
   check bool "perf attach records kernel perf event id" true
     (contains_substr code "PERF_EVENT_IOC_ID");
@@ -460,7 +448,7 @@ let test_detach_attach_concurrent_window () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
   let attr_decl =
@@ -493,40 +481,6 @@ let test_detach_attach_concurrent_window () =
   check bool "detach invalidates stale perf attachment handles before close" true
     (contains_substr code "invalidate_perf_attachment_state_locked(entry)")
 
-let test_perf_group_source_field_access_codegen () =
-  let source = {|
-@perf_event
-fn on_event(ctx: *bpf_perf_event_data) -> i32 {
-    return 0
-}
-
-fn main() -> i32 {
-    var prog = load(on_event)
-    var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
-    }, 0)
-    var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
-        group_fd: cache.perf_fd,
-    }, 0)
-    detach(branch)
-    detach(cache)
-    detach(prog)
-    return 0
-}
-|} in
-  let code = make_generated_code_from_source source in
-  check bool "source group_fd field access type-checks and codegens" true
-    (contains_substr code "var_cache.perf_fd");
-  check bool "source emits grouped perf option assignment" true
-    (contains_substr code ".group_fd = __field_access_");
-  check bool "leader detach protection helper generated" true
-    (contains_substr code "perf_group_has_active_members_locked");
-  check bool "detach cascades active group leaders" true
-    (contains_substr code "Detaching perf group leader fd %d cascades to %d active member(s)")
-
 let test_perf_group_attachment_field_codegen () =
   let source = {|
 @perf_event
@@ -537,12 +491,10 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
     detach(branch)
@@ -553,11 +505,15 @@ fn main() -> i32 {
 |} in
   let code = make_generated_code_from_source source in
   check bool "perf_options carries high-level group attachment" true
-    (contains_substr code "PerfAttachment group;");
+    (contains_substr code "perf_attachment group;");
   check bool "source group attachment field type-checks and codegens" true
     (contains_substr code ".group = var_cache");
   check bool "runtime prefers valid group attachment fd" true
-    (contains_substr code "opts.group.perf_fd >= 0 && opts.group.link_id > 0 && opts.group.generation != 0")
+    (contains_substr code "opts.group.perf_fd >= 0 && opts.group.link_id > 0 && opts.group.generation != 0");
+  check bool "leader detach protection helper generated" true
+    (contains_substr code "perf_group_has_active_members_locked");
+  check bool "detach cascades active group leaders" true
+    (contains_substr code "Detaching perf group leader fd %d cascades to %d active member(s)")
 
 let test_perf_read_codegen () =
   let source = {|
@@ -569,12 +525,10 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
     var snapshot = read(cache)
@@ -594,7 +548,7 @@ fn main() -> i32 {
 |} in
   let code = make_generated_code_from_source source in
   check bool "unified read helper generated" true
-    (contains_substr code "PerfRead ks_perf_attachment_read");
+    (contains_substr code "perf_read ks_perf_attachment_read");
   check bool "old raw helper removed" false
     (contains_substr code "ks_perf_attachment_read_raw");
   check bool "old details helper removed" false
@@ -614,139 +568,6 @@ fn main() -> i32 {
     (contains_substr code "memcpy(__field_access_");
   check bool "array snapshot indexing dereferences element pointer" true
     (contains_substr code "*__array_ptr_")
-
-let test_perf_group_too_large_static_group_rejected () =
-  Unix.putenv "KERNELSCRIPT_PERF_GROUP_MAX_EVENTS" "4";
-  let source = {|
-@perf_event
-fn on_event(ctx: *bpf_perf_event_data) -> i32 {
-    return 0
-}
-
-fn main() -> i32 {
-    var prog = load(on_event)
-    var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
-    }, 0)
-    var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
-        group: cache,
-    }, 0)
-    var cycles = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cpu_cycles,
-        group: cache,
-    }, 0)
-    var inst = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: instructions,
-        group: cache,
-    }, 0)
-    var refs = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_references,
-        group: cache,
-    }, 0)
-    detach(refs)
-    detach(inst)
-    detach(cycles)
-    detach(branch)
-    detach(cache)
-    detach(prog)
-    return 0
-}
-|} in
-  try
-    let _ = make_generated_code_from_source source in
-    fail "Oversized static perf event group should be rejected at compile time"
-  with
-  | Type_error (msg, _) ->
-      check bool "oversized group reports PMU group limit" true
-        (contains_substr msg "perf event group rooted at 'cache' needs 5 PMU counter slot(s), but target PMU group limit is 4")
-  | exn ->
-      fail ("Expected Type_error for oversized perf event group, got " ^ Printexc.to_string exn)
-
-let test_perf_group_too_many_static_members_rejected () =
-  Unix.putenv "KERNELSCRIPT_PERF_GROUP_MAX_EVENTS" "32";
-  let member_decls =
-    List.init 16 (fun i ->
-      Printf.sprintf {|
-    var sw%d = attach(prog, perf_options {
-        perf_type: perf_type_software,
-        perf_config: context_switches,
-        group: leader,
-    }, 0)|} i)
-    |> String.concat "\n"
-  in
-  let source = {|
-@perf_event
-fn on_event(ctx: *bpf_perf_event_data) -> i32 {
-    return 0
-}
-
-fn main() -> i32 {
-    var prog = load(on_event)
-    var leader = attach(prog, perf_options {
-        perf_type: perf_type_software,
-        perf_config: page_faults,
-    }, 0)
-|} ^ member_decls ^ {|
-    detach(leader)
-    detach(prog)
-    return 0
-}
-|} in
-  try
-    let _ = make_generated_code_from_source source in
-    fail "Static perf event group with more than 16 members should be rejected"
-  with
-  | Type_error (msg, _) ->
-      check bool "oversized group reports clamped perf group limit" true
-        (contains_substr msg "perf event group rooted at 'leader' has 17 member(s), but target perf group limit is 16")
-  | exn ->
-      fail ("Expected Type_error for oversized perf event member count, got " ^ Printexc.to_string exn)
-
-let test_perf_group_env_override_clamped_to_read_capacity () =
-  Unix.putenv "KERNELSCRIPT_PERF_GROUP_MAX_EVENTS" "32";
-  let member_decls =
-    List.init 16 (fun i ->
-      Printf.sprintf {|
-    var hw%d = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
-        group: leader,
-    }, 0)|} i)
-    |> String.concat "\n"
-  in
-  let source = {|
-@perf_event
-fn on_event(ctx: *bpf_perf_event_data) -> i32 {
-    return 0
-}
-
-fn main() -> i32 {
-    var prog = load(on_event)
-    var leader = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
-    }, 0)
-|} ^ member_decls ^ {|
-    detach(leader)
-    detach(prog)
-    return 0
-}
-|} in
-  try
-    let _ = make_generated_code_from_source source in
-    fail "Perf group limit override above PerfRead capacity should be clamped"
-  with
-  | Type_error (msg, _) ->
-      check bool "oversized group reports clamped PMU group limit" true
-        (contains_substr msg "perf event group rooted at 'leader' needs 17 PMU counter slot(s), but target PMU group limit is 16")
-  | exn ->
-      fail ("Expected Type_error for clamped perf event group limit, got " ^ Printexc.to_string exn)
 
 (* ── Type-checking regression tests ───────────────────────────────────── *)
 
@@ -823,12 +644,8 @@ let tests = [
   test_case "perf_read_helper_scales_multiplexed_counts"`Quick test_perf_read_helper_scales_multiplexed_counts;
   test_case "perf_attach_event_function_generated"      `Quick test_perf_attach_event_function_generated;
   test_case "detach_attach_concurrent_window"           `Quick test_detach_attach_concurrent_window;
-  test_case "perf_group_source_field_access_codegen"    `Quick test_perf_group_source_field_access_codegen;
   test_case "perf_group_attachment_field_codegen"       `Quick test_perf_group_attachment_field_codegen;
   test_case "perf_read_codegen"                         `Quick test_perf_read_codegen;
-  test_case "perf_group_too_large_static_group_rejected" `Quick test_perf_group_too_large_static_group_rejected;
-  test_case "perf_group_too_many_static_members_rejected" `Quick test_perf_group_too_many_static_members_rejected;
-  test_case "perf_group_env_override_clamped_to_read_capacity" `Quick test_perf_group_env_override_clamped_to_read_capacity;
   test_case "standard_attach_uses_libbpf_error_checks"  `Quick test_standard_attach_uses_libbpf_error_checks;
 ]
 

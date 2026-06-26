@@ -460,25 +460,22 @@ The context type is always `*bpf_perf_event_data` (from `vmlinux.h`).
 fn main() -> i32 {
     var prog = load(my_handler)
 
-    // Only perf_type + perf_config are required; all other fields use language-level defaults:
+    // Only event is required; all other fields use language-level defaults:
     // pid=-1, cpu=0, no group, period=1_000_000, wakeup=1, inherit/exclude_*=false
-    var misses = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    var misses = attach(prog, perf_options { event: branch_misses }, 0)
 
     // Override specific fields as needed:
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
         cpu: 2,
         period: 500000,
         exclude_kernel: true,
     }, 0)
 
     // Put branch misses in cache's perf event group. Adding a member restarts
-    // the whole group from zero. The lower-level group_fd: cache.perf_fd form
-    // is still accepted.
+    // the whole group from zero.
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
 
@@ -497,12 +494,10 @@ fn main() -> i32 {
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `perf_type` | `perf_type` | *(required)* | `perf_event_attr.type` tag |
-| `perf_config` | `u64` | *(required)* | `perf_event_attr.config` value for that type |
+| `event` | `perf_event` | *(required)* | Named event; packs the `perf_event_attr.type` tag and config into one value |
 | `pid` | `i32` | `-1` | -1 = all processes; ≥0 = specific PID |
 | `cpu` | `i32` | `0` | ≥0 = specific CPU; -1 = any CPU (pid must be ≥0) |
-| `group_fd` | `i32` | `-1` | -1 = standalone event; ≥0 = perf group leader fd |
-| `group` | `PerfAttachment` | invalid attachment | Preferred high-level group leader attachment |
+| `group` | `perf_attachment` | invalid attachment | Group leader attachment; omit for a standalone event |
 | `period` | `u64` | `1000000` | Sample after this many events |
 | `wakeup` | `u32` | `1` | Wake userspace after N samples |
 | `inherit` | `bool` | `false` | Inherit to forked children |
@@ -518,40 +513,29 @@ fn main() -> i32 {
 | -1 | ≥ 0 | All processes on specific CPU (system-wide) |
 | -1 | -1 | **Invalid** — rejected with error |
 
-**`perf_type` enum:**
+**`perf_event` enum:**
 
-| Value | Linux constant |
-|---|---|
-| `perf_type_hardware` | `PERF_TYPE_HARDWARE` |
-| `perf_type_software` | `PERF_TYPE_SOFTWARE` |
-| `perf_type_tracepoint` | `PERF_TYPE_TRACEPOINT` |
-| `perf_type_hw_cache` | `PERF_TYPE_HW_CACHE` |
-| `perf_type_raw` | `PERF_TYPE_RAW` |
-| `perf_type_breakpoint` | `PERF_TYPE_BREAKPOINT` |
+Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its config in the low 32 bits, so naming the event fixes both and the type can never be mismatched with the config.
 
-**Common `perf_config` constants:**
-
-| Value | Intended `perf_type` | Linux constant |
+| Value | Kernel type | Linux config constant |
 |---|---|---|
-| `cpu_cycles` | `perf_type_hardware` | `PERF_COUNT_HW_CPU_CYCLES` |
-| `instructions` | `perf_type_hardware` | `PERF_COUNT_HW_INSTRUCTIONS` |
-| `cache_references` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_REFERENCES` |
-| `cache_misses` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_MISSES` |
-| `branch_instructions` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
-| `branch_misses` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_MISSES` |
-| `page_faults` | `perf_type_software` | `PERF_COUNT_SW_PAGE_FAULTS` |
-| `context_switches` | `perf_type_software` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
-| `cpu_migrations` | `perf_type_software` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
-
-For event families with a richer config space, such as `perf_type_hw_cache`, provide the encoded kernel `perf_config` value directly instead of relying on a flattened enum.
+| `cpu_cycles` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CPU_CYCLES` |
+| `instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_INSTRUCTIONS` |
+| `cache_references` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_REFERENCES` |
+| `cache_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_MISSES` |
+| `branch_instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
+| `branch_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_MISSES` |
+| `page_faults` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_PAGE_FAULTS` |
+| `context_switches` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
+| `cpu_migrations` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
 
 **Generated C helpers (emitted when `attach(prog, perf_options{...}, flags)` is used):**
 
 | Function | Signature | Description |
 |---|---|---|
 | `ks_open_perf_event` | `int (ks_perf_options)` | Calls `perf_event_open(2)`, returns fd |
-| `ks_attach_perf_event` | `PerfAttachment (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
-| `ks_perf_attachment_read` | `PerfRead (PerfAttachment)` | Direct fd snapshot through the attachment value with stale-handle detection |
+| `ks_attach_perf_event` | `perf_attachment (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
+| `ks_perf_attachment_read` | `perf_read (perf_attachment)` | Direct fd snapshot through the attachment value with stale-handle detection |
 
 **Attach sequence for standalone events (compiler-generated, inside `ks_attach_perf_event`):**
 1. `ks_attr.attr.disabled = 1` — open counter without starting it  
@@ -561,19 +545,16 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 5. `ioctl(perf_fd, PERF_EVENT_IOC_ENABLE, 0)` — **start counting**  
 
 **Perf event groups:**
-- `group: leader_attachment` is the preferred way to join a perf group.
-- `group_fd >= 0` opens the new event as a member of that leader fd.
+- `group: leader_attachment` joins the new event to that leader's perf group.
 - Group members are opened disabled, linked to the BPF program, then the leader is disabled, reset, and enabled with `PERF_IOC_FLAG_GROUP`.
 - Adding a member to an already running group restarts the whole group from zero.
-- A group is scheduled as an atomic PMU unit. Separate events and separate groups may be multiplexed; members inside one group are not independently multiplexed. If a statically visible group needs more PMU counter slots than the target limit, compilation fails.
-- The compile-time group limit uses known sysfs PMU caps when available, falls back to `4`, can be overridden with `KERNELSCRIPT_PERF_GROUP_MAX_EVENTS`, and is capped at the 16 entries exposed by `PerfRead`.
-- `perf_type_software` and `perf_type_tracepoint` do not consume PMU counter slots for this check; static hardware/raw/cache/breakpoint events consume one slot, and dynamic `perf_type` values are conservatively counted as one slot.
+- A group is scheduled as an atomic PMU unit. Separate events and separate groups may be multiplexed; members inside one group are not independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)` and reported by `attach()` at runtime — group sizing is enforced on the actual host, not guessed at compile time.
 - Detaching a member is allowed. Detaching a leader cascades to any live members.
 - Generated perf events always enable `PERF_FORMAT_GROUP | PERF_FORMAT_ID`, and `read(att)` returns up to 16 same-time group values plus perf IDs and timing fields. `raw` and `scaled` select the entry matching the attachment being read.
 
 **Counter reads:**
 - Generated perf events request `PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING | PERF_FORMAT_ID | PERF_FORMAT_GROUP`.
-- `read(att)` returns a `PerfRead` snapshot with `raw`, `scaled`, `time_enabled`, `time_running`, `count`, `values`, and `ids`.
+- `read(att)` returns a `perf_read` snapshot with `raw`, `scaled`, `time_enabled`, `time_running`, `count`, `values`, and `ids`.
 - `read(att).scaled` equals this attachment's raw value when `time_enabled == time_running`.
 - If multiplexing occurred, `read(att).scaled` is `value * time_enabled / time_running` using a 128-bit intermediate.
 - If `time_running == 0`, `read(att)` reports an error and returns `scaled == -1`.
@@ -588,11 +569,11 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 **Compiler implementation:**
 - Detects `attach(prog, perf_options_value, flags)` (three-argument form with `perf_options` second arg) and routes to `ks_attach_perf_event`
 - Requires perf attach `flags` to be `0`; nonzero values are rejected instead of being silently ignored
-- Returns a first-class `PerfAttachment` value for perf attaches so one program can hold multiple live counters
-- `PerfAttachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
+- Returns a first-class `perf_attachment` value for perf attaches so one program can hold multiple live counters
+- `perf_attachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
 - Exposes omitted `perf_options` fields as language-level defaults (partial struct literal)
 - Validates `pid ≥ -1`, `cpu ≥ -1`, `group_fd ≥ -1`, and rejects `pid == -1 && cpu == -1` at runtime
-- Treats `group` as valid only when it carries a live `PerfAttachment` generation token; otherwise `group_fd` controls grouping
+- Treats `group` as valid only when it carries a live `perf_attachment` generation token; otherwise the event is opened standalone
 - Emits `PERF_FLAG_FD_CLOEXEC` for safe fd inheritance
 - BPF program section is `SEC("perf_event")`
 

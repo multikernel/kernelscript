@@ -110,17 +110,17 @@ let validate_register_function arg_types ast_context _pos =
         (false, Some "register() requires an impl block argument")
 
 (** Read dispatch metadata keyed by argument type.
-    This keeps read() trait-shaped even while only PerfAttachment is supported. *)
+    This keeps read() trait-shaped even while only perf_attachment is supported. *)
 type read_dispatch = {
   read_return_type: bpf_type;
   read_userspace_impl: string;
 }
 
 let read_dispatch_for_type = function
-  | Struct "PerfAttachment"
-  | UserType "PerfAttachment" ->
+  | Struct "perf_attachment"
+  | UserType "perf_attachment" ->
       Some {
-        read_return_type = Struct "PerfRead";
+        read_return_type = Struct "perf_read";
         read_userspace_impl = "ks_perf_attachment_read";
       }
   | _ -> None
@@ -143,7 +143,7 @@ let validate_read_function arg_types _ast_context _pos =
   | [arg_type] ->
       (match read_dispatch_for_type arg_type with
        | Some _ -> (true, None)
-       | None -> (false, Some "read() currently requires a PerfAttachment"))
+       | None -> (false, Some "read() currently requires a perf_attachment"))
   | _ ->
       (false, Some "read() currently requires exactly one argument")
 
@@ -151,11 +151,11 @@ let validate_read_function arg_types _ast_context _pos =
 let validate_detach_function arg_types _ast_context _pos =
   match arg_types with
   | [ProgramHandle]
-  | [Struct "PerfAttachment"]
-  | [UserType "PerfAttachment"] ->
+  | [Struct "perf_attachment"]
+  | [UserType "perf_attachment"] ->
       (true, None)
   | _ ->
-      (false, Some "detach() requires a ProgramHandle or PerfAttachment")
+      (false, Some "detach() requires a ProgramHandle or perf_attachment")
 
 (** Standard library built-in functions *)
 let builtin_functions = [
@@ -261,7 +261,7 @@ let builtin_functions = [
   {
     name = "read";
     param_types = []; (* Custom validation handles attachment-aware overloads *)
-    return_type = Struct "PerfRead";
+    return_type = Struct "perf_read";
     description = "Read raw/scaled/timing values and group snapshot arrays for a perf attachment";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
@@ -311,6 +311,16 @@ let builtin_pos = { line = 0; column = 0; filename = "<builtin>" }
 
 let perf_read_max_values = 16
 
+(* A perf_event value packs the perf_event_attr.type tag in the high 32 bits and the
+   config in the low 32 bits, so naming an event fixes both. perf_event_pack is the
+   single source of truth for that layout; the C side mirrors it with the
+   KS_PERF_EVENT macros in userspace_codegen.ml. *)
+let perf_type_hardware = 0
+let perf_type_software = 1
+
+let perf_event_pack ptype config =
+  Int64.logor (Int64.shift_left (Int64.of_int ptype) 32) (Int64.of_int config)
+
 let builtin_types = [
   (* Standard C types as type aliases *)
   TypeDef (TypeAlias ("size_t", U64, builtin_pos));  (* size_t maps to 64-bit unsigned integer *)
@@ -335,42 +345,28 @@ let builtin_types = [
     ("TC_ACT_TRAP", Some (Ast.Signed64 8L));
   ], builtin_pos));
 
-  (* perf_type mirrors perf_event_attr.type so config stays a tagged 2D space. *)
-  TypeDef (EnumDef ("perf_type", [
-    ("perf_type_hardware",   Some (Ast.Signed64 0L));
-    ("perf_type_software",   Some (Ast.Signed64 1L));
-    ("perf_type_tracepoint", Some (Ast.Signed64 2L));
-    ("perf_type_hw_cache",   Some (Ast.Signed64 3L));
-    ("perf_type_raw",        Some (Ast.Signed64 4L));
-    ("perf_type_breakpoint", Some (Ast.Signed64 5L));
-  ], builtin_pos));
-
-  (* Common config values for PERF_TYPE_HARDWARE. *)
-  TypeDef (EnumDef ("perf_hw_config", [
-    ("cpu_cycles",           Some (Ast.Signed64 0L));
-    ("instructions",         Some (Ast.Signed64 1L));
-    ("cache_references",     Some (Ast.Signed64 2L));
-    ("cache_misses",         Some (Ast.Signed64 3L));
-    ("branch_instructions",  Some (Ast.Signed64 4L));
-    ("branch_misses",        Some (Ast.Signed64 5L));
-  ], builtin_pos));
-
-  (* Common config values for PERF_TYPE_SOFTWARE. *)
-  TypeDef (EnumDef ("perf_sw_config", [
-    ("page_faults",          Some (Ast.Signed64 2L));
-    ("context_switches",     Some (Ast.Signed64 3L));
-    ("cpu_migrations",       Some (Ast.Signed64 4L));
+  (* perf_event: a named hardware or software event. Each value is built with
+     perf_event_pack so the perf_event_attr.type tag and config travel together and
+     can never be mismatched. The C #defines in userspace_codegen.ml mirror this. *)
+  TypeDef (EnumDef ("perf_event", [
+    ("cpu_cycles",           Some (Ast.Signed64 (perf_event_pack perf_type_hardware 0)));
+    ("instructions",         Some (Ast.Signed64 (perf_event_pack perf_type_hardware 1)));
+    ("cache_references",     Some (Ast.Signed64 (perf_event_pack perf_type_hardware 2)));
+    ("cache_misses",         Some (Ast.Signed64 (perf_event_pack perf_type_hardware 3)));
+    ("branch_instructions",  Some (Ast.Signed64 (perf_event_pack perf_type_hardware 4)));
+    ("branch_misses",        Some (Ast.Signed64 (perf_event_pack perf_type_hardware 5)));
+    ("page_faults",          Some (Ast.Signed64 (perf_event_pack perf_type_software 2)));
+    ("context_switches",     Some (Ast.Signed64 (perf_event_pack perf_type_software 3)));
+    ("cpu_migrations",       Some (Ast.Signed64 (perf_event_pack perf_type_software 4)));
   ], builtin_pos));
 
   (* perf_options: configuration bag for @perf_event programs.
-     Only 'perf_type' and 'perf_config' are required; all other fields have language-level defaults. *)
+     Only 'event' is required; all other fields have language-level defaults. *)
   TypeDef (StructDef ("perf_options", [
-    ("perf_type",      Enum "perf_type");
-    ("perf_config",    U64);
+    ("event",          Enum "perf_event");
     ("pid",            I32);
     ("cpu",            I32);
-    ("group_fd",       I32);
-    ("group",          Struct "PerfAttachment");
+    ("group",          Struct "perf_attachment");
     ("period",         U64);
     ("wakeup",         U32);
     ("inherit",        Bool);
@@ -378,15 +374,15 @@ let builtin_types = [
     ("exclude_user",   Bool);
   ], builtin_pos));
 
-  (* PerfAttachment: first-class userspace handle returned by perf_event attach(). *)
-  TypeDef (StructDef ("PerfAttachment", [
+  (* perf_attachment: first-class userspace handle returned by perf_event attach(). *)
+  TypeDef (StructDef ("perf_attachment", [
     ("perf_fd", I32);
     ("link_id", I32);
     ("prog_fd", I32);
     ("generation", U64);
   ], builtin_pos));
 
-  TypeDef (StructDef ("PerfRead", [
+  TypeDef (StructDef ("perf_read", [
     ("raw", I64);
     ("scaled", I64);
     ("time_enabled", U64);
@@ -399,15 +395,14 @@ let builtin_types = [
 
 (** Default field values for structs that support partial initialisation.
     Returns [(field_name, default_literal)] for optional fields only.
-  Required fields (e.g. perf_type/perf_config in perf_options) are absent from the list,
+  Required fields (e.g. event in perf_options) are absent from the list,
     so the type checker will still error if they are omitted. *)
 let get_struct_field_defaults = function
   | "perf_options" ->
       Some [
         ("pid",            Literal (IntLit (Signed64 (-1L),      None)));
         ("cpu",            Literal (IntLit (Signed64 0L,         None)));
-        ("group_fd",       Literal (IntLit (Signed64 (-1L),      None)));
-        ("group",          StructLiteral ("PerfAttachment", [
+        ("group",          StructLiteral ("perf_attachment", [
           ("perf_fd",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);
           ("link_id",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);
           ("prog_fd",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);
