@@ -98,7 +98,7 @@ fn main() -> i32 {
     - `flags`: Attachment flags (context-dependent)
 - Perf event form:
     - `handle`: Program handle returned from `load()`
-    - `opts`: `perf_options` value — only `perf_type` and `perf_config` are required; all other fields have defaults, including no group (`group` invalid and `group_fd=-1`)
+    - `opts`: `perf_options` value — only `event` is required; all other fields have defaults, including no group (`group` invalid and `group_fd=-1`)
     - `flags`: Must be `0` for perf attaches; nonzero values are rejected
 
 **Return Value:**
@@ -113,19 +113,18 @@ if (result != 0) {
     print("Failed to attach program")
 }
 
-// Minimal perf attach — all non-perf_type/perf_config fields use defaults:
+// Minimal perf attach — all non-event fields use defaults:
 // pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1; perf attach flags must be 0
 var perf_prog = load(on_branch_miss)
-var perf_att = attach(perf_prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+var perf_att = attach(perf_prog, perf_options { event: branch_misses }, 0)
 var count = read(perf_att).scaled
 detach(perf_att)
 detach(perf_prog)
 
 // Grouped perf events: branch joins cache's leader group. Adding a member restarts the group.
-var cache = attach(perf_prog, perf_options { perf_type: perf_type_hardware, perf_config: cache_misses }, 0)
+var cache = attach(perf_prog, perf_options { event: cache_misses }, 0)
 var branch = attach(perf_prog, perf_options {
-    perf_type: perf_type_hardware,
-    perf_config: branch_misses,
+    event: branch_misses,
     group: cache,
 }, 0)
 detach(branch)

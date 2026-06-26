@@ -38,23 +38,16 @@ let bool_value value =
 let int64_value value =
   make_ir_value (IRLiteral (IntLit (Signed64 value, None))) IRI64 test_pos
 
-let perf_type_value name raw_value =
+let perf_event_value name raw_value =
   make_ir_value
-    (IREnumConstant ("perf_type", name, Signed64 raw_value))
-    (IREnum ("perf_type", []))
-    test_pos
-
-let perf_config_value enum_name name raw_value =
-  make_ir_value
-    (IREnumConstant (enum_name, name, Signed64 raw_value))
-    (IREnum (enum_name, []))
+    (IREnumConstant ("perf_event", name, Signed64 raw_value))
+    (IREnum ("perf_event", []))
     test_pos
 
 let perf_attr_expr ~pid ~cpu =
   make_ir_expr
     (IRStructLiteral ("perf_options", [
-      ("perf_type", perf_type_value "perf_type_hardware" 0L);
-      ("perf_config", perf_config_value "perf_hw_config" "branch_misses" 5L);
+      ("event", perf_event_value "branch_misses" 0x5L);
       ("pid", int32_value pid);
       ("cpu", int32_value cpu);
       ("group_fd", int32_value (-1L));
@@ -150,8 +143,7 @@ let appears_before str a b =
 let perf_attr_expr_with ~period ~wakeup =
   make_ir_expr
     (IRStructLiteral ("perf_options", [
-      ("perf_type", perf_type_value "perf_type_hardware" 0L);
-      ("perf_config", perf_config_value "perf_hw_config" "branch_misses" 5L);
+      ("event", perf_event_value "branch_misses" 0x5L);
       ("pid",     int32_value 1234L);
       ("cpu",     int32_value 0L);
       ("group_fd", int32_value (-1L));
@@ -421,9 +413,9 @@ let test_perf_attach_event_function_generated () =
   check bool "no snprintf perf_fd string hack" false
     (contains_substr code "snprintf(%s, sizeof(%s),");
   check bool "perf attr type copied directly from perf_options" true
-    (contains_substr code "ks_attr.attr.type = (__u32)ks_attr.perf_type;");
+    (contains_substr code "ks_attr.attr.type = KS_PERF_EVENT_TYPE(ks_attr.event);");
   check bool "perf attr config copied directly from perf_options" true
-    (contains_substr code "ks_attr.attr.config = (__u64)ks_attr.perf_config;");
+    (contains_substr code "ks_attr.attr.config = KS_PERF_EVENT_CONFIG(ks_attr.event);");
   check bool "old perf_counter switch removed" false
     (contains_substr code "switch (ks_attr.counter)");
   check bool "find_prog_by_fd helper used for program lookup" true
@@ -503,12 +495,10 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group_fd: cache.perf_fd,
     }, 0)
     detach(branch)
@@ -537,12 +527,10 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
     detach(branch)
@@ -569,12 +557,10 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
     var snapshot = read(cache)
@@ -626,27 +612,22 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
     var cycles = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cpu_cycles,
+        event: cpu_cycles,
         group: cache,
     }, 0)
     var inst = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: instructions,
+        event: instructions,
         group: cache,
     }, 0)
     var refs = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_references,
+        event: cache_references,
         group: cache,
     }, 0)
     detach(refs)
@@ -674,8 +655,7 @@ let test_perf_group_too_many_static_members_rejected () =
     List.init 16 (fun i ->
       Printf.sprintf {|
     var sw%d = attach(prog, perf_options {
-        perf_type: perf_type_software,
-        perf_config: context_switches,
+        event: context_switches,
         group: leader,
     }, 0)|} i)
     |> String.concat "\n"
@@ -689,8 +669,7 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var leader = attach(prog, perf_options {
-        perf_type: perf_type_software,
-        perf_config: page_faults,
+        event: page_faults,
     }, 0)
 |} ^ member_decls ^ {|
     detach(leader)
@@ -714,8 +693,7 @@ let test_perf_group_env_override_clamped_to_read_capacity () =
     List.init 16 (fun i ->
       Printf.sprintf {|
     var hw%d = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: leader,
     }, 0)|} i)
     |> String.concat "\n"
@@ -729,8 +707,7 @@ fn on_event(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_event)
     var leader = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
     }, 0)
 |} ^ member_decls ^ {|
     detach(leader)

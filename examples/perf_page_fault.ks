@@ -14,9 +14,9 @@ fn main() -> i32 {
     // pid: 0 = current process, cpu: -1 = any CPU (standard per-process monitoring).
     // page_faults (PERF_COUNT_SW_PAGE_FAULTS) is the most reliable software event:
     // every heap/stack allocation triggers minor page faults, no scheduler dependency.
-    var page = attach(prog, perf_options { perf_type: perf_type_software, perf_config: page_faults, pid: 0, cpu: -1, period: 1 }, 0)
+    var page = attach(prog, perf_options { event: page_faults, pid: 0, cpu: -1, period: 1 }, 0)
     // branch is a standalone hardware event; page_faults remains a separate software event.
-    var branch = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses, period: 10000000, inherit: true}, 0)
+    var branch = attach(prog, perf_options { event: branch_misses, period: 10000000, inherit: true}, 0)
     
     print("perf_event demo attached")
 

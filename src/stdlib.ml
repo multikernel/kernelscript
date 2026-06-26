@@ -335,38 +335,28 @@ let builtin_types = [
     ("TC_ACT_TRAP", Some (Ast.Signed64 8L));
   ], builtin_pos));
 
-  (* perf_type mirrors perf_event_attr.type so config stays a tagged 2D space. *)
-  TypeDef (EnumDef ("perf_type", [
-    ("perf_type_hardware",   Some (Ast.Signed64 0L));
-    ("perf_type_software",   Some (Ast.Signed64 1L));
-    ("perf_type_tracepoint", Some (Ast.Signed64 2L));
-    ("perf_type_hw_cache",   Some (Ast.Signed64 3L));
-    ("perf_type_raw",        Some (Ast.Signed64 4L));
-    ("perf_type_breakpoint", Some (Ast.Signed64 5L));
-  ], builtin_pos));
-
-  (* Common config values for PERF_TYPE_HARDWARE. *)
-  TypeDef (EnumDef ("perf_hw_config", [
-    ("cpu_cycles",           Some (Ast.Signed64 0L));
-    ("instructions",         Some (Ast.Signed64 1L));
-    ("cache_references",     Some (Ast.Signed64 2L));
-    ("cache_misses",         Some (Ast.Signed64 3L));
-    ("branch_instructions",  Some (Ast.Signed64 4L));
-    ("branch_misses",        Some (Ast.Signed64 5L));
-  ], builtin_pos));
-
-  (* Common config values for PERF_TYPE_SOFTWARE. *)
-  TypeDef (EnumDef ("perf_sw_config", [
-    ("page_faults",          Some (Ast.Signed64 2L));
-    ("context_switches",     Some (Ast.Signed64 3L));
-    ("cpu_migrations",       Some (Ast.Signed64 4L));
+  (* perf_event: a named hardware or software event. The enum value packs the
+     perf_event_attr.type tag in the high 32 bits and the config in the low 32 bits,
+     so one value carries both and the type can never be mismatched with the config.
+     Keep these encodings in sync with the C #defines emitted in userspace_codegen.ml. *)
+  TypeDef (EnumDef ("perf_event", [
+    (* PERF_TYPE_HARDWARE (0) *)
+    ("cpu_cycles",           Some (Ast.Signed64 0x0_00000000L));
+    ("instructions",         Some (Ast.Signed64 0x0_00000001L));
+    ("cache_references",     Some (Ast.Signed64 0x0_00000002L));
+    ("cache_misses",         Some (Ast.Signed64 0x0_00000003L));
+    ("branch_instructions",  Some (Ast.Signed64 0x0_00000004L));
+    ("branch_misses",        Some (Ast.Signed64 0x0_00000005L));
+    (* PERF_TYPE_SOFTWARE (1) *)
+    ("page_faults",          Some (Ast.Signed64 0x1_00000002L));
+    ("context_switches",     Some (Ast.Signed64 0x1_00000003L));
+    ("cpu_migrations",       Some (Ast.Signed64 0x1_00000004L));
   ], builtin_pos));
 
   (* perf_options: configuration bag for @perf_event programs.
-     Only 'perf_type' and 'perf_config' are required; all other fields have language-level defaults. *)
+     Only 'event' is required; all other fields have language-level defaults. *)
   TypeDef (StructDef ("perf_options", [
-    ("perf_type",      Enum "perf_type");
-    ("perf_config",    U64);
+    ("event",          Enum "perf_event");
     ("pid",            I32);
     ("cpu",            I32);
     ("group_fd",       I32);
@@ -399,7 +389,7 @@ let builtin_types = [
 
 (** Default field values for structs that support partial initialisation.
     Returns [(field_name, default_literal)] for optional fields only.
-  Required fields (e.g. perf_type/perf_config in perf_options) are absent from the list,
+  Required fields (e.g. event in perf_options) are absent from the list,
     so the type checker will still error if they are omitted. *)
 let get_struct_field_defaults = function
   | "perf_options" ->

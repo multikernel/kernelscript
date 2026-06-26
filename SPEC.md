@@ -460,14 +460,13 @@ The context type is always `*bpf_perf_event_data` (from `vmlinux.h`).
 fn main() -> i32 {
     var prog = load(my_handler)
 
-    // Only perf_type + perf_config are required; all other fields use language-level defaults:
+    // Only event is required; all other fields use language-level defaults:
     // pid=-1, cpu=0, no group, period=1_000_000, wakeup=1, inherit/exclude_*=false
-    var misses = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    var misses = attach(prog, perf_options { event: branch_misses }, 0)
 
     // Override specific fields as needed:
     var cache = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: cache_misses,
+        event: cache_misses,
         cpu: 2,
         period: 500000,
         exclude_kernel: true,
@@ -477,8 +476,7 @@ fn main() -> i32 {
     // the whole group from zero. The lower-level group_fd: cache.perf_fd form
     // is still accepted.
     var branch = attach(prog, perf_options {
-        perf_type: perf_type_hardware,
-        perf_config: branch_misses,
+        event: branch_misses,
         group: cache,
     }, 0)
 
@@ -497,8 +495,7 @@ fn main() -> i32 {
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `perf_type` | `perf_type` | *(required)* | `perf_event_attr.type` tag |
-| `perf_config` | `u64` | *(required)* | `perf_event_attr.config` value for that type |
+| `event` | `perf_event` | *(required)* | Named event; packs the `perf_event_attr.type` tag and config into one value |
 | `pid` | `i32` | `-1` | -1 = all processes; ≥0 = specific PID |
 | `cpu` | `i32` | `0` | ≥0 = specific CPU; -1 = any CPU (pid must be ≥0) |
 | `group_fd` | `i32` | `-1` | -1 = standalone event; ≥0 = perf group leader fd |
@@ -518,32 +515,21 @@ fn main() -> i32 {
 | -1 | ≥ 0 | All processes on specific CPU (system-wide) |
 | -1 | -1 | **Invalid** — rejected with error |
 
-**`perf_type` enum:**
+**`perf_event` enum:**
 
-| Value | Linux constant |
-|---|---|
-| `perf_type_hardware` | `PERF_TYPE_HARDWARE` |
-| `perf_type_software` | `PERF_TYPE_SOFTWARE` |
-| `perf_type_tracepoint` | `PERF_TYPE_TRACEPOINT` |
-| `perf_type_hw_cache` | `PERF_TYPE_HW_CACHE` |
-| `perf_type_raw` | `PERF_TYPE_RAW` |
-| `perf_type_breakpoint` | `PERF_TYPE_BREAKPOINT` |
+Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its config in the low 32 bits, so naming the event fixes both and the type can never be mismatched with the config.
 
-**Common `perf_config` constants:**
-
-| Value | Intended `perf_type` | Linux constant |
+| Value | Kernel type | Linux config constant |
 |---|---|---|
-| `cpu_cycles` | `perf_type_hardware` | `PERF_COUNT_HW_CPU_CYCLES` |
-| `instructions` | `perf_type_hardware` | `PERF_COUNT_HW_INSTRUCTIONS` |
-| `cache_references` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_REFERENCES` |
-| `cache_misses` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_MISSES` |
-| `branch_instructions` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
-| `branch_misses` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_MISSES` |
-| `page_faults` | `perf_type_software` | `PERF_COUNT_SW_PAGE_FAULTS` |
-| `context_switches` | `perf_type_software` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
-| `cpu_migrations` | `perf_type_software` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
-
-For event families with a richer config space, such as `perf_type_hw_cache`, provide the encoded kernel `perf_config` value directly instead of relying on a flattened enum.
+| `cpu_cycles` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CPU_CYCLES` |
+| `instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_INSTRUCTIONS` |
+| `cache_references` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_REFERENCES` |
+| `cache_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_MISSES` |
+| `branch_instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
+| `branch_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_MISSES` |
+| `page_faults` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_PAGE_FAULTS` |
+| `context_switches` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
+| `cpu_migrations` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
 
 **Generated C helpers (emitted when `attach(prog, perf_options{...}, flags)` is used):**
 
@@ -567,7 +553,7 @@ For event families with a richer config space, such as `perf_type_hw_cache`, pro
 - Adding a member to an already running group restarts the whole group from zero.
 - A group is scheduled as an atomic PMU unit. Separate events and separate groups may be multiplexed; members inside one group are not independently multiplexed. If a statically visible group needs more PMU counter slots than the target limit, compilation fails.
 - The compile-time group limit uses known sysfs PMU caps when available, falls back to `4`, can be overridden with `KERNELSCRIPT_PERF_GROUP_MAX_EVENTS`, and is capped at the 16 entries exposed by `PerfRead`.
-- `perf_type_software` and `perf_type_tracepoint` do not consume PMU counter slots for this check; static hardware/raw/cache/breakpoint events consume one slot, and dynamic `perf_type` values are conservatively counted as one slot.
+- Software events (e.g. `page_faults`, `context_switches`, `cpu_migrations`) do not consume PMU counter slots for this check; static hardware events consume one slot, and events whose value is not statically known are conservatively counted as one slot.
 - Detaching a member is allowed. Detaching a leader cascades to any live members.
 - Generated perf events always enable `PERF_FORMAT_GROUP | PERF_FORMAT_ID`, and `read(att)` returns up to 16 same-time group values plus perf IDs and timing fields. `raw` and `scaled` select the entry matching the attachment being read.
 

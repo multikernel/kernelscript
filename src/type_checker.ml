@@ -279,19 +279,24 @@ let perf_options_static_group_leader expr =
             | _ -> None))
   | _ -> None
 
-let perf_type_consumes_pmu_slot expr =
+(* Software and tracepoint events don't occupy a hardware PMU counter, so they
+   never count against a group's PMU-slot budget. The event enum packs the
+   perf_event_attr.type tag in the high 32 bits; type 1 = software, 2 = tracepoint. *)
+let perf_event_consumes_pmu_slot expr =
+  let pmu_free_tag tag = tag = 1L || tag = 2L in
   match expr.expr_desc with
-  | Identifier "perf_type_software"
-  | Identifier "perf_type_tracepoint" -> 0
-  | Literal (IntLit (Signed64 value, _)) when value = 1L || value = 2L -> 0
-  | Literal (IntLit (Unsigned64 value, _)) when value = 1L || value = 2L -> 0
+  | Identifier ("page_faults" | "context_switches" | "cpu_migrations") -> 0
+  | Literal (IntLit (Signed64 value, _))
+      when pmu_free_tag (Int64.shift_right_logical value 32) -> 0
+  | Literal (IntLit (Unsigned64 value, _))
+      when pmu_free_tag (Int64.shift_right_logical value 32) -> 0
   | _ -> 1
 
 let perf_options_pmu_slots expr =
   match expr.expr_desc with
   | StructLiteral ("perf_options", fields) ->
-      (match List.assoc_opt "perf_type" fields with
-       | Some perf_type_expr -> perf_type_consumes_pmu_slot perf_type_expr
+      (match List.assoc_opt "event" fields with
+       | Some event_expr -> perf_event_consumes_pmu_slot event_expr
        | None -> 1)
   | _ -> 1
 

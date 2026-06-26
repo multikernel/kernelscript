@@ -521,8 +521,8 @@ let generate_kernelscript_source ?extra_param ?include_kfuncs template project_n
 fn main() -> i32 {
     var prog = load(%s)
 
-    // perf_type + perf_config are required; all other fields default to sensible values.
-    var att = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    // event is required; all other fields default to sensible values.
+    var att = attach(prog, perf_options { event: branch_misses }, 0)
 
     detach(att)
     detach(prog)

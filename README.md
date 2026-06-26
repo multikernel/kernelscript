@@ -294,7 +294,7 @@ fn main() -> i32 {
 
 ### Hardware Performance Counter Programs
 
-Use `@perf_event` to attach eBPF programs to hardware or software performance counters. `perf_options` keeps the kernel's tagged `perf_type + perf_config` model, so adding new perf event families does not require flattening everything into one enum. Only `perf_type` and `perf_config` are required; all other fields have sensible defaults. Perf attaches return a first-class attachment value, so if you need the current count in userspace, call `read(att).scaled`:
+Use `@perf_event` to attach eBPF programs to hardware or software performance counters. Each event is named by a single `event` value that carries both the kernel `perf_event_attr.type` tag and its config, so the type can never be mismatched with the config. Only `event` is required; all other fields have sensible defaults. Perf attaches return a first-class attachment value, so if you need the current count in userspace, call `read(att).scaled`:
 
 ```kernelscript
 // eBPF program fires on every hardware branch-miss sample
@@ -308,7 +308,7 @@ fn main() -> i32 {
 
     // Minimal form — defaults: pid=-1 (all procs), cpu=0, no group,
     // period=1_000_000, wakeup=1; perf attach flags must be 0
-    var att = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: branch_misses }, 0)
+    var att = attach(prog, perf_options { event: branch_misses }, 0)
     var count = read(att).scaled
     print("branch misses: %lld", count)
 
@@ -322,10 +322,9 @@ Perf events can share a kernel scheduling group by passing the leader attachment
 The lower-level `group_fd: cache.perf_fd` form is still supported for compatibility:
 
 ```kernelscript
-var cache = attach(prog, perf_options { perf_type: perf_type_hardware, perf_config: cache_misses }, 0)
+var cache = attach(prog, perf_options { event: cache_misses }, 0)
 var branch = attach(prog, perf_options {
-    perf_type: perf_type_hardware,
-    perf_config: branch_misses,
+    event: branch_misses,
     group: cache,
 }, 0)
 ```
@@ -334,32 +333,21 @@ Adding a member restarts the whole group from zero. Detaching a leader cascades 
 
 `read(att)` returns a `PerfRead` snapshot with raw, multiplex-scaled, timing, and group fields. Use `read(att).scaled` for that attachment's counter value, `read(att).raw` for its unscaled value, and `read(att).values` / `read(att).ids` for a same-time group snapshot.
 
-**Available `perf_type` values:**
+**Available `event` constants:**
 
-| Enum value | Hardware/software event |
-|---|---|
-| `perf_type_hardware` | `PERF_TYPE_HARDWARE` |
-| `perf_type_software` | `PERF_TYPE_SOFTWARE` |
-| `perf_type_tracepoint` | `PERF_TYPE_TRACEPOINT` |
-| `perf_type_hw_cache` | `PERF_TYPE_HW_CACHE` |
-| `perf_type_raw` | `PERF_TYPE_RAW` |
-| `perf_type_breakpoint` | `PERF_TYPE_BREAKPOINT` |
+Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its config in the low 32 bits, so naming the event fixes both.
 
-**Common `perf_config` constants:**
-
-| Constant | Intended `perf_type` | Linux config |
+| Constant | Kernel type | Linux config |
 |---|---|---|
-| `cpu_cycles` | `perf_type_hardware` | `PERF_COUNT_HW_CPU_CYCLES` |
-| `instructions` | `perf_type_hardware` | `PERF_COUNT_HW_INSTRUCTIONS` |
-| `cache_references` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_REFERENCES` |
-| `cache_misses` | `perf_type_hardware` | `PERF_COUNT_HW_CACHE_MISSES` |
-| `branch_instructions` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
-| `branch_misses` | `perf_type_hardware` | `PERF_COUNT_HW_BRANCH_MISSES` |
-| `page_faults` | `perf_type_software` | `PERF_COUNT_SW_PAGE_FAULTS` |
-| `context_switches` | `perf_type_software` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
-| `cpu_migrations` | `perf_type_software` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
-
-For newer families such as `perf_type_hw_cache`, pass the kernel-compatible encoded `perf_config` value directly.
+| `cpu_cycles` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CPU_CYCLES` |
+| `instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_INSTRUCTIONS` |
+| `cache_references` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_REFERENCES` |
+| `cache_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_MISSES` |
+| `branch_instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
+| `branch_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_MISSES` |
+| `page_faults` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_PAGE_FAULTS` |
+| `context_switches` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
+| `cpu_migrations` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
 
 📖 **For detailed language specification, syntax reference, and advanced features, please read [`SPEC.md`](SPEC.md).**
 

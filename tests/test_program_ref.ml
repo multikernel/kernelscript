@@ -171,8 +171,7 @@ let test_perf_attachment_value_flow () =
 fn main() -> i32 {
   var prog = load(on_cache_miss)
   var att = attach(prog, perf_options {
-    perf_type: perf_type_hardware,
-    perf_config: cache_misses,
+    event: cache_misses,
     period: 1000000,
   }, 0)
   var snapshot = read(att)
