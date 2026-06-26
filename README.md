@@ -318,8 +318,7 @@ fn main() -> i32 {
 }
 ```
 
-Perf events can share a kernel scheduling group by passing the leader attachment directly with `group`.
-The lower-level `group_fd: cache.perf_fd` form is still supported for compatibility:
+Perf events can share a kernel scheduling group by passing the leader attachment with `group`:
 
 ```kernelscript
 var cache = attach(prog, perf_options { event: cache_misses }, 0)

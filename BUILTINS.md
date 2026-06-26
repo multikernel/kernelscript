@@ -98,7 +98,7 @@ fn main() -> i32 {
     - `flags`: Attachment flags (context-dependent)
 - Perf event form:
     - `handle`: Program handle returned from `load()`
-    - `opts`: `perf_options` value — only `event` is required; all other fields have defaults, including no group (`group` invalid and `group_fd=-1`)
+    - `opts`: `perf_options` value — only `event` is required; all other fields have defaults, including no group (`group` defaults to an invalid attachment)
     - `flags`: Must be `0` for perf attaches; nonzero values are rejected
 
 **Return Value:**

@@ -366,7 +366,6 @@ let builtin_types = [
     ("event",          Enum "perf_event");
     ("pid",            I32);
     ("cpu",            I32);
-    ("group_fd",       I32);
     ("group",          Struct "PerfAttachment");
     ("period",         U64);
     ("wakeup",         U32);
@@ -403,7 +402,6 @@ let get_struct_field_defaults = function
       Some [
         ("pid",            Literal (IntLit (Signed64 (-1L),      None)));
         ("cpu",            Literal (IntLit (Signed64 0L,         None)));
-        ("group_fd",       Literal (IntLit (Signed64 (-1L),      None)));
         ("group",          StructLiteral ("PerfAttachment", [
           ("perf_fd",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);
           ("link_id",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);

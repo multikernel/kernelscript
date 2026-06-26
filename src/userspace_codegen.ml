@@ -4078,8 +4078,7 @@ typedef struct {
   uint64_t event;               /* packed perf event: high 32 bits = type, low 32 bits = config */
     int32_t pid;                  /* process ID (-1 = all processes, default) */
     int32_t cpu;                  /* CPU number (0 = CPU 0, default) */
-    int32_t group_fd;             /* perf event group leader fd (-1 = no group, default) */
-    PerfAttachment group;         /* high-level group leader attachment */
+    PerfAttachment group;         /* group leader attachment (-1 fields = no group, default) */
     uint64_t period;              /* sampling period (default 1 000 000) */
     uint32_t wakeup;              /* wakeup after N events (default 1) */
     bool inherit;                 /* inherit to child processes (default false) */
@@ -5154,7 +5153,7 @@ static int ensure_bpf_dir(const char *path) {
 
     int cpu = ks_attr.cpu;
     int pid = ks_attr.pid;
-    int group_fd = ks_attr.group_fd;
+    int group_fd = -1;
     if (ks_attr.group.perf_fd >= 0 &&
         ks_attr.group.link_id > 0 &&
         ks_attr.group.generation != 0) {
@@ -5247,7 +5246,7 @@ PerfAttachment ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags
     int effective_group_fd =
         (opts.group.perf_fd >= 0 && opts.group.link_id > 0 && opts.group.generation != 0)
             ? opts.group.perf_fd
-            : opts.group_fd;
+            : -1;
     bool is_group_member = effective_group_fd >= 0;
     int perf_fd = ks_open_perf_event(opts);
     if (perf_fd < 0) return attachment;

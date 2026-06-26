@@ -11,7 +11,7 @@ fn on_cache_miss(ctx: *bpf_perf_event_data) -> i32 {
 fn main() -> i32 {
     var prog = load(on_cache_miss)
 
-    // Only event is required; pid, cpu, group/group_fd, period, wakeup and flag fields
+    // Only event is required; pid, cpu, group, period, wakeup and flag fields
     // default to: pid=-1 (all procs), cpu=0, period=1_000_000, wakeup=1,
     // no group, inherit/exclude_kernel/exclude_user=false.
     var cache = attach(prog, perf_options { event: cache_misses, period: 10000000, inherit: true }, 0)

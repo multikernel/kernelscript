@@ -50,7 +50,6 @@ let perf_attr_expr ~pid ~cpu =
       ("event", perf_event_value "branch_misses" 0x5L);
       ("pid", int32_value pid);
       ("cpu", int32_value cpu);
-      ("group_fd", int32_value (-1L));
       ("period", uint64_value 1000000L);
       ("wakeup", uint32_value 1L);
       ("inherit", bool_value false);
@@ -146,7 +145,6 @@ let perf_attr_expr_with ~period ~wakeup =
       ("event", perf_event_value "branch_misses" 0x5L);
       ("pid",     int32_value 1234L);
       ("cpu",     int32_value 0L);
-      ("group_fd", int32_value (-1L));
       ("period",  uint64_value period);
       ("wakeup",  uint32_value wakeup);
       ("inherit",         bool_value false);
@@ -234,12 +232,10 @@ let test_perf_event_period_and_wakeup_custom () =
 
 let test_perf_event_group_fd_codegen () =
   let code = make_perf_code_with ~period:1000000L ~wakeup:1L in
-  check bool "ks_perf_options carries group_fd" true
+  check bool "perf options carry no raw group_fd field" false
     (contains_substr code "int32_t group_fd;");
-  check bool "hand-built perf options default group_fd to -1" true
-    (contains_substr code ".group_fd = -1");
-  check bool "group_fd copied from options" true
-    (contains_substr code "int group_fd = ks_attr.group_fd;");
+  check bool "group leader fd defaults to no-group" true
+    (contains_substr code "int group_fd = -1;");
   check bool "invalid group_fd rejected" true
     (contains_substr code "if (group_fd < -1)");
   check bool "perf_event_open receives variable group_fd" true
@@ -485,38 +481,6 @@ let test_detach_attach_concurrent_window () =
   check bool "detach invalidates stale perf attachment handles before close" true
     (contains_substr code "invalidate_perf_attachment_state_locked(entry)")
 
-let test_perf_group_source_field_access_codegen () =
-  let source = {|
-@perf_event
-fn on_event(ctx: *bpf_perf_event_data) -> i32 {
-    return 0
-}
-
-fn main() -> i32 {
-    var prog = load(on_event)
-    var cache = attach(prog, perf_options {
-        event: cache_misses,
-    }, 0)
-    var branch = attach(prog, perf_options {
-        event: branch_misses,
-        group_fd: cache.perf_fd,
-    }, 0)
-    detach(branch)
-    detach(cache)
-    detach(prog)
-    return 0
-}
-|} in
-  let code = make_generated_code_from_source source in
-  check bool "source group_fd field access type-checks and codegens" true
-    (contains_substr code "var_cache.perf_fd");
-  check bool "source emits grouped perf option assignment" true
-    (contains_substr code ".group_fd = __field_access_");
-  check bool "leader detach protection helper generated" true
-    (contains_substr code "perf_group_has_active_members_locked");
-  check bool "detach cascades active group leaders" true
-    (contains_substr code "Detaching perf group leader fd %d cascades to %d active member(s)")
-
 let test_perf_group_attachment_field_codegen () =
   let source = {|
 @perf_event
@@ -545,7 +509,11 @@ fn main() -> i32 {
   check bool "source group attachment field type-checks and codegens" true
     (contains_substr code ".group = var_cache");
   check bool "runtime prefers valid group attachment fd" true
-    (contains_substr code "opts.group.perf_fd >= 0 && opts.group.link_id > 0 && opts.group.generation != 0")
+    (contains_substr code "opts.group.perf_fd >= 0 && opts.group.link_id > 0 && opts.group.generation != 0");
+  check bool "leader detach protection helper generated" true
+    (contains_substr code "perf_group_has_active_members_locked");
+  check bool "detach cascades active group leaders" true
+    (contains_substr code "Detaching perf group leader fd %d cascades to %d active member(s)")
 
 let test_perf_read_codegen () =
   let source = {|
@@ -676,7 +644,6 @@ let tests = [
   test_case "perf_read_helper_scales_multiplexed_counts"`Quick test_perf_read_helper_scales_multiplexed_counts;
   test_case "perf_attach_event_function_generated"      `Quick test_perf_attach_event_function_generated;
   test_case "detach_attach_concurrent_window"           `Quick test_detach_attach_concurrent_window;
-  test_case "perf_group_source_field_access_codegen"    `Quick test_perf_group_source_field_access_codegen;
   test_case "perf_group_attachment_field_codegen"       `Quick test_perf_group_attachment_field_codegen;
   test_case "perf_read_codegen"                         `Quick test_perf_read_codegen;
   test_case "standard_attach_uses_libbpf_error_checks"  `Quick test_standard_attach_uses_libbpf_error_checks;

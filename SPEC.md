@@ -473,8 +473,7 @@ fn main() -> i32 {
     }, 0)
 
     // Put branch misses in cache's perf event group. Adding a member restarts
-    // the whole group from zero. The lower-level group_fd: cache.perf_fd form
-    // is still accepted.
+    // the whole group from zero.
     var branch = attach(prog, perf_options {
         event: branch_misses,
         group: cache,
@@ -498,8 +497,7 @@ fn main() -> i32 {
 | `event` | `perf_event` | *(required)* | Named event; packs the `perf_event_attr.type` tag and config into one value |
 | `pid` | `i32` | `-1` | -1 = all processes; ≥0 = specific PID |
 | `cpu` | `i32` | `0` | ≥0 = specific CPU; -1 = any CPU (pid must be ≥0) |
-| `group_fd` | `i32` | `-1` | -1 = standalone event; ≥0 = perf group leader fd |
-| `group` | `PerfAttachment` | invalid attachment | Preferred high-level group leader attachment |
+| `group` | `PerfAttachment` | invalid attachment | Group leader attachment; omit for a standalone event |
 | `period` | `u64` | `1000000` | Sample after this many events |
 | `wakeup` | `u32` | `1` | Wake userspace after N samples |
 | `inherit` | `bool` | `false` | Inherit to forked children |
@@ -547,8 +545,7 @@ Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its c
 5. `ioctl(perf_fd, PERF_EVENT_IOC_ENABLE, 0)` — **start counting**  
 
 **Perf event groups:**
-- `group: leader_attachment` is the preferred way to join a perf group.
-- `group_fd >= 0` opens the new event as a member of that leader fd.
+- `group: leader_attachment` joins the new event to that leader's perf group.
 - Group members are opened disabled, linked to the BPF program, then the leader is disabled, reset, and enabled with `PERF_IOC_FLAG_GROUP`.
 - Adding a member to an already running group restarts the whole group from zero.
 - A group is scheduled as an atomic PMU unit. Separate events and separate groups may be multiplexed; members inside one group are not independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)` and reported by `attach()` at runtime — group sizing is enforced on the actual host, not guessed at compile time.
@@ -576,7 +573,7 @@ Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its c
 - `PerfAttachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
 - Exposes omitted `perf_options` fields as language-level defaults (partial struct literal)
 - Validates `pid ≥ -1`, `cpu ≥ -1`, `group_fd ≥ -1`, and rejects `pid == -1 && cpu == -1` at runtime
-- Treats `group` as valid only when it carries a live `PerfAttachment` generation token; otherwise `group_fd` controls grouping
+- Treats `group` as valid only when it carries a live `PerfAttachment` generation token; otherwise the event is opened standalone
 - Emits `PERF_FLAG_FD_CLOEXEC` for safe fd inheritance
 - BPF program section is `SEC("perf_event")`
 
