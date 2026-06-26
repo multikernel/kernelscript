@@ -551,9 +551,7 @@ Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its c
 - `group_fd >= 0` opens the new event as a member of that leader fd.
 - Group members are opened disabled, linked to the BPF program, then the leader is disabled, reset, and enabled with `PERF_IOC_FLAG_GROUP`.
 - Adding a member to an already running group restarts the whole group from zero.
-- A group is scheduled as an atomic PMU unit. Separate events and separate groups may be multiplexed; members inside one group are not independently multiplexed. If a statically visible group needs more PMU counter slots than the target limit, compilation fails.
-- The compile-time group limit uses known sysfs PMU caps when available, falls back to `4`, can be overridden with `KERNELSCRIPT_PERF_GROUP_MAX_EVENTS`, and is capped at the 16 entries exposed by `PerfRead`.
-- Software events (e.g. `page_faults`, `context_switches`, `cpu_migrations`) do not consume PMU counter slots for this check; static hardware events consume one slot, and events whose value is not statically known are conservatively counted as one slot.
+- A group is scheduled as an atomic PMU unit. Separate events and separate groups may be multiplexed; members inside one group are not independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)` and reported by `attach()` at runtime — group sizing is enforced on the actual host, not guessed at compile time.
 - Detaching a member is allowed. Detaching a leader cascades to any live members.
 - Generated perf events always enable `PERF_FORMAT_GROUP | PERF_FORMAT_ID`, and `read(att)` returns up to 16 same-time group values plus perf IDs and timing fields. `raw` and `scaled` select the entry matching the attachment being read.
 

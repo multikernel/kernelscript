@@ -312,22 +312,14 @@ let builtin_pos = { line = 0; column = 0; filename = "<builtin>" }
 let perf_read_max_values = 16
 
 (* A perf_event value packs the perf_event_attr.type tag in the high 32 bits and the
-   config in the low 32 bits. These helpers are the single source of truth for that
-   layout: the perf_event enum below is built with perf_event_pack, and the PMU-slot
-   analysis in the type checker decodes via perf_event_consumes_pmu_slot. The C side
-   mirrors this with the KS_PERF_EVENT macros in userspace_codegen.ml. *)
-let perf_type_hardware   = 0
-let perf_type_software   = 1
-let perf_type_tracepoint = 2
+   config in the low 32 bits, so naming an event fixes both. perf_event_pack is the
+   single source of truth for that layout; the C side mirrors it with the
+   KS_PERF_EVENT macros in userspace_codegen.ml. *)
+let perf_type_hardware = 0
+let perf_type_software = 1
 
 let perf_event_pack ptype config =
   Int64.logor (Int64.shift_left (Int64.of_int ptype) 32) (Int64.of_int config)
-
-(* Software and tracepoint events don't occupy a hardware PMU counter slot, so they
-   never count against a perf group's PMU-slot budget. *)
-let perf_event_consumes_pmu_slot value =
-  let tag = Int64.to_int (Int64.shift_right_logical value 32) in
-  not (tag = perf_type_software || tag = perf_type_tracepoint)
 
 let builtin_types = [
   (* Standard C types as type aliases *)

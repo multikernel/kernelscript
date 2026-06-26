@@ -131,7 +131,7 @@ detach(branch)
 detach(cache)
 ```
 
-Grouped events are scheduled as one atomic PMU unit. Separate events and separate groups may be multiplexed, but members inside one group cannot be independently multiplexed. Static groups that exceed the target PMU counter limit are rejected at compile time; override the detected/default limit with `KERNELSCRIPT_PERF_GROUP_MAX_EVENTS` when compiling for a different target. The effective limit is capped at 16 to match `PerfRead`.
+Grouped events are scheduled as one atomic PMU unit. Separate events and separate groups may be multiplexed, but members inside one group cannot be independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)`, and `attach()` reports the error at runtime. `read(att)` exposes up to 16 group entries (`PerfRead`).
 
 **Context-specific implementations:**
 - **eBPF:** Not available
