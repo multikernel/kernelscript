@@ -294,7 +294,7 @@ fn main() -> i32 {
 
 ### Hardware Performance Counter Programs
 
-Use `@perf_event` to attach eBPF programs to hardware or software performance counters. Each event is named by a single `event` value that carries both the kernel `perf_event_attr.type` tag and its config, so the type can never be mismatched with the config. Only `event` is required; all other fields have sensible defaults. Perf attaches return a first-class attachment value, so if you need the current count in userspace, call `read(att).scaled`:
+Use `@perf_event` to attach eBPF programs to hardware or software performance counters. Only `event` is required; perf attaches return a first-class attachment whose count you read with `read(att).scaled`. Event grouping, the full `event` constant list, and the `perf_options` / `perf_read` field reference are in [`SPEC.md`](SPEC.md).
 
 ```kernelscript
 // eBPF program fires on every hardware branch-miss sample
@@ -317,36 +317,6 @@ fn main() -> i32 {
     return 0
 }
 ```
-
-Perf events can share a kernel scheduling group by passing the leader attachment with `group`:
-
-```kernelscript
-var cache = attach(prog, perf_options { event: cache_misses }, 0)
-var branch = attach(prog, perf_options {
-    event: branch_misses,
-    group: cache,
-}, 0)
-```
-
-Adding a member restarts the whole group from zero. Detaching a leader cascades to any live members. A group competes for PMU counters as one atomic unit: different groups can be multiplexed over time, but members inside one group are not independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)`, and `attach()` surfaces the error at runtime — on the actual deployment host, where the real counter count is known. `read(att)` exposes up to 16 group entries (`perf_read`).
-
-`read(att)` returns a `perf_read` snapshot with raw, multiplex-scaled, timing, and group fields. Use `read(att).scaled` for that attachment's counter value, `read(att).raw` for its unscaled value, and `read(att).values` / `read(att).ids` for a same-time group snapshot.
-
-**Available `event` constants:**
-
-Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its config in the low 32 bits, so naming the event fixes both.
-
-| Constant | Kernel type | Linux config |
-|---|---|---|
-| `cpu_cycles` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CPU_CYCLES` |
-| `instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_INSTRUCTIONS` |
-| `cache_references` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_REFERENCES` |
-| `cache_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_CACHE_MISSES` |
-| `branch_instructions` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_INSTRUCTIONS` |
-| `branch_misses` | `PERF_TYPE_HARDWARE` | `PERF_COUNT_HW_BRANCH_MISSES` |
-| `page_faults` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_PAGE_FAULTS` |
-| `context_switches` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CONTEXT_SWITCHES` |
-| `cpu_migrations` | `PERF_TYPE_SOFTWARE` | `PERF_COUNT_SW_CPU_MIGRATIONS` |
 
 📖 **For detailed language specification, syntax reference, and advanced features, please read [`SPEC.md`](SPEC.md).**
 
