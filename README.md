@@ -328,9 +328,9 @@ var branch = attach(prog, perf_options {
 }, 0)
 ```
 
-Adding a member restarts the whole group from zero. Detaching a leader cascades to any live members. A group competes for PMU counters as one atomic unit: different groups can be multiplexed over time, but members inside one group are not independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)`, and `attach()` surfaces the error at runtime — on the actual deployment host, where the real counter count is known. `read(att)` exposes up to 16 group entries (`PerfRead`).
+Adding a member restarts the whole group from zero. Detaching a leader cascades to any live members. A group competes for PMU counters as one atomic unit: different groups can be multiplexed over time, but members inside one group are not independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)`, and `attach()` surfaces the error at runtime — on the actual deployment host, where the real counter count is known. `read(att)` exposes up to 16 group entries (`perf_read`).
 
-`read(att)` returns a `PerfRead` snapshot with raw, multiplex-scaled, timing, and group fields. Use `read(att).scaled` for that attachment's counter value, `read(att).raw` for its unscaled value, and `read(att).values` / `read(att).ids` for a same-time group snapshot.
+`read(att)` returns a `perf_read` snapshot with raw, multiplex-scaled, timing, and group fields. Use `read(att).scaled` for that attachment's counter value, `read(att).raw` for its unscaled value, and `read(att).values` / `read(att).ids` for a same-time group snapshot.
 
 **Available `event` constants:**
 

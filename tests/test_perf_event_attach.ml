@@ -162,7 +162,7 @@ let make_perf_code_with ~period ~wakeup =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
   let attr_decl =
@@ -311,10 +311,10 @@ let test_read_helpers_generated_when_used () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
-  let count_value = make_ir_value (IRVariable "count") (IRStruct ("PerfRead", [])) test_pos in
+  let count_value = make_ir_value (IRVariable "count") (IRStruct ("perf_read", [])) test_pos in
   let attr_decl =
     make_ir_instruction
       (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
@@ -352,10 +352,10 @@ let test_perf_read_helper_scales_multiplexed_counts () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
-  let count_value = make_ir_value (IRVariable "count") (IRStruct ("PerfRead", [])) test_pos in
+  let count_value = make_ir_value (IRVariable "count") (IRStruct ("perf_read", [])) test_pos in
   let attr_decl =
     make_ir_instruction
       (IRVariableDecl (attr_value, IRStruct ("perf_options", []),
@@ -422,11 +422,11 @@ let test_perf_attach_event_function_generated () =
     (contains_substr code "perf attach flags must be 0");
   check bool "perf attach no longer ignores flags" false
     (contains_substr code "(void)flags");
-  check bool "perf attach returns PerfAttachment" true
-    (contains_substr code "PerfAttachment ks_attach_perf_event");
+  check bool "perf attach returns perf_attachment" true
+    (contains_substr code "perf_attachment ks_attach_perf_event");
   check bool "attachment struct typedef emitted" true
-    (contains_substr code "typedef struct PerfAttachment");
-  check bool "PerfAttachment carries stale-handle generation" true
+    (contains_substr code "typedef struct perf_attachment");
+  check bool "perf_attachment carries stale-handle generation" true
     (contains_substr code "uint64_t generation;");
   check bool "perf attach records kernel perf event id" true
     (contains_substr code "PERF_EVENT_IOC_ID");
@@ -448,7 +448,7 @@ let test_detach_attach_concurrent_window () =
   let attachment_value =
     make_ir_value
       (IRVariable "att")
-      (IRStruct ("PerfAttachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
+      (IRStruct ("perf_attachment", [("perf_fd", IRI32); ("link_id", IRI32); ("prog_fd", IRI32); ("generation", IRU64)]))
       test_pos
   in
   let attr_decl =
@@ -505,7 +505,7 @@ fn main() -> i32 {
 |} in
   let code = make_generated_code_from_source source in
   check bool "perf_options carries high-level group attachment" true
-    (contains_substr code "PerfAttachment group;");
+    (contains_substr code "perf_attachment group;");
   check bool "source group attachment field type-checks and codegens" true
     (contains_substr code ".group = var_cache");
   check bool "runtime prefers valid group attachment fd" true
@@ -548,7 +548,7 @@ fn main() -> i32 {
 |} in
   let code = make_generated_code_from_source source in
   check bool "unified read helper generated" true
-    (contains_substr code "PerfRead ks_perf_attachment_read");
+    (contains_substr code "perf_read ks_perf_attachment_read");
   check bool "old raw helper removed" false
     (contains_substr code "ks_perf_attachment_read_raw");
   check bool "old details helper removed" false

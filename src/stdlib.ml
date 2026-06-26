@@ -110,17 +110,17 @@ let validate_register_function arg_types ast_context _pos =
         (false, Some "register() requires an impl block argument")
 
 (** Read dispatch metadata keyed by argument type.
-    This keeps read() trait-shaped even while only PerfAttachment is supported. *)
+    This keeps read() trait-shaped even while only perf_attachment is supported. *)
 type read_dispatch = {
   read_return_type: bpf_type;
   read_userspace_impl: string;
 }
 
 let read_dispatch_for_type = function
-  | Struct "PerfAttachment"
-  | UserType "PerfAttachment" ->
+  | Struct "perf_attachment"
+  | UserType "perf_attachment" ->
       Some {
-        read_return_type = Struct "PerfRead";
+        read_return_type = Struct "perf_read";
         read_userspace_impl = "ks_perf_attachment_read";
       }
   | _ -> None
@@ -143,7 +143,7 @@ let validate_read_function arg_types _ast_context _pos =
   | [arg_type] ->
       (match read_dispatch_for_type arg_type with
        | Some _ -> (true, None)
-       | None -> (false, Some "read() currently requires a PerfAttachment"))
+       | None -> (false, Some "read() currently requires a perf_attachment"))
   | _ ->
       (false, Some "read() currently requires exactly one argument")
 
@@ -151,11 +151,11 @@ let validate_read_function arg_types _ast_context _pos =
 let validate_detach_function arg_types _ast_context _pos =
   match arg_types with
   | [ProgramHandle]
-  | [Struct "PerfAttachment"]
-  | [UserType "PerfAttachment"] ->
+  | [Struct "perf_attachment"]
+  | [UserType "perf_attachment"] ->
       (true, None)
   | _ ->
-      (false, Some "detach() requires a ProgramHandle or PerfAttachment")
+      (false, Some "detach() requires a ProgramHandle or perf_attachment")
 
 (** Standard library built-in functions *)
 let builtin_functions = [
@@ -261,7 +261,7 @@ let builtin_functions = [
   {
     name = "read";
     param_types = []; (* Custom validation handles attachment-aware overloads *)
-    return_type = Struct "PerfRead";
+    return_type = Struct "perf_read";
     description = "Read raw/scaled/timing values and group snapshot arrays for a perf attachment";
     is_variadic = false;
     ebpf_impl = ""; (* Not available in eBPF context *)
@@ -366,7 +366,7 @@ let builtin_types = [
     ("event",          Enum "perf_event");
     ("pid",            I32);
     ("cpu",            I32);
-    ("group",          Struct "PerfAttachment");
+    ("group",          Struct "perf_attachment");
     ("period",         U64);
     ("wakeup",         U32);
     ("inherit",        Bool);
@@ -374,15 +374,15 @@ let builtin_types = [
     ("exclude_user",   Bool);
   ], builtin_pos));
 
-  (* PerfAttachment: first-class userspace handle returned by perf_event attach(). *)
-  TypeDef (StructDef ("PerfAttachment", [
+  (* perf_attachment: first-class userspace handle returned by perf_event attach(). *)
+  TypeDef (StructDef ("perf_attachment", [
     ("perf_fd", I32);
     ("link_id", I32);
     ("prog_fd", I32);
     ("generation", U64);
   ], builtin_pos));
 
-  TypeDef (StructDef ("PerfRead", [
+  TypeDef (StructDef ("perf_read", [
     ("raw", I64);
     ("scaled", I64);
     ("time_enabled", U64);
@@ -402,7 +402,7 @@ let get_struct_field_defaults = function
       Some [
         ("pid",            Literal (IntLit (Signed64 (-1L),      None)));
         ("cpu",            Literal (IntLit (Signed64 0L,         None)));
-        ("group",          StructLiteral ("PerfAttachment", [
+        ("group",          StructLiteral ("perf_attachment", [
           ("perf_fd",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);
           ("link_id",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);
           ("prog_fd",    make_expr (Literal (IntLit (Signed64 (-1L), None))) builtin_pos);

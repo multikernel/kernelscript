@@ -53,7 +53,7 @@ type read_codegen_dispatch = {
 }
 
 let read_codegen_dispatch_for_type = function
-  | IRStruct ("PerfAttachment", _) ->
+  | IRStruct ("perf_attachment", _) ->
       Some { read_codegen_userspace_impl = "ks_perf_attachment_read" }
   | _ -> None
 
@@ -2128,7 +2128,7 @@ let rec generate_c_instruction_from_ir ctx instruction =
                  (* Special handling for detach: accepts program handles and perf attachments *)
                  ctx.function_usage.uses_detach <- true;
                  (match args, c_args with
-                  | [attachment], [attachment_arg] when (match attachment.val_type with IRStruct ("PerfAttachment", _) -> true | _ -> false) ->
+                  | [attachment], [attachment_arg] when (match attachment.val_type with IRStruct ("perf_attachment", _) -> true | _ -> false) ->
                       ("ks_detach_perf_attachment", [attachment_arg])
                   | [_], [program_handle] ->
                       ("detach_bpf_program_by_fd", [program_handle])
@@ -4053,15 +4053,15 @@ let generate_complete_userspace_program_from_ir ?(config_declarations = []) ?(ta
 #define context_switches    KS_PERF_EVENT(PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES)
 #define cpu_migrations      KS_PERF_EVENT(PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS)
 
-typedef struct PerfAttachment {
+typedef struct perf_attachment {
   int perf_fd;
   int link_id;
   int prog_fd;
   uint64_t generation;
-} PerfAttachment;
+} perf_attachment;
 
 #define KS_PERF_GROUP_MAX_VALUES %d
-typedef struct PerfRead {
+typedef struct perf_read {
   int64_t raw;
   int64_t scaled;
   uint64_t time_enabled;
@@ -4069,7 +4069,7 @@ typedef struct PerfRead {
   uint32_t count;
   int64_t values[KS_PERF_GROUP_MAX_VALUES];
   uint64_t ids[KS_PERF_GROUP_MAX_VALUES];
-} PerfRead;
+} perf_read;
 
 /* ks_perf_options holds all KernelScript perf_options fields plus the inner
  * kernel perf_event_attr (from linux/perf_event.h) that ks_open_perf_event fills. */
@@ -4078,7 +4078,7 @@ typedef struct {
   uint64_t event;               /* packed perf event: high 32 bits = type, low 32 bits = config */
     int32_t pid;                  /* process ID (-1 = all processes, default) */
     int32_t cpu;                  /* CPU number (0 = CPU 0, default) */
-    PerfAttachment group;         /* group leader attachment (-1 fields = no group, default) */
+    perf_attachment group;         /* group leader attachment (-1 fields = no group, default) */
     uint64_t period;              /* sampling period (default 1 000 000) */
     uint32_t wakeup;              /* wakeup after N events (default 1) */
     bool inherit;                 /* inherit to child processes (default false) */
@@ -4379,7 +4379,7 @@ void cleanup_bpf_maps(void) {
     entry->generation = 0;
   }
 
-  static struct perf_attachment_state *perf_attachment_begin_read(PerfAttachment attachment) {
+  static struct perf_attachment_state *perf_attachment_begin_read(perf_attachment attachment) {
     if (attachment.perf_fd < 0 || attachment.link_id <= 0 || attachment.generation == 0) {
       return NULL;
     }
@@ -4532,7 +4532,7 @@ void cleanup_bpf_maps(void) {
     int group_leader_fd;      // Perf group leader fd for members (-1 otherwise)
     int is_group_member;      // Non-zero when perf_fd belongs to a group leader
     int detaching;            // Non-zero while teardown is in progress
-    uint64_t generation;      // PerfAttachment stale-handle token
+    uint64_t generation;      // perf_attachment stale-handle token
     enum bpf_prog_type type;
     struct attachment_entry *next;
   };
@@ -4948,7 +4948,7 @@ void cleanup_bpf_maps(void) {
 }|} perf_leader_guard_line invalidate_call_line
     else "" in
     let perf_detach_function = if all_usage.uses_attach_perf then
-      {|void ks_detach_perf_attachment(PerfAttachment attachment) {
+      {|void ks_detach_perf_attachment(perf_attachment attachment) {
     if (attachment.link_id <= 0) {
         fprintf(stderr, "Invalid perf attachment link id: %d\n", attachment.link_id);
         return;
@@ -5216,8 +5216,8 @@ static int ks_restart_perf_group(int group_fd) {
 /* Attach a perf_event BPF program using a ks_perf_options config.
  * Standalone events are reset and enabled directly; group members restart their
  * leader group after the member link is attached. */
-PerfAttachment ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags) {
-    PerfAttachment attachment = {
+perf_attachment ks_attach_perf_event(int prog_fd, ks_perf_options opts, int flags) {
+    perf_attachment attachment = {
         .perf_fd = -1,
         .link_id = -1,
         .prog_fd = prog_fd,
@@ -5365,7 +5365,7 @@ static int64_t ks_scale_perf_count(uint64_t value, uint64_t time_enabled, uint64
   return (int64_t)scaled;
 }
 
-static int ks_read_perf_from_fd(int perf_fd, uint64_t event_id, PerfRead *result, const char *caller) {
+static int ks_read_perf_from_fd(int perf_fd, uint64_t event_id, perf_read *result, const char *caller) {
   if (perf_fd < 0) {
     fprintf(stderr, "%s: invalid perf_fd %d\n", caller, perf_fd);
     return -1;
@@ -5457,8 +5457,8 @@ static int ks_read_perf_from_fd(int perf_fd, uint64_t event_id, PerfRead *result
 }
 
 /* Read raw/scaled details and the current group snapshot for a perf attachment. */
-PerfRead ks_perf_attachment_read(PerfAttachment attachment) {
-  PerfRead result = {
+perf_read ks_perf_attachment_read(perf_attachment attachment) {
+  perf_read result = {
     .raw = -1,
     .scaled = -1,
     .count = 0,

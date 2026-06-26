@@ -477,7 +477,7 @@ let can_assign to_type from_type =
 let builtin_return_type_for_call name arg_types default_return_type =
   match name, arg_types with
   | "attach", [ProgramHandle; (Struct "perf_options" | UserType "perf_options"); _] ->
-      Struct "PerfAttachment"
+      Struct "perf_attachment"
   | "detach", _ ->
       Void
   | "read", [arg_type] ->

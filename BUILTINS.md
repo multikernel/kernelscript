@@ -85,7 +85,7 @@ fn main() -> i32 {
 
 #### `attach(handle, target, flags)` / `attach(handle, opts, flags)`
 **Signature:** `attach(handle: ProgramHandle, target: str(128), flags: u32) -> u32`
-**Signature:** `attach(handle: ProgramHandle, opts: perf_options, flags: u32) -> PerfAttachment`
+**Signature:** `attach(handle: ProgramHandle, opts: perf_options, flags: u32) -> perf_attachment`
 **Variadic:** No
 **Context:** Userspace only
 
@@ -103,7 +103,7 @@ fn main() -> i32 {
 
 **Return Value:**
 - Standard form returns `0` on success and an error code on failure
-- Perf event form returns a `PerfAttachment` value with the open counter/link identity and an internal stale-handle token
+- Perf event form returns a `perf_attachment` value with the open counter/link identity and an internal stale-handle token
 
 **Examples:**
 ```kernelscript
@@ -131,7 +131,7 @@ detach(branch)
 detach(cache)
 ```
 
-Grouped events are scheduled as one atomic PMU unit. Separate events and separate groups may be multiplexed, but members inside one group cannot be independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)`, and `attach()` reports the error at runtime. `read(att)` exposes up to 16 group entries (`PerfRead`).
+Grouped events are scheduled as one atomic PMU unit. Separate events and separate groups may be multiplexed, but members inside one group cannot be independently multiplexed. A group that needs more hardware PMU counters than the running host provides is rejected by the kernel at `perf_event_open(2)`, and `attach()` reports the error at runtime. `read(att)` exposes up to 16 group entries (`perf_read`).
 
 **Context-specific implementations:**
 - **eBPF:** Not available
@@ -142,14 +142,14 @@ Grouped events are scheduled as one atomic PMU unit. Separate events and separat
 
 #### `detach(handle)`
 **Signature:** `detach(handle: ProgramHandle) -> void`
-**Signature:** `detach(handle: PerfAttachment) -> void`
+**Signature:** `detach(handle: perf_attachment) -> void`
 **Variadic:** No
 **Context:** Userspace only
 
 **Description:** Detach a loaded eBPF program from its current attachment point, or tear down one perf attachment.
 
 **Parameters:**
-- `handle`: Program handle returned from `load()`, or a `PerfAttachment` returned from perf `attach()`
+- `handle`: Program handle returned from `load()`, or a `perf_attachment` returned from perf `attach()`
 
 **Return Value:**
 - No return value (void)
@@ -170,7 +170,7 @@ detach(prog)  // Clean up
 ---
 
 #### `read(handle)`
-**Signature:** `read(handle: PerfAttachment) -> PerfRead`
+**Signature:** `read(handle: perf_attachment) -> perf_read`
 **Variadic:** No
 **Context:** Userspace only
 

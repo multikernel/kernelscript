@@ -497,7 +497,7 @@ fn main() -> i32 {
 | `event` | `perf_event` | *(required)* | Named event; packs the `perf_event_attr.type` tag and config into one value |
 | `pid` | `i32` | `-1` | -1 = all processes; ≥0 = specific PID |
 | `cpu` | `i32` | `0` | ≥0 = specific CPU; -1 = any CPU (pid must be ≥0) |
-| `group` | `PerfAttachment` | invalid attachment | Group leader attachment; omit for a standalone event |
+| `group` | `perf_attachment` | invalid attachment | Group leader attachment; omit for a standalone event |
 | `period` | `u64` | `1000000` | Sample after this many events |
 | `wakeup` | `u32` | `1` | Wake userspace after N samples |
 | `inherit` | `bool` | `false` | Inherit to forked children |
@@ -534,8 +534,8 @@ Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its c
 | Function | Signature | Description |
 |---|---|---|
 | `ks_open_perf_event` | `int (ks_perf_options)` | Calls `perf_event_open(2)`, returns fd |
-| `ks_attach_perf_event` | `PerfAttachment (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
-| `ks_perf_attachment_read` | `PerfRead (PerfAttachment)` | Direct fd snapshot through the attachment value with stale-handle detection |
+| `ks_attach_perf_event` | `perf_attachment (int prog_fd, ks_perf_options, int flags)` | Full open-reset-attach-enable lifecycle |
+| `ks_perf_attachment_read` | `perf_read (perf_attachment)` | Direct fd snapshot through the attachment value with stale-handle detection |
 
 **Attach sequence for standalone events (compiler-generated, inside `ks_attach_perf_event`):**
 1. `ks_attr.attr.disabled = 1` — open counter without starting it  
@@ -554,7 +554,7 @@ Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its c
 
 **Counter reads:**
 - Generated perf events request `PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING | PERF_FORMAT_ID | PERF_FORMAT_GROUP`.
-- `read(att)` returns a `PerfRead` snapshot with `raw`, `scaled`, `time_enabled`, `time_running`, `count`, `values`, and `ids`.
+- `read(att)` returns a `perf_read` snapshot with `raw`, `scaled`, `time_enabled`, `time_running`, `count`, `values`, and `ids`.
 - `read(att).scaled` equals this attachment's raw value when `time_enabled == time_running`.
 - If multiplexing occurred, `read(att).scaled` is `value * time_enabled / time_running` using a 128-bit intermediate.
 - If `time_running == 0`, `read(att)` reports an error and returns `scaled == -1`.
@@ -569,11 +569,11 @@ Each constant packs its `perf_event_attr.type` tag in the high 32 bits and its c
 **Compiler implementation:**
 - Detects `attach(prog, perf_options_value, flags)` (three-argument form with `perf_options` second arg) and routes to `ks_attach_perf_event`
 - Requires perf attach `flags` to be `0`; nonzero values are rejected instead of being silently ignored
-- Returns a first-class `PerfAttachment` value for perf attaches so one program can hold multiple live counters
-- `PerfAttachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
+- Returns a first-class `perf_attachment` value for perf attaches so one program can hold multiple live counters
+- `perf_attachment` carries `perf_fd` plus an internal generation token; `read(attachment)` avoids global attachment-list scans and rejects copied handles after detach
 - Exposes omitted `perf_options` fields as language-level defaults (partial struct literal)
 - Validates `pid ≥ -1`, `cpu ≥ -1`, `group_fd ≥ -1`, and rejects `pid == -1 && cpu == -1` at runtime
-- Treats `group` as valid only when it carries a live `PerfAttachment` generation token; otherwise the event is opened standalone
+- Treats `group` as valid only when it carries a live `perf_attachment` generation token; otherwise the event is opened standalone
 - Emits `PERF_FLAG_FD_CLOEXEC` for safe fd inheritance
 - BPF program section is `SEC("perf_event")`
 
